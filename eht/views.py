@@ -8,19 +8,20 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
 
-from .models import ProjectData, UserAttempt
+from .models import HeatTracingInput, ProjectData, UserAttempt
 from .forms import ProjectDataForm
 from .sanatize_input import * #sanitize_file
 from .calculations import * # Calculation
-
 from django.utils.timezone import now, timedelta
+
 
 from django.urls import reverse
 
 COOLDOWN_PERIOD_MINUTES = 30
 MAX_FAILED_ATTEMPTS = 3
 
-from eht.cal import parent_calculation_func
+# from eht.cal import parent_calculation_func
+from eht.cal import orchestrate_calculations
 from eht.models import ProjectData, HeatTracingInput, ElecEHT_ThermalConductivity, ElecEHT_ASMEB36, ElecEHT_Vendor, SELECT_VENDOR # import required models
 
 
@@ -56,49 +57,211 @@ def download_template(request):
         messages.error(request, "The file could not be found.")
         return redirect('some_error_page')
 
+# @login_required
+# def upload_input(request, project_id=None, *arg, **kwarg):
+#     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
+#     if request.method == 'POST':
+#         file = request.FILES.get('file')
+#         if not file: return JsonResponse({'error': 'No file uploaded'}, status=400)
+
+#         try:
+#             # Sanitize the file
+#             valid_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
+
+#             # Save valid data to the database with a "pending" status
+#             if valid_data:
+#                 upload_inputData_in_DB(valid_data, project_id)
+
+#             # If invalid data exists, send the error file and ask for user confirmation            
+#             if invalid_data:
+#                 error_file_name = os.path.basename(error_file_path)
+#                 error_file_url = reverse('download_error_file', args=[error_file_name])  # A dedicated endpoint for file download
+
+#                 # Return JSON metadata with the download URL
+#                 return JsonResponse({
+#                     'valid_data_with_error': True,
+#                     'error_file_url': error_file_url,
+#                     'success': 'Partial valid data uploaded. Download the error file.',
+#                 }, status=200)
+
+
+                        
+#             # If all data is valid, proceed directly to the calculation stage                    
+#             status_ok, valid_data, updated_count = update_pending_status(project_id)     
+
+#             if status_ok:                
+#                 # Calculation_result = parent_calculation_func(project_id, valid_data)
+#                 Calculation_result = orchestrate_calculations(project_id, valid_data)
+                
+               
+
+#             return JsonResponse({'success': 'Data processed successfully. Proceeding to calculations.'}, status=200)  
+        
+#         except ValidationError as e:
+#             return JsonResponse({'error': str(e)}, status=400)
+#         except Exception as e:
+#             return JsonResponse({'error': f"An unexpected error occurred: {str(e)}"}, status=500)
+
+#     return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+# ##################################################################################################
+# CALCULATION Module: --------------------------------------------------------
+
+from .cal import orchestrate_calculations
+from .data_service import (
+    fetch_process_lines,
+    fetch_vendor_data,
+    fetch_project_data,
+    fetch_asme_b36_table,
+    fetch_thermal_conductivity_data,
+)
+
 @login_required
-def upload_input(request, project_id=None, *arg, **kwarg):
+def calculate_view(request, project_id=None):
     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
+
     if request.method == 'POST':
         file = request.FILES.get('file')
         if not file: return JsonResponse({'error': 'No file uploaded'}, status=400)
 
         try:
-            # Sanitize the file
-            valid_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
-
+            # Step 1: Sanitize the file
+            valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)         
             # Save valid data to the database with a "pending" status
-            if valid_data:
-                upload_inputData_in_DB(valid_data, project_id)
+            if valid_process_line_data:
+                upload_inputData_in_DB(valid_process_line_data, project_id)
 
             # If invalid data exists, send the error file and ask for user confirmation            
             if invalid_data:
                 error_file_name = os.path.basename(error_file_path)
                 error_file_url = reverse('download_error_file', args=[error_file_name])  # A dedicated endpoint for file download
-
                 # Return JSON metadata with the download URL
                 return JsonResponse({
                     'valid_data_with_error': True,
                     'error_file_url': error_file_url,
                     'success': 'Partial valid data uploaded. Download the error file.',
                 }, status=200)
-
-
                         
             # If all data is valid, proceed directly to the calculation stage                    
             status_ok, valid_data, updated_count = update_pending_status(project_id)     
 
-            if status_ok:                
-                Calculation_result = parent_calculation_func(project_id, valid_data)
+            if status_ok:    
+                # Step 2: Fetch all data from the database                
+                project_specific_data = fetch_project_data(project_id)                                               
+                selected_vendor = next(
+                    (vendor_name for code, vendor_name in SELECT_VENDOR if code == project_specific_data['vendor']), None
+                )
 
-            return JsonResponse({'success': 'Data processed successfully. Proceeding to calculations.'}, status=200)  
+                vendor_data = fetch_vendor_data(selected_vendor, project_specific_data['voltage'])
+                process_lines = fetch_process_lines(project_id)
+                asme_b36_table = fetch_asme_b36_table()
+                thermal_conductivity_data = fetch_thermal_conductivity_data()                                      
+            
+                # Step 2: Call the orchestrator
+                CalculationResult = orchestrate_calculations(
+                    project_id=project_id,
+                    process_lines=process_lines,
+                    vendor_data=vendor_data,
+                    project_settings=project_specific_data,
+                    asme_b36_table=asme_b36_table,
+                    thermal_cond_data=thermal_conductivity_data
+                )
+
+                # Step 4: Return the results
+                return JsonResponse(CalculationResult)           
         
         except ValidationError as e:
+            logger.error(f"Validation error: {str(e)}")
             return JsonResponse({'error': str(e)}, status=400)
         except Exception as e:
+            logger.error(f"Unexpected error: {str(e)}")
             return JsonResponse({'error': f"An unexpected error occurred: {str(e)}"}, status=500)
-
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+
+# -------------------helper functions for calculate_view:-------------------------------------------------------
+# def get_project_id(request):
+#     return request.GET.get('project_id') or request.POST.get('project_id')
+
+# def fetch_asme_b36_table_from_db():
+#     df_asme_b36 = ElecEHT_ASMEB36.objects.values('Nominal_Pipe_Size', 'Outside_Diameter_mm')
+#     return pd.DataFrame.from_records(df_asme_b36)
+
+# def fetch_ther_conductivity_data_from_db():
+#     thermal_conductivity_data = ElecEHT_ThermalConductivity.objects.values('Ins_Mat_Type', 'K_factor_A', 'K_factor_B', 'K_factor_C')
+#     return pd.DataFrame.from_records(thermal_conductivity_data)
+
+# def fetch_process_lines_from_db(project_id):
+#     """Fetch process lines from the database for a given project ID."""
+#     process_lines = HeatTracingInput.objects.filter(project_id=project_id).values()
+#     return pd.DataFrame(process_lines)
+
+# def fetch_vendor_data_from_db(selected_vendor, project_voltage):
+#     """
+#     Fetch vendor data from the database for a given project ID.    
+#     """
+#     # vendor_dict = dict(SELECT_VENDOR)
+#     vendor_data_query = list(ElecEHT_Vendor.objects.filter(
+#             Vendor=selected_vendor,
+#             Voltage__gte=float(project_voltage)
+#             ).annotate(
+#                 Voltage_Float= Cast('Voltage', FloatField())  # Convert to float at DB level
+#                 ).values(
+#                     'V_UID', 'Voltage_Float', 'A_Coeff', 'B_Coeff', 'C_Coeff', 
+#                     'Power_at_Startup_T', 'Ohm_per_km', 'Res_corrFactor_Mica', 'Tracer_Family'
+#                 ).distinct())   
+#     return pd.DataFrame(vendor_data_query)
+
+# def fetch_project_data_from_db(project_id):
+#     """
+#     Fetch project-specific settings from the database for a given project ID.
+#     """
+#     project_data = ProjectData.objects.get(proj_id=project_id)
+#     # TODO: commented out 9 nos parameters are not currently in use, revisit and update model if not finally used.
+#     # Project data being limited data set, we can directly return the dictionary without converting to DataFrame
+#     return {
+#         "id":project_data.id,
+#         "proj_id":project_data.proj_id,
+#         "min_amb_t":float(project_data.min_amb_t),
+#         "max_amb_t":float(project_data.max_amb_t),
+#         "startup_t":float(project_data.startup_t),
+#         "area_class":project_data.area_class,
+#         "temp_class":project_data.temp_class,
+#         "voltage":float(project_data.voltage),
+#         "max_cb_size":float(project_data.max_cb_size),
+#         "restrict_cb_current":float(project_data.restrict_cb_current),
+#         "vendor":project_data.vendor,
+#         # "tracer_family":project_data.tracer_family,
+#         "spiral_wrap_allowed":project_data.spiral_wrap_allowed,
+#         "spiral_factor":float(project_data.spiral_factor),
+#         #"valve_factor":float(project_data.valve_factor),                                # not used default value 5
+#         #"flange_factor":float(project_data.flange_factor),                              # not used default value 5
+#         #"support_factor":float(project_data.support_factor),                            # not used default value 5
+#         "margin_on_tracer_lengths":float(project_data.margin_on_tracer_lengths),
+#         "voltage_var_factor":float(project_data.voltage_var_factor),
+#         "res_tol":float(project_data.res_tol),
+#         "termination_margin":float(project_data.termination_margin),
+#         "heat_loss_sf":float(project_data.heat_loss_sf),
+#         "rtd_thrm":project_data.rtd_thrm,
+#         "wind_speed":float(project_data.wind_speed),
+#         # "req_local_isolator":project_data.req_local_isolator,
+#         "caution_label_interval":float(project_data.caution_label_interval),
+#         # "k_factor_ccons":float(project_data.k_factor_ccons),
+#         "isolator_location":project_data.isolator_location,
+#         "ckt_ln":float(project_data.ckt_ln),
+#         "loop_ln":float(project_data.loop_ln),
+#         # "acc_power_density":project_data.acc_power_density,
+#         # "tracer_temp_factor":project_data.tracer_temp_factor,
+#         # "alpha_for_res":float(project_data.alpha_for_res),
+#         "allowablevdrop":float(project_data.allowablevdrop)      
+#     }
+
+
+
+
+
+
+
 
 # -------------Download error File -------------------------------------------------------
 
@@ -120,7 +283,7 @@ def confirm_valid_data(request):
         try:            
             status_ok, valid_data, updated_count = update_pending_status(project_id)
             if status_ok:
-                calculation_result = parent_calculation_func(project_id)
+                # calculation_result = parent_calculation_func(project_id)
 
                 logger.info(f"Project ID: {project_id} - File uploaded and processed successfully.")                  
                 return JsonResponse({'success': 'File uploaded and processed successfully.'}, status=200)
