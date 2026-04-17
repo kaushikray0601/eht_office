@@ -1,0 +1,87 @@
+<!-- NAV BAR using bootstrap-->
+ {% load static %}
+<nav class="navbar border-bottom border-body navbar-expand-lg justify-content-end py-2" style="background-color: #e3f2fd; height:50px;">
+{% comment %} <nav class="navbar navbar-expand-lg navbar-dark bg-dark justify-content-end py-2" style="background-color: #e3f2fd;">  {% endcomment %}
+    <!-- Button inside the HTML -->
+    <button id="toggleSidebar" class="mySidebarBtn mt-3">
+        <span class="bi bi-list"></span>
+    </button>
+    <div class="container-fluid" >
+        <a class="navbar-brand" style="margin-left:200px;" href="#" >
+            <span class="eTrace">e<span>Trace</span></span>
+        </a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarScroll" 
+            aria-controls="navbarScroll" aria-expanded="false" aria-label="Toggle navigation">
+            <span class="navbar-toggler-icon"></span>
+        </button>
+        
+        <div class="collapse navbar-collapse" id="navbarScroll">
+            <ul class="navbar-nav d-flex ms-auto navbar-nav-scroll py-0" style="--bs-scroll-height: 100px;">
+                <li class="nav-item">
+                    <a class="nav-link" aria-current="page" href="#">Home</a>
+                </li>
+                <li class="nav-item"><a class="nav-link" href="#">Input</a></li>
+                <li class="nav-item"><a class="nav-link" href="#">Features</a></li>
+                <li class="nav-item"><a class="nav-link" href="#">FAQ</a></li>
+                <li class="nav-item"><a class="nav-link" href="#">Contact us</a></li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Design</a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="#">Heat Loss Calculation</a></li>
+                        <li><a class="dropdown-item" href="#">BOQ Estimation</a></li>
+                        <li><a class="dropdown-item" href="#">SLD Generation</a></li>
+                        <li><a class="dropdown-item" href="#">Cable Optimization</a></li>
+                        <li><a class="dropdown-item" href="#">Cable Schedule</a></li>
+                        <li><hr class="dropdown-divider"></li>
+                        <li><a class="dropdown-item" href="#">Manual Fine Tuning</a></li>
+                    </ul>
+                </li>
+                <li class="nav-item"><a class="nav-link disabled">Isometric</a></li>
+            </ul>
+        
+
+        
+            <!-- Ensure the search form is aligned to the right -->
+            <form class="d-flex me-4 ms-5" role="search">
+                <input class="form-control" type="search" placeholder="Search" aria-label="Search">
+                <button class="btn btn-outline-success" type="submit" data-url="#">Search</button>
+            </form>
+
+            <!-- User details -->                
+            {% comment %} <ul class="navbar-nav d-flex ms-auto navbar-nav-scroll py-0" style="--bs-scroll-height: 100px;">
+                <li class="nav-item">
+                    <a class="nav-link" aria-current="page" href="#">Login</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" aria-current="page" href="#">Register</a>
+                </li>
+                <li class="nav-item">
+                    <a class="nav-link" aria-current="page" href="#">admin</a>
+                </li>
+            </ul> {% endcomment %}
+            
+            <ul class="navbar-nav d-flex ms-auto navbar-nav-scroll py-0" style="--bs-scroll-height: 100px;">
+                {% if user.is_authenticated %}
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="#">{{ user.username }}</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="{% static 'logout' %}">Logout</a>
+                    </li>
+                {% else %}
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="{% static 'login' %}">Login</a>
+                    </li>
+                    <li class="nav-item">
+                        <a class="nav-link" aria-current="page" href="{% static 'register' %}">Register</a>
+                    </li>
+                {% endif %}
+            </ul>
+
+
+
+
+
+        </div>
+    </div>
+</nav>

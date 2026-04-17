@@ -1,0 +1,85 @@
+/* Sidebar - Transitions */
+.sidebar {
+    transition: all 0.3s ease;
+    height: 100vh;
+    width: 200px; /* Expanded width */
+    position: fixed;
+}
+
+.sidebar.collapsed {
+    display: none;
+}
+
+/* Main content when sidebar is expanded */
+.main-content {
+    transition: all 0.3s ease;
+    margin-left: 200px;   /* Adjusted margin when sidebar is expanded */
+}
+
+/* Main content when sidebar is collapsed */
+.main-content.collapsed {
+    margin-left: 25px;              /* Adjusted margin when sidebar is collapsed */
+}
+
+/* Button for toggling sidebar */
+#toggleSidebar {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    z-index: 999;
+}
+
+
+.mySidebarBtn {
+    position: absolute;
+    top: 50%;
+    left: 5px;
+    z-index: 999;
+    background-color: #e3f2fd;
+    color: #28a745;
+    border: none;
+    padding: 5px;
+    border-radius: 5px;
+    cursor: pointer;
+    transform: translateY(-50%);
+    font-size: 30px;
+    height:48px;
+    transform: translateY(-65%);
+}
+
+/* Add this style for hover effect (optional) */
+
+.mySidebarBtn:hover {
+    background-color:rgb(114, 170, 230);
+}
+
+/* Ensure that the body takes the full height of the viewport */
+body, html {
+    height: 100%;
+    margin: 0;
+}
+
+/* Main container to hold content and footer */
+.content-wrapper {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh; /* Ensures the content wrapper takes at least the full height of the viewport */
+}
+
+/* Push the footer to the bottom */
+footer {
+    margin-top: auto; /* This pushes the footer down */
+}
+
+.eTrace {
+    font-family: 'system-ui', sans-serif;
+    color: #28a745; /* Deep Navy, 0ab15d */
+    font-weight: 400;
+}
+
+.eTrace span {
+    color: #0f21e4;
+    font-weight: 500;
+}
+
+

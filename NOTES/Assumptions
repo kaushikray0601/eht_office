@@ -1,0 +1,164 @@
+# Heat Tracing System Design Roadmap
+
+This document outlines the development roadmap for the heat tracing system design software.
+
+## 1. Heat Loss Calculation
+
+### 1.1 Initial Heat Loss Estimation
+
+*   **Equation:** `HeatLoss = 2 * PI * conductivity * delta_tmp / Math.Log((2 * insul_thick + pipe_size_mm) / pipe_size_mm)`
+    *   **Units:** All dimensions are in mm, conductivity in W/m.K, temperature in °C.
+    *   **Note:** Heat loss due to convection and radiation is approximated as 10% and TO BE added ADDITIONALLY to this estimate.
+
+### 1.2 Heat Loss with Margin
+
+*   **Equation:** `Heat_Loss = HeatLoss * margin_on_heat_loss`
+    *   **Variable:** `margin_on_heat_loss`: User-defined margin on heat loss (typically 10%).
+
+### 1.3 Delta Temperature Calculation
+
+*   **Equation:** `delta_tmp = maintenance_temp - min_ambient_temp`
+    *   **Variables:**
+        *   `maintenance_temp`:  Maintenance temperature (°C). User Input.
+        *   `min_ambient_temp`: Minimum ambient temperature (°C). User Input or retrieved from location data.
+
+### 1.4 Pipe Size Lookup
+
+*   Attempt to look up pipe size (mm) in ASME B36.10 database table for a match.
+*   **Fallback Equation (if no ASME match):** `pipe_size_mm = 25.206 * pipe_size_in_inch + 9.4852`
+    *   **Note:** Ensure consistent unit usage (mm vs. inches)
+    *   **Database Lookup:** `pipe_size_mm = asme_data[asme_data['Nominal_Pipe_Size'] == pipe_size_in]['Outside_Diameter_mm']`
+
+## 2. Correction Factors
+
+### 2.1 Wind Speed Correction
+
+*   **Equation:** `Wind_speed_correction_factor = max(1 + Math.Min(20, (windspeed - 32) / 1.60934) / 100, 1)`
+    *   **Units:** `windspeed` in kmph.
+*   **Equation:** `Corrected_heat_Loss = Heat_Loss * Wind_speed_correction_factor`
+*   **Note:** Add 1% per kmph above 32 kmph, up to a maximum of 20%.
+*   **Variable:**  `windspeed`: Wind speed (kmph).  User Input or retrieved from location data.
+
+### 2.2 Additional Tracers for Components (Valves, Supports, Flanges) : Imperical equation
+
+*   **Equation:** `tracer_adder_dueto_valves = valve_qty * (0.5 * pipe_size_mm / 25.4 + 3.5) / 3.048`
+*   **Equation:** `tracer_adder_dueto_support = support_qty * (0.08 * pipe_size_mm / 25.4 + 2) / 3.048`
+*   **Equation:** `tracer_adder_dueto_flange = flange_qty * If(pipe_size_mm / 25.4 < 3, 0.3, If(pipe_size_mm / 25.4 < 6, 0.5, If(pipe_size_mm / 25.4 < 14, 0.8, 1)))`
+*   **Equation:** `additional_tracer = tracer_adder_dueto_valves + tracer_adder_dueto_support + tracer_adder_dueto_flange`
+    *   **Variables:**
+        *   `valve_qty`: Quantity of valves. User Input.
+        *   `support_qty`: Quantity of supports. User Input.
+        *   `flange_qty`: Quantity of flanges. User Input.
+
+## 3. Conductivity and Tracer Power Output
+*   Use a 2nd order polynomial for conductivity and tracer power output.
+*   **General Equation:** `target_value = A * x^2 + B * x + C`
+*   **Example (Conductivity or Tracer Power Output):** `conductivity or tracer_power_output = A * maintenance_temp^2 + B * maintenance_temp + C`
+    *   **Variables:**
+        *   `A`, `B`, `C`: Constants pre-processed and stored in database.
+            *   **Data Source:** vendor_data_table
+        *  `x`: Temperature variable, which can be `maintenance_temp` or `operating_temp`
+    *   **Note:**  Units of `A`, `B`, and `C` must be consistent with the target value (conductivity or tracer power output) and temperature.
+
+## 4. Tracer Selection Loop
+*   **Loop Condition:** Iterate through all tracers where `tracer_design_voltage >= system_voltage`.
+
+    **Start Loop:**
+
+    ### 4.1 Voltage Correction Factor
+
+    *   **Equation:** `voltage_correction_factor = (system_voltage / designed_temp_for_tracers)^2`
+        *   **Variable:** `system_voltage`:  System voltage (V). User Input.
+        *   **Variable:** `designed_temp_for_tracers`: Designed temperature for tracers (V).  From tracer database.
+        *   **Note:** Tracer power output is proportional to Voltage².
+
+    ### 4.2 Spiral Factor
+
+    *   **Equation:** `spiral_factor = Math.Abs(heat_loss * (1 + voltage_var_factor / 100) / tracer_power_output)`
+        *   **Variable:** `voltage_var_factor`: Allowable voltage variation percentage. User Input.
+        *   **Variable:** `tracer_power_output`: Power output of the tracer, determined by `A * maintenance_temp^2 + B * maintenance_temp + C`.
+        *   **Unit:** The equation should be unit-less to make sure the dimension is correct
+    *   **Error Handling:** If no tracer is found in the database call, set `spiral_factor = 1`.
+
+
+    ### 4.3 Estimated Tracer Length
+
+    *   **Equation:** `estimated_tracer_length = (pipe_length_in_meter + additional_tracer) * spiral_factor * margin_on_tracer_length`
+        *   **Variable:** `margin_on_tracer_length`: User-settable additional margin on tracer length (typically 5 to 10%).
+        *   **Units:** meters
+
+    ### 4.4 Current and Power Calculation
+
+    *   **Equation:** `operating_current = estimated_tracer_length * voltage_correction_factor * (A * operating_temp^2 + B * operating_temp + C) / system_voltage`
+        *   **Variable:**  `operating_temp`:  Operating temperature. User Input.
+        *   **Units:** Amperes
+    *   **Equation:** `maximum_current = estimated_tracer_length * voltage_correction_factor * (A * maintenance_temp^2 + B * maintenance_temp + C) / system_voltage`
+        *   **Note:** Maximum current is approximated for now.  Fix this equation with vendor data and a suitable fitting mechanism (polynomial/exponential curve?).
+        *   **Units:** Amperes
+    **End Loop:**
+
+*   **Tracer Prioritization:** After the loop, sort the tracers according to length (shortest to longest) and then by power output (lowest to highest). The top tracer is the preferred option. Remaining tracers are offered to the user as alternatives.
+
+
+## 5. Power Distribution
+
+### 5.1 Number of Circuits
+
+*   **Equation:** `number_of_circuits = Math.Ceiling(maximum_current / (max_cb_size * margin_on_max_cb_size))`
+    *   **Variables:**
+        *   `max_cb_size`: Maximum circuit breaker size (A). User Input (based on project specifications).
+        *   `margin_on_max_cb_size`: Margin on maximum circuit breaker size. User Input (based on project specifications).
+
+### 5.2 Termination Margin
+
+*   **Equation:** `calculated_tracer_length = estimated_tracer_length + number_of_circuits * termination_margin/1000`
+    *   **Variable:** `termination_margin`: Termination margin (mm). User Input (typically 200-300mm).
+    *   **Units:** meters
+
+### 5.3 MCB Selection
+
+*   Select the closest higher standard MCB size (A) available in the market such that `(maximum_current/margin_on_max_cb_size) <= cb_size_in_Amp <= max_cb_size`.
+
+### 5.4 Power Flow Logic
+
+*   **(a) If number_of_circuits = 1:** Power flow > MCB to 1phJB to TRACER to END_TERMINATION_KIT
+*   **(b) If number_of_circuits = 2:** Power flow > MCB to 3phJB > 3phJB to [(a) 1phJB-1 to TRACER-1 to END_TERMINATION_KIT-1, (b) 1phJB-2 to TRACER-2 to END_TERMINATION_KIT-2]
+*   **(c) If number_of_circuits = 3:** Power flow > MCB to 3phJB > 3phJB to [(a) 1phJB-1 to TRACER-1 to END_TERMINATION_KIT-1, (b) 1phJB-2 to TRACER-2 to END_TERMINATION_KIT-2, (c) 1phJB-3 to TRACER-3 to END_TERMINATION_KIT-3]
+*   **(d) If number_of_circuits = 4:** Power flow-1 > same as (c) & Power flow-2 > same as (a)
+*   **(e) If number_of_circuits = 5:** Power flow-1 > same as (c) & Power flow-2 > same as (b)
+*   **(f) If number_of_circuits = 6:** Power flow-1 > same as (c) & Power flow-2 > same as (c)
+*   **(g) If number_of_circuits = 7:** Power flow-1 & 2 > same as (f) & Power flow-3 > same as (a)
+*   **And so on in this sequence**
+
+*   **Data Recording:** Record the power flow (connection/relationship) between: MCB > cold cable > 3phJB > cold cable > 1phJB > Tracer > End termination kit
+    *   Use unique tags for each component to facilitate single-line diagram generation.
+
+## 6. Component Calculation
+
+### 6.1 Isolators and Thermostats/RTDs
+
+*   Calculate the number of isolators and thermostats/RTDs based on user settings and the number of 3phJBs calculated above.
+
+### 6.2 Caution/Warning Labels
+
+*   **Equation:** `caution_label_count = Math.Ceiling(Math.Max(eqv_pipe_length / caution_label_interval, 1))`
+    *   **Variable:** `caution_label_interval`: User-defined interval between caution labels (typically 25m).
+    *   **Units:** meter
+
+### 6.3 Pipe Straps
+
+*   **Equation:** `pipe_strap_count = count_of_1phJB + (count_of_RTD or count_of_thermostat)`
+*   **Assumption:** 3phJBs and isolators are large/heavy and will be independently supported, not mounted on the pipe.
+
+## 7. Single Line Diagram (SLD) Generation
+
+*   **(a) Efficient Data structure:** Use a node and branch structure to represent the SLD.
+*   **(b) Connection Algorithm:** Implement Depth-First Search (DFS) for tracing connections.
+*   **(c) Coordinate Distribution:** Distribute relative coordinates of each component, keeping scale factor in mind to auto-adjust for different screen sizes.
+*   **(d) SVG Drawing:** Use the JOINT.JS JavaScript library to draw the SVG on a canvas (paper).
+    *   Use stencils for component palettes.
+    *   **Data Persistence:** Use AJAX calls to store coordinates in the database as modified by the user.
+    *   **Relationship Persistence:** Use AJAX calls to store connections/relationships in the database when the user manually alters the SLD.
+*   **(e) Cold Cable Length Updates:** Enable users to update cold cable lengths.
+*   **(f) Tracer Selection:** Enable users to select alternate tracers and store this selection.
+*   **(g) Cable Optimization:** Run a cable optimization module on each tracer selection and display cable size, voltage drops, and Tagno/ratings of each component.

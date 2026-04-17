@@ -1,0 +1,6 @@
+﻿ID,Ins_Mat_Type,K_factor_A,K_factor_B,K_factor_C
+1,CG,0.0000002,0.00002,0.0357
+2,CW,1,1,0.069
+3,MO,0.0000003,0.00005,0.035
+4,Micro/Nano porous insulation,0.0000002,0.00003,0.0203
+5,C-ET,0,0,0.036
