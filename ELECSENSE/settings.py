@@ -1,7 +1,15 @@
-from pathlib import Path, os
+import os
+from pathlib import Path
+
+import environ
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+env = environ.Env()
+
+for env_file in (BASE_DIR / ".env.postgres.local", BASE_DIR / ".env"):
+    if env_file.exists():
+        environ.Env.read_env(env_file)
 
 
 # Quick-start development settings - unsuitable for production
@@ -69,11 +77,50 @@ WSGI_APPLICATION = 'ELECSENSE.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+USE_POSTGRES = env.bool("USE_POSTGRES", default=False)
+
+SQLITE_DB_PATH = BASE_DIR / env("SQLITE_DB_NAME", default="db.sqlite3")
+SQLITE_SOURCE_DB_PATH = BASE_DIR / env("SQLITE_SOURCE_DB_NAME", default="db.sqlite3")
+SQLITE_BACKUP_DB_PATH = BASE_DIR / env("SQLITE_BACKUP_DB_NAME", default="db.sqlite3.bak")
+
+POSTGRES_USER = env("POSTGRES_USER", default=os.getenv("PGUSER", "sa"))
+POSTGRES_NAME = env(
+    "POSTGRES_DB",
+    default=os.getenv("PGDATABASE", POSTGRES_USER),
+)
+
+if USE_POSTGRES:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": POSTGRES_NAME,
+            "USER": POSTGRES_USER,
+            "PASSWORD": env("POSTGRES_PASSWORD", default=os.getenv("PGPASSWORD", "")),
+            "HOST": env("POSTGRES_HOST", default=os.getenv("PGHOST", "129.151.129.146")),
+            "PORT": env("POSTGRES_PORT", default=os.getenv("PGPORT", "5432")),
+            "CONN_MAX_AGE": env.int("POSTGRES_CONN_MAX_AGE", default=60),
+            "OPTIONS": {
+                "connect_timeout": env.int("POSTGRES_CONNECT_TIMEOUT", default=10),
+            },
+        }
     }
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": SQLITE_DB_PATH,
+        }
+    }
+
+# Convenience aliases used during one-time migration from SQLite to PostgreSQL.
+DATABASES["sqlite_source"] = {
+    "ENGINE": "django.db.backends.sqlite3",
+    "NAME": SQLITE_SOURCE_DB_PATH,
+}
+
+DATABASES["sqlite_backup"] = {
+    "ENGINE": "django.db.backends.sqlite3",
+    "NAME": SQLITE_BACKUP_DB_PATH,
 }
 
 

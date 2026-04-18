@@ -18,6 +18,11 @@ venv/
 ENV/
 env/
 
+# Local environment files
+.env
+.env.*
+!.env.postgres.example
+
 # VS Code
 .vscode/
 
