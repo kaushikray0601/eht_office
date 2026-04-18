@@ -90,7 +90,7 @@
                     showToast("Please correct the errors and re-upload the file.", "info");
                 }
             } else {
-                showToast(data.success, "success");
+                showToast(data.success || "Input file processed successfully.", "success");
             }
         },
         error: function (xhr) {
@@ -124,10 +124,10 @@
               "{% url 'confirm_valid_data' %}",
               { project_id: projectId, csrfmiddlewaretoken: getCSRFToken() },
               function (response) {
-                  showToast("Valid data confirmed. Proceeding to calculations.", "success");
+                  showToast(response.success || "Valid data confirmed and calculations completed.", "success");
               }
-          ).fail(function () {
-              showToast("Failed to confirm valid data.", "error");
+          ).fail(function (xhr) {
+              handleErrorResponse(xhr);
           });
       }
   }); 

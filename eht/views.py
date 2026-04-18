@@ -117,6 +117,48 @@ from .data_service import (
     store_calculated_results,
 )
 
+
+def summarize_calculation_result(calculation_result):
+    return {
+        'heat_loss': len(calculation_result.get('heat_loss', [])),
+        'selected_tracers': len(calculation_result.get('selected_tracers', [])),
+        'alternative_tracers': len(calculation_result.get('alternative_tracers', [])),
+        'power_distribution': len(calculation_result.get('power_distribution', [])),
+        'boq_lines': len(calculation_result.get('boq_per_line', {})),
+        'consolidated_boq_items': len(calculation_result.get('consolidated_boq', {})),
+        'tracer_power_param': len(calculation_result.get('tracer_power_param', [])),
+    }
+
+
+def run_project_calculations(project_id):
+    project_specific_data = fetch_project_data(project_id)
+    selected_vendor = next(
+        (vendor_name for code, vendor_name in SELECT_VENDOR if code == project_specific_data['vendor']),
+        None,
+    )
+    if not selected_vendor:
+        raise ValidationError("Selected vendor could not be resolved for this project.")
+
+    process_lines = fetch_process_lines(project_id)
+    if process_lines.empty:
+        raise ValidationError("No confirmed input data found for this project.")
+
+    vendor_data = fetch_vendor_data(selected_vendor, project_specific_data['voltage'])
+    asme_b36_table = fetch_asme_b36_table()
+    thermal_conductivity_data = fetch_thermal_conductivity_data()
+
+    calculation_result = orchestrate_calculations(
+        project_id=project_id,
+        process_lines=process_lines,
+        vendor_data=vendor_data,
+        project_settings=project_specific_data,
+        asme_b36_table=asme_b36_table,
+        thermal_cond_data=thermal_conductivity_data,
+    )
+    store_calculated_results(project_id, calculation_result)
+    return calculation_result, summarize_calculation_result(calculation_result)
+
+
 @login_required
 def calculate_view(request, project_id=None):
     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
@@ -146,35 +188,20 @@ def calculate_view(request, project_id=None):
             # If all data is valid, proceed directly to the calculation stage                    
             status_ok, valid_data, updated_count = update_pending_status(project_id)     
 
-            if status_ok:    
-                # Step 2: Fetch all data from the database                
-                project_specific_data = fetch_project_data(project_id)                                               
-                selected_vendor = next(
-                    (vendor_name for code, vendor_name in SELECT_VENDOR if code == project_specific_data['vendor']), None
-                )
+            if not status_ok:
+                return JsonResponse({'error': 'Failed to confirm uploaded data.'}, status=500)
 
-                vendor_data = fetch_vendor_data(selected_vendor, project_specific_data['voltage'])
-                process_lines = fetch_process_lines(project_id)
-                asme_b36_table = fetch_asme_b36_table()
-                thermal_conductivity_data = fetch_thermal_conductivity_data()                                      
-            
-                # Step 2: Call the orchestrator
-                CalculationResult = orchestrate_calculations(
-                    project_id=project_id,
-                    process_lines=process_lines,
-                    vendor_data=vendor_data,
-                    project_settings=project_specific_data,
-                    asme_b36_table=asme_b36_table,
-                    thermal_cond_data=thermal_conductivity_data
-                )
+            if updated_count == 0:
+                return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
 
-
-                # Step 4: Store the calculated data into database call store_calculated_results
-
-                is_stored = store_calculated_results(project_id, CalculationResult)
-
-                # Step 4: Return the results
-                return JsonResponse(CalculationResult)           
+            calculation_result, result_counts = run_project_calculations(project_id)
+            return JsonResponse({
+                'success': 'Input file processed and calculations completed successfully.',
+                'project_id': project_id,
+                'confirmed_rows': updated_count,
+                'result_counts': result_counts,
+                'calculation_result': calculation_result,
+            })           
         
         except ValidationError as e:
             logger.error(f"Validation error: {str(e)}")
@@ -299,13 +326,25 @@ def confirm_valid_data(request):
 
         try:            
             status_ok, valid_data, updated_count = update_pending_status(project_id)
-            if status_ok:
-                # calculation_result = parent_calculation_func(project_id)
+            if not status_ok:
+                return JsonResponse({'error': 'Failed to confirm valid uploaded data.'}, status=500)
 
-                logger.info(f"Project ID: {project_id} - File uploaded and processed successfully.")                  
-                return JsonResponse({'success': 'File uploaded and processed successfully.'}, status=200)
-            else:                
-                return JsonResponse({"error': 'Internal server error."}, status=500)
+            if updated_count == 0:
+                return JsonResponse({'error': 'No valid uploaded data is pending confirmation.'}, status=400)
+
+            calculation_result, result_counts = run_project_calculations(project_id)
+            logger.info(
+                "Project ID: %s - Pending rows confirmed and calculations completed for %s row(s).",
+                project_id,
+                updated_count,
+            )
+            return JsonResponse({
+                'success': 'Valid data confirmed and calculations completed successfully.',
+                'project_id': project_id,
+                'confirmed_rows': updated_count,
+                'result_counts': result_counts,
+                'calculation_result': calculation_result,
+            }, status=200)
         except Exception as e:
             logger.error(f"Project ID: {project_id} - Failed to confirm 'EHT Input data': {str(e)}", exc_info=True)
             return JsonResponse({'error': f"Failed to confirm valid data: {str(e)}"}, status=500)

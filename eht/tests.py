@@ -2,7 +2,9 @@ import json
 import math
 
 import pandas as pd
+from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase
+from django.urls import reverse
 
 from eht.cal import orchestrate_calculations
 from eht.calculations.boq import compute_bill_of_quantities
@@ -13,6 +15,9 @@ from eht.data_service import store_calculated_results
 from eht.models import (
     AlternateTracer,
     BOQ,
+    ElecEHT_ASMEB36,
+    ElecEHT_ThermalConductivity,
+    ElecEHT_Vendor,
     HeatLoss,
     HeatTracingInput,
     PowerDistribution,
@@ -147,6 +152,43 @@ def make_project_record(**overrides):
     }
     data.update(overrides)
     return ProjectData.objects.create(**data)
+
+
+def seed_reference_data():
+    ElecEHT_ThermalConductivity.objects.create(
+        Ins_Mat_Type='Mineral Wool',
+        K_factor_A=0.0,
+        K_factor_B=0.0,
+        K_factor_C=0.05,
+    )
+    ElecEHT_ASMEB36.objects.create(
+        Nominal_Pipe_Size=2.0,
+        Outside_Diameter_mm=60.3,
+    )
+    ElecEHT_Vendor.objects.create(
+        V_UID='V-001',
+        Vendor='Chromalox',
+        Tracer_Family='SR',
+        Voltage=230.0,
+        A_Coeff=0.0,
+        B_Coeff=0.0,
+        C_Coeff=30.0,
+        Power_at_Startup_T=10.0,
+        Ohm_per_km=1.0,
+        Res_corrFactor_Mica=1.0,
+    )
+    ElecEHT_Vendor.objects.create(
+        V_UID='V-ALT-001',
+        Vendor='Chromalox',
+        Tracer_Family='SR',
+        Voltage=230.0,
+        A_Coeff=0.0,
+        B_Coeff=0.0,
+        C_Coeff=25.0,
+        Power_at_Startup_T=10.0,
+        Ohm_per_km=1.0,
+        Res_corrFactor_Mica=1.0,
+    )
 
 
 class HeatLossCalculationTests(SimpleTestCase):
@@ -504,3 +546,64 @@ class StoreCalculatedResultsTests(TestCase):
         self.assertEqual(SelectedTracer.objects.filter(v_uid='V-001').count(), 2)
         self.assertEqual(SelectedTracer.objects.get(line=line_one).tracer_with_margin, 12.6)
         self.assertEqual(SelectedTracer.objects.get(line=line_two).tracer_with_margin, 14.7)
+
+
+class ConfirmValidDataViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='tester', password='password123')
+        self.client.force_login(self.user)
+        make_project_record()
+        seed_reference_data()
+
+    def create_pending_line(self, **overrides):
+        defaults = {
+            'proj_id': 'p1',
+            'line_id': 'LINE-001',
+            'service_type': 'EP',
+            'line_size': 2.0,
+            'line_length': 10.0,
+            'ins_mat_type': 'Mineral Wool',
+            'insul_thick': 50.0,
+            'maint_temp': 100.0,
+            'oper_temp': 80.0,
+            'design_temp': 120.0,
+            'valve_qty': 0,
+            'flange_qty': 0,
+            'support_qty': 0,
+            'status': 'pending',
+        }
+        defaults.update(overrides)
+        return HeatTracingInput.objects.create(**defaults)
+
+    def test_confirm_valid_data_processes_pending_rows_and_stores_results(self):
+        line = self.create_pending_line()
+
+        response = self.client.post(reverse('confirm_valid_data'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['confirmed_rows'], 1)
+        self.assertEqual(payload['result_counts']['heat_loss'], 1)
+        self.assertEqual(payload['result_counts']['selected_tracers'], 1)
+        self.assertEqual(payload['result_counts']['boq_lines'], 1)
+
+        line.refresh_from_db()
+        self.assertEqual(line.status, 'confirmed')
+        self.assertTrue(HeatLoss.objects.filter(line=line).exists())
+        self.assertTrue(SelectedTracer.objects.filter(line=line).exists())
+        self.assertTrue(AlternateTracer.objects.filter(line=line, option_rank=1).exists())
+        self.assertTrue(PowerDistribution.objects.filter(line=line).exists())
+        self.assertTrue(ProcessLineCalculation.objects.filter(line=line).exists())
+        self.assertTrue(BOQ.objects.filter(project_id='p1', scope='line', line=line).exists())
+        self.assertTrue(BOQ.objects.filter(project_id='p1', scope='consolidated').exists())
+
+    def test_confirm_valid_data_rejects_requests_when_no_rows_are_pending(self):
+        line = self.create_pending_line(status='confirmed')
+
+        response = self.client.post(reverse('confirm_valid_data'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'No valid uploaded data is pending confirmation.')
+        self.assertEqual(line.status, 'confirmed')
+        self.assertFalse(HeatLoss.objects.filter(line=line).exists())
