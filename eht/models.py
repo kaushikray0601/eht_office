@@ -193,11 +193,16 @@ class UserAttempt(models.Model):
 
 class HeatLoss(models.Model):
     uid = models.CharField(max_length=100, primary_key=True)
+    line = models.OneToOneField(HeatTracingInput, on_delete=models.CASCADE, null=True, blank=True, related_name='heat_loss_result')
     heat_loss = models.FloatField()
     tracer_adder = models.FloatField()
 
+    class Meta:
+        ordering = ['line']
+
 class SelectedTracer(models.Model):
-    v_uid = models.CharField(max_length=100, primary_key=True)
+    line = models.OneToOneField(HeatTracingInput, on_delete=models.CASCADE, null=True, blank=True, related_name='selected_tracer_result')
+    v_uid = models.CharField(max_length=100)
     a_coeff = models.FloatField()
     b_coeff = models.FloatField()
     c_coeff = models.FloatField()
@@ -212,8 +217,13 @@ class SelectedTracer(models.Model):
     tracer_length = models.FloatField()
     tracer_with_margin = models.FloatField()
 
+    class Meta:
+        ordering = ['line']
+
 class AlternateTracer(models.Model):
-    v_uid = models.CharField(max_length=100, primary_key=True)
+    line = models.ForeignKey(HeatTracingInput, on_delete=models.CASCADE, null=True, blank=True, related_name='alternate_tracer_results')
+    option_rank = models.PositiveIntegerField(default=0)
+    v_uid = models.CharField(max_length=100)
     a_coeff = models.FloatField()
     b_coeff = models.FloatField()
     c_coeff = models.FloatField()
@@ -227,39 +237,76 @@ class AlternateTracer(models.Model):
     spiral_factor = models.FloatField()
     tracer_length = models.FloatField()
     tracer_with_margin = models.FloatField()
+
+    class Meta:
+        ordering = ['line', 'option_rank']
+        constraints = [
+            models.UniqueConstraint(fields=['line', 'option_rank'], name='unique_alternate_tracer_rank_per_line'),
+        ]
 
 class PowerDistribution(models.Model):
     uid = models.CharField(max_length=100, primary_key=True)
+    line = models.OneToOneField(HeatTracingInput, on_delete=models.CASCADE, null=True, blank=True, related_name='power_distribution_result')
     total_circuits = models.IntegerField()
+
+    class Meta:
+        ordering = ['line']
     
 class PowerDistributionBranch(models.Model):
     distribution = models.ForeignKey(PowerDistribution, related_name='branches', on_delete=models.CASCADE)
+    branch_index = models.PositiveIntegerField(default=0)
     branch_type = models.CharField(max_length=50)
     circuit_count = models.IntegerField()
     connected_to = models.CharField(max_length=100)
     cable_length_db_to_jb = models.FloatField()
-    cable_length_jb_to_jb = models.FloatField()
-    tagged_components = models.TextField()
+    cable_length_jb_to_jb = models.FloatField(null=True, blank=True)
+    tagged_components = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ['distribution', 'branch_index']
+        constraints = [
+            models.UniqueConstraint(fields=['distribution', 'branch_index'], name='unique_branch_index_per_distribution'),
+        ]
 
 class BOQ(models.Model):
-    uid = models.CharField(max_length=100, primary_key=True)
-    item_description = models.CharField(max_length=255)
+    uid = models.CharField(max_length=100, blank=True, default='')
+    project = models.ForeignKey(ProjectData, to_field='proj_id', db_column='project_id', on_delete=models.CASCADE, related_name='boq_items', null=True, blank=True)
+    line = models.ForeignKey(HeatTracingInput, null=True, blank=True, on_delete=models.CASCADE, related_name='boq_items')
+    scope = models.CharField(max_length=20, choices=[('line', 'Line'), ('consolidated', 'Consolidated')], default='line')
+    item_code = models.CharField(max_length=100, blank=True, default='')
+    item_description = models.CharField(max_length=255, blank=True)
     quantity = models.FloatField()
-    unit = models.CharField(max_length=50)
-    cost = models.FloatField()
+    unit = models.CharField(max_length=50, blank=True, default='EA')
+    cost = models.FloatField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['scope', 'line', 'item_code']
+        indexes = [
+            models.Index(fields=['project', 'scope']),
+            models.Index(fields=['line', 'scope']),
+            models.Index(fields=['item_code']),
+        ]
 
 class ProcessLineCalculation(models.Model):
     uid = models.CharField(max_length=100, primary_key=True)
+    line = models.OneToOneField(HeatTracingInput, on_delete=models.CASCADE, null=True, blank=True, related_name='process_line_calculation')
     line_size = models.FloatField()
     line_length = models.FloatField()
     operating_temp = models.FloatField()
     heat_loss = models.FloatField()
     selected_tracer = models.CharField(max_length=100)  # Store Tracer Name
+    breaker_size = models.FloatField(default=0)
+    total_circuits = models.IntegerField(default=0)
     starting_current = models.FloatField()
     operating_current = models.FloatField()
     total_power_consumption = models.FloatField()
+    total_tracer_length = models.FloatField(default=0)
+    pipe_size_mm = models.FloatField(default=0)
     spiral_factor = models.FloatField()
     remarks = models.TextField(null=True, blank=True)  # Placeholder for future
+
+    class Meta:
+        ordering = ['line']
 
 # ------ STORE CALCULATED DATA -------------------------------------------------------
 

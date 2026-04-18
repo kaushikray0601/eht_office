@@ -1,12 +1,94 @@
+from decimal import Decimal
+
 import pandas as pd
 from .models import ElecEHT_ASMEB36, ElecEHT_ThermalConductivity, ElecEHT_Vendor, HeatTracingInput, ProjectData
-from .models import HeatLoss, SelectedTracer, AlternateTracer, PowerDistribution, BOQ, ProcessLineCalculation
+from .models import HeatLoss, SelectedTracer, AlternateTracer, PowerDistribution, PowerDistributionBranch, BOQ, ProcessLineCalculation
 
 from django.db.models.functions import Cast
 from django.db.models import FloatField
 
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse
+
+import logging
+
+
+logger = logging.getLogger(__name__)
+
+BOQ_ITEM_METADATA = {
+    'MCB': {'description': 'Miniature Circuit Breaker', 'unit': 'EA'},
+    'JB3PH': {'description': '3-Phase Junction Box', 'unit': 'EA'},
+    'JB1PH': {'description': '1-Phase Junction Box', 'unit': 'EA'},
+    'CCMCB-3PHJB': {'description': 'Cable from MCB to 3-Phase Junction Box', 'unit': 'm'},
+    'CC3PHJB-1PHJB': {'description': 'Cable from 3-Phase Junction Box to 1-Phase Junction Box', 'unit': 'm'},
+    'TRACER': {'description': 'Heating Tracer', 'unit': 'm'},
+    'ENDTRM': {'description': 'End Termination Kit', 'unit': 'EA'},
+    'ISOLATOR_1PH': {'description': '1-Phase Isolator', 'unit': 'EA'},
+    'ISOLATOR_3PH': {'description': '3-Phase Isolator', 'unit': 'EA'},
+    'ISOLATOR': {'description': 'Isolator', 'unit': 'EA'},
+    'RTD': {'description': 'RTD', 'unit': 'EA'},
+    'THERMOSTAT': {'description': 'Thermostat', 'unit': 'EA'},
+    'Caution_Label': {'description': 'Caution Label', 'unit': 'EA'},
+    'Aluminium_Adhesive_Tape': {'description': 'Aluminium Adhesive Tape', 'unit': 'm'},
+    'Pipe_Strap': {'description': 'Pipe Strap', 'unit': 'EA'},
+}
+
+TRACER_FIELD_MAPPING = {
+    'A_Coeff': 'a_coeff',
+    'B_Coeff': 'b_coeff',
+    'C_Coeff': 'c_coeff',
+    'Ohm_per_km': 'ohm_per_km',
+    'Power_Output': 'power_output',
+    'Power_at_Startup_T': 'power_at_startup_t',
+    'Res_corrFactor_Mica': 'res_corrFactor_mica',
+    'Spiral_Factor': 'spiral_factor',
+    'Tracer_Family': 'tracer_family',
+    'Tracer_Length': 'tracer_length',
+    'Tracer_With_Margin': 'tracer_with_margin',
+    'V_UID': 'v_uid',
+    'Voltage_Correction_Factor': 'voltage_correction_factor',
+    'Voltage_Float': 'voltage_float',
+}
+
+
+def _to_builtin(value):
+    if isinstance(value, Decimal):
+        return float(value)
+    if hasattr(value, "item"):
+        try:
+            return value.item()
+        except (TypeError, ValueError):
+            return value
+    return value
+
+
+def _normalize_payload(value):
+    if isinstance(value, dict):
+        return {key: _normalize_payload(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_normalize_payload(item) for item in value]
+    return _to_builtin(value)
+
+
+def _transform_tracer_item(item):
+    normalized_item = _normalize_payload(item)
+    return {
+        model_field: normalized_item[source_field]
+        for source_field, model_field in TRACER_FIELD_MAPPING.items()
+        if source_field in normalized_item
+    }
+
+
+def _index_by_uid(rows):
+    indexed_rows = {}
+    for row in rows:
+        if 'uid' in row:
+            indexed_rows[str(row['uid'])] = row
+    return indexed_rows
+
+
+def _get_boq_metadata(item_code):
+    return BOQ_ITEM_METADATA.get(item_code, {'description': item_code, 'unit': 'EA'})
 
 
 
@@ -78,71 +160,145 @@ def fetch_project_data(project_id):
 
 # Function to store aggregated_results into the database
 def store_calculated_results(project_id, aggregated_results):
+    project = ProjectData.objects.get(proj_id=project_id)
+    project_lines = {
+        str(line.uid): line
+        for line in HeatTracingInput.objects.filter(proj_id=project_id)
+    }
+    project_line_ids = [line.uid for line in project_lines.values()]
+
+    HeatLoss.objects.filter(line_id__in=project_line_ids).delete()
+    SelectedTracer.objects.filter(line_id__in=project_line_ids).delete()
+    AlternateTracer.objects.filter(line_id__in=project_line_ids).delete()
+    PowerDistribution.objects.filter(line_id__in=project_line_ids).delete()
+    ProcessLineCalculation.objects.filter(line_id__in=project_line_ids).delete()
+    BOQ.objects.filter(project=project).delete()
+
+    heat_loss_lookup = _index_by_uid(aggregated_results.get('heat_loss', []))
+    selected_tracer_lookup = _index_by_uid(aggregated_results.get('selected_tracers', []))
+    alternative_tracers = aggregated_results.get('alternative_tracers')
+    if alternative_tracers is None:
+        alternative_tracers = aggregated_results.get('alternate_tracers', [])
+
     # Storing Heat Loss Data
-    for item in aggregated_results['heat_loss']:
-        HeatLoss.objects.update_or_create(
-            uid=item['uid'],
-            defaults={
-                'heat_loss': item['heat_loss'],
-                'tracer_adder': item['tracer_adder']
-            }
+    for item in aggregated_results.get('heat_loss', []):
+        normalized_item = _normalize_payload(item)
+        line = project_lines.get(str(normalized_item['uid']))
+        if not line:
+            continue
+        HeatLoss.objects.create(
+            uid=str(normalized_item['uid']),
+            line=line,
+            heat_loss=normalized_item['heat_loss'],
+            tracer_adder=normalized_item['tracer_adder'],
         )
-    field_mapping = {
-    'A_Coeff': 'a_coeff',
-    'B_Coeff': 'b_coeff',
-    'C_Coeff': 'c_coeff',
-    'Ohm_per_km': 'ohm_per_km',
-    'Power_Output': 'power_output',
-    'Power_at_Startup_T': 'power_at_startup_t',
-    'Res_corrFactor_Mica': 'res_corrFactor_mica',
-    'Spiral_Factor': 'spiral_factor',
-    'Tracer_Family': 'tracer_family',
-    'Tracer_Length': 'tracer_length',
-    'Tracer_With_Margin': 'tracer_with_margin',
-    'V_UID': 'v_uid',
-    'Voltage_Correction_Factor': 'voltage_correction_factor',
-    'Voltage_Float': 'voltage_float',
-}
+
     # Storing Selected Tracers Data
-    for item in aggregated_results['selected_tracers']:
-        item['Res_corrFactor_Mica']=float(item['Res_corrFactor_Mica'])
-        item['Ohm_per_km']=float(item['Ohm_per_km'])
-        item['Power_at_Startup_T'] = float(item['Power_at_Startup_T'])
-        transformed_item = {field_mapping[key]: value for key, value in item.items()}
-        SelectedTracer.objects.update_or_create(
-            v_uid=item['V_UID'],
-            defaults=transformed_item
-        )
+    for item in aggregated_results.get('selected_tracers', []):
+        normalized_item = _normalize_payload(item)
+        line = project_lines.get(str(normalized_item['uid']))
+        if not line:
+            continue
+        transformed_item = _transform_tracer_item(normalized_item)
+        SelectedTracer.objects.create(line=line, **transformed_item)
     
     # Storing Alternate Tracers Data
-    for item in aggregated_results['alternate_tracers']:
-        AlternateTracer.objects.update_or_create(
-            v_uid=item['V_UID'],
-            defaults=transformed_item
+    alternate_rank_by_line = {}
+    for item in alternative_tracers:
+        normalized_item = _normalize_payload(item)
+        line_uid = str(normalized_item['uid'])
+        line = project_lines.get(line_uid)
+        if not line:
+            continue
+        alternate_rank_by_line[line_uid] = alternate_rank_by_line.get(line_uid, 0) + 1
+        transformed_item = _transform_tracer_item(normalized_item)
+        AlternateTracer.objects.create(
+            line=line,
+            option_rank=alternate_rank_by_line[line_uid],
+            **transformed_item,
         )
     
     # Storing Power Distribution Data
-    for item in aggregated_results['power_distribution']:
-        branches = item.pop('branches')
-        power_distribution, _ = PowerDistribution.objects.update_or_create(
-            uid=item['uid'],
-            defaults=item
+    for item in aggregated_results.get('power_distribution', []):
+        normalized_item = _normalize_payload(item)
+        line = project_lines.get(str(normalized_item['uid']))
+        if not line:
+            continue
+        power_distribution = PowerDistribution.objects.create(
+            uid=str(normalized_item['uid']),
+            line=line,
+            total_circuits=normalized_item['total_circuits'],
         )
-        for branch in branches:
-            power_distribution.branches.create(**branch)
+        for branch_index, branch in enumerate(normalized_item.get('branches', []), start=1):
+            PowerDistributionBranch.objects.create(
+                distribution=power_distribution,
+                branch_index=branch_index,
+                branch_type=branch['type'],
+                circuit_count=branch['circuit_count'],
+                connected_to=branch['connected_to'],
+                cable_length_db_to_jb=branch['cable_length_db_to_jb'] or 0,
+                cable_length_jb_to_jb=branch.get('cable_length_jb_to_jb'),
+                tagged_components=branch.get('tagged_components', {}),
+            )
     
     # Storing BOQ Data
-    for item in aggregated_results['boq_per_line']:
-        BOQ.objects.update_or_create(
-            uid=item['uid'],
-            defaults=item
+    for line_uid, boq_items in aggregated_results.get('boq_per_line', {}).items():
+        line = project_lines.get(str(line_uid))
+        if not line:
+            continue
+        for item_code, quantity in _normalize_payload(boq_items).items():
+            metadata = _get_boq_metadata(item_code)
+            BOQ.objects.create(
+                uid=str(line.uid),
+                project=project,
+                line=line,
+                scope='line',
+                item_code=item_code,
+                item_description=metadata['description'],
+                quantity=quantity,
+                unit=metadata['unit'],
+            )
+
+    for item_code, quantity in _normalize_payload(aggregated_results.get('consolidated_boq', {})).items():
+        metadata = _get_boq_metadata(item_code)
+        BOQ.objects.create(
+            uid=f'{project_id}:consolidated',
+            project=project,
+            line=None,
+            scope='consolidated',
+            item_code=item_code,
+            item_description=metadata['description'],
+            quantity=quantity,
+            unit=metadata['unit'],
         )
     
     # Storing Consolidated Power Data
-    for item in aggregated_results['tracer_power_param']:
-        ProcessLineCalculation.objects.update_or_create(
-            uid=item['uid'],
-            defaults=item        )
+    for item in aggregated_results.get('tracer_power_param', []):
+        normalized_item = _normalize_payload(item)
+        uid = str(normalized_item['uid'])
+        line = project_lines.get(uid)
+        if not line:
+            continue
+        heat_loss = heat_loss_lookup.get(uid, {})
+        selected_tracer = selected_tracer_lookup.get(uid, {})
+        ProcessLineCalculation.objects.create(
+            uid=uid,
+            line=line,
+            line_size=_to_builtin(line.line_size),
+            line_length=_to_builtin(line.line_length),
+            operating_temp=_to_builtin(line.oper_temp),
+            heat_loss=heat_loss.get('heat_loss', 0),
+            selected_tracer=selected_tracer.get('V_UID', ''),
+            breaker_size=normalized_item.get('breaker_size', 0),
+            total_circuits=normalized_item.get('no_of_circuits', 0),
+            starting_current=normalized_item.get('max_current', 0),
+            operating_current=normalized_item.get('operating_current', 0),
+            total_power_consumption=normalized_item.get('operating_load', 0),
+            total_tracer_length=normalized_item.get('total_tracer_length', 0),
+            pipe_size_mm=normalized_item.get('pipe_size_mm', 0),
+            spiral_factor=selected_tracer.get('Spiral_Factor', 0),
+            remarks='',
+        )
     
     return True
 
@@ -153,9 +309,34 @@ def store_calculated_results(project_id, aggregated_results):
 
 # Function to export all reports in an Excel file with multiple sheets
 def export_full_report_excel(request):
-    boq_data = list(BOQ.objects.all().values())
-    calculation_data = list(ProcessLineCalculation.objects.all().values())
-    cable_schedule_data = list(ProcessLineCalculation.objects.all().values())
+    boq_data = list(BOQ.objects.values('project_id', 'scope', 'line_id', 'item_code', 'item_description', 'quantity', 'unit', 'cost'))
+    calculation_data = list(ProcessLineCalculation.objects.values(
+        'line_id',
+        'line_size',
+        'line_length',
+        'operating_temp',
+        'heat_loss',
+        'selected_tracer',
+        'breaker_size',
+        'total_circuits',
+        'starting_current',
+        'operating_current',
+        'total_power_consumption',
+        'total_tracer_length',
+        'pipe_size_mm',
+        'spiral_factor',
+        'remarks',
+    ))
+    cable_schedule_data = list(PowerDistributionBranch.objects.values(
+        'distribution_id',
+        'branch_index',
+        'branch_type',
+        'circuit_count',
+        'connected_to',
+        'cable_length_db_to_jb',
+        'cable_length_jb_to_jb',
+        'tagged_components',
+    ))
     
     with pd.ExcelWriter('/tmp/full_report.xlsx', engine='xlsxwriter') as writer:
         if boq_data:

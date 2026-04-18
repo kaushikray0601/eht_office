@@ -33,9 +33,13 @@ def orchestrate_calculations(project_id, process_lines, vendor_data, project_set
             # Step-2: Tracer Selection
             selected_tracer, alternative_tracers = get_tracer_options(heat_loss, line, project_settings, vendor_data)
             if not selected_tracer: continue
+            selected_tracer = {**selected_tracer, "uid": line["uid"]}
             aggregated_results["selected_tracers"].append(selected_tracer)
-            if isinstance(alternative_tracers, list): 
-                aggregated_results["alternative_tracers"].append(alternative_tracers)
+            if isinstance(alternative_tracers, list):
+                aggregated_results["alternative_tracers"].extend(
+                    {**tracer, "uid": line["uid"]}
+                    for tracer in alternative_tracers
+                )
              
             # Step 3: Power Distribution
             power_params = compute_power_params(line, project_settings, asme_b36_table, selected_tracer) # adding asme_data data to append pipe-dia (mm), when returned to calculate BOQ later
