@@ -7,26 +7,59 @@ from django.utils import timezone
 
 
 # Choices should be an iterable of (value, label) tuples
-SELECT_PROJECT_ID = [('p1', 'P001'), ('p2', 'P002')]
 MAX_CB_SIZE = [(10, 10), (16, 16), (20, 20), (25, 25),(32, 32), (40, 40)]
 SELECT_VENDOR = [('THR', 'Thermon'), ('CHR', 'Chromalox'), ('nVN', 'nVent'), ('SST', 'SST'), ('KRZ', 'KRUS-Zapad')]
 ALLOW_SPIRAL_WRAP = [(True, 'Allowed'), (False, 'Not Allowed')]
 SELECT_RTD_THERMOSTAT = [('RI', 'RTD-Inline'), ('RO', 'RTD-Offline'), ('TI', 'Thermostat-Inline'), ('TO', 'Thermostat-Offline')]
 CHOICE_LOCAL_ISOLATOR = [('bothSides', 'Both Sides'), ('outgoingOnly', 'Outgoing Only'), ('incomingOnly', 'Incoming Only'), ('noIsolator', 'No Isolator')]
+LOCAL_ISOLATOR_REQUIREMENT = [('required', 'Required'), ('not_required', 'Not Required')]
+DEFAULT_PROJECT_ID = 'default_project'
+
+
+def is_default_project_id(proj_id):
+    return (proj_id or '').strip().casefold() == DEFAULT_PROJECT_ID.casefold()
+
+
+class ManagedProject(models.Model):
+    proj_id = models.CharField(max_length=20, unique=True, verbose_name='Project ID')
+    description = models.CharField(max_length=255, blank=True)
+    assigned_users = models.ManyToManyField(User, blank=True, related_name='eht_managed_projects')
+    is_active = models.BooleanField(default=True)
+
+    class Meta:
+        ordering = ['proj_id']
+
+    @classmethod
+    def available_to_user(cls, user):
+        projects = cls.objects.filter(is_active=True)
+        if getattr(user, 'is_authenticated', False) and not (
+            getattr(user, 'is_staff', False) or getattr(user, 'is_superuser', False)
+        ):
+            return projects.filter(assigned_users=user)
+        return projects
+
+    @property
+    def display_name(self):
+        if self.description:
+            return f"{self.proj_id} - {self.description}"
+        return self.proj_id
+
+    def __str__(self):
+        return self.display_name
+
 
 class ProjectData(models.Model):
     id = models.BigAutoField(primary_key=True)
-    proj_id = models.CharField(max_length=20, unique=True, choices=SELECT_PROJECT_ID, default='p1', verbose_name='Project ID')    
+    proj_id = models.CharField(max_length=20, unique=True, verbose_name='Project ID')
     min_amb_t = models.DecimalField(max_digits=5, decimal_places=2)
     max_amb_t = models.DecimalField(max_digits=5, decimal_places=2)
     startup_t = models.DecimalField(max_digits=5, decimal_places=2)
     area_class = models.CharField(max_length=20)
     temp_class = models.CharField(max_length=20)
     voltage = models.DecimalField(max_digits=5, decimal_places=2)
-    max_cb_size = models.IntegerField(choices=MAX_CB_SIZE, default=5)
+    max_cb_size = models.IntegerField(choices=MAX_CB_SIZE, default=10)
     restrict_cb_current = models.DecimalField(max_digits=5, decimal_places=2)
     vendor = models.CharField(max_length=30, choices=SELECT_VENDOR, default='THR')
-    tracer_family = models.CharField(max_length=30)
     spiral_wrap_allowed = models.BooleanField(choices=ALLOW_SPIRAL_WRAP, default=True)
     spiral_factor = models.DecimalField(max_digits=5, decimal_places=2)
     valve_factor = models.DecimalField(max_digits=5, decimal_places=2, default=0)
@@ -39,10 +72,10 @@ class ProjectData(models.Model):
     heat_loss_sf = models.DecimalField(max_digits=5, decimal_places=2)
     rtd_thrm = models.CharField(max_length=50, choices=SELECT_RTD_THERMOSTAT, default='TI')
     wind_speed = models.DecimalField(max_digits=8, decimal_places=2)
-    req_local_isolator = models.CharField(max_length=30)
+    req_local_isolator = models.CharField(max_length=30, choices=LOCAL_ISOLATOR_REQUIREMENT, default='required')
     caution_label_interval = models.DecimalField(max_digits=5, decimal_places=2)
     k_factor_ccons = models.DecimalField(max_digits=6, decimal_places=2, default=1)
-    isolator_location = models.CharField(max_length=20, choices=CHOICE_LOCAL_ISOLATOR, default='II')
+    isolator_location = models.CharField(max_length=20, choices=CHOICE_LOCAL_ISOLATOR, default='noIsolator')
     ckt_ln = models.DecimalField(max_digits=5, decimal_places=2)
     loop_ln = models.DecimalField(max_digits=5, decimal_places=2)
     acc_power_density = models.DecimalField(max_digits=5, decimal_places=2, default=1)
@@ -54,12 +87,15 @@ class ProjectData(models.Model):
     udf3 = models.CharField(max_length=30, null=True, blank=True)    
 
     def save(self, *args, **kwargs):                                                                #`save()` method to check project id uniqueness
+        if self.proj_id:
+            self.proj_id = self.proj_id.strip()
+        self.req_local_isolator = 'not_required' if self.isolator_location == 'noIsolator' else 'required'
         if ProjectData.objects.filter(proj_id=self.proj_id).exclude(pk=self.pk).exists():
             raise IntegrityError("A project with this ID already exists.")
         super().save(*args, **kwargs)
 
     def __str__(self):
-        return str(self.id)
+        return self.proj_id
     
 
 

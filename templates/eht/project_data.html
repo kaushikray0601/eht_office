@@ -41,7 +41,7 @@
 <div class="container-fluid mt-n4">
      <h6 class="mb-3 mt-n2">Enter Project Data</h6>
      <!-- display message to user about the fileupload/download success/failure--> 
-      <div class="input-group mb-3">
+      <div class="input-group mb-4">
         <div class="custom-file">
           <input type="file" class="custom-file-input" id="upload_input" disabled>
           <input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
@@ -143,17 +143,15 @@
   </script>
 
 
-      <div id="form-container">      
-        <form method="post" id="form-container">
+      <div id="project-data-form-container">      
+        <form method="post" id="project-data-form">
           {% csrf_token %}     
-          <div class="form-row">
-              <div class="form-group col-md-4 mb-1">
+          <div class="form-row justify-content-between">
+              <div class="form-group col-md-4 mb-2">
                 {{ form.proj_id|as_crispy_field }}
               </div>
-              <div class="form-group col-md-6 mb-1">               
-              </div>
-              <div class="form-group col-md-2 mb-1">
-                  {{ form.vendor|as_crispy_field }}
+              <div class="form-group col-md-4 mb-2">
+                {{ form.vendor|as_crispy_field }}
               </div>
           </div>
           <div class="form-row">
@@ -236,9 +234,11 @@
                   {{ form.temp_class|as_crispy_field }}
                 </div>
           </div>    
-          <button type="submit" class="btn btn-primary">Save</button>
-        <button type="submit" class="btn btn-secondary">Default Project data</button>
-        <button type="submit" class="btn btn-info" id="navigate-to-input">Navigate to Input page</button>
+          <div class="mt-3">
+            <button type="submit" class="btn btn-primary mr-2" name="action" value="save">Save</button>
+            <button type="submit" class="btn btn-secondary" name="action" value="load_defaults" formnovalidate>Default Project Data</button>
+          </div>
+          <p class="text-muted small mt-3 mb-0">Refer Note-1 for Factor for valve/flange/support.</p>
         </form>
       </div>     
 

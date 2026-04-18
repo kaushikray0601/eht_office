@@ -1,14 +1,14 @@
 import os
 from django.shortcuts import render, redirect, get_object_or_404
 from django.template.loader import render_to_string
-from django.http import JsonResponse, FileResponse
+from django.http import JsonResponse, FileResponse, Http404
 from django.utils.timezone import now
 from django.core.exceptions import ValidationError
 from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.conf import settings
 
-from .models import HeatTracingInput, ProjectData, UserAttempt
+from .models import DEFAULT_PROJECT_ID, HeatTracingInput, ManagedProject, ProjectData, UserAttempt, is_default_project_id
 from .forms import ProjectDataForm
 from .sanatize_input import * #sanitize_file
 # from .calculations import * # Calculation
@@ -27,6 +27,48 @@ from eht.models import ProjectData, HeatTracingInput, ElecEHT_ThermalConductivit
 
 import logging
 logger = logging.getLogger(__name__)
+
+PROJECT_DATA_TEMPLATE_FIELDS = [
+    'min_amb_t',
+    'max_amb_t',
+    'startup_t',
+    'area_class',
+    'temp_class',
+    'voltage',
+    'max_cb_size',
+    'restrict_cb_current',
+    'vendor',
+    'spiral_wrap_allowed',
+    'spiral_factor',
+    'valve_factor',
+    'flange_factor',
+    'support_factor',
+    'margin_on_tracer_lengths',
+    'voltage_var_factor',
+    'res_tol',
+    'termination_margin',
+    'heat_loss_sf',
+    'rtd_thrm',
+    'wind_speed',
+    'req_local_isolator',
+    'caution_label_interval',
+    'k_factor_ccons',
+    'isolator_location',
+    'ckt_ln',
+    'loop_ln',
+    'acc_power_density',
+    'tracer_temp_factor',
+    'alpha_for_res',
+    'allowablevdrop',
+    'udf1',
+    'udf2',
+    'udf3',
+]
+
+
+def copy_project_setup(source_project, target_project):
+    for field_name in PROJECT_DATA_TEMPLATE_FIELDS:
+        setattr(target_project, field_name, getattr(source_project, field_name))
 
 # Create your views here.
 def index(request):
@@ -365,8 +407,42 @@ def confirm_valid_data(request):
 
 #  Get the validated instance of forms
 def handle_project_data(request, project_id=None):
-    instance = get_object_or_404(ProjectData, proj_id=project_id) if project_id else ProjectData()
-    form = ProjectDataForm(request.POST or None, instance=instance)
+    selected_project_id = request.POST.get('proj_id') or project_id or request.GET.get('project_id')
+    available_projects = ManagedProject.available_to_user(getattr(request, 'user', None))
+    available_project_ids = set(available_projects.values_list('proj_id', flat=True))
+
+    if selected_project_id and not available_projects.filter(proj_id=selected_project_id).exists() and request.method != 'POST':
+        raise Http404("Project not found.")
+
+    instance = ProjectData.objects.filter(proj_id=selected_project_id).first() if selected_project_id else None
+    if instance is None:
+        instance = ProjectData(proj_id=selected_project_id) if selected_project_id else ProjectData()
+
+    if request.method == 'POST' and request.POST.get('action') == 'load_defaults':
+        if not selected_project_id:
+            messages.error(request, "Select a project before loading the default project data.")
+        elif selected_project_id not in available_project_ids:
+            messages.error(request, "The selected project is not available for this user.")
+        else:
+            default_project = ProjectData.objects.filter(proj_id__iexact=DEFAULT_PROJECT_ID).first()
+            if default_project is None:
+                messages.error(request, "Default project data is not configured yet.")
+            elif is_default_project_id(selected_project_id):
+                messages.error(request, "Select a working project before loading the default project data.")
+            else:
+                copy_project_setup(default_project, instance)
+                instance.proj_id = selected_project_id
+                try:
+                    instance.full_clean()
+                    instance.save()
+                    messages.success(request, "Default project data loaded successfully. Review and adjust any project-specific values.")
+                except ValidationError as exc:
+                    for field_errors in exc.message_dict.values():
+                        for message in field_errors:
+                            messages.error(request, message)
+        return ProjectDataForm(instance=instance, user=getattr(request, 'user', None))
+
+    form = ProjectDataForm(request.POST or None, instance=instance, user=getattr(request, 'user', None))
     if request.method == 'POST' and form.is_valid():
         form.save()
         messages.success(request, "Project data saved successfully.")
@@ -462,7 +538,7 @@ def update_pending_status(project_id):
 
 # --------------Create project data--------------------------------------------------
 def base(request):  
-    form = ProjectDataForm()
+    form = ProjectDataForm(user=getattr(request, 'user', None))
     return render(request, 'eht/base.html', {'form': form})
 
 def my_login(request):    

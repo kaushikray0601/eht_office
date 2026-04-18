@@ -12,19 +12,23 @@ from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
 from eht.calculations.tracer_selection import get_tracer_options
 from eht.data_service import store_calculated_results
+from eht.forms import ProjectDataForm
 from eht.models import (
     AlternateTracer,
     BOQ,
+    DEFAULT_PROJECT_ID,
     ElecEHT_ASMEB36,
     ElecEHT_ThermalConductivity,
     ElecEHT_Vendor,
     HeatLoss,
     HeatTracingInput,
+    ManagedProject,
     PowerDistribution,
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
     SelectedTracer,
+    is_default_project_id,
 )
 
 
@@ -133,7 +137,6 @@ def make_project_record(**overrides):
         'max_cb_size': 10,
         'restrict_cb_current': 80.0,
         'vendor': 'CHR',
-        'tracer_family': 'SR',
         'spiral_wrap_allowed': True,
         'spiral_factor': 2.0,
         'margin_on_tracer_lengths': 10.0,
@@ -149,6 +152,93 @@ def make_project_record(**overrides):
         'ckt_ln': 30.0,
         'loop_ln': 12.0,
         'allowablevdrop': 5.0,
+    }
+    data.update(overrides)
+    ManagedProject.objects.get_or_create(
+        proj_id=data['proj_id'],
+        defaults={'description': f"Project {data['proj_id']}", 'is_active': True},
+    )
+    return ProjectData.objects.create(**data)
+
+
+def make_project_form_payload(**overrides):
+    payload = {
+        'proj_id': 'PLANT_A_001',
+        'vendor': 'CHR',
+        'startup_t': '15.00',
+        'min_amb_t': '20.00',
+        'max_amb_t': '45.00',
+        'area_class': 'SAFE',
+        'temp_class': 'T3',
+        'voltage': '230.00',
+        'max_cb_size': '10',
+        'restrict_cb_current': '80.00',
+        'allowablevdrop': '5.00',
+        'spiral_factor': '2.00',
+        'spiral_wrap_allowed': 'True',
+        'margin_on_tracer_lengths': '10.00',
+        'voltage_var_factor': '0.00',
+        'res_tol': '10.00',
+        'termination_margin': '250.00',
+        'heat_loss_sf': '1.00',
+        'rtd_thrm': 'TI',
+        'wind_speed': '32.00',
+        'caution_label_interval': '10.00',
+        'isolator_location': 'bothSides',
+        'ckt_ln': '30.00',
+        'loop_ln': '12.00',
+    }
+    payload.update(overrides)
+    return payload
+
+
+def make_managed_project(proj_id='PLANT_A_001', description='Plant A 001', users=None, is_active=True):
+    project, _created = ManagedProject.objects.get_or_create(
+        proj_id=proj_id,
+        defaults={
+            'description': description,
+            'is_active': is_active,
+        },
+    )
+    project.description = description
+    project.is_active = is_active
+    project.save(update_fields=['description', 'is_active'])
+    if users:
+        project.assigned_users.set(users)
+    return project
+
+
+def make_default_project_record(**overrides):
+    managed_project, _ = ManagedProject.objects.get_or_create(
+        proj_id=DEFAULT_PROJECT_ID,
+        defaults={'description': 'Default project', 'is_active': True},
+    )
+    data = {
+        'proj_id': DEFAULT_PROJECT_ID,
+        'min_amb_t': 10.0,
+        'max_amb_t': 40.0,
+        'startup_t': 5.0,
+        'area_class': 'SAFE',
+        'temp_class': 'T4',
+        'voltage': 110.0,
+        'max_cb_size': 16,
+        'restrict_cb_current': 75.0,
+        'vendor': 'THR',
+        'spiral_wrap_allowed': False,
+        'spiral_factor': 1.5,
+        'margin_on_tracer_lengths': 8.0,
+        'voltage_var_factor': 2.0,
+        'res_tol': 5.0,
+        'termination_margin': 200.0,
+        'heat_loss_sf': 1.1,
+        'rtd_thrm': 'TO',
+        'wind_speed': 25.0,
+        'req_local_isolator': 'required',
+        'caution_label_interval': 12.0,
+        'isolator_location': 'incomingOnly',
+        'ckt_ln': 15.0,
+        'loop_ln': 6.0,
+        'allowablevdrop': 3.0,
     }
     data.update(overrides)
     return ProjectData.objects.create(**data)
@@ -546,6 +636,108 @@ class StoreCalculatedResultsTests(TestCase):
         self.assertEqual(SelectedTracer.objects.filter(v_uid='V-001').count(), 2)
         self.assertEqual(SelectedTracer.objects.get(line=line_one).tracer_with_margin, 12.6)
         self.assertEqual(SelectedTracer.objects.get(line=line_two).tracer_with_margin, 14.7)
+
+
+class ProjectDataFormTests(TestCase):
+    def test_form_lists_only_assigned_projects_for_logged_in_user(self):
+        user = User.objects.create_user(username='planner', password='password123')
+        make_managed_project(proj_id='P-001', description='Assigned', users=[user])
+        make_managed_project(proj_id='P-002', description='Not Assigned')
+        make_managed_project(proj_id='DEFAULT_PROJECT', description='Default project', users=[user])
+
+        form = ProjectDataForm(user=user)
+        choices = {value for value, _label in form.fields['proj_id'].choices}
+
+        self.assertIn('', choices)
+        self.assertIn('P-001', choices)
+        self.assertNotIn('P-002', choices)
+        self.assertNotIn('DEFAULT_PROJECT', choices)
+
+    def test_default_project_id_helper_is_case_insensitive(self):
+        self.assertTrue(is_default_project_id('DEFAULT_PROJECT'))
+        self.assertTrue(is_default_project_id('default_project'))
+        self.assertFalse(is_default_project_id('project_default'))
+
+    def test_form_saves_setup_for_registered_project_and_hides_tracer_family(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        form = ProjectDataForm(data=make_project_form_payload())
+
+        self.assertTrue(form.is_valid(), form.errors)
+        project = form.save()
+        self.assertEqual(project.proj_id, 'PLANT_A_001')
+        self.assertEqual(project.req_local_isolator, 'required')
+        self.assertNotIn('tracer_family', form.fields)
+        self.assertNotIn('req_local_isolator', form.fields)
+        self.assertEqual(form.fields['proj_id'].help_text, 'Projects are managed in Django admin.')
+
+    def test_form_rejects_unregistered_project_id(self):
+        make_managed_project(proj_id='PLANT_B_001', description='Plant B')
+        form = ProjectDataForm(data=make_project_form_payload())
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('proj_id', form.errors)
+
+    def test_existing_project_form_keeps_current_project_selected(self):
+        project = make_project_record(proj_id='p1')
+        form = ProjectDataForm(instance=project)
+
+        self.assertFalse(form.fields['proj_id'].disabled)
+        self.assertEqual(form.initial['proj_id'], 'p1')
+
+    def test_project_save_syncs_local_isolator_requirement_from_location(self):
+        project = make_project_record(proj_id='p-sync', isolator_location='noIsolator', req_local_isolator='required')
+
+        project.refresh_from_db()
+        self.assertEqual(project.req_local_isolator, 'not_required')
+
+
+class ProjectDataViewTests(TestCase):
+    def test_create_project_data_view_persists_registered_project_id(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        response = self.client.post(reverse('create_project_data'), data=make_project_form_payload())
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(ProjectData.objects.filter(proj_id='PLANT_A_001').exists())
+
+    def test_update_project_data_view_renders_blank_form_for_registered_project_without_setup(self):
+        make_managed_project(proj_id='PLANT_B_001', description='Plant B')
+
+        response = self.client.get(
+            reverse('update_project_data', args=['PLANT_B_001']),
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ProjectData.objects.filter(proj_id='PLANT_B_001').exists())
+        self.assertIn('PLANT_B_001', response.json()['form_html'])
+
+    def test_default_project_button_copies_template_values_into_selected_project(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        make_default_project_record(proj_id='DEFAULT_PROJECT')
+
+        response = self.client.post(
+            reverse('create_project_data'),
+            data={'proj_id': 'PLANT_A_001', 'action': 'load_defaults'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        project = ProjectData.objects.get(proj_id='PLANT_A_001')
+        self.assertEqual(project.vendor, 'THR')
+        self.assertEqual(float(project.startup_t), 5.0)
+        self.assertEqual(project.isolator_location, 'incomingOnly')
+        self.assertEqual(project.req_local_isolator, 'required')
+
+    def test_default_project_button_does_not_auto_create_template_project(self):
+        make_managed_project(proj_id='PLANT_C_001', description='Plant C')
+
+        response = self.client.post(
+            reverse('create_project_data'),
+            data={'proj_id': 'PLANT_C_001', 'action': 'load_defaults'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(ProjectData.objects.filter(proj_id='PLANT_C_001').exists())
+        self.assertFalse(ProjectData.objects.filter(proj_id__iexact=DEFAULT_PROJECT_ID).exists())
 
 
 class ConfirmValidDataViewTests(TestCase):

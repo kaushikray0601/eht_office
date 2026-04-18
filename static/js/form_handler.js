@@ -32,8 +32,11 @@
 
     // ----------------Initialize form validation --------------------
     function initializeFormValidation() {
-        const form = document.getElementById('form-container');
+        const form = document.getElementById('project-data-form');
         const uploadInput = document.getElementById('upload_input');
+        if (!form || !uploadInput) {
+            return;
+        }
         const requiredFields = Array.from(form.querySelectorAll('.form-group input, .form-group select'));
     
         function checkFields() {
@@ -55,11 +58,11 @@ function handleProjectIDSelection() {
     $(document).on('change', '#id_proj_id', function () {
         let projectId = $(this).val();
         if (projectId) {
-            $('#form-container').html('<p>Loading...</p>');
+            $('#project-data-form-container').html('<p>Loading...</p>');
             $.ajax({
                 url: '/edit-project-data/' + projectId + '/',
                 success: function (data) {
-                    $('#form-container').html(data.form_html);
+                    $('#project-data-form-container').html(data.form_html);
                     initializeFormValidation(); // Reinitialize validation
                 },
                 error: function (xhr, status, error) {
@@ -169,4 +172,3 @@ function handleErrorResponse(xhr) {
 //       });
 //     });
   
-
