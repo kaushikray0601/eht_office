@@ -295,12 +295,34 @@
         };
     }
 
-    function createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode) {
-        const link = new joint.shapes.standard.Link();
+    function getEdgeKey(edge) {
+        return [
+            edge.from_component_id,
+            edge.to_component_id,
+            edge.branch_index || 0,
+            edge.circuit_index === null || edge.circuit_index === undefined ? 'na' : edge.circuit_index,
+        ].join('__');
+    }
+
+    function buildLinkVertices(sourceCell, targetCell) {
         const sourceCenterY = sourceCell.position().y + sourceCell.size().height / 2;
         const targetCenterY = targetCell.position().y + targetCell.size().height / 2;
         const sourceRightX = sourceCell.position().x + sourceCell.size().width;
         const targetLeftX = targetCell.position().x;
+
+        if (Math.abs(sourceCenterY - targetCenterY) <= 8) {
+            return [];
+        }
+
+        const branchX = Math.round((sourceRightX + targetLeftX) / 2);
+        return [
+            { x: branchX, y: sourceCenterY },
+            { x: branchX, y: targetCenterY },
+        ];
+    }
+
+    function createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode) {
+        const link = new joint.shapes.standard.Link();
 
         link.source({ id: sourceCell.id, anchor: { name: 'right' } });
         link.target({ id: targetCell.id, anchor: { name: 'left' } });
@@ -310,17 +332,11 @@
                 strokeWidth: 2,
                 targetMarker: null,
                 sourceMarker: null,
+                pointerEvents: 'none',
             },
         });
         link.connector('rounded', { radius: 8 });
-
-        if (Math.abs(sourceCenterY - targetCenterY) > 8) {
-            const branchX = Math.round((sourceRightX + targetLeftX) / 2);
-            link.vertices([
-                { x: branchX, y: sourceCenterY },
-                { x: branchX, y: targetCenterY },
-            ]);
-        }
+        link.vertices(buildLinkVertices(sourceCell, targetCell));
 
         link.prop('sldMeta', {
             edge: edge,
@@ -368,6 +384,26 @@
         return positions;
     }
 
+    function updateLinkGeometry(root) {
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+
+        Object.keys(state.linkByEdgeKey).forEach(function (edgeKey) {
+            const linkEntry = state.linkByEdgeKey[edgeKey];
+            const sourceCell = state.elementByComponentId[linkEntry.edge.from_component_id];
+            const targetCell = state.elementByComponentId[linkEntry.edge.to_component_id];
+            if (!sourceCell || !targetCell) {
+                return;
+            }
+
+            linkEntry.link.source({ id: sourceCell.id, anchor: { name: 'right' } });
+            linkEntry.link.target({ id: targetCell.id, anchor: { name: 'left' } });
+            linkEntry.link.vertices(buildLinkVertices(sourceCell, targetCell));
+        });
+    }
+
     function refreshDynamicLabels(root) {
         const state = root.__sldState;
         if (!state) {
@@ -391,6 +427,24 @@
             if (label) {
                 label.position(lineLabel.x, lineLabel.y);
             }
+        });
+    }
+
+    function refreshDerivedGeometry(root) {
+        refreshDynamicLabels(root);
+        updateLinkGeometry(root);
+    }
+
+    function scheduleDerivedGeometryRefresh(root) {
+        if (!root) {
+            return;
+        }
+        if (root.__sldRefreshFrame) {
+            cancelAnimationFrame(root.__sldRefreshFrame);
+        }
+        root.__sldRefreshFrame = requestAnimationFrame(function () {
+            root.__sldRefreshFrame = null;
+            refreshDerivedGeometry(root);
         });
     }
 
@@ -443,6 +497,7 @@
         const elementByComponentId = {};
         const endLabelByComponentId = {};
         const lineLabelByLineId = {};
+        const linkByEdgeKey = {};
         const nodeByComponentId = {};
 
         lineLabels.forEach(function (lineLabel) {
@@ -476,7 +531,12 @@
             if (!sourceCell || !targetCell || !sourceNode || !targetNode) {
                 return;
             }
-            cells.push(createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode));
+            const link = createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode);
+            linkByEdgeKey[getEdgeKey(edge)] = {
+                edge: edge,
+                link: link,
+            };
+            cells.push(link);
         });
 
         graph.resetCells(cells);
@@ -488,6 +548,7 @@
             elementByComponentId: elementByComponentId,
             endLabelByComponentId: endLabelByComponentId,
             lineLabelByLineId: lineLabelByLineId,
+            linkByEdgeKey: linkByEdgeKey,
             nodeByComponentId: nodeByComponentId,
             isDirty: false,
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
@@ -498,10 +559,11 @@
             if (!meta.componentId) {
                 return;
             }
-            refreshDynamicLabels(root);
+            scheduleDerivedGeometryRefresh(root);
             setDirtyState(root, true, true);
         });
 
+        refreshDerivedGeometry(root);
         updateSavedCountBadge(root, (savedLayout && savedLayout.meta && savedLayout.meta.saved_count) || 0);
         setDirtyState(root, false, !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout));
     }
@@ -572,6 +634,7 @@
             success: function (response) {
                 updateSavedCountBadge(root, response.layout.meta.saved_count);
                 setDirtyState(root, false, response.layout.meta.has_saved_layout);
+                refreshDerivedGeometry(root);
                 if (typeof window.showToast === 'function') {
                     window.showToast(response.success || 'SLD layout saved.', 'success');
                 }
@@ -605,6 +668,7 @@
             contentType: 'application/json',
             data: JSON.stringify({ project_id: projectId }),
             success: function (response) {
+                root.__sldState = null;
                 updateSavedCountBadge(root, 0);
                 if (typeof window.showToast === 'function') {
                     window.showToast(response.success || 'Stored SLD layout reset.', 'info');

@@ -15,8 +15,16 @@ This tracker is derived from [CODEBASE_REVIEW_2026-04-17.md](/home/kr/mydev/eht_
   - [x] Task 7.4: Replace the hardcoded JointJS demo with data-driven read-only rendering.
   - [x] Task 7.5: Validate generated SLDs against real stored projects in the browser.
   - [x] Task 7.6: Add coordinate persistence so manual layout can be saved and reloaded.
+    - [x] Task 7.6.1: Make links and labels fully derived from component-node positions so drag/save/reset behavior stays deterministic.
+    - [ ] Task 7.6.2: Improve symbol readability: move cable labels/specs out of cramped boxes, simplify tracer/end-termination labeling, and tighten geometry sizing.
+    - [ ] Task 7.6.3: Add clearer per-line visual grouping so all circuits belonging to one line are easy to read as a set.
+    - [ ] Task 7.6.4: Add scalable SLD browsing for large projects: search/select by `line_id`, paged one-line-at-a-time viewing, and collapsed-by-default validation details.
+    - [ ] Task 7.6.5: Review remaining SLD correctness/presentation refinements before starting regrouping logic.
   - [ ] Task 7.7: Later enhancement: allow regrouping/reorganization of branches and sources independent of the raw calculation topology.
 - [ ] Task 8: Add automated test coverage for import, calculation, persistence, and reporting flows.
 
 Carry-over items:
 - [ ] Add deeper domain/business-rule validation for `ProjectData` so admin-created setup/templates fail early on engineering constraints instead of only on field/model-level validation.
+- [ ] Refine SLD presentation after the architecture phase: conventional SLD visual language, geometry/symbol sizing, text sizing, page layout, cable/spec label placement, and overall UI polish.
+- [ ] Improve SLD interaction correctness: fully derived link routing on node move/reset, clearer grouping cues per line, and review/reset behavior for saved vs derived visual elements.
+- [ ] Add scalable SLD browsing UX for large projects: pagination/search by `line_id`, collapsible validation panels, and other large-project readability improvements.
