@@ -290,6 +290,61 @@ def import_input_view(request):
     return render(request, 'eht/partials/import_input_tab.html', context)
 
 
+def input_data_export_view(request):
+    project_id = request.GET.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to export input data.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    input_rows = list(
+        HeatTracingInput.objects.filter(proj_id=project_id)
+        .order_by('xlid', 'line_id')
+    )
+
+    if not input_rows:
+        return JsonResponse({'error': 'No imported input data is available for this project yet.'}, status=400)
+
+    export_rows = [
+        {
+            'Project ID': row.proj_id,
+            'Excel Row': row.xlid,
+            'Line ID': row.line_id,
+            'PID No': row.pid_no,
+            'Area': row.area,
+            'Train': row.train,
+            'Service Type': row.service_type,
+            'Line Size': row.line_size,
+            'Line Length': row.line_length,
+            'Valve Qty': row.valve_qty,
+            'Flange Qty': row.flange_qty,
+            'Support Qty': row.support_qty,
+            'Pipe Material Class': row.pipe_mat_class,
+            'Insulation Material': row.ins_mat_type,
+            'Insulation Thickness': row.insul_thick,
+            'Maintenance Temp': row.maint_temp,
+            'Operating Temp': row.oper_temp,
+            'Design Temp': row.design_temp,
+            'Emergency Supply': row.emergency_supply,
+            'Discipline': row.discipline,
+            'Remarks': row.remarks,
+            'Status': row.status,
+        }
+        for row in input_rows
+    ]
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        pd.DataFrame(export_rows).to_excel(writer, sheet_name='Input Data', index=False)
+
+    output.seek(0)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{project_id}_input_data.xlsx"'
+    return response
+
+
 def _build_boq_workspace_data(project_id):
     consolidated_items = list(
         BOQ.objects.filter(project_id=project_id, scope='consolidated')

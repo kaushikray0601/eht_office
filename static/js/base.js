@@ -145,7 +145,7 @@ window.loadWorkspaceTab = loadWorkspaceTab;
 window.resetWorkspaceTabContent = function () {
     renderWorkspacePlaceholder(
         '#import-input-tab-pane',
-        'Select a project in the Project Data form, then open this tab to inspect the imported input line list.'
+        'Select a project in the Project Data form, then open this tab to inspect the imported input data.'
     );
     renderWorkspacePlaceholder(
         '#result-tab-pane',
@@ -208,6 +208,12 @@ $(document).on('submit', '#boq-line-filter-form', function (e) {
     const activeButton = document.querySelector('button.nav-link#boq-tab');
     const formData = Object.fromEntries(new FormData(this).entries());
     loadWorkspaceTab(activeButton, formData);
+});
+
+$(document).on('change', '#boq-line-filter-form select[name="line_id"]', function () {
+    const $form = $(this).closest('form');
+    $form.find('input[name="line_lookup"]').val('');
+    $form.trigger('submit');
 });
 
 $(document).on('click', '#boq-line-filter-reset', function () {

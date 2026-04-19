@@ -9,6 +9,13 @@ This tracker is derived from [CODEBASE_REVIEW_2026-04-17.md](/home/kr/mydev/eht_
 - [x] Task 5: Normalize the calculation pipeline contracts and remove duplicate old/new code paths that drifted during the refactor.
 - [x] Task 6: Build usable result and BOQ views on top of persisted calculation data.
 - [ ] Task 7: Connect the SLD prototype to real stored project/component relationships.
+  - [x] Task 7.1: Introduce project-wide unique tag generation with separate `display_tag` and stable internal `component_id` / `component_uid`.
+  - [x] Task 7.2: Build an SLD payload service that reads persisted `PowerDistributionBranch.tagged_components` and emits normalized nodes/edges.
+  - [ ] Task 7.3: Add a project-backed SLD endpoint for the workspace tab.
+  - [ ] Task 7.4: Replace the hardcoded JointJS demo with data-driven read-only rendering.
+  - [ ] Task 7.5: Validate generated SLDs against real stored projects in the browser.
+  - [ ] Task 7.6: Add coordinate persistence so manual layout can be saved and reloaded.
+  - [ ] Task 7.7: Later enhancement: allow regrouping/reorganization of branches and sources independent of the raw calculation topology.
 - [ ] Task 8: Add automated test coverage for import, calculation, persistence, and reporting flows.
 
 Carry-over items:

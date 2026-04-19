@@ -158,10 +158,11 @@ footer {
 }
 
 .btn-premium {
-    min-width: 150px;
-    border-radius: 0.75rem;
-    padding: 0.62rem 1rem;
+    min-width: 132px;
+    border-radius: 0.65rem;
+    padding: 0.5rem 0.9rem;
     font-weight: 600;
+    font-size: 0.92rem;
 }
 
 .project-upload-bar {
@@ -372,4 +373,12 @@ footer {
 .import-input-panel .badge.text-bg-success,
 .import-input-panel .badge.text-bg-warning {
     min-width: 84px;
+}
+
+.import-input-panel .bootstrap-table .fixed-table-toolbar {
+    margin-bottom: 0.35rem;
+}
+
+.import-input-panel .workspace-section h6 {
+    margin-bottom: 0;
 }

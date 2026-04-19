@@ -9,6 +9,7 @@ urlpatterns = [
     # path('upload-input-file/', views.upload_input, name='upload_input_file'),
     path('upload-input-file/', views.calculate_view, name='calculate_view'),
     path('input-lines/', views.import_input_view, name='import_input_view'),
+    path('input-lines/export/', views.input_data_export_view, name='input_data_export_view'),
     path('results/', views.result_view, name='result_view'),
     path('results/export/', views.result_export_view, name='result_export_view'),
     path('boq/', views.boq_view, name='boq_view'),

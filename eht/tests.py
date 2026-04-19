@@ -12,6 +12,7 @@ from eht.cal import orchestrate_calculations
 from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
+from eht.calculations.tag_management import ProjectTagFactory
 from eht.calculations.tracer_selection import get_tracer_options
 from eht.data_service import clear_project_workspace_data, store_calculated_results
 from eht.forms import ProjectDataForm
@@ -32,6 +33,7 @@ from eht.models import (
     SelectedTracer,
     is_default_project_id,
 )
+from eht.sld_payload import build_project_sld_payload
 
 
 def make_line(**overrides):
@@ -473,8 +475,82 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         self.assertEqual(branch['type'], '3phJB')
         self.assertEqual(branch['connected_to'], '2x 1phJB')
         self.assertEqual(branch['tagged_components']['Isolator3PH'], 'ISOL_3PH_001')
-        self.assertEqual(branch['tagged_components']['Isolator1PH'], 'ISOL_1PH_001')
+        self.assertEqual(branch['tagged_components']['component_details']['MCB']['component_type'], 'MCB')
+        self.assertEqual(branch['tagged_components']['component_details']['MCB']['display_tag'], 'MCB_001')
+        self.assertEqual(branch['tagged_components']['Downstream'][0]['Isolator1PH'], 'ISOL_1PH_001')
         self.assertEqual(len(branch['tagged_components']['Downstream']), 2)
+        self.assertEqual(len(branch['tagged_components']['connections']), 13)
+
+    def test_compute_power_distribution_uses_project_wide_tags_across_lines(self):
+        selected_tracer = {
+            'Tracer_With_Margin': 20.0,
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 100.0,
+            'Voltage_Correction_Factor': 1.0,
+        }
+        project_settings = make_project_settings(proj_id='p1')
+        tag_factory = ProjectTagFactory('p1')
+
+        first_distribution = compute_power_distribution(
+            compute_power_params(
+                make_line(uid='L1', line_id='LINE-001'),
+                project_settings,
+                make_asme_table(),
+                selected_tracer,
+            ),
+            project_settings,
+            tag_factory=tag_factory,
+        )
+        second_distribution = compute_power_distribution(
+            compute_power_params(
+                make_line(uid='L2', line_id='LINE-002'),
+                project_settings,
+                make_asme_table(),
+                selected_tracer,
+            ),
+            project_settings,
+            tag_factory=tag_factory,
+        )
+
+        first_branch = first_distribution['branches'][0]
+        second_branch = second_distribution['branches'][0]
+
+        self.assertEqual(first_branch['tagged_components']['MCB'], 'MCB_001')
+        self.assertEqual(second_branch['tagged_components']['MCB'], 'MCB_002')
+        self.assertEqual(
+            second_branch['tagged_components']['component_details']['MCB']['line_id'],
+            'LINE-002',
+        )
+        self.assertNotEqual(
+            first_branch['tagged_components']['component_details']['MCB']['component_uid'],
+            second_branch['tagged_components']['component_details']['MCB']['component_uid'],
+        )
+
+    def test_compute_power_distribution_for_single_circuit_avoids_fake_3ph_components(self):
+        selected_tracer = {
+            'Tracer_With_Margin': 10.0,
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 40.0,
+            'Voltage_Correction_Factor': 1.0,
+        }
+        project_settings = make_project_settings(max_cb_size=40.0, proj_id='p1')
+
+        power_params = compute_power_params(
+            make_line(line_id='LINE-001'),
+            project_settings,
+            make_asme_table(),
+            selected_tracer,
+        )
+        distribution = compute_power_distribution(power_params, project_settings)
+        branch = distribution['branches'][0]
+
+        self.assertEqual(branch['type'], '1phJB')
+        self.assertIsNone(branch['tagged_components']['JB3PH'])
+        self.assertIsNone(branch['tagged_components']['Cable4C'])
+        self.assertIsNone(branch['tagged_components']['Isolator3PH'])
+        self.assertEqual(branch['tagged_components']['Downstream'][0]['JB1PH'], 'JB1PH_001')
 
 
 class BoqCalculationTests(SimpleTestCase):
@@ -790,6 +866,139 @@ class StoreCalculatedResultsTests(TestCase):
         self.assertEqual(SelectedTracer.objects.get(line=line_two).tracer_with_margin, 14.7)
 
 
+class SldPayloadTests(TestCase):
+    def test_build_project_sld_payload_reads_rich_branch_json_for_multiple_lines(self):
+        make_project_record(proj_id='p1')
+        line_one = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-001',
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+        line_two = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-002',
+            service_type='EP',
+            line_size=2.0,
+            line_length=12.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+
+        selected_tracer_template = {
+            'V_UID': 'V-001',
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 100.0,
+            'Power_at_Startup_T': 10.0,
+            'Ohm_per_km': 1.0,
+            'Res_corrFactor_Mica': 1.0,
+            'Tracer_Family': 'SR',
+            'Voltage_Float': 230.0,
+            'Voltage_Correction_Factor': 1.0,
+            'Power_Output': 30.0,
+            'Spiral_Factor': 1.0,
+            'Tracer_Length': 20.0,
+            'Tracer_With_Margin': 20.0,
+        }
+        project_settings = make_project_settings(proj_id='p1')
+        tag_factory = ProjectTagFactory('p1')
+        aggregated_results = {
+            'heat_loss': [],
+            'selected_tracers': [],
+            'alternative_tracers': [],
+            'power_distribution': [],
+            'boq_per_line': {},
+            'consolidated_boq': {},
+            'tracer_power_param': [],
+        }
+
+        for line in [line_one, line_two]:
+            selected_tracer = {**selected_tracer_template, 'uid': line.uid}
+            power_params = compute_power_params(
+                make_line(uid=str(line.uid), line_id=line.line_id),
+                project_settings,
+                make_asme_table(),
+                selected_tracer_template,
+            )
+            aggregated_results['selected_tracers'].append(selected_tracer)
+            aggregated_results['power_distribution'].append(
+                compute_power_distribution(power_params, project_settings, tag_factory=tag_factory)
+            )
+            aggregated_results['tracer_power_param'].append(power_params)
+
+        self.assertTrue(store_calculated_results('p1', aggregated_results))
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['meta']['branch_count'], 2)
+        self.assertEqual(payload['meta']['node_count'], 28)
+        self.assertEqual(payload['meta']['edge_count'], 26)
+        self.assertEqual(
+            {group['line_id'] for group in payload['line_groups']},
+            {'LINE-001', 'LINE-002'},
+        )
+
+        component_ids = [node['component_id'] for node in payload['nodes']]
+        component_uids = [node['component_uid'] for node in payload['nodes']]
+        display_tags = [node['display_tag'] for node in payload['nodes']]
+
+        self.assertEqual(len(component_ids), len(set(component_ids)))
+        self.assertEqual(len(component_uids), len(set(component_uids)))
+        self.assertEqual(len(display_tags), len(set(display_tags)))
+        self.assertTrue(all(len(component_uid) == 16 for component_uid in component_uids))
+        self.assertIn('MCB_001', display_tags)
+        self.assertIn('MCB_002', display_tags)
+        self.assertTrue(any('line:LINE-001' in component_id for component_id in component_ids))
+        self.assertTrue(any('line:LINE-002' in component_id for component_id in component_ids))
+
+    def test_build_project_sld_payload_falls_back_for_legacy_branch_json(self):
+        line = make_calculated_project_snapshot()
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['meta']['branch_count'], 1)
+        self.assertEqual(payload['meta']['node_count'], 4)
+        self.assertEqual(payload['meta']['edge_count'], 3)
+        self.assertEqual(payload['line_groups'], [{'line_id': line.line_id, 'branch_indices': [1]}])
+
+        nodes_by_tag = {node['display_tag']: node for node in payload['nodes']}
+        self.assertEqual(nodes_by_tag['MCB_001']['component_type'], 'MCB')
+        self.assertEqual(nodes_by_tag['JB3PH_001']['component_type'], 'JB3PH')
+        self.assertEqual(nodes_by_tag['Tracer_001']['component_type'], 'Tracer')
+        self.assertEqual(nodes_by_tag['Tracer_002']['component_type'], 'Tracer')
+
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in payload['edges']
+        }
+        self.assertIn(
+            (nodes_by_tag['MCB_001']['component_id'], nodes_by_tag['JB3PH_001']['component_id']),
+            edge_pairs,
+        )
+        self.assertIn(
+            (nodes_by_tag['JB3PH_001']['component_id'], nodes_by_tag['Tracer_001']['component_id']),
+            edge_pairs,
+        )
+        self.assertIn(
+            (nodes_by_tag['JB3PH_001']['component_id'], nodes_by_tag['Tracer_002']['component_id']),
+            edge_pairs,
+        )
+
+
 class ProjectDataFormTests(TestCase):
     def test_form_lists_only_assigned_projects_for_logged_in_user(self):
         user = User.objects.create_user(username='planner', password='password123')
@@ -902,6 +1111,34 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Input Line List')
         self.assertContains(response, line.line_id)
         self.assertContains(response, 'data-toggle="table"')
+
+    def test_input_data_export_returns_uploaded_line_sheet(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('input_data_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertIn('p1_input_data.xlsx', response['Content-Disposition'])
+
+        workbook = load_workbook(BytesIO(response.content))
+        self.assertEqual(workbook.sheetnames, ['Input Data'])
+
+        input_rows = list(workbook['Input Data'].iter_rows(values_only=True))
+        self.assertIn(
+            (
+                'Project ID', 'Excel Row', 'Line ID', 'PID No', 'Area', 'Train',
+                'Service Type', 'Line Size', 'Line Length', 'Valve Qty', 'Flange Qty',
+                'Support Qty', 'Pipe Material Class', 'Insulation Material',
+                'Insulation Thickness', 'Maintenance Temp', 'Operating Temp',
+                'Design Temp', 'Emergency Supply', 'Discipline', 'Remarks', 'Status',
+            ),
+            input_rows,
+        )
+        self.assertTrue(any(row[2] == line.line_id for row in input_rows[1:]))
 
     def test_result_view_prompts_for_project_selection_when_missing(self):
         response = self.client.get(reverse('result_view'))

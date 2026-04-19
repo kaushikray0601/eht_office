@@ -5,6 +5,7 @@ import pandas as pd
 from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
+from eht.calculations.tag_management import ProjectTagFactory
 from eht.calculations.tracer_selection import get_tracer_options
 
 
@@ -15,6 +16,13 @@ def _ensure_process_lines_df(process_lines):
     if isinstance(process_lines, pd.DataFrame):
         return process_lines
     return pd.DataFrame(process_lines)
+
+
+def _sort_process_lines_df(process_lines_df):
+    sort_columns = [column for column in ['xlid', 'line_id', 'uid'] if column in process_lines_df.columns]
+    if not sort_columns:
+        return process_lines_df
+    return process_lines_df.sort_values(by=sort_columns, kind='stable', na_position='last')
 
 
 def orchestrate_calculations(process_lines, vendor_data, project_settings, asme_b36_table, thermal_cond_data):
@@ -31,6 +39,8 @@ def orchestrate_calculations(process_lines, vendor_data, project_settings, asme_
     process_lines_df = _ensure_process_lines_df(process_lines)
     if process_lines_df.empty:
         return aggregated_results
+    process_lines_df = _sort_process_lines_df(process_lines_df)
+    tag_factory = ProjectTagFactory(project_settings.get('proj_id'))
 
     for _, line in process_lines_df.iterrows():
         try:
@@ -57,7 +67,7 @@ def orchestrate_calculations(process_lines, vendor_data, project_settings, asme_
                 )
 
             power_params = compute_power_params(line, project_settings, asme_b36_table, selected_tracer)
-            power_distribution = compute_power_distribution(power_params, project_settings)
+            power_distribution = compute_power_distribution(power_params, project_settings, tag_factory=tag_factory)
             aggregated_results["power_distribution"].append(power_distribution)
 
             boq = compute_bill_of_quantities(
