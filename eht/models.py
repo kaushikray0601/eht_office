@@ -304,6 +304,39 @@ class PowerDistributionBranch(models.Model):
             models.UniqueConstraint(fields=['distribution', 'branch_index'], name='unique_branch_index_per_distribution'),
         ]
 
+
+class SLDNodeLayout(models.Model):
+    project = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='project_id',
+        on_delete=models.CASCADE,
+        related_name='sld_node_layouts',
+    )
+    component_id = models.CharField(max_length=255)
+    component_uid = models.CharField(max_length=32, blank=True, default='')
+    display_tag = models.CharField(max_length=100, blank=True, default='')
+    component_type = models.CharField(max_length=50)
+    line_id = models.CharField(max_length=100, blank=True, default='')
+    line_uid = models.CharField(max_length=100, blank=True, default='')
+    branch_index = models.PositiveIntegerField(default=0)
+    circuit_index = models.PositiveIntegerField(null=True, blank=True)
+    x_position = models.FloatField()
+    y_position = models.FloatField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['project', 'line_id', 'branch_index', 'component_type', 'display_tag']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'component_id'], name='unique_sld_layout_component_per_project'),
+        ]
+        indexes = [
+            models.Index(fields=['project', 'line_id']),
+            models.Index(fields=['project', 'branch_index']),
+            models.Index(fields=['component_uid']),
+        ]
+
 class BOQ(models.Model):
     uid = models.CharField(max_length=100, blank=True, default='')
     project = models.ForeignKey(ProjectData, to_field='proj_id', db_column='project_id', on_delete=models.CASCADE, related_name='boq_items', null=True, blank=True)

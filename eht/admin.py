@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from eht.models import ManagedProject, ProjectData
+from eht.models import ManagedProject, ProjectData, SLDNodeLayout
 
 
 @admin.register(ManagedProject)
@@ -16,3 +16,10 @@ class ProjectDataAdmin(admin.ModelAdmin):
     list_display = ('proj_id', 'vendor', 'voltage', 'max_cb_size')
     list_filter = ('vendor', 'max_cb_size')
     search_fields = ('proj_id',)
+
+
+@admin.register(SLDNodeLayout)
+class SLDNodeLayoutAdmin(admin.ModelAdmin):
+    list_display = ('project', 'display_tag', 'component_type', 'line_id', 'branch_index', 'updated_at')
+    list_filter = ('project', 'component_type')
+    search_fields = ('project__proj_id', 'display_tag', 'component_id', 'line_id', 'component_uid')

@@ -30,10 +30,13 @@ from eht.models import (
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
+    SLDNodeLayout,
     SelectedTracer,
     is_default_project_id,
 )
+from eht.sld_layout import get_project_sld_layout
 from eht.sld_payload import build_project_sld_payload
+from eht.sld_validation import validate_project_sld_payload
 
 
 def make_line(**overrides):
@@ -356,6 +359,73 @@ def make_calculated_project_snapshot(project_id='p1'):
     }
     store_calculated_results(project_id, aggregated_results)
     return line
+
+
+def make_rich_sld_project_snapshot(project_id='p1', line_ids=None):
+    line_ids = line_ids or ['LINE-001']
+    make_project_record(proj_id=project_id)
+    project_settings = make_project_settings(proj_id=project_id)
+    tag_factory = ProjectTagFactory(project_id)
+    selected_tracer_template = {
+        'V_UID': 'V-001',
+        'A_Coeff': 0.0,
+        'B_Coeff': 0.0,
+        'C_Coeff': 100.0,
+        'Power_at_Startup_T': 10.0,
+        'Ohm_per_km': 1.0,
+        'Res_corrFactor_Mica': 1.0,
+        'Tracer_Family': 'SR',
+        'Voltage_Float': 230.0,
+        'Voltage_Correction_Factor': 1.0,
+        'Power_Output': 30.0,
+        'Spiral_Factor': 1.0,
+        'Tracer_Length': 20.0,
+        'Tracer_With_Margin': 20.0,
+    }
+    aggregated_results = {
+        'heat_loss': [],
+        'selected_tracers': [],
+        'alternative_tracers': [],
+        'power_distribution': [],
+        'boq_per_line': {},
+        'consolidated_boq': {},
+        'tracer_power_param': [],
+    }
+    created_lines = []
+
+    for index, line_id in enumerate(line_ids, start=1):
+        line = HeatTracingInput.objects.create(
+            proj_id=project_id,
+            line_id=line_id,
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0 + index,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+        created_lines.append(line)
+        aggregated_results['selected_tracers'].append({
+            **selected_tracer_template,
+            'uid': line.uid,
+        })
+
+        power_params = compute_power_params(
+            make_line(uid=str(line.uid), line_id=line.line_id),
+            project_settings,
+            make_asme_table(),
+            selected_tracer_template,
+        )
+        aggregated_results['power_distribution'].append(
+            compute_power_distribution(power_params, project_settings, tag_factory=tag_factory)
+        )
+        aggregated_results['tracer_power_param'].append(power_params)
+
+    store_calculated_results(project_id, aggregated_results)
+    return created_lines
 
 
 def seed_reference_data():
@@ -999,6 +1069,76 @@ class SldPayloadTests(TestCase):
         )
 
 
+class SldValidationTests(TestCase):
+    def test_validate_project_sld_payload_passes_for_rich_project_distribution(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+
+        report = validate_project_sld_payload('p1')
+
+        self.assertEqual(report['project_id'], 'p1')
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual(report['summary']['failed_count'], 0)
+        self.assertEqual(report['summary']['warning_count'], 0)
+        self.assertGreater(report['summary']['passed_count'], 0)
+        self.assertTrue(all(check['status'] == 'passed' for check in report['checks']))
+        self.assertTrue(all(check['status'] == 'passed' for check in report['branch_checks']))
+
+    def test_validate_project_sld_payload_flags_duplicate_display_tags(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        payload['nodes'][1]['display_tag'] = payload['nodes'][0]['display_tag']
+
+        report = validate_project_sld_payload('p1', payload=payload)
+
+        duplicate_check = next(check for check in report['checks'] if check['code'] == 'unique_display_tags')
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(duplicate_check['status'], 'failed')
+
+
+class SldLayoutTests(TestCase):
+    def test_sld_layout_view_saves_loads_and_resets_component_positions(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        positions = {
+            node['component_id']: {'x': 100 + index * 25, 'y': 200 + index * 10}
+            for index, node in enumerate(payload['nodes'], start=1)
+        }
+
+        save_response = self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': positions}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        save_payload = save_response.json()
+        self.assertEqual(save_payload['saved_count'], len(payload['nodes']))
+        self.assertEqual(SLDNodeLayout.objects.filter(project_id='p1').count(), len(payload['nodes']))
+
+        load_response = self.client.get(reverse('sld_layout_view'), {'project_id': 'p1'})
+
+        self.assertEqual(load_response.status_code, 200)
+        layout_payload = load_response.json()
+        self.assertTrue(layout_payload['meta']['has_saved_layout'])
+        first_component_id = payload['nodes'][0]['component_id']
+        self.assertEqual(layout_payload['positions'][first_component_id]['x'], positions[first_component_id]['x'])
+        self.assertEqual(layout_payload['positions'][first_component_id]['y'], positions[first_component_id]['y'])
+
+        reset_response = self.client.post(
+            reverse('sld_layout_reset_view'),
+            data=json.dumps({'project_id': 'p1'}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+        self.assertEqual(reset_response.json()['deleted_count'], len(payload['nodes']))
+        self.assertFalse(SLDNodeLayout.objects.filter(project_id='p1').exists())
+
+        reloaded_layout = get_project_sld_layout('p1', payload=payload)
+        self.assertFalse(reloaded_layout['meta']['has_saved_layout'])
+        self.assertEqual(reloaded_layout['meta']['saved_count'], 0)
+
+
 class ProjectDataFormTests(TestCase):
     def test_form_lists_only_assigned_projects_for_logged_in_user(self):
         user = User.objects.create_user(username='planner', password='password123')
@@ -1241,6 +1381,55 @@ class ResultAndBoqViewTests(TestCase):
         self.assertIn(('Project ID', 'Line ID', 'Service Type', 'Item Code', 'Description', 'Quantity', 'Unit'), detail_rows)
         self.assertTrue(any(row[1] == 'TRACER' for row in summary_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in detail_rows[1:]))
+
+    def test_sld_workspace_view_renders_project_backed_summary(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+
+        response = self.client.get(reverse('sld_workspace_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Single Line Diagram')
+        self.assertContains(response, 'SLD Payload Ready')
+        self.assertContains(response, 'SLD Validation')
+        self.assertContains(response, 'Validation Passed')
+        self.assertContains(response, 'LINE-001')
+        self.assertContains(response, reverse('sld_payload_view'))
+        self.assertContains(response, reverse('sld_layout_view'))
+        self.assertContains(response, reverse('sld_layout_reset_view'))
+        self.assertContains(response, reverse('sld_validation_view'))
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'id="sld-diagram-shell"')
+        self.assertContains(response, 'data-project-id="p1"')
+        self.assertContains(response, 'Save Layout')
+        self.assertContains(response, 'Reset Layout')
+
+    def test_sld_payload_view_returns_json_graph_payload(self):
+        make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('sld_payload_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['meta']['branch_count'], 1)
+        self.assertEqual(payload['meta']['node_count'], 4)
+        self.assertEqual(payload['meta']['edge_count'], 3)
+        self.assertIn('nodes', payload)
+        self.assertIn('edges', payload)
+        self.assertTrue(any(node['display_tag'] == 'MCB_001' for node in payload['nodes']))
+
+    def test_sld_validation_view_returns_project_report(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(reverse('sld_validation_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        report = response.json()
+        self.assertEqual(report['project_id'], 'p1')
+        self.assertEqual(report['status'], 'passed')
+        self.assertIn('summary', report)
+        self.assertIn('checks', report)
+        self.assertIn('branch_checks', report)
 
 
 class ProjectWorkspaceCleanupTests(TestCase):

@@ -1,5 +1,7 @@
+import json
 import logging
 import os
+from collections import Counter
 from io import BytesIO
 
 import pandas as pd
@@ -30,6 +32,9 @@ from .models import (
 )
 from .pipeline import run_project_calculations
 from .sanatize_input import *  # sanitize_file
+from .sld_layout import get_project_sld_layout, reset_project_sld_layout, save_project_sld_layout
+from .sld_payload import build_project_sld_payload
+from .sld_validation import validate_project_sld_payload
 
 COOLDOWN_PERIOD_MINUTES = 30
 MAX_FAILED_ATTEMPTS = 3
@@ -395,6 +400,53 @@ def _build_boq_workspace_data(project_id):
     }
 
 
+def _build_sld_workspace_data(project_id):
+    payload = build_project_sld_payload(project_id)
+    layout = get_project_sld_layout(project_id, payload=payload)
+    validation = validate_project_sld_payload(project_id, payload=payload)
+    nodes = payload['nodes']
+    edges = payload['edges']
+    line_groups = payload['line_groups']
+
+    component_type_counts = Counter(node['component_type'] for node in nodes)
+    component_summary = []
+    for component_type, count in sorted(component_type_counts.items()):
+        sample_node = next((node for node in nodes if node['component_type'] == component_type), {})
+        component_summary.append({
+            'component_type': component_type,
+            'display_name': sample_node.get('display_name', component_type),
+            'count': count,
+        })
+
+    line_summary = []
+    for group in line_groups:
+        line_id = group['line_id']
+        component_count = sum(1 for node in nodes if line_id in node.get('line_ids', []))
+        edge_count = sum(1 for edge in edges if line_id in edge.get('line_ids', []))
+        line_summary.append({
+            'line_id': line_id,
+            'branch_indices': group['branch_indices'],
+            'branch_count': len(group['branch_indices']),
+            'component_count': component_count,
+            'edge_count': edge_count,
+        })
+
+    summary = {
+        'line_group_count': len(line_groups),
+        'branch_count': payload['meta']['branch_count'],
+        'node_count': payload['meta']['node_count'],
+        'edge_count': payload['meta']['edge_count'],
+    }
+    return {
+        'payload': payload,
+        'layout': layout,
+        'validation': validation,
+        'component_summary': component_summary,
+        'line_summary': line_summary,
+        'summary': summary,
+    }
+
+
 def boq_view(request):
     project_id = request.GET.get('project_id')
     context = _get_project_workspace_context(request, project_id)
@@ -477,6 +529,160 @@ def boq_line_detail_view(request):
         'tracer_quantity': tracer_quantity,
     }
     return render(request, 'eht/partials/boq_line_detail.html', context)
+
+
+def sld_workspace_view(request):
+    project_id = request.GET.get('project_id')
+    context = _get_project_workspace_context(request, project_id)
+    sld_data = {
+        'summary': {
+            'line_group_count': 0,
+            'branch_count': 0,
+            'node_count': 0,
+            'edge_count': 0,
+        },
+        'layout': {
+            'project_id': project_id or '',
+            'positions': {},
+            'meta': {
+                'saved_count': 0,
+                'node_count': 0,
+                'has_saved_layout': False,
+            },
+        },
+        'validation': {
+            'project_id': project_id or '',
+            'status': 'warning',
+            'summary': {
+                'passed_count': 0,
+                'warning_count': 0,
+                'failed_count': 0,
+                'check_count': 0,
+            },
+            'checks': [],
+            'branch_checks': [],
+        },
+        'component_summary': [],
+        'line_summary': [],
+    }
+
+    if project_id and context['project_setup']:
+        sld_data = _build_sld_workspace_data(project_id)
+
+    context.update({
+        'sld_summary': sld_data['summary'],
+        'sld_layout': sld_data['layout'],
+        'sld_validation': sld_data['validation'],
+        'sld_component_summary': sld_data['component_summary'],
+        'sld_line_summary': sld_data['line_summary'],
+        'has_sld_payload': bool(sld_data['summary']['node_count']),
+        'sld_payload_url': reverse('sld_payload_view'),
+        'sld_layout_url': reverse('sld_layout_view'),
+        'sld_layout_reset_url': reverse('sld_layout_reset_view'),
+        'sld_validation_url': reverse('sld_validation_view'),
+    })
+    return render(request, 'eht/partials/sld_tab.html', context)
+
+
+def sld_payload_view(request):
+    project_id = request.GET.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to load SLD data.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    sld_data = _build_sld_workspace_data(project_id)
+    if not sld_data['summary']['node_count']:
+        return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
+
+    return JsonResponse(sld_data['payload'])
+
+
+def sld_validation_view(request):
+    project_id = request.GET.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to validate the SLD.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    sld_data = _build_sld_workspace_data(project_id)
+    if not sld_data['summary']['node_count']:
+        return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
+
+    return JsonResponse(sld_data['validation'])
+
+
+def sld_layout_view(request):
+    project_id = request.GET.get('project_id') if request.method == 'GET' else request.POST.get('project_id')
+    if not project_id and request.method == 'POST':
+        try:
+            body = json.loads(request.body or '{}')
+        except json.JSONDecodeError:
+            body = {}
+        project_id = body.get('project_id')
+
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to load or save the SLD layout.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    sld_data = _build_sld_workspace_data(project_id)
+    if not sld_data['summary']['node_count']:
+        return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
+
+    if request.method == 'GET':
+        return JsonResponse(sld_data['layout'])
+
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    try:
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid layout payload.'}, status=400)
+
+    save_summary = save_project_sld_layout(
+        project_id,
+        positions=body.get('positions', {}),
+        payload=sld_data['payload'],
+    )
+    refreshed_layout = get_project_sld_layout(project_id, payload=sld_data['payload'])
+    return JsonResponse({
+        'success': 'SLD layout saved successfully.',
+        'project_id': project_id,
+        'saved_count': save_summary['saved_count'],
+        'ignored_component_ids': save_summary['ignored_component_ids'],
+        'layout': refreshed_layout,
+    })
+
+
+def sld_layout_reset_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    try:
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        body = {}
+    project_id = body.get('project_id') or request.POST.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to reset the SLD layout.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    reset_summary = reset_project_sld_layout(project_id)
+    return JsonResponse({
+        'success': 'Stored SLD layout reset successfully.',
+        **reset_summary,
+    })
 
 
 def result_export_view(request):

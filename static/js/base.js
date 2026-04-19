@@ -129,6 +129,9 @@ function loadWorkspaceTab(buttonElement, extraData = {}) {
             $(target).html(html);
             initializeBootstrapTables(target);
             resetBootstrapTables(target);
+            if (window.initializeSldWorkspace) {
+                window.initializeSldWorkspace(target);
+            }
         },
         error: function (xhr) {
             let errorMessage = 'Failed to load project data for this tab.';
@@ -154,6 +157,10 @@ window.resetWorkspaceTabContent = function () {
     renderWorkspacePlaceholder(
         '#boq-tab-pane',
         'Select a project in the Project Data form, then open this tab to load stored BOQ data.'
+    );
+    renderWorkspacePlaceholder(
+        '#sld-tab-pane',
+        'Select a project in the Project Data form, then open this tab to load the stored SLD graph data.'
     );
 };
 

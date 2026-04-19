@@ -13,6 +13,7 @@
     integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
 
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/bootstrap-table.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jointjs/3.6.5/joint.min.css">
   
     <!-- Bootstrap Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
@@ -60,7 +61,7 @@
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link" id="sld-tab" data-bs-toggle="tab" data-bs-target="#sld-tab-pane" 
-                            type="button" role="tab" aria-controls="sld-tab-pane" aria-selected="false" data-url="#">SLD</button>
+                            type="button" role="tab" aria-controls="sld-tab-pane" aria-selected="false" data-url="{% url 'sld_workspace_view' %}">SLD</button>
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link" id="isometric-tab" data-bs-toggle="tab" data-bs-target="#isometric-tab-pane" type="button" role="tab" aria-controls="isometric-tab-pane" aria-selected="false" disabled>
@@ -82,7 +83,9 @@
                     <div class="tab-pane fade" id="boq-tab-pane">
                         <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to load stored BOQ data.</div>
                     </div>
-                    <div class="tab-pane fade" id="sld-tab-pane">Content for SLD</div>
+                    <div class="tab-pane fade" id="sld-tab-pane">
+                        <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to load the stored SLD graph data.</div>
+                    </div>
                     <div class="tab-pane fade" id="isometric-tab-pane">Content for Isometric</div>                
                 </div>
             
@@ -102,8 +105,12 @@
 <script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/bootstrap-table.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/bootstrap-table-locale-all.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/extensions/export/bootstrap-table-export.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/lodash.js/4.17.20/lodash.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/backbone.js/1.4.0/backbone-min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jointjs/3.6.5/joint.min.js"></script>
 <!-- Custom JS -->
 <script src="{% static 'js/base.js' %}" defer ></script>    
+<script src="{% static 'js/sld_workspace.js' %}" defer ></script>
 <script src="{% static 'js/form_handler.js' %}" defer ></script>
 
 </body>
