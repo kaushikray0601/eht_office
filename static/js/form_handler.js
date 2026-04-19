@@ -37,7 +37,9 @@
         if (!form || !uploadInput) {
             return;
         }
-        const requiredFields = Array.from(form.querySelectorAll('.form-group input, .form-group select'));
+        const requiredFields = Array.from(
+            form.querySelectorAll('input[required], select[required], textarea[required]')
+        );
     
         function checkFields() {
             const allFilled = requiredFields.every(field => field.value.trim() !== "");
@@ -84,37 +86,28 @@ $(document).ready(function () {
 
 //  SHow Toasts
 function showToast(message, type) {
-    let toastElement = $('#toast_id');
-    let toastBody = toastElement.find('.toast-body');
-
-    // Hide the previous toast
-    toastElement.toast('hide');
-
-    // Remove old class
-    toastElement.removeClass('bg-success bg-info bg-danger text-white');
-
-    // Update toast body content and type
-    toastBody.text(message);
-    toastBody.attr('data-message-type', type);
-
-    // Style the toast based on type
-    if (type === 'success') {
-        toastElement.addClass('bg-success text-white');
-    } else if (type === 'info') {
-        toastElement.addClass('bg-info text-white');
-    } else if (type === 'error') {
-        toastElement.addClass('bg-danger text-white');
+    const toastElement = document.getElementById('toast_id');
+    if (!toastElement || !window.bootstrap) {
+        return;
     }
 
-    // Show the toast
-    toastElement.toast({ delay: 6000 }); // Auto-hide delay
-    toastElement.toast('show'); // Show the toast
-}
+    const toastBody = toastElement.querySelector('.toast-body');
+    const toastInstance = bootstrap.Toast.getOrCreateInstance(toastElement, { delay: 6000 });
+    toastInstance.hide();
 
-// Add event listener to the close button within the toast
-$(document).on('click', '#toast_id .close', function () {
-    $('#toast_id').toast('hide'); // Hide the toast when the close button is clicked
- });
+    toastElement.classList.remove('bg-success', 'bg-info', 'bg-danger', 'text-white');
+    toastBody.textContent = message;
+    toastBody.setAttribute('data-message-type', type);
+
+    if (type === 'success') {
+        toastElement.classList.add('bg-success', 'text-white');
+    } else if (type === 'info') {
+        toastElement.classList.add('bg-info', 'text-white');
+    } else if (type === 'error') {
+        toastElement.classList.add('bg-danger', 'text-white');
+    }
+    toastInstance.show();
+}
 
  
 /**

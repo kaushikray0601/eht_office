@@ -15,6 +15,7 @@ from django.urls import reverse
 from django.utils.timezone import now, timedelta
 
 from .forms import ProjectDataForm
+from .data_service import clear_project_workspace_data
 from .models import (
     AlternateTracer,
     BOQ,
@@ -32,6 +33,7 @@ from .sanatize_input import *  # sanitize_file
 
 COOLDOWN_PERIOD_MINUTES = 30
 MAX_FAILED_ATTEMPTS = 3
+BOQ_LINE_DROPDOWN_LIMIT = 25
 
 logger = logging.getLogger(__name__)
 
@@ -116,7 +118,9 @@ def calculate_view(request, project_id=None):
 
         try:
             # Step 1: Sanitize the file
-            valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)         
+            valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
+            if project_id:
+                clear_project_workspace_data(project_id)
             # Save valid data to the database with a "pending" status
             if valid_process_line_data:
                 upload_inputData_in_DB(valid_process_line_data, project_id)
@@ -189,6 +193,57 @@ def _get_project_workspace_context(request, project_id):
     return context
 
 
+def _build_result_workspace_data(project_id):
+    calculations = list(
+        ProcessLineCalculation.objects.filter(line__proj_id=project_id)
+        .select_related(
+            'line',
+            'line__selected_tracer_result',
+            'line__power_distribution_result',
+        )
+        .prefetch_related(
+            Prefetch(
+                'line__alternate_tracer_results',
+                queryset=AlternateTracer.objects.order_by('option_rank'),
+            ),
+            Prefetch(
+                'line__power_distribution_result__branches',
+                queryset=PowerDistributionBranch.objects.order_by('branch_index'),
+            ),
+        )
+        .order_by('line__line_id')
+    )
+    branch_rows = list(
+        PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
+        .select_related('distribution__line')
+        .order_by('distribution__line__line_id', 'branch_index')
+    )
+
+    line_results = []
+    for calculation in calculations:
+        line = calculation.line
+        line_results.append({
+            'calculation': calculation,
+            'line': line,
+            'selected_tracer': getattr(line, 'selected_tracer_result', None),
+            'alternate_tracers': list(line.alternate_tracer_results.all()),
+            'branch_count': len(getattr(line.power_distribution_result, 'branches').all()) if hasattr(line, 'power_distribution_result') else 0,
+        })
+
+    summary = {
+        'calculated_lines': len(line_results),
+        'total_circuits': sum(item['calculation'].total_circuits for item in line_results),
+        'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results) / 1000 if line_results else 0,
+        'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
+        'branch_count': len(branch_rows),
+    }
+    return {
+        'line_results': line_results,
+        'branch_rows': branch_rows,
+        'summary': summary,
+    }
+
+
 def result_view(request):
     project_id = request.GET.get('project_id')
     context = _get_project_workspace_context(request, project_id)
@@ -203,48 +258,10 @@ def result_view(request):
     }
 
     if project_id and context['project_setup']:
-        calculations = list(
-            ProcessLineCalculation.objects.filter(line__proj_id=project_id)
-            .select_related(
-                'line',
-                'line__selected_tracer_result',
-                'line__power_distribution_result',
-            )
-            .prefetch_related(
-                Prefetch(
-                    'line__alternate_tracer_results',
-                    queryset=AlternateTracer.objects.order_by('option_rank'),
-                ),
-                Prefetch(
-                    'line__power_distribution_result__branches',
-                    queryset=PowerDistributionBranch.objects.order_by('branch_index'),
-                ),
-            )
-            .order_by('line__line_id')
-        )
-        branch_rows = list(
-            PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
-            .select_related('distribution__line')
-            .order_by('distribution__line__line_id', 'branch_index')
-        )
-
-        for calculation in calculations:
-            line = calculation.line
-            line_results.append({
-                'calculation': calculation,
-                'line': line,
-                'selected_tracer': getattr(line, 'selected_tracer_result', None),
-                'alternate_tracers': list(line.alternate_tracer_results.all()),
-                'branch_count': len(getattr(line.power_distribution_result, 'branches').all()) if hasattr(line, 'power_distribution_result') else 0,
-            })
-
-        summary = {
-            'calculated_lines': len(line_results),
-            'total_circuits': sum(item['calculation'].total_circuits for item in line_results),
-            'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results) / 1000 if line_results else 0,
-            'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
-            'branch_count': len(branch_rows),
-        }
+        result_data = _build_result_workspace_data(project_id)
+        line_results = result_data['line_results']
+        branch_rows = result_data['branch_rows']
+        summary = result_data['summary']
 
     context.update({
         'line_results': line_results,
@@ -253,6 +270,24 @@ def result_view(request):
         'has_results': bool(line_results),
     })
     return render(request, 'eht/partials/result_tab.html', context)
+
+
+def import_input_view(request):
+    project_id = request.GET.get('project_id')
+    context = _get_project_workspace_context(request, project_id)
+    input_rows = []
+
+    if project_id:
+        input_rows = list(
+            HeatTracingInput.objects.filter(proj_id=project_id)
+            .order_by('xlid', 'line_id')
+        )
+
+    context.update({
+        'input_rows': input_rows,
+        'has_input_rows': bool(input_rows),
+    })
+    return render(request, 'eht/partials/import_input_tab.html', context)
 
 
 def _build_boq_workspace_data(project_id):
@@ -350,9 +385,124 @@ def boq_view(request):
         'selected_line_group': selected_line_group,
         'selected_line_query': selected_line_query,
         'selected_line_error': selected_line_error,
-        'show_line_dropdown': len(line_groups) < 50,
+        'show_line_dropdown': len(line_groups) < BOQ_LINE_DROPDOWN_LIMIT,
     })
     return render(request, 'eht/partials/boq_tab.html', context)
+
+
+def boq_line_detail_view(request):
+    project_id = request.GET.get('project_id')
+    line_id = (request.GET.get('line_id') or '').strip()
+
+    if not project_id or not line_id:
+        return JsonResponse({'error': 'Project ID and line ID are required.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+
+    line_items = list(
+        BOQ.objects.filter(
+            project_id=project_id,
+            scope='line',
+            line__line_id__iexact=line_id,
+        )
+        .select_related('line')
+        .order_by('item_code')
+    )
+
+    if not line_items:
+        return JsonResponse({'error': f"No BOQ line items were found for line ID '{line_id}'."}, status=404)
+
+    line = line_items[0].line
+    tracer_quantity = next((item.quantity for item in line_items if item.item_code == 'TRACER'), 0)
+    context = {
+        'project_id': project_id,
+        'line': line,
+        'line_items': line_items,
+        'item_count': len(line_items),
+        'tracer_quantity': tracer_quantity,
+    }
+    return render(request, 'eht/partials/boq_line_detail.html', context)
+
+
+def result_export_view(request):
+    project_id = request.GET.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to export results.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    result_data = _build_result_workspace_data(project_id)
+    if not result_data['line_results']:
+        return JsonResponse({'error': 'No stored calculation results are available for this project yet.'}, status=400)
+
+    line_rows = []
+    alternate_rows = []
+    for item in result_data['line_results']:
+        calculation = item['calculation']
+        line = item['line']
+        selected_tracer = item['selected_tracer']
+        line_rows.append({
+            'Project ID': project_id,
+            'Line ID': line.line_id,
+            'Service Type': line.service_type,
+            'Line Size': calculation.line_size,
+            'Line Length': calculation.line_length,
+            'Operating Temp': calculation.operating_temp,
+            'Heat Loss': calculation.heat_loss,
+            'Selected Tracer': calculation.selected_tracer,
+            'Tracer Family': getattr(selected_tracer, 'tracer_family', ''),
+            'Spiral Factor': calculation.spiral_factor,
+            'Breaker Size': calculation.breaker_size,
+            'Total Circuits': calculation.total_circuits,
+            'Starting Current': calculation.starting_current,
+            'Operating Current': calculation.operating_current,
+            'Total Power Consumption': calculation.total_power_consumption,
+            'Total Tracer Length': calculation.total_tracer_length,
+            'Pipe Size mm': calculation.pipe_size_mm,
+        })
+        for alternate in item['alternate_tracers']:
+            alternate_rows.append({
+                'Project ID': project_id,
+                'Line ID': line.line_id,
+                'Option Rank': alternate.option_rank,
+                'Tracer UID': alternate.v_uid,
+                'Tracer Family': alternate.tracer_family,
+                'Power Output': alternate.power_output,
+                'Spiral Factor': alternate.spiral_factor,
+                'Tracer Length': alternate.tracer_length,
+                'Tracer With Margin': alternate.tracer_with_margin,
+            })
+
+    branch_rows = [
+        {
+            'Project ID': project_id,
+            'Line ID': branch.distribution.line.line_id,
+            'Branch Index': branch.branch_index,
+            'Branch Type': branch.branch_type,
+            'Connected To': branch.connected_to,
+            'Circuit Count': branch.circuit_count,
+            'Cable Length DB to JB': branch.cable_length_db_to_jb,
+            'Cable Length JB to JB': branch.cable_length_jb_to_jb,
+            'Tagged Components': str(branch.tagged_components),
+        }
+        for branch in result_data['branch_rows']
+    ]
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        pd.DataFrame(line_rows).to_excel(writer, sheet_name='Line Results', index=False)
+        pd.DataFrame(branch_rows).to_excel(writer, sheet_name='Power Distribution', index=False)
+        pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
+
+    output.seek(0)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{project_id}_results.xlsx"'
+    return response
 
 
 def boq_export_view(request):
@@ -536,10 +686,6 @@ def log_failed_attempt(user, ip_address):
 # Bulk upload valid/sanitized input data into database
 def upload_inputData_in_DB(valid_data, project_id):
     try:
-        if project_id:
-            deleted_count, _ = HeatTracingInput.objects.filter(proj_id=project_id).delete()
-            print(f"{deleted_count} rows deleted")
-
         valid_rows = [
             HeatTracingInput(               
                 proj_id=project_id,
@@ -571,8 +717,7 @@ def upload_inputData_in_DB(valid_data, project_id):
         HeatTracingInput.objects.bulk_create(valid_rows)
 
     except Exception as e:
-        # Log the error or handle it as needed
-        print(f"An error occurred: {e}")
+        logger.error("Failed to upload input data for project %s: %s", project_id, str(e), exc_info=True)
 
 # Update input data status from 'pending' to confirm
 

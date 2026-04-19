@@ -1,12 +1,13 @@
-<div class="card border-0 shadow-sm mt-3">
+<div class="card border-0 shadow-sm mt-3 workspace-panel glass-panel boq-panel">
     <div class="card-body">
-        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4 workspace-header">
             <div>
-                <h5 class="mb-1">Bill Of Quantities</h5>
+                <span class="workspace-eyebrow">Stored Output</span>
+                <h4 class="workspace-title mb-1">Bill Of Quantities</h4>
                 {% if managed_project %}
-                    <p class="text-muted mb-0">{{ managed_project.display_name }}</p>
+                    <p class="workspace-subtitle mb-0">{{ managed_project.display_name }}</p>
                 {% else %}
-                    <p class="text-muted mb-0">Stored BOQ output for the selected project.</p>
+                    <p class="workspace-subtitle mb-0">Stored BOQ output for the selected project.</p>
                 {% endif %}
             </div>
             {% if project_id %}
@@ -28,32 +29,73 @@
             </div>
             <div class="row g-3 mb-4">
                 <div class="col-md-6 col-xl-3">
-                    <div class="border rounded p-3 h-100 bg-light-subtle">
-                        <div class="text-muted small">Consolidated Items</div>
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Consolidated Items</div>
                         <div class="h4 mb-0">{{ boq_summary.consolidated_item_count }}</div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
-                    <div class="border rounded p-3 h-100 bg-light-subtle">
-                        <div class="text-muted small">Line Groups</div>
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Line Groups</div>
                         <div class="h4 mb-0">{{ boq_summary.line_group_count }}</div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
-                    <div class="border rounded p-3 h-100 bg-light-subtle">
-                        <div class="text-muted small">Tracer Total</div>
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Tracer Total</div>
                         <div class="h4 mb-0">{{ boq_summary.tracer_total|floatformat:2 }} <small class="text-muted">m</small></div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
-                    <div class="border rounded p-3 h-100 bg-light-subtle">
-                        <div class="text-muted small">MCB / JB Total</div>
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">MCB / JB Total</div>
                         <div class="h4 mb-0">{{ boq_summary.mcb_total|floatformat:0 }} / {{ boq_summary.junction_box_total|floatformat:0 }}</div>
                     </div>
                 </div>
             </div>
 
-            <div class="border rounded p-3 mb-4 bg-light-subtle">
+            <div class="workspace-section mb-4">
+                <div class="accordion workspace-accordion" id="consolidatedBoqAccordion">
+                    <div class="accordion-item border-0 bg-transparent">
+                        <h2 class="accordion-header" id="consolidatedBoqHeading">
+                            <button class="accordion-button collapsed px-0 py-1 shadow-none bg-transparent" type="button" data-bs-toggle="collapse" data-bs-target="#consolidatedBoqCollapse" aria-expanded="false" aria-controls="consolidatedBoqCollapse">
+                                <span>
+                                    <span class="d-block fw-semibold">Consolidated BOQ</span>
+                                    <span class="small text-muted">Short fixed summary list for the project-level bill of quantities.</span>
+                                </span>
+                            </button>
+                        </h2>
+                        <div id="consolidatedBoqCollapse" class="accordion-collapse collapse" aria-labelledby="consolidatedBoqHeading" data-bs-parent="#consolidatedBoqAccordion">
+                            <div class="accordion-body px-0 pt-3 pb-0">
+                                <div class="table-responsive">
+                                    <table class="table table-striped table-hover align-middle mb-0 compact-data-table">
+                                        <thead class="table-light">
+                                            <tr>
+                                                <th>Code</th>
+                                                <th>Description</th>
+                                                <th>Quantity</th>
+                                                <th>Unit</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {% for item in consolidated_items %}
+                                                <tr>
+                                                    <td class="fw-semibold">{{ item.item_code }}</td>
+                                                    <td>{{ item.item_description }}</td>
+                                                    <td>{{ item.quantity|floatformat:2 }}</td>
+                                                    <td>{{ item.unit }}</td>
+                                                </tr>
+                                            {% endfor %}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workspace-section p-3 mb-4">
                 <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                     <div>
                         <h6 class="mb-1">Line BOQ Verification</h6>
@@ -101,105 +143,86 @@
                                 Tracer {{ selected_line_group.tracer_quantity|floatformat:2 }} m
                             </span>
                         </div>
-                        <div class="table-responsive">
-                            <table class="table table-sm table-striped align-middle mb-0">
-                                <thead class="table-light">
+                        <table
+                            class="table table-striped table-hover align-middle mb-0"
+                            data-toggle="table"
+                            data-classes="table table-striped table-hover align-middle"
+                            data-search="true"
+                            data-pagination="true"
+                            data-page-size="10"
+                            data-page-list="[10, 25, 50, all]"
+                        >
+                            <thead class="table-light">
+                                <tr>
+                                    <th data-field="code" data-sortable="true">Code</th>
+                                    <th data-field="description" data-sortable="true">Description</th>
+                                    <th data-field="quantity" data-sortable="true">Quantity</th>
+                                    <th data-field="unit" data-sortable="true">Unit</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in selected_line_group.items %}
                                     <tr>
-                                        <th>Code</th>
-                                        <th>Description</th>
-                                        <th>Quantity</th>
-                                        <th>Unit</th>
+                                        <td class="fw-semibold">{{ item.item_code }}</td>
+                                        <td>{{ item.item_description }}</td>
+                                        <td>{{ item.quantity|floatformat:2 }}</td>
+                                        <td>{{ item.unit }}</td>
                                     </tr>
-                                </thead>
-                                <tbody>
-                                    {% for item in selected_line_group.items %}
-                                        <tr>
-                                            <td class="fw-semibold">{{ item.item_code }}</td>
-                                            <td>{{ item.item_description }}</td>
-                                            <td>{{ item.quantity|floatformat:2 }}</td>
-                                            <td>{{ item.unit }}</td>
-                                        </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
+                                {% endfor %}
+                            </tbody>
+                        </table>
                     </div>
                 {% else %}
                     <p class="text-muted small mt-3 mb-0">Choose a line from the list above to display its BOQ details here.</p>
                 {% endif %}
             </div>
 
-            <div class="mb-4">
-                <h6 class="mb-2">Consolidated BOQ</h6>
-                <div class="table-responsive">
-                    <table class="table table-sm table-striped align-middle">
-                        <thead class="table-light">
-                            <tr>
-                                <th>Code</th>
-                                <th>Description</th>
-                                <th>Quantity</th>
-                                <th>Unit</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {% for item in consolidated_items %}
-                                <tr>
-                                    <td class="fw-semibold">{{ item.item_code }}</td>
-                                    <td>{{ item.item_description }}</td>
-                                    <td>{{ item.quantity|floatformat:2 }}</td>
-                                    <td>{{ item.unit }}</td>
-                                </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-
-            <div>
+            <div class="workspace-section">
                 <div class="d-flex justify-content-between align-items-center mb-2">
-                    <h6 class="mb-0">Per-Line BOQ</h6>
+                    <h6 class="mb-0">Per-Line BOQ Index</h6>
                     <span class="text-muted small">{{ line_groups|length }} line{{ line_groups|length|pluralize }}</span>
                 </div>
-                <div class="accordion" id="boqLineAccordion">
-                    {% for group in line_groups %}
-                        <div class="accordion-item">
-                            <h2 class="accordion-header" id="heading-{{ group.line.uid }}">
-                                <button class="accordion-button {% if not forloop.first %}collapsed{% endif %}" type="button" data-bs-toggle="collapse" data-bs-target="#collapse-{{ group.line.uid }}" aria-expanded="{% if forloop.first %}true{% else %}false{% endif %}" aria-controls="collapse-{{ group.line.uid }}">
-                                    <span class="fw-semibold me-2">{{ group.line.line_id }}</span>
-                                    <span class="text-muted small me-3">{{ group.line.service_type }}</span>
-                                    <span class="badge text-bg-light border me-2">{{ group.item_count }} items</span>
-                                    <span class="badge text-bg-light border">Tracer {{ group.tracer_quantity|floatformat:2 }} m</span>
-                                </button>
-                            </h2>
-                            <div id="collapse-{{ group.line.uid }}" class="accordion-collapse collapse {% if forloop.first %}show{% endif %}" aria-labelledby="heading-{{ group.line.uid }}" data-bs-parent="#boqLineAccordion">
-                                <div class="accordion-body">
-                                    <div class="table-responsive">
-                                        <table class="table table-sm table-striped align-middle mb-0">
-                                            <thead class="table-light">
-                                                <tr>
-                                                    <th>Code</th>
-                                                    <th>Description</th>
-                                                    <th>Quantity</th>
-                                                    <th>Unit</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {% for item in group.items %}
-                                                    <tr>
-                                                        <td class="fw-semibold">{{ item.item_code }}</td>
-                                                        <td>{{ item.item_description }}</td>
-                                                        <td>{{ item.quantity|floatformat:2 }}</td>
-                                                        <td>{{ item.unit }}</td>
-                                                    </tr>
-                                                {% endfor %}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    {% endfor %}
-                </div>
+                <p class="text-muted small mb-2">Use the paginated line index below to expand one line at a time without leaving this section.</p>
+                <table
+                    id="boq-line-index-table"
+                    class="table table-striped table-hover align-middle compact-data-table"
+                    data-toggle="table"
+                    data-classes="table table-striped table-hover align-middle compact-data-table"
+                    data-search="true"
+                    data-pagination="true"
+                    data-page-size="10"
+                    data-page-list="[10, 25, 50, 100, all]"
+                    data-sort-name="line-id"
+                    data-detail-view="true"
+                    data-detail-view-icon="false"
+                    data-detail-formatter="boqLineDetailFormatter"
+                    data-detail-url="{% url 'boq_line_detail_view' %}"
+                >
+                    <thead class="table-light">
+                        <tr>
+                            <th data-field="line-id" data-sortable="true">Line ID</th>
+                            <th data-field="service-type" data-sortable="true">Service Type</th>
+                            <th data-field="item-count" data-sortable="true">Items</th>
+                            <th data-field="tracer-quantity" data-sortable="true">Tracer Qty</th>
+                            <th data-field="action">Review</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for group in line_groups %}
+                            <tr>
+                                <td class="fw-semibold">{{ group.line.line_id }}</td>
+                                <td>{{ group.line.service_type }}</td>
+                                <td>{{ group.item_count }}</td>
+                                <td>{{ group.tracer_quantity|floatformat:2 }} m</td>
+                                <td>
+                                    <button type="button" class="btn btn-sm btn-outline-primary boq-line-quick-view" data-line-id="{{ group.line.line_id }}">
+                                        Show BOQ
+                                    </button>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
             </div>
         {% endif %}
     </div>

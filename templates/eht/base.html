@@ -11,12 +11,17 @@
     <!-- Bootstrap CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" 
     integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/bootstrap-table.min.css">
   
     <!-- Bootstrap Icons -->
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   
     <!-- Custom CSS -->
     <link href="{% static 'css/base_css.css' %}" rel="stylesheet">
+
+    <!-- jQuery is loaded early because the project-data workspace injects inline jQuery handlers -->
+    <script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
 
 </head>
 
@@ -39,11 +44,11 @@
                 <ul class="nav nav-tabs nav-left" id="myTab" role="tablist">
                     <li class="nav-item" role="presentation">
                         <button class="nav-link active" id="project-setup-tab" data-bs-toggle="tab" data-bs-target="#project-setup-tab-pane" 
-                            type="button" role="tab" aria-controls="project-setup-tab-pane" aria-selected="true" data-url="#">Project Setup</button>
+                            type="button" role="tab" aria-controls="project-setup-tab-pane" aria-selected="true" data-url="#">Project Data</button>
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link" id="import-input-tab" data-bs-toggle="tab" data-bs-target="#import-input-tab-pane" 
-                            type="button" role="tab" aria-controls="import-input-tab-pane" aria-selected="false" data-url="#">Import Input</button>
+                            type="button" role="tab" aria-controls="import-input-tab-pane" aria-selected="false" data-url="{% url 'import_input_view' %}">Import Input</button>
                     </li>
                     <li class="nav-item" role="presentation">
                         <button class="nav-link" id="result-tab" data-bs-toggle="tab" data-bs-target="#result-tab-pane" 
@@ -66,9 +71,11 @@
                 <div class="tab-content" id="myTabContent">
                     {% comment %} <div class="tab-pane fade show active" id="project-setup-tab-pane"> {% include 'eht/project_data.html' %}</div> {% endcomment %}
                     <div class="tab-pane fade show active" id="project-setup-tab-pane">
-                       {% include 'eht/project_data.html' %}
+                       {% include 'eht/partials/project_data_workspace.html' %}
                     </div>
-                    <div class="tab-pane fade" id="import-input-tab-pane">Content for Import Input</div>
+                    <div class="tab-pane fade" id="import-input-tab-pane">
+                        <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to inspect the imported input line list.</div>
+                    </div>
                     <div class="tab-pane fade" id="result-tab-pane">
                         <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to load stored calculation results.</div>
                     </div>
@@ -91,10 +98,13 @@
  <!-- Bootstrap JS (Bundle includes Popper) -->
  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" 
  integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
-<!-- jQuery -->
-<script src="https://code.jquery.com/jquery-3.7.1.min.js" integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo=" crossorigin="anonymous"></script>
+<script src="https://cdn.jsdelivr.net/npm/tableexport.jquery.plugin@1.29.0/tableExport.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/bootstrap-table.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/bootstrap-table-locale-all.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap-table@1.27.2/dist/extensions/export/bootstrap-table-export.min.js"></script>
 <!-- Custom JS -->
 <script src="{% static 'js/base.js' %}" defer ></script>    
+<script src="{% static 'js/form_handler.js' %}" defer ></script>
 
 </body>
 {% include 'eht/partials/footer.html' %}

@@ -86,3 +86,25 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['min_amb_t'].widget.attrs.update({'placeholder': 'Min. ambient temperature (°C)'})
         self.fields['max_amb_t'].widget.attrs.update({'placeholder': 'Max. ambient temperature (°C)'})
         self.fields['startup_t'].widget.attrs.update({'placeholder': 'Startup temperature (°C)'})
+
+        for name, field in self.fields.items():
+            self._apply_bootstrap_widget_classes(name, field)
+
+    def _apply_bootstrap_widget_classes(self, name, field):
+        widget = field.widget
+        existing_classes = widget.attrs.get('class', '')
+        class_tokens = existing_classes.split()
+
+        def ensure_class(value):
+            if value not in class_tokens:
+                class_tokens.append(value)
+
+        if isinstance(widget, forms.Select):
+            ensure_class('form-select')
+        else:
+            ensure_class('form-control')
+
+        if name in {'proj_id', 'vendor'}:
+            ensure_class('project-hero-field')
+
+        widget.attrs['class'] = ' '.join(token for token in class_tokens if token)

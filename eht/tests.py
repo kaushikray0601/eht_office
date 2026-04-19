@@ -13,7 +13,7 @@ from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
 from eht.calculations.tracer_selection import get_tracer_options
-from eht.data_service import store_calculated_results
+from eht.data_service import clear_project_workspace_data, store_calculated_results
 from eht.forms import ProjectDataForm
 from eht.models import (
     AlternateTracer,
@@ -893,6 +893,16 @@ class ProjectDataViewTests(TestCase):
 
 
 class ResultAndBoqViewTests(TestCase):
+    def test_import_input_view_renders_uploaded_line_list(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('import_input_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Input Line List')
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'data-toggle="table"')
+
     def test_result_view_prompts_for_project_selection_when_missing(self):
         response = self.client.get(reverse('result_view'))
 
@@ -906,10 +916,34 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Calculation Results')
+        self.assertContains(response, 'data-toggle="table"')
         self.assertContains(response, line.line_id)
         self.assertContains(response, 'V-001')
         self.assertContains(response, 'V-ALT-001')
         self.assertContains(response, 'MCB_001')
+
+    def test_result_export_returns_line_branch_and_alternate_sheets(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertIn('p1_results.xlsx', response['Content-Disposition'])
+
+        workbook = load_workbook(BytesIO(response.content))
+        self.assertEqual(workbook.sheetnames, ['Line Results', 'Power Distribution', 'Alternate Tracers'])
+
+        line_rows = list(workbook['Line Results'].iter_rows(values_only=True))
+        branch_rows = list(workbook['Power Distribution'].iter_rows(values_only=True))
+        alternate_rows = list(workbook['Alternate Tracers'].iter_rows(values_only=True))
+
+        self.assertTrue(any(row[1] == line.line_id for row in line_rows[1:]))
+        self.assertTrue(any(row[1] == line.line_id for row in branch_rows[1:]))
+        self.assertTrue(any(row[1] == line.line_id for row in alternate_rows[1:]))
 
     def test_boq_view_renders_consolidated_and_line_items(self):
         line = make_calculated_project_snapshot()
@@ -918,6 +952,7 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Bill Of Quantities')
+        self.assertContains(response, 'data-toggle="table"')
         self.assertContains(response, 'TRACER')
         self.assertContains(response, 'MCB')
         self.assertContains(response, line.line_id)
@@ -934,6 +969,18 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, f'Selected Line: {line.line_id}')
         self.assertContains(response, 'Show Line BOQ')
+
+    def test_boq_line_detail_view_renders_inline_detail_partial(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(
+            reverse('boq_line_detail_view'),
+            {'project_id': 'p1', 'line_id': line.line_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'Miniature Circuit Breaker')
 
     def test_boq_export_returns_summary_and_per_line_sheets(self):
         line = make_calculated_project_snapshot()
@@ -957,6 +1004,24 @@ class ResultAndBoqViewTests(TestCase):
         self.assertIn(('Project ID', 'Line ID', 'Service Type', 'Item Code', 'Description', 'Quantity', 'Unit'), detail_rows)
         self.assertTrue(any(row[1] == 'TRACER' for row in summary_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in detail_rows[1:]))
+
+
+class ProjectWorkspaceCleanupTests(TestCase):
+    def test_clear_project_workspace_data_removes_input_and_derived_outputs(self):
+        line = make_calculated_project_snapshot()
+
+        cleanup_summary = clear_project_workspace_data('p1')
+
+        self.assertEqual(cleanup_summary['project_id'], 'p1')
+        self.assertGreaterEqual(cleanup_summary['input_lines'], 1)
+        self.assertFalse(HeatTracingInput.objects.filter(proj_id='p1').exists())
+        self.assertFalse(HeatLoss.objects.filter(uid=str(line.uid)).exists())
+        self.assertFalse(SelectedTracer.objects.filter(line_id=line.uid).exists())
+        self.assertFalse(AlternateTracer.objects.filter(line_id=line.uid).exists())
+        self.assertFalse(PowerDistribution.objects.filter(uid=str(line.uid)).exists())
+        self.assertFalse(ProcessLineCalculation.objects.filter(uid=str(line.uid)).exists())
+        self.assertFalse(PowerDistributionBranch.objects.exists())
+        self.assertFalse(BOQ.objects.filter(project_id='p1').exists())
 
 
 class ConfirmValidDataViewTests(TestCase):

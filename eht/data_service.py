@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 import pandas as pd
+from django.db import transaction
 from django.db.models import FloatField
 from django.db.models.functions import Cast
 
@@ -162,6 +163,51 @@ def fetch_project_data(project_id):
         "ckt_ln": float(project_data.ckt_ln),
         "loop_ln": float(project_data.loop_ln),
         "allowablevdrop": float(project_data.allowablevdrop),
+    }
+
+
+@transaction.atomic
+def clear_project_workspace_data(project_id):
+    """Delete all uploaded inputs and derived outputs for a project in one clean reset."""
+    if not project_id:
+        return {
+            'project_id': project_id,
+            'input_lines': 0,
+            'boq_items': 0,
+            'derived_rows': 0,
+        }
+
+    project_line_ids = list(HeatTracingInput.objects.filter(proj_id=project_id).values_list('uid', flat=True))
+    project_line_uid_strings = [str(uid) for uid in project_line_ids]
+
+    derived_rows = 0
+    if project_line_ids:
+        derived_rows += HeatLoss.objects.filter(line_id__in=project_line_ids).delete()[0]
+        derived_rows += SelectedTracer.objects.filter(line_id__in=project_line_ids).delete()[0]
+        derived_rows += AlternateTracer.objects.filter(line_id__in=project_line_ids).delete()[0]
+        derived_rows += PowerDistribution.objects.filter(line_id__in=project_line_ids).delete()[0]
+        derived_rows += ProcessLineCalculation.objects.filter(line_id__in=project_line_ids).delete()[0]
+
+        # Defensive cleanup for any legacy/orphaned rows keyed only by stored UID text.
+        derived_rows += HeatLoss.objects.filter(uid__in=project_line_uid_strings).delete()[0]
+        derived_rows += PowerDistribution.objects.filter(uid__in=project_line_uid_strings).delete()[0]
+        derived_rows += ProcessLineCalculation.objects.filter(uid__in=project_line_uid_strings).delete()[0]
+
+    boq_items = BOQ.objects.filter(project_id=project_id).delete()[0]
+    input_lines = HeatTracingInput.objects.filter(proj_id=project_id).delete()[0]
+
+    logger.info(
+        "Project ID: %s - Workspace reset complete. Deleted %s input line(s), %s BOQ row(s), %s derived row(s).",
+        project_id,
+        input_lines,
+        boq_items,
+        derived_rows,
+    )
+    return {
+        'project_id': project_id,
+        'input_lines': input_lines,
+        'boq_items': boq_items,
+        'derived_rows': derived_rows,
     }
 
 

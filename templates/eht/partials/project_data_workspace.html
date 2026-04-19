@@ -1,0 +1,229 @@
+{% load crispy_forms_tags %}
+
+<div class="toast-container position-fixed top-0 end-0 p-3" style="z-index: 1080;">
+    <div class="toast border-0 shadow-sm" role="alert" id="toast_id" aria-live="assertive" aria-atomic="true">
+        <div class="toast-header">
+            <span class="badge rounded-pill text-bg-primary me-2">&nbsp;</span>
+            <strong class="me-auto">Notification</strong>
+            <small>Just Now</small>
+            <button type="button" class="btn-close ms-2 mb-1" data-bs-dismiss="toast" aria-label="Close"></button>
+        </div>
+        <div class="toast-body" data-message-type="">
+            {% if messages %}
+                {% for message in messages %}
+                    <span class="message-content">{{ message }}</span>
+                    <span class="message-type" data-message-type="{{ message.tags }}"></span>
+                {% endfor %}
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<div id="calculation-progress-overlay" class="d-none">
+    <div class="d-flex flex-column justify-content-center align-items-center h-100">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+        <p id="calculation-progress-message" class="mt-3 mb-0 fw-semibold text-dark">Calculation in progress...</p>
+        <p class="text-muted mt-2 mb-0">Please wait while the uploaded project data is being processed.</p>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm mt-3 workspace-panel glass-panel project-data-panel">
+    <div class="card-body p-3 p-xl-4">
+        <div class="workspace-header mb-4">
+            <span class="workspace-eyebrow">Design Workspace</span>
+            <h4 class="workspace-title mb-1">Enter Project Data</h4>
+            <p class="workspace-subtitle mb-0">Configure the project setup, then import the piping line list for calculation and BOQ generation.</p>
+        </div>
+
+        <div class="row g-3 align-items-end mb-3 project-upload-bar">
+            <div class="col-lg-7">
+                <label for="upload_input" class="form-label">Import Piping Details</label>
+                <input type="file" class="form-control" id="upload_input" disabled>
+                <input type="hidden" name="csrfmiddlewaretoken" value="{{ csrf_token }}">
+            </div>
+            <div class="col-lg-5 d-flex justify-content-lg-end">
+                <button class="btn btn-outline-secondary" id="download_template" type="button">
+                    <i class="bi bi-download me-1"></i>
+                    Download Template
+                </button>
+            </div>
+        </div>
+
+        <div id="project-data-form-container">
+            <form method="post" id="project-data-form">
+                {% csrf_token %}
+                <div class="row justify-content-between g-3">
+                    <div class="col-lg-4">
+                        {{ form.proj_id|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.vendor|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.startup_t|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.min_amb_t|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.max_amb_t|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.voltage|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.max_cb_size|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.restrict_cb_current|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.allowablevdrop|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.voltage_var_factor|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.res_tol|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.spiral_factor|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.heat_loss_sf|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.wind_speed|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.margin_on_tracer_lengths|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.termination_margin|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.spiral_wrap_allowed|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.rtd_thrm|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.isolator_location|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.caution_label_interval|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
+                        {{ form.ckt_ln|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.loop_ln|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-2">
+                        {{ form.area_class|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-2">
+                        {{ form.temp_class|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="mt-4 d-flex flex-wrap gap-2">
+                    <button type="submit" class="btn btn-primary btn-premium" name="action" value="save">Save</button>
+                    <button type="submit" class="btn btn-outline-secondary btn-premium" name="action" value="load_defaults" formnovalidate>Default Project Data</button>
+                </div>
+                <p class="text-muted small mt-3 mb-0">Refer Note-1 for Factor for valve/flange/support.</p>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+    function setCalculationProgress(isVisible, message) {
+        const overlay = document.getElementById('calculation-progress-overlay');
+        const messageNode = document.getElementById('calculation-progress-message');
+        if (!overlay) {
+            return;
+        }
+        if (message && messageNode) {
+            messageNode.textContent = message;
+        }
+        overlay.classList.toggle('d-none', !isVisible);
+    }
+
+    $('#upload_input').off('change.projectUpload').on('change.projectUpload', function () {
+        let projectId = $('#id_proj_id').val();
+        let formData = new FormData();
+        formData.append('file', this.files[0]);
+        formData.append('project_id', projectId);
+        setCalculationProgress(true, "Calculation in progress...");
+
+        $.ajax({
+            url: "/upload-input-file/",
+            type: 'POST',
+            headers: { 'X-CSRFToken': getCSRFToken() },
+            data: formData,
+            processData: false,
+            contentType: false,
+            success: function (data) {
+                if (data.valid_data_with_error) {
+                    setCalculationProgress(false);
+                    let downloadUrl = data.error_file_url;
+                    let a = document.createElement('a');
+                    a.href = downloadUrl;
+                    a.download = 'error_file.xlsx';
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+
+                    if (confirm("Errors were found in your input file. Do you want to proceed with the valid data?")) {
+                        confirmValidData();
+                    } else {
+                        showToast("Please correct the errors and re-upload the file.", "info");
+                    }
+                } else {
+                    setCalculationProgress(false);
+                    showToast(data.success || "Input file processed successfully.", "success");
+                }
+            },
+            error: function (xhr) {
+                setCalculationProgress(false);
+                handleErrorResponse(xhr);
+            }
+        });
+
+        function confirmValidData() {
+            setCalculationProgress(true, "Running calculation for valid uploaded rows...");
+            $.post(
+                "{% url 'confirm_valid_data' %}",
+                { project_id: projectId, csrfmiddlewaretoken: getCSRFToken() },
+                function (response) {
+                    setCalculationProgress(false);
+                    showToast(response.success || "Valid data confirmed and calculations completed.", "success");
+                }
+            ).fail(function (xhr) {
+                setCalculationProgress(false);
+                handleErrorResponse(xhr);
+            });
+        }
+    });
+
+    $('#download_template').off('click.projectTemplate').on('click.projectTemplate', function () {
+        window.location.href = "{% url 'download_template_file' %}";
+        showToast("Template download has started.", "success");
+    });
+</script>

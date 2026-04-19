@@ -1,0 +1,106 @@
+<div class="card border-0 shadow-sm mt-3 workspace-panel glass-panel import-input-panel">
+    <div class="card-body">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4 workspace-header">
+            <div>
+                <span class="workspace-eyebrow">Imported Source Data</span>
+                <h4 class="workspace-title mb-1">Input Line List</h4>
+                {% if managed_project %}
+                    <p class="workspace-subtitle mb-0">{{ managed_project.display_name }}</p>
+                {% else %}
+                    <p class="workspace-subtitle mb-0">Imported piping details for the selected project.</p>
+                {% endif %}
+            </div>
+            {% if project_id %}
+                <span class="badge text-bg-light border">Project {{ project_id }}</span>
+            {% endif %}
+        </div>
+
+        {% if not project_id %}
+            <div class="alert alert-info mb-0">Select a project in the Project Data form to inspect its imported input rows.</div>
+        {% elif not has_input_rows %}
+            <div class="alert alert-info mb-0">No input lines have been uploaded for this project yet.</div>
+        {% else %}
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Imported Rows</div>
+                        <div class="h4 mb-0">{{ total_input_count }}</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Confirmed Rows</div>
+                        <div class="h4 mb-0">{{ confirmed_input_count }}</div>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Pending Rows</div>
+                        <div class="h4 mb-0">{{ pending_input_count }}</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="workspace-section">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Imported Piping Details</h6>
+                    <span class="text-muted small">Compact verification view of the uploaded Excel line list.</span>
+                </div>
+                <table
+                    class="table table-striped table-hover align-middle compact-data-table"
+                    data-toggle="table"
+                    data-classes="table table-striped table-hover align-middle compact-data-table"
+                    data-search="true"
+                    data-pagination="true"
+                    data-page-size="10"
+                    data-page-list="[10, 25, 50, 100, all]"
+                    data-show-columns="true"
+                    data-sort-name="xlid"
+                >
+                    <thead class="table-light">
+                        <tr>
+                            <th data-field="xlid" data-sortable="true">Row</th>
+                            <th data-field="line-id" data-sortable="true">Line ID</th>
+                            <th data-field="pid" data-sortable="true">PID No</th>
+                            <th data-field="service" data-sortable="true">Service</th>
+                            <th data-field="size" data-sortable="true">Size</th>
+                            <th data-field="length" data-sortable="true">Length</th>
+                            <th data-field="maint-temp" data-sortable="true">Maint</th>
+                            <th data-field="oper-temp" data-sortable="true">Oper</th>
+                            <th data-field="insulation" data-sortable="true">Insulation</th>
+                            <th data-field="thickness" data-sortable="true">Thk</th>
+                            <th data-field="valves" data-sortable="true">Valves</th>
+                            <th data-field="flanges" data-sortable="true">Flanges</th>
+                            <th data-field="supports" data-sortable="true">Supports</th>
+                            <th data-field="status" data-sortable="true">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in input_rows %}
+                            <tr>
+                                <td>{{ row.xlid|default:"-" }}</td>
+                                <td class="fw-semibold">{{ row.line_id }}</td>
+                                <td>{{ row.pid_no|default:"-" }}</td>
+                                <td>{{ row.service_type }}</td>
+                                <td>{{ row.line_size|floatformat:2 }}</td>
+                                <td>{{ row.line_length|floatformat:2 }}</td>
+                                <td>{{ row.maint_temp|floatformat:2 }}</td>
+                                <td>{{ row.oper_temp|floatformat:2 }}</td>
+                                <td>{{ row.ins_mat_type }}</td>
+                                <td>{{ row.insul_thick|floatformat:2 }}</td>
+                                <td>{{ row.valve_qty|default:0 }}</td>
+                                <td>{{ row.flange_qty|default:0 }}</td>
+                                <td>{{ row.support_qty|default:0 }}</td>
+                                <td>
+                                    <span class="badge {% if row.status == 'confirmed' %}text-bg-success{% else %}text-bg-warning{% endif %}">
+                                        {{ row.status|title }}
+                                    </span>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% endif %}
+    </div>
+</div>

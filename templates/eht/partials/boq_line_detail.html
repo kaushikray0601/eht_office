@@ -1,0 +1,31 @@
+<div class="boq-inline-detail-card">
+    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+        <div>
+            <div class="fw-semibold">{{ line.line_id }}</div>
+            <div class="small text-muted">{{ line.service_type }} | {{ item_count }} item{{ item_count|pluralize }}</div>
+        </div>
+        <span class="badge text-bg-light border">Tracer {{ tracer_quantity|floatformat:2 }} m</span>
+    </div>
+    <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle mb-0 compact-inline-table">
+            <thead class="table-light">
+                <tr>
+                    <th>Code</th>
+                    <th>Description</th>
+                    <th>Quantity</th>
+                    <th>Unit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in line_items %}
+                    <tr>
+                        <td class="fw-semibold">{{ item.item_code }}</td>
+                        <td>{{ item.item_description }}</td>
+                        <td>{{ item.quantity|floatformat:2 }}</td>
+                        <td>{{ item.unit }}</td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>

@@ -2,97 +2,97 @@
 
 <form method="post" id="project-data-form" action="{% url 'update_project_data' project_id %}">
     {% csrf_token %} 
-        <div class="form-row justify-content-between">
-            <div class="form-group col-md-4 mb-2">
+        <div class="row justify-content-between g-3">
+            <div class="col-lg-4">
               {{ form.proj_id|as_crispy_field }}
             </div>
-            <div class="form-group col-md-4 mb-2">
+            <div class="col-lg-4">
                 {{ form.vendor|as_crispy_field }}
             </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.startup_t|as_crispy_field }}
             </div>
-            <div class="form-group col-md-4 mb-1">
+            <div class="col-lg-4">
                 {{ form.min_amb_t|as_crispy_field }}
             </div>
-            <div class="form-group col-md-4 mb-1">
+            <div class="col-lg-4">
                 {{ form.max_amb_t|as_crispy_field }}
             </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.voltage|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.max_cb_size|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.restrict_cb_current|as_crispy_field }}
               </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.allowablevdrop|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.voltage_var_factor|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.res_tol|as_crispy_field }}
               </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.spiral_factor|as_crispy_field }} 
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.heat_loss_sf|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.wind_speed|as_crispy_field }}
               </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.margin_on_tracer_lengths|as_crispy_field }}  
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.termination_margin|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.spiral_wrap_allowed|as_crispy_field }}
               </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.rtd_thrm|as_crispy_field }}  
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.isolator_location|as_crispy_field }}
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.caution_label_interval|as_crispy_field }}
               </div>
         </div>
-        <div class="form-row">
-            <div class="form-group col-md-4 mb-1">
+        <div class="row g-3 mt-1">
+            <div class="col-lg-4">
                 {{ form.ckt_ln|as_crispy_field }}  
               </div>
-              <div class="form-group col-md-4 mb-1">
+              <div class="col-lg-4">
                 {{ form.loop_ln|as_crispy_field }}
               </div>
-              <div class="form-group col-md-2 mb-1">
+              <div class="col-lg-2">
                 {{ form.area_class|as_crispy_field }}  
               </div>
-              <div class="form-group col-md-2 mb-1">
+              <div class="col-lg-2">
                 {{ form.temp_class|as_crispy_field }}
               </div>
         </div>    
-        <div class="mt-3">
-            <button type="submit" class="btn btn-primary mr-2" name="action" value="save">Save</button>
-            <button type="submit" class="btn btn-secondary" name="action" value="load_defaults" formnovalidate>Default Project Data</button>
+        <div class="mt-4 d-flex flex-wrap gap-2">
+            <button type="submit" class="btn btn-primary btn-premium" name="action" value="save">Save</button>
+            <button type="submit" class="btn btn-outline-secondary btn-premium" name="action" value="load_defaults" formnovalidate>Default Project Data</button>
         </div>
         <p class="text-muted small mt-3 mb-0">Refer Note-1 for Factor for valve/flange/support.</p>
 </form>
