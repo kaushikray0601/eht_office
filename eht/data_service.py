@@ -1,16 +1,25 @@
 from decimal import Decimal
 
 import pandas as pd
-from .models import ElecEHT_ASMEB36, ElecEHT_ThermalConductivity, ElecEHT_Vendor, HeatTracingInput, ProjectData
-from .models import HeatLoss, SelectedTracer, AlternateTracer, PowerDistribution, PowerDistributionBranch, BOQ, ProcessLineCalculation
-
-from django.db.models.functions import Cast
 from django.db.models import FloatField
-
-from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse
+from django.db.models.functions import Cast
 
 import logging
+
+from .models import (
+    AlternateTracer,
+    BOQ,
+    ElecEHT_ASMEB36,
+    ElecEHT_ThermalConductivity,
+    ElecEHT_Vendor,
+    HeatLoss,
+    HeatTracingInput,
+    PowerDistribution,
+    PowerDistributionBranch,
+    ProcessLineCalculation,
+    ProjectData,
+    SelectedTracer,
+)
 
 
 logger = logging.getLogger(__name__)

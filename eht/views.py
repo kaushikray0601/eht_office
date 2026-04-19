@@ -1,31 +1,38 @@
+import logging
 import os
-from django.shortcuts import render, redirect, get_object_or_404
-from django.template.loader import render_to_string
-from django.http import JsonResponse, FileResponse, Http404
-from django.utils.timezone import now
-from django.core.exceptions import ValidationError
-from django.contrib.auth.decorators import login_required
-from django.contrib import messages
-from django.conf import settings
+from io import BytesIO
 
-from .models import DEFAULT_PROJECT_ID, HeatTracingInput, ManagedProject, ProjectData, UserAttempt, is_default_project_id
-from .forms import ProjectDataForm
-from .sanatize_input import * #sanitize_file
-# from .calculations import * # Calculation
+import pandas as pd
+from django.conf import settings
+from django.contrib import messages
+from django.contrib.auth.decorators import login_required
+from django.core.exceptions import ValidationError
+from django.db.models import Prefetch
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
+from django.shortcuts import redirect, render
+from django.template.loader import render_to_string
+from django.urls import reverse
 from django.utils.timezone import now, timedelta
 
-
-from django.urls import reverse
+from .forms import ProjectDataForm
+from .models import (
+    AlternateTracer,
+    BOQ,
+    DEFAULT_PROJECT_ID,
+    HeatTracingInput,
+    ManagedProject,
+    PowerDistributionBranch,
+    ProcessLineCalculation,
+    ProjectData,
+    UserAttempt,
+    is_default_project_id,
+)
+from .pipeline import run_project_calculations
+from .sanatize_input import *  # sanitize_file
 
 COOLDOWN_PERIOD_MINUTES = 30
 MAX_FAILED_ATTEMPTS = 3
 
-# from eht.cal import parent_calculation_func
-from eht.cal import orchestrate_calculations
-from eht.models import ProjectData, HeatTracingInput, ElecEHT_ThermalConductivity, ElecEHT_ASMEB36, ElecEHT_Vendor, SELECT_VENDOR # import required models
-
-
-import logging
 logger = logging.getLogger(__name__)
 
 PROJECT_DATA_TEMPLATE_FIELDS = [
@@ -99,108 +106,6 @@ def download_template(request):
         messages.error(request, "The file could not be found.")
         return redirect('some_error_page')
 
-# @login_required
-# def upload_input(request, project_id=None, *arg, **kwarg):
-#     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
-#     if request.method == 'POST':
-#         file = request.FILES.get('file')
-#         if not file: return JsonResponse({'error': 'No file uploaded'}, status=400)
-
-#         try:
-#             # Sanitize the file
-#             valid_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
-
-#             # Save valid data to the database with a "pending" status
-#             if valid_data:
-#                 upload_inputData_in_DB(valid_data, project_id)
-
-#             # If invalid data exists, send the error file and ask for user confirmation            
-#             if invalid_data:
-#                 error_file_name = os.path.basename(error_file_path)
-#                 error_file_url = reverse('download_error_file', args=[error_file_name])  # A dedicated endpoint for file download
-
-#                 # Return JSON metadata with the download URL
-#                 return JsonResponse({
-#                     'valid_data_with_error': True,
-#                     'error_file_url': error_file_url,
-#                     'success': 'Partial valid data uploaded. Download the error file.',
-#                 }, status=200)
-
-
-                        
-#             # If all data is valid, proceed directly to the calculation stage                    
-#             status_ok, valid_data, updated_count = update_pending_status(project_id)     
-
-#             if status_ok:                
-#                 # Calculation_result = parent_calculation_func(project_id, valid_data)
-#                 Calculation_result = orchestrate_calculations(project_id, valid_data)
-                
-               
-
-#             return JsonResponse({'success': 'Data processed successfully. Proceeding to calculations.'}, status=200)  
-        
-#         except ValidationError as e:
-#             return JsonResponse({'error': str(e)}, status=400)
-#         except Exception as e:
-#             return JsonResponse({'error': f"An unexpected error occurred: {str(e)}"}, status=500)
-
-#     return JsonResponse({'error': 'Invalid request method.'}, status=405)
-
-# ##################################################################################################
-# CALCULATION Module: --------------------------------------------------------
-
-from .cal import orchestrate_calculations
-from .data_service import (
-    fetch_process_lines,
-    fetch_vendor_data,
-    fetch_project_data,
-    fetch_asme_b36_table,
-    fetch_thermal_conductivity_data,
-    store_calculated_results,
-)
-
-
-def summarize_calculation_result(calculation_result):
-    return {
-        'heat_loss': len(calculation_result.get('heat_loss', [])),
-        'selected_tracers': len(calculation_result.get('selected_tracers', [])),
-        'alternative_tracers': len(calculation_result.get('alternative_tracers', [])),
-        'power_distribution': len(calculation_result.get('power_distribution', [])),
-        'boq_lines': len(calculation_result.get('boq_per_line', {})),
-        'consolidated_boq_items': len(calculation_result.get('consolidated_boq', {})),
-        'tracer_power_param': len(calculation_result.get('tracer_power_param', [])),
-    }
-
-
-def run_project_calculations(project_id):
-    project_specific_data = fetch_project_data(project_id)
-    selected_vendor = next(
-        (vendor_name for code, vendor_name in SELECT_VENDOR if code == project_specific_data['vendor']),
-        None,
-    )
-    if not selected_vendor:
-        raise ValidationError("Selected vendor could not be resolved for this project.")
-
-    process_lines = fetch_process_lines(project_id)
-    if process_lines.empty:
-        raise ValidationError("No confirmed input data found for this project.")
-
-    vendor_data = fetch_vendor_data(selected_vendor, project_specific_data['voltage'])
-    asme_b36_table = fetch_asme_b36_table()
-    thermal_conductivity_data = fetch_thermal_conductivity_data()
-
-    calculation_result = orchestrate_calculations(
-        project_id=project_id,
-        process_lines=process_lines,
-        vendor_data=vendor_data,
-        project_settings=project_specific_data,
-        asme_b36_table=asme_b36_table,
-        thermal_cond_data=thermal_conductivity_data,
-    )
-    store_calculated_results(project_id, calculation_result)
-    return calculation_result, summarize_calculation_result(calculation_result)
-
-
 @login_required
 def calculate_view(request, project_id=None):
     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
@@ -253,101 +158,251 @@ def calculate_view(request, project_id=None):
             return JsonResponse({'error': f"An unexpected error occurred: {str(e)}"}, status=500)
     return JsonResponse({'error': 'Invalid request method.'}, status=405)
 
-# View to render the calculation results page
-'''
+def _get_project_workspace_context(request, project_id):
+    context = {
+        'project_id': project_id or '',
+        'managed_project': None,
+        'project_setup': None,
+        'total_input_count': 0,
+        'confirmed_input_count': 0,
+        'pending_input_count': 0,
+        'calculated_line_count': 0,
+    }
+    if not project_id:
+        return context
+
+    managed_project = ManagedProject.available_to_user(getattr(request, 'user', None)).filter(proj_id=project_id).first()
+    if managed_project is None:
+        raise Http404("Project not found.")
+
+    project_setup = ProjectData.objects.filter(proj_id=project_id).first()
+    input_lines = HeatTracingInput.objects.filter(proj_id=project_id)
+
+    context.update({
+        'managed_project': managed_project,
+        'project_setup': project_setup,
+        'total_input_count': input_lines.count(),
+        'confirmed_input_count': input_lines.filter(status='confirmed').count(),
+        'pending_input_count': input_lines.filter(status='pending').count(),
+        'calculated_line_count': ProcessLineCalculation.objects.filter(line__proj_id=project_id).count(),
+    })
+    return context
+
+
+def result_view(request):
+    project_id = request.GET.get('project_id')
+    context = _get_project_workspace_context(request, project_id)
+    line_results = []
+    branch_rows = []
+    summary = {
+        'calculated_lines': 0,
+        'total_circuits': 0,
+        'total_power_kw': 0,
+        'total_tracer_length': 0,
+        'branch_count': 0,
+    }
+
+    if project_id and context['project_setup']:
+        calculations = list(
+            ProcessLineCalculation.objects.filter(line__proj_id=project_id)
+            .select_related(
+                'line',
+                'line__selected_tracer_result',
+                'line__power_distribution_result',
+            )
+            .prefetch_related(
+                Prefetch(
+                    'line__alternate_tracer_results',
+                    queryset=AlternateTracer.objects.order_by('option_rank'),
+                ),
+                Prefetch(
+                    'line__power_distribution_result__branches',
+                    queryset=PowerDistributionBranch.objects.order_by('branch_index'),
+                ),
+            )
+            .order_by('line__line_id')
+        )
+        branch_rows = list(
+            PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
+            .select_related('distribution__line')
+            .order_by('distribution__line__line_id', 'branch_index')
+        )
+
+        for calculation in calculations:
+            line = calculation.line
+            line_results.append({
+                'calculation': calculation,
+                'line': line,
+                'selected_tracer': getattr(line, 'selected_tracer_result', None),
+                'alternate_tracers': list(line.alternate_tracer_results.all()),
+                'branch_count': len(getattr(line.power_distribution_result, 'branches').all()) if hasattr(line, 'power_distribution_result') else 0,
+            })
+
+        summary = {
+            'calculated_lines': len(line_results),
+            'total_circuits': sum(item['calculation'].total_circuits for item in line_results),
+            'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results) / 1000 if line_results else 0,
+            'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
+            'branch_count': len(branch_rows),
+        }
+
+    context.update({
+        'line_results': line_results,
+        'branch_rows': branch_rows,
+        'result_summary': summary,
+        'has_results': bool(line_results),
+    })
+    return render(request, 'eht/partials/result_tab.html', context)
+
+
+def _build_boq_workspace_data(project_id):
+    consolidated_items = list(
+        BOQ.objects.filter(project_id=project_id, scope='consolidated')
+        .order_by('item_code')
+    )
+    line_items = (
+        BOQ.objects.filter(project_id=project_id, scope='line')
+        .select_related('line')
+        .order_by('line__line_id', 'item_code')
+    )
+    grouped_items = {}
+    for item in line_items:
+        if item.line_id is None:
+            continue
+        group = grouped_items.setdefault(
+            item.line_id,
+            {'line': item.line, 'items': []},
+        )
+        group['items'].append(item)
+
+    line_groups = []
+    for line_id, group in grouped_items.items():
+        tracer_quantity = next(
+            (entry.quantity for entry in group['items'] if entry.item_code == 'TRACER'),
+            0,
+        )
+        line_groups.append({
+            'line_id': line_id,
+            'line': group['line'],
+            'items': group['items'],
+            'item_count': len(group['items']),
+            'tracer_quantity': tracer_quantity,
+        })
+
+    line_groups.sort(key=lambda group: group['line'].line_id if group['line'] else '')
+    consolidated_lookup = {item.item_code: item.quantity for item in consolidated_items}
+    summary = {
+        'consolidated_item_count': len(consolidated_items),
+        'line_group_count': len(line_groups),
+        'tracer_total': consolidated_lookup.get('TRACER', 0),
+        'mcb_total': consolidated_lookup.get('MCB', 0),
+        'junction_box_total': consolidated_lookup.get('JB3PH', 0) + consolidated_lookup.get('JB1PH', 0),
+    }
+    return {
+        'consolidated_items': consolidated_items,
+        'line_groups': line_groups,
+        'summary': summary,
+    }
+
+
 def boq_view(request):
-    boq_data = list(BOQ.objects.all().values())
-    calculation_data = list(ProcessLineCalculation.objects.all().values())
-    cable_schedule_data = list(ProcessLineCalculation.objects.all().values())
-    return render(request, 'boq.html', {
-        'boq': boq_data,
-        'calculations': calculation_data,
-        'cable_schedule': cable_schedule_data
-    })'''
+    project_id = request.GET.get('project_id')
+    context = _get_project_workspace_context(request, project_id)
+    consolidated_items = []
+    line_groups = []
+    selected_line_group = None
+    selected_line_query = (request.GET.get('line_lookup') or request.GET.get('line_id') or '').strip()
+    selected_line_error = ''
+    summary = {
+        'consolidated_item_count': 0,
+        'line_group_count': 0,
+        'tracer_total': 0,
+        'mcb_total': 0,
+        'junction_box_total': 0,
+    }
 
-# -------------------helper functions for calculate_view:-------------------------------------------------------
-# def get_project_id(request):
-#     return request.GET.get('project_id') or request.POST.get('project_id')
+    if project_id and context['project_setup']:
+        boq_data = _build_boq_workspace_data(project_id)
+        consolidated_items = boq_data['consolidated_items']
+        line_groups = boq_data['line_groups']
+        summary = boq_data['summary']
 
-# def fetch_asme_b36_table_from_db():
-#     df_asme_b36 = ElecEHT_ASMEB36.objects.values('Nominal_Pipe_Size', 'Outside_Diameter_mm')
-#     return pd.DataFrame.from_records(df_asme_b36)
+        if len(line_groups) == 1 and not selected_line_query:
+            selected_line_group = line_groups[0]
+            selected_line_query = selected_line_group['line'].line_id
+        elif selected_line_query:
+            selected_line_group = next(
+                (
+                    group
+                    for group in line_groups
+                    if group['line'] and group['line'].line_id.casefold() == selected_line_query.casefold()
+                ),
+                None,
+            )
+            if selected_line_group is None:
+                selected_line_error = f"No BOQ line items were found for line ID '{selected_line_query}'."
 
-# def fetch_ther_conductivity_data_from_db():
-#     thermal_conductivity_data = ElecEHT_ThermalConductivity.objects.values('Ins_Mat_Type', 'K_factor_A', 'K_factor_B', 'K_factor_C')
-#     return pd.DataFrame.from_records(thermal_conductivity_data)
-
-# def fetch_process_lines_from_db(project_id):
-#     """Fetch process lines from the database for a given project ID."""
-#     process_lines = HeatTracingInput.objects.filter(project_id=project_id).values()
-#     return pd.DataFrame(process_lines)
-
-# def fetch_vendor_data_from_db(selected_vendor, project_voltage):
-#     """
-#     Fetch vendor data from the database for a given project ID.    
-#     """
-#     # vendor_dict = dict(SELECT_VENDOR)
-#     vendor_data_query = list(ElecEHT_Vendor.objects.filter(
-#             Vendor=selected_vendor,
-#             Voltage__gte=float(project_voltage)
-#             ).annotate(
-#                 Voltage_Float= Cast('Voltage', FloatField())  # Convert to float at DB level
-#                 ).values(
-#                     'V_UID', 'Voltage_Float', 'A_Coeff', 'B_Coeff', 'C_Coeff', 
-#                     'Power_at_Startup_T', 'Ohm_per_km', 'Res_corrFactor_Mica', 'Tracer_Family'
-#                 ).distinct())   
-#     return pd.DataFrame(vendor_data_query)
-
-# def fetch_project_data_from_db(project_id):
-#     """
-#     Fetch project-specific settings from the database for a given project ID.
-#     """
-#     project_data = ProjectData.objects.get(proj_id=project_id)
-#     # TODO: commented out 9 nos parameters are not currently in use, revisit and update model if not finally used.
-#     # Project data being limited data set, we can directly return the dictionary without converting to DataFrame
-#     return {
-#         "id":project_data.id,
-#         "proj_id":project_data.proj_id,
-#         "min_amb_t":float(project_data.min_amb_t),
-#         "max_amb_t":float(project_data.max_amb_t),
-#         "startup_t":float(project_data.startup_t),
-#         "area_class":project_data.area_class,
-#         "temp_class":project_data.temp_class,
-#         "voltage":float(project_data.voltage),
-#         "max_cb_size":float(project_data.max_cb_size),
-#         "restrict_cb_current":float(project_data.restrict_cb_current),
-#         "vendor":project_data.vendor,
-#         # "tracer_family":project_data.tracer_family,
-#         "spiral_wrap_allowed":project_data.spiral_wrap_allowed,
-#         "spiral_factor":float(project_data.spiral_factor),
-#         #"valve_factor":float(project_data.valve_factor),                                # not used default value 5
-#         #"flange_factor":float(project_data.flange_factor),                              # not used default value 5
-#         #"support_factor":float(project_data.support_factor),                            # not used default value 5
-#         "margin_on_tracer_lengths":float(project_data.margin_on_tracer_lengths),
-#         "voltage_var_factor":float(project_data.voltage_var_factor),
-#         "res_tol":float(project_data.res_tol),
-#         "termination_margin":float(project_data.termination_margin),
-#         "heat_loss_sf":float(project_data.heat_loss_sf),
-#         "rtd_thrm":project_data.rtd_thrm,
-#         "wind_speed":float(project_data.wind_speed),
-#         # "req_local_isolator":project_data.req_local_isolator,
-#         "caution_label_interval":float(project_data.caution_label_interval),
-#         # "k_factor_ccons":float(project_data.k_factor_ccons),
-#         "isolator_location":project_data.isolator_location,
-#         "ckt_ln":float(project_data.ckt_ln),
-#         "loop_ln":float(project_data.loop_ln),
-#         # "acc_power_density":project_data.acc_power_density,
-#         # "tracer_temp_factor":project_data.tracer_temp_factor,
-#         # "alpha_for_res":float(project_data.alpha_for_res),
-#         "allowablevdrop":float(project_data.allowablevdrop)      
-#     }
+    context.update({
+        'consolidated_items': consolidated_items,
+        'line_groups': line_groups,
+        'boq_summary': summary,
+        'has_boq': bool(consolidated_items or line_groups),
+        'selected_line_group': selected_line_group,
+        'selected_line_query': selected_line_query,
+        'selected_line_error': selected_line_error,
+        'show_line_dropdown': len(line_groups) < 50,
+    })
+    return render(request, 'eht/partials/boq_tab.html', context)
 
 
+def boq_export_view(request):
+    project_id = request.GET.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to export BOQ.'}, status=400)
 
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
 
+    boq_data = _build_boq_workspace_data(project_id)
+    if not boq_data['consolidated_items'] and not boq_data['line_groups']:
+        return JsonResponse({'error': 'No stored BOQ data is available for this project yet.'}, status=400)
 
+    summary_rows = [
+        {
+            'Project ID': project_id,
+            'Item Code': item.item_code,
+            'Description': item.item_description,
+            'Quantity': item.quantity,
+            'Unit': item.unit,
+        }
+        for item in boq_data['consolidated_items']
+    ]
+    detail_rows = []
+    for group in boq_data['line_groups']:
+        for item in group['items']:
+            detail_rows.append({
+                'Project ID': project_id,
+                'Line ID': group['line'].line_id if group['line'] else '',
+                'Service Type': group['line'].service_type if group['line'] else '',
+                'Item Code': item.item_code,
+                'Description': item.item_description,
+                'Quantity': item.quantity,
+                'Unit': item.unit,
+            })
 
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        pd.DataFrame(summary_rows).to_excel(writer, sheet_name='BOQ Summary', index=False)
+        pd.DataFrame(detail_rows).to_excel(writer, sheet_name='BOQ Per Line', index=False)
 
+    output.seek(0)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename=\"{project_id}_boq.xlsx\"'
+    return response
 
 # -------------Download error File -------------------------------------------------------
 

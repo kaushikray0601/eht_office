@@ -64,6 +64,9 @@ function handleProjectIDSelection() {
                 success: function (data) {
                     $('#project-data-form-container').html(data.form_html);
                     initializeFormValidation(); // Reinitialize validation
+                    if (window.resetWorkspaceTabContent) {
+                        window.resetWorkspaceTabContent();
+                    }
                 },
                 error: function (xhr, status, error) {
                     console.error("AJAX Error:", status, error);

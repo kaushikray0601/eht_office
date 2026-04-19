@@ -1,6 +1,17 @@
-# Here goes the calculation
-import pandas as pd
-import numpy as np
+"""Legacy module kept only as a redirect marker for old imports.
+
+The active calculation pipeline now lives in `eht.pipeline` and `eht.cal`.
+"""
+
+
+def calculation(*args, **kwargs):
+    raise NotImplementedError(
+        "Legacy `eht.calculation.calculation()` has been retired. "
+        "Use `eht.pipeline.run_project_calculations()` instead."
+    )
+
+
+LEGACY_IMPLEMENTATION = """
 import math
 from collections import namedtuple
 
@@ -436,3 +447,4 @@ def SRTracerDesign(TagParams):
 #     except Exception as e:
 #          logger.error(f"Error during heat loss calculation for project ID: {project_id}: {str(e)}")
 #          raise Exception(f"Error during heat loss calculation for project ID: {project_id}: {str(e)}")
+"""

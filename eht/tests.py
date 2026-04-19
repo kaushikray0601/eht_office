@@ -1,10 +1,12 @@
 import json
 import math
+from io import BytesIO
 
 import pandas as pd
 from django.contrib.auth.models import User
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
+from openpyxl import load_workbook
 
 from eht.cal import orchestrate_calculations
 from eht.calculations.boq import compute_bill_of_quantities
@@ -244,6 +246,116 @@ def make_default_project_record(**overrides):
     return ProjectData.objects.create(**data)
 
 
+def make_calculated_project_snapshot(project_id='p1'):
+    make_project_record(proj_id=project_id)
+    line = HeatTracingInput.objects.create(
+        proj_id=project_id,
+        line_id='LINE-001',
+        service_type='EP',
+        line_size=2.0,
+        line_length=10.0,
+        ins_mat_type='Mineral Wool',
+        insul_thick=50.0,
+        maint_temp=120.0,
+        oper_temp=100.0,
+        design_temp=140.0,
+        status='confirmed',
+    )
+
+    aggregated_results = {
+        'heat_loss': [
+            {'uid': line.uid, 'heat_loss': 12.5, 'tracer_adder': 1.2},
+        ],
+        'selected_tracers': [
+            {
+                'uid': line.uid,
+                'V_UID': 'V-001',
+                'A_Coeff': 1.0,
+                'B_Coeff': 2.0,
+                'C_Coeff': 3.0,
+                'Power_at_Startup_T': 11.5,
+                'Ohm_per_km': 9.5,
+                'Res_corrFactor_Mica': 0.5,
+                'Tracer_Family': 'Self Regulating',
+                'Voltage_Float': 230.0,
+                'Voltage_Correction_Factor': 0.95,
+                'Power_Output': 30.0,
+                'Spiral_Factor': 1.1,
+                'Tracer_Length': 12.0,
+                'Tracer_With_Margin': 12.6,
+            },
+        ],
+        'alternative_tracers': [
+            {
+                'uid': line.uid,
+                'V_UID': 'V-ALT-001',
+                'A_Coeff': 1.1,
+                'B_Coeff': 2.1,
+                'C_Coeff': 3.1,
+                'Power_at_Startup_T': 12.5,
+                'Ohm_per_km': 10.5,
+                'Res_corrFactor_Mica': 0.6,
+                'Tracer_Family': 'Self Regulating',
+                'Voltage_Float': 230.0,
+                'Voltage_Correction_Factor': 0.97,
+                'Power_Output': 31.0,
+                'Spiral_Factor': 1.2,
+                'Tracer_Length': 13.0,
+                'Tracer_With_Margin': 13.7,
+            },
+        ],
+        'power_distribution': [
+            {
+                'uid': line.uid,
+                'total_circuits': 2,
+                'branches': [
+                    {
+                        'type': '3phJB',
+                        'circuit_count': 2,
+                        'connected_to': '2x 1phJB',
+                        'cable_length_db_to_jb': 25.0,
+                        'cable_length_jb_to_jb': 10.0,
+                        'tagged_components': {
+                            'MCB': 'MCB_001',
+                            'JB3PH': 'JB3PH_001',
+                            'Downstream': [
+                                {'Tracer': 'Tracer_001'},
+                                {'Tracer': 'Tracer_002'},
+                            ],
+                        },
+                    }
+                ],
+            },
+        ],
+        'boq_per_line': {
+            line.uid: {
+                'TRACER': 12.6,
+                'MCB': 1,
+                'JB3PH': 1,
+            },
+        },
+        'consolidated_boq': {
+            'TRACER': 12.6,
+            'MCB': 1,
+            'JB3PH': 1,
+        },
+        'tracer_power_param': [
+            {
+                'uid': line.uid,
+                'breaker_size': 10,
+                'no_of_circuits': 2,
+                'max_current': 2.5,
+                'operating_current': 2.0,
+                'operating_load': 460.0,
+                'total_tracer_length': 12.6,
+                'pipe_size_mm': 60.3,
+            },
+        ],
+    }
+    store_calculated_results(project_id, aggregated_results)
+    return line
+
+
 def seed_reference_data():
     ElecEHT_ThermalConductivity.objects.create(
         Ins_Mat_Type='Mineral Wool',
@@ -367,22 +479,22 @@ class PowerDistributionCalculationTests(SimpleTestCase):
 
 class BoqCalculationTests(SimpleTestCase):
     def test_compute_bill_of_quantities_counts_key_components(self):
-        power_distribution_data = pd.DataFrame([
-            {
-                'uid': 'L1',
-                'total_circuits': 2,
-                'branches': {
+        power_distribution = {
+            'uid': 'L1',
+            'total_circuits': 2,
+            'branches': [
+                {
                     'type': '3phJB',
                     'connected_to': '2x 1phJB',
                     'circuit_count': 2,
                     'cable_length_db_to_jb': 30.0,
                     'cable_length_jb_to_jb': 12.0,
                 },
-            }
-        ])
+            ],
+        }
 
         boq = compute_bill_of_quantities(
-            power_distribution_data=power_distribution_data,
+            power_distribution=power_distribution,
             project_settings=make_project_settings(),
             tracer_qty=20.5,
             line_length=10.0,
@@ -400,6 +512,47 @@ class BoqCalculationTests(SimpleTestCase):
         self.assertEqual(boq['THERMOSTAT'], 2)
         self.assertEqual(boq['ENDTRM'], 2)
 
+    def test_compute_bill_of_quantities_aggregates_all_branches_in_active_payload(self):
+        power_distribution = {
+            'uid': 'L2',
+            'total_circuits': 4,
+            'branches': [
+                {
+                    'type': '3phJB',
+                    'connected_to': '3x 1phJB',
+                    'circuit_count': 3,
+                    'cable_length_db_to_jb': 30.0,
+                    'cable_length_jb_to_jb': 12.0,
+                },
+                {
+                    'type': '1phJB',
+                    'connected_to': 'Tracer',
+                    'circuit_count': 1,
+                    'cable_length_db_to_jb': 30.0,
+                    'cable_length_jb_to_jb': None,
+                },
+            ],
+        }
+
+        boq = compute_bill_of_quantities(
+            power_distribution=power_distribution,
+            project_settings=make_project_settings(),
+            tracer_qty=41.0,
+            line_length=20.0,
+            pipe_size_mm=60.3,
+            is_process_temp_controlled=True,
+        )
+
+        self.assertEqual(boq['MCB'], 2)
+        self.assertEqual(boq['JB3PH'], 1)
+        self.assertEqual(boq['JB1PH'], 4)
+        self.assertEqual(boq['CCMCB-3PHJB'], 30.0)
+        self.assertEqual(boq['CC3PHJB-1PHJB'], 66.0)
+        self.assertEqual(boq['ISOLATOR_3PH'], 1)
+        self.assertEqual(boq['ISOLATOR_1PH'], 4)
+        self.assertEqual(boq['THERMOSTAT'], 4)
+        self.assertEqual(boq['ENDTRM'], 4)
+
 
 class OrchestrationTests(SimpleTestCase):
     def test_orchestrate_calculations_builds_expected_aggregates(self):
@@ -409,7 +562,6 @@ class OrchestrationTests(SimpleTestCase):
         )
 
         result = orchestrate_calculations(
-            project_id='p1',
             process_lines=[line],
             vendor_data=vendor_data,
             project_settings=make_project_settings(),
@@ -738,6 +890,73 @@ class ProjectDataViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(ProjectData.objects.filter(proj_id='PLANT_C_001').exists())
         self.assertFalse(ProjectData.objects.filter(proj_id__iexact=DEFAULT_PROJECT_ID).exists())
+
+
+class ResultAndBoqViewTests(TestCase):
+    def test_result_view_prompts_for_project_selection_when_missing(self):
+        response = self.client.get(reverse('result_view'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a project in the Project Data form')
+
+    def test_result_view_renders_stored_project_results(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Calculation Results')
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'V-001')
+        self.assertContains(response, 'V-ALT-001')
+        self.assertContains(response, 'MCB_001')
+
+    def test_boq_view_renders_consolidated_and_line_items(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('boq_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Bill Of Quantities')
+        self.assertContains(response, 'TRACER')
+        self.assertContains(response, 'MCB')
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'Miniature Circuit Breaker')
+
+    def test_boq_view_filters_selected_line_for_verification(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(
+            reverse('boq_view'),
+            {'project_id': 'p1', 'line_lookup': line.line_id},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f'Selected Line: {line.line_id}')
+        self.assertContains(response, 'Show Line BOQ')
+
+    def test_boq_export_returns_summary_and_per_line_sheets(self):
+        line = make_calculated_project_snapshot()
+
+        response = self.client.get(reverse('boq_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertIn('p1_boq.xlsx', response['Content-Disposition'])
+
+        workbook = load_workbook(BytesIO(response.content))
+        self.assertEqual(workbook.sheetnames, ['BOQ Summary', 'BOQ Per Line'])
+
+        summary_rows = list(workbook['BOQ Summary'].iter_rows(values_only=True))
+        detail_rows = list(workbook['BOQ Per Line'].iter_rows(values_only=True))
+
+        self.assertIn(('Project ID', 'Item Code', 'Description', 'Quantity', 'Unit'), summary_rows)
+        self.assertIn(('Project ID', 'Line ID', 'Service Type', 'Item Code', 'Description', 'Quantity', 'Unit'), detail_rows)
+        self.assertTrue(any(row[1] == 'TRACER' for row in summary_rows[1:]))
+        self.assertTrue(any(row[1] == line.line_id for row in detail_rows[1:]))
 
 
 class ConfirmValidDataViewTests(TestCase):

@@ -23,17 +23,76 @@ function debounce(func, delay) {
         timeout = setTimeout(() => func.apply(this, args), delay);
     };
 }
-// JavaScript to control Tab -->
-$(document).on('click', '.nav-link', debounce(function (e) {
-    e.preventDefault();
-    const url = $(this).data('url');
-    if (!url || url === undefined || url === '#' || url === '' || url === null) {       
-        return; // Stop execution if URL is undefined
+
+function getSelectedProjectId() {
+    return $('#id_proj_id').val() || '';
+}
+
+function renderWorkspacePlaceholder(target, message, tone = 'info') {
+    $(target).html(`<div class="alert alert-${tone} mt-3 mb-0">${message}</div>`);
+}
+
+function loadWorkspaceTab(buttonElement, extraData = {}) {
+    const $button = $(buttonElement);
+    const url = $button.data('url');
+    const target = $button.attr('data-bs-target');
+
+    if (!url || url === '#' || !target) {
+        return;
     }
-    $('#tabContent').load(url);
-    //alert('clicked');
-}, 300));
 
+    const projectId = getSelectedProjectId();
+    if (!projectId) {
+        renderWorkspacePlaceholder(target, 'Select a project in the Project Data form before loading this tab.', 'warning');
+        return;
+    }
 
+    $(target).html('<div class="text-muted mt-3">Loading...</div>');
+    $.ajax({
+        url: url,
+        type: 'GET',
+        data: { project_id: projectId, ...extraData },
+        success: function (html) {
+            $(target).html(html);
+        },
+        error: function (xhr) {
+            let errorMessage = 'Failed to load project data for this tab.';
+            if (xhr.responseJSON && xhr.responseJSON.error) {
+                errorMessage = xhr.responseJSON.error;
+            }
+            renderWorkspacePlaceholder(target, errorMessage, 'danger');
+        }
+    });
+}
+
+window.loadWorkspaceTab = loadWorkspaceTab;
+
+window.resetWorkspaceTabContent = function () {
+    renderWorkspacePlaceholder(
+        '#result-tab-pane',
+        'Select a project in the Project Data form, then open this tab to load stored calculation results.'
+    );
+    renderWorkspacePlaceholder(
+        '#boq-tab-pane',
+        'Select a project in the Project Data form, then open this tab to load stored BOQ data.'
+    );
+};
+
+// Click-driven load is more reliable here than depending only on Bootstrap tab events.
+$(document).on('click', 'button.nav-link[data-url]', debounce(function () {
+    loadWorkspaceTab(this);
+}, 150));
+
+$(document).on('submit', '#boq-line-filter-form', function (e) {
+    e.preventDefault();
+    const activeButton = document.querySelector('button.nav-link#boq-tab');
+    const formData = Object.fromEntries(new FormData(this).entries());
+    loadWorkspaceTab(activeButton, formData);
+});
+
+$(document).on('click', '#boq-line-filter-reset', function () {
+    const activeButton = document.querySelector('button.nav-link#boq-tab');
+    loadWorkspaceTab(activeButton);
+});
 
 
