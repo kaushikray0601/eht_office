@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'easyaudit',
     "crispy_forms",
     "crispy_bootstrap4",
+    "idfviewer",
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"

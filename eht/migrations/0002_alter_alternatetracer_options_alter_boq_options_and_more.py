@@ -181,7 +181,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='powerdistributionbranch',
             name='tagged_components',
-            field=models.JSONField(default=dict),
+            field=models.TextField(default='{}'),
         ),
         migrations.AddIndex(
             model_name='boq',

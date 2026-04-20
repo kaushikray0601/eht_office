@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>IDF Viewer</title>
+    {% load static %}
+    <style>
+        html, body {
+            margin: 0;
+            height: 100%;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+
+        #topbar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 70px;
+            background: #111827;
+            color: white;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            padding: 0 16px;
+            z-index: 20;
+            flex-wrap: wrap;
+        }
+
+        #viewer {
+            position: absolute;
+            top: 70px;
+            left: 0;
+            right: 340px;
+            bottom: 0;
+            background: #f3f4f6;
+        }
+
+        #sidepanel {
+            position: absolute;
+            top: 70px;
+            right: 0;
+            width: 340px;
+            bottom: 0;
+            overflow: auto;
+            border-left: 1px solid #d1d5db;
+            background: #ffffff;
+            padding: 14px;
+            box-sizing: border-box;
+            z-index: 15;
+        }
+
+        #sidepanel h3 {
+            margin-top: 0;
+        }
+
+        .section {
+            margin-bottom: 18px;
+        }
+
+        .label {
+            font-weight: bold;
+        }
+
+        pre {
+            white-space: pre-wrap;
+            word-break: break-word;
+            background: #f9fafb;
+            border: 1px solid #e5e7eb;
+            padding: 8px;
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        th, td {
+            border: 1px solid #e5e7eb;
+            padding: 6px;
+            vertical-align: top;
+            text-align: left;
+        }
+
+        a {
+            color: #93c5fd;
+        }
+
+        .legend span {
+            margin-right: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="topbar">
+        <div><strong>File:</strong> {{ filename }}</div>
+        <div>
+            <strong>Parsed:</strong>
+            Pipes {{ scene.stats.pipe_count }},
+            Fittings {{ scene.stats.fitting_count }},
+            Welds {{ scene.stats.weld_count }},
+            Supports {{ scene.stats.support_count }},
+            Markers {{ scene.stats.marker_count }}
+        </div>
+        <div class="legend">
+            <span>Gray = Pipes</span>
+            <span>Blue = Fittings</span>
+            <span>Red = Welds</span>
+            <span>Green = Supports</span>
+            <span>Orange = Markers</span>
+        </div>
+        <div><a href="{% url 'idf_upload' %}">Upload another file</a></div>
+    </div>
+
+    <div id="viewer"></div>
+
+    <div id="sidepanel">
+        <h3>Properties</h3>
+        <div id="props-content">
+            Click any pipe, fitting, weld, support, or marker.
+        </div>
+    </div>
+
+    {{ scene|json_script:"scene-data" }}
+
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+      }
+    }
+    </script>
+
+    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}"></script>
+</body>
+</html>

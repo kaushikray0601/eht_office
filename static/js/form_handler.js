@@ -32,9 +32,13 @@
 
     // ----------------Initialize form validation --------------------
     function initializeFormValidation() {
+        console.log('Initializing form validation');
         const form = document.getElementById('project-data-form');
         const uploadInput = document.getElementById('upload_input');
+        console.log('Form element:', form);
+        console.log('Upload input element:', uploadInput);
         if (!form || !uploadInput) {
+            console.log('Form or upload input not found, skipping validation');
             return;
         }
         const requiredFields = Array.from(
@@ -57,13 +61,16 @@
 
 // ---------------- Haldle project ID selection -----------------------------
 function handleProjectIDSelection() {
+    console.log('Setting up project ID selection handler');
     $(document).on('change', '#id_proj_id', function () {
         let projectId = $(this).val();
+        console.log('Project ID changed to:', projectId);
         if (projectId) {
             $('#project-data-form-container').html('<p>Loading...</p>');
             $.ajax({
                 url: '/edit-project-data/' + projectId + '/',
                 success: function (data) {
+                    console.log('AJAX success, received data:', data);
                     $('#project-data-form-container').html(data.form_html);
                     initializeFormValidation(); // Reinitialize validation
                     if (window.resetWorkspaceTabContent) {
@@ -72,6 +79,7 @@ function handleProjectIDSelection() {
                 },
                 error: function (xhr, status, error) {
                     console.error("AJAX Error:", status, error);
+                    $('#project-data-form-container').html('<p class="text-danger">Error loading project data. Please try again.</p>');
                 }
             });
         }
@@ -79,6 +87,7 @@ function handleProjectIDSelection() {
 }
 
 $(document).ready(function () {
+    console.log('Form handler initialized');
     initializeFormValidation();
     handleProjectIDSelection();
 });
