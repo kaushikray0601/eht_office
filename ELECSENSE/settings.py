@@ -24,13 +24,20 @@ SECRET_KEY = env(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env.bool("DEBUG", default=True)
 
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=[])
+ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["local.enggsense.com", "localhost", "127.0.0.1"])
+
+ALLOWED_HOSTS = ["*"]
+
+# Allow CSRF validation to pass for the Cloudflare Tunnel HTTPS origin
+CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=["https://local.enggsense.com"])
+
 
 
 # Application definition
 
 INSTALLED_APPS = [
     'django.contrib.admin',
+    
     'django.contrib.auth',
     'django.contrib.contenttypes',
     'django.contrib.sessions',

@@ -64,6 +64,7 @@ scene.add(modelGroup);
 const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 const selectableMeshes = [];
+const manuallyHiddenItems = new Set();
 
 let selectedGroup = null;
 
@@ -71,9 +72,33 @@ function vecFromArray(a) {
     return new THREE.Vector3(a[0], a[1], a[2]);
 }
 
+function getItemProperties(item) {
+    return item.properties || {};
+}
+
+function getHierarchyFile(item) {
+    return getItemProperties(item).filename || "Unknown File";
+}
+
+function getHierarchyPipe(item) {
+    const props = getItemProperties(item);
+    return props.pipeline_ref || props.spool_ref || "Unknown Line";
+}
+
+function getHierarchyKey(item) {
+    return `${getHierarchyFile(item)}___${getHierarchyPipe(item)}`;
+}
+
+function getItemVisibilityKey(item) {
+    const props = getItemProperties(item);
+    return `${getHierarchyFile(item)}___${props.uid ?? "no-uid"}___${props.record_id ?? item.kind ?? "item"}`;
+}
+
 function registerSelectable(mesh, item, selectGroup) {
     mesh.userData.item = item;
     mesh.userData.selectGroup = selectGroup;
+    mesh.userData.hierarchyKey = getHierarchyKey(item);
+    mesh.userData.visibilityKey = getItemVisibilityKey(item);
     selectableMeshes.push(mesh);
 }
 
@@ -200,9 +225,8 @@ function addMarker(item) {
 // ----------- HIERARCHY TREE GENERATION -----------
 const hierarchy = {}; 
 selectableMeshes.forEach(mesh => {
-    const p = mesh.userData.item.properties || {};
-    const file = p.filename || "Unknown File";
-    const pipe = p.pipeline_ref || p.spool_ref || "Unknown Line";
+    const file = getHierarchyFile(mesh.userData.item);
+    const pipe = getHierarchyPipe(mesh.userData.item);
     
     if (!hierarchy[file]) hierarchy[file] = {};
     if (!hierarchy[file][pipe]) hierarchy[file][pipe] = [];
@@ -233,21 +257,33 @@ if (hContent) {
     });
     hContent.innerHTML = html || "<span class='text-gray-400'>No hierarchy data found.</span>";
 
-    function updateVisibility() {
-        const activePipes = new Set();
+    function getActiveHierarchyKeys() {
+        const activeKeys = new Set();
         document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
-            activePipes.add(cb.dataset.file + "___" + cb.dataset.pipe);
+            activeKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
         });
-        
+        return activeKeys;
+    }
+
+    function syncVisibility({ refit = true } = {}) {
+        const pipeToggles = document.querySelectorAll('.pipe-toggle');
+        const activeHierarchyKeys = getActiveHierarchyKeys();
+
         selectableMeshes.forEach(mesh => {
-            const p = mesh.userData.item.properties || {};
-            const file = p.filename || "Unknown File";
-            const pipe = p.pipeline_ref || p.spool_ref || "Unknown Line";
-            const key = file + "___" + pipe;
-            mesh.visible = activePipes.has(key);
+            const hierarchyVisible = pipeToggles.length
+                ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
+                : true;
+            const itemVisible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
+            mesh.visible = hierarchyVisible && itemVisible;
         });
-        
-        fitCameraToObject(modelGroup);
+
+        if (refit) {
+            fitCameraToObject(modelGroup);
+        }
+    }
+
+    function updateVisibility() {
+        syncVisibility();
     }
 
     document.querySelectorAll('.file-toggle').forEach(cb => {
@@ -264,6 +300,8 @@ if (hContent) {
     document.querySelectorAll('.pipe-toggle').forEach(cb => {
         cb.addEventListener('change', updateVisibility);
     });
+
+    syncVisibility({ refit: false });
 }
 
 // -------------------------------------------------
@@ -375,7 +413,25 @@ function focusOnSelection() {
 
 function hideSelection() {
     if (!selectedGroup) return;
-    selectedGroup.forEach(mesh => mesh.visible = false);
+    selectedGroup.forEach(mesh => manuallyHiddenItems.add(mesh.userData.visibilityKey));
+    if (hContent) {
+        const pipeToggles = document.querySelectorAll('.pipe-toggle');
+        const activeHierarchyKeys = new Set();
+        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
+            activeHierarchyKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
+        });
+        selectableMeshes.forEach(mesh => {
+            const hierarchyVisible = pipeToggles.length
+                ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
+                : true;
+            const itemVisible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
+            mesh.visible = hierarchyVisible && itemVisible;
+        });
+    } else {
+        selectableMeshes.forEach(mesh => {
+            mesh.visible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
+        });
+    }
     clearHighlight();
     propsContent.innerHTML = `
         <div class="text-center mt-10">
@@ -399,8 +455,17 @@ function hideSelection() {
 const btnShowHidden = document.getElementById('btnShowHidden');
 if(btnShowHidden) {
     btnShowHidden.addEventListener('click', () => {
-        modelGroup.traverse(node => {
-            if (node.isMesh) node.visible = true;
+        manuallyHiddenItems.clear();
+        const pipeToggles = document.querySelectorAll('.pipe-toggle');
+        const activeHierarchyKeys = new Set();
+        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
+            activeHierarchyKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
+        });
+        selectableMeshes.forEach(mesh => {
+            const hierarchyVisible = pipeToggles.length
+                ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
+                : true;
+            mesh.visible = hierarchyVisible;
         });
         btnShowHidden.classList.add('hidden');
         fitCameraToObject(modelGroup);
