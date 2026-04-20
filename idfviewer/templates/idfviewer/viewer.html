@@ -2,126 +2,160 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>IDF Viewer</title>
+    <title>IDF Pipeline Viewer</title>
     {% load static %}
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         html, body {
-            margin: 0;
-            height: 100%;
-            overflow: hidden;
-            font-family: Arial, sans-serif;
+            margin: 0; height: 100%; overflow: hidden;
+            background-color: #f1f5f9;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            color: #1e293b;
         }
-
-        #topbar {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 70px;
-            background: #111827;
-            color: white;
-            display: flex;
-            align-items: center;
-            gap: 20px;
-            padding: 0 16px;
-            z-index: 20;
-            flex-wrap: wrap;
+        .glass-topbar {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(226, 232, 240, 0.8);
+            box-shadow: 0 4px 20px rgba(0,0,0,0.03);
         }
-
+        .glass-sidebar {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(16px);
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.05);
+        }
+        #navpanel {
+            position: absolute; top: 60px; left: 0; bottom: 0; width: 300px;
+            z-index: 15; border-right: 1px solid rgba(226, 232, 240, 0.8);
+        }
         #viewer {
-            position: absolute;
-            top: 70px;
-            left: 0;
-            right: 340px;
-            bottom: 0;
-            background: #f3f4f6;
+            position: absolute; top: 60px; left: 300px; right: 340px; bottom: 0;
+            background: radial-gradient(circle at center, #f8fafc 0%, #e2e8f0 100%);
         }
-
         #sidepanel {
-            position: absolute;
-            top: 70px;
-            right: 0;
-            width: 340px;
-            bottom: 0;
-            overflow: auto;
-            border-left: 1px solid #d1d5db;
-            background: #ffffff;
-            padding: 14px;
-            box-sizing: border-box;
-            z-index: 15;
+            position: absolute; top: 60px; right: 0; width: 340px; bottom: 0;
+            border-left: 1px solid rgba(226, 232, 240, 0.8);
+            overflow-y: auto; padding: 24px; z-index: 15;
+            box-shadow: -4px 0 20px rgba(0,0,0,0.02);
         }
-
-        #sidepanel h3 {
-            margin-top: 0;
-        }
-
-        .section {
-            margin-bottom: 18px;
-        }
-
-        .label {
-            font-weight: bold;
-        }
-
-        pre {
-            white-space: pre-wrap;
-            word-break: break-word;
-            background: #f9fafb;
-            border: 1px solid #e5e7eb;
-            padding: 8px;
-            border-radius: 6px;
-            font-size: 12px;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 12px;
-        }
-
-        th, td {
-            border: 1px solid #e5e7eb;
-            padding: 6px;
-            vertical-align: top;
-            text-align: left;
-        }
-
-        a {
-            color: #93c5fd;
-        }
-
-        .legend span {
-            margin-right: 12px;
-        }
+        
+        /* Minimalist scrollbars */
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .prop-key { font-weight: 500; color: #475569; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+        .prop-val { color: #0f172a; font-size: 0.85rem; word-break: break-word; margin-top: 2px; }
+        .prop-row { padding-bottom: 0.6rem; margin-bottom: 0.6rem; border-bottom: 1px solid #e2e8f0; display: flex; flex-direction: column; }
     </style>
 </head>
 <body>
-    <div id="topbar">
-        <div><strong>File:</strong> {{ filename }}</div>
-        <div>
-            <strong>Parsed:</strong>
-            Pipes {{ scene.stats.pipe_count }},
-            Fittings {{ scene.stats.fitting_count }},
-            Welds {{ scene.stats.weld_count }},
-            Supports {{ scene.stats.support_count }},
-            Markers {{ scene.stats.marker_count }}
+    <div class="glass-topbar absolute top-0 left-0 right-0 h-[60px] px-6 z-20 flex items-center justify-between">
+        <div class="flex items-center space-x-4">
+            <h1 class="text-[17px] font-medium text-slate-800 tracking-wide">ELECSENSE <span class="text-slate-500">Pipeline</span></h1>
+            <span class="text-[11px] font-medium text-slate-700 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">Batched Scene</span>
+            <span class="text-[11px] font-medium text-blue-800 bg-blue-50 px-2.5 py-1 rounded border border-blue-200" id="header-proj-id" data-proj-id="{{ project.proj_id }}">Project: {{ project.proj_id }}</span>
         </div>
-        <div class="legend">
-            <span>Gray = Pipes</span>
-            <span>Blue = Fittings</span>
-            <span>Red = Welds</span>
-            <span>Green = Supports</span>
-            <span>Orange = Markers</span>
+        
+        <div class="hidden xl:flex space-x-6 text-[12px] text-slate-700 font-medium items-center tracking-wide">
+            <div class="flex items-center"><div class="w-3 h-3 bg-slate-400 rounded-sm mr-2 shadow-sm"></div>Pipes ({{ scene.stats.pipe_count }})</div>
+            <div class="flex items-center"><div class="w-3 h-3 bg-blue-500 rounded-sm mr-2 shadow-sm"></div>Fittings ({{ scene.stats.fitting_count }})</div>
+            <div class="flex items-center"><div class="w-3 h-3 bg-red-400 rounded-sm mr-2 shadow-sm"></div>Welds ({{ scene.stats.weld_count }})</div>
+            <div class="flex items-center"><div class="w-3 h-3 bg-green-500 rounded-sm mr-2 shadow-sm"></div>Supports ({{ scene.stats.support_count }})</div>
+            <div class="flex items-center"><div class="w-3 h-3 bg-orange-400 rounded-sm mr-2 shadow-sm"></div>Markers ({{ scene.stats.marker_count }})</div>
         </div>
-        <div><a href="{% url 'idf_upload' %}">Upload another file</a></div>
+
+        <a href="{% url 'idf_upload' %}" class="text-[12px] font-medium text-white bg-slate-800 hover:bg-slate-700 px-5 py-2 rounded-md shadow-md transition">Upload New</a>
     </div>
 
+    <!-- LEFT HIERARCHY PANEL -->
+    <div id="navpanel" class="glass-sidebar flex flex-col">
+        <h3 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest p-5 border-b border-slate-200">Assets & Hierarchy</h3>
+        
+        <div id="hierarchy-content" class="flex-grow p-4 space-y-3 overflow-y-auto">
+            <!-- Populated by viewer.js -->
+        </div>
+
+        <div class="p-5 border-t border-slate-200 bg-slate-50/50">
+            <h4 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest mb-3">Map Overlay</h4>
+            <input type="file" id="plotPlanInput" accept="image/*" class="w-full text-xs text-slate-700 mb-4 border border-slate-300 rounded p-1 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-slate-200 file:text-slate-800 file:font-medium hover:file:bg-slate-300 bg-white cursor-pointer transition shadow-sm">
+            
+            <div id="plotPlanControls" class="hidden text-xs space-y-4 text-slate-700">
+                <div>
+                    <label class="flex justify-between font-medium mb-1"><span class="text-slate-800">Scale</span> <span id="scaleVal" class="text-slate-600">1.0</span></label>
+                    <input type="range" id="ppScale" min="0.05" max="10" step="0.05" value="1" class="w-full h-1 bg-slate-300 rounded appearance-none cursor-pointer">
+                </div>
+                <div>
+                    <label class="flex justify-between font-medium mb-1"><span class="text-slate-800">Offset X</span> <span id="offsetXVal" class="text-slate-600">0</span></label>
+                    <input type="range" id="ppOffsetX" min="-5000" max="5000" step="10" value="0" class="w-full h-1 bg-slate-300 rounded appearance-none cursor-pointer">
+                </div>
+                <div>
+                    <label class="flex justify-between font-medium mb-1"><span class="text-slate-800">Offset Z</span> <span id="offsetZVal" class="text-slate-600">0</span></label>
+                    <input type="range" id="ppOffsetZ" min="-5000" max="5000" step="10" value="0" class="w-full h-1 bg-slate-300 rounded appearance-none cursor-pointer">
+                </div>
+                <div class="flex items-center pt-2">
+                    <button id="btnCenterMap" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white font-medium py-2 rounded transition shadow-md text-[11px]">Recenter to Camera</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- MAIN 3D VIEWER -->
     <div id="viewer"></div>
 
-    <div id="sidepanel">
-        <h3>Properties</h3>
-        <div id="props-content">
-            Click any pipe, fitting, weld, support, or marker.
+    <!-- RIGHT PROPERTIES PANEL -->
+    <div id="sidepanel" class="glass-sidebar flex flex-col">
+        <h3 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest mb-5">Properties</h3>
+        
+        <!-- Filter Controls -->
+        <div class="mb-6 bg-slate-50/80 p-4 rounded-lg border border-slate-200 shadow-sm">
+            <div class="flex justify-between items-center cursor-pointer" onclick="document.getElementById('displayFilters').classList.toggle('hidden')">
+                <span class="text-xs font-medium text-slate-800 tracking-wide">Display Settings</span>
+                <span class="text-slate-500 text-[10px] uppercase font-medium">Toggle</span>
+            </div>
+            <div id="displayFilters" class="hidden mt-4">
+                <div class="mb-4 pt-2 border-t border-slate-100">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-[11px] font-medium text-slate-500 tracking-wide">Pipe Thickness</label>
+                        <span id="thicknessValue" class="text-[11px] font-semibold text-slate-700">1.0x</span>
+                    </div>
+                    <input type="range" id="thicknessSlider" min="0.1" max="10.0" step="0.1" value="1.0" class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-600">
+                </div>
+                <div class="grid grid-cols-2 gap-y-3 gap-x-2 text-[11px] mb-4 text-slate-700 font-medium">
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" checked class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="pipeline_ref"> <span>Pipeline Ref</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" checked class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="materials"> <span>Materials</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" checked class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="insulation_spec"> <span>Insulation Spec</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" checked class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="instrument_tag"> <span>Instruments</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" checked class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="support_code"> <span>Support Code</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="raw_coords"> <span>Raw Coords</span>
+                    </label>
+                    <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                        <input type="checkbox" class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="unmapped"> <span>Unmapped</span>
+                    </label>
+                </div>
+                <button id="btnShowHidden" class="hidden w-full bg-slate-200 border border-slate-300 hover:bg-slate-300 text-slate-800 font-medium py-1.5 rounded transition shadow-sm text-[11px]">Restore Hidden Objects</button>
+            </div>
+        </div>
+
+        <div id="props-content" class="flex-grow">
+            <div class="text-center text-slate-400 mt-12 flex flex-col items-center">
+                <svg class="h-8 w-8 text-slate-300 mb-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
+                </svg>
+                <p class="text-[12px] tracking-wide px-4 text-slate-500">Select any pipe, fitting, weld, support, or marker to view details.</p>
+            </div>
         </div>
     </div>
 

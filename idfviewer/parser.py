@@ -1,6 +1,12 @@
 import re
 from statistics import median
+from .models import IDFFile, IDFComponent
 
+DN_RE = re.compile(r"\bDN\s*(\d+)\b", re.I)
+SCH_RE = re.compile(r"\bSch\s*([A-Z0-9/]+)\b", re.I)
+CLASS_RE = re.compile(r"\bCL\s*(\d+)\b", re.I)
+STD_RE = re.compile(r"\b(ASME\s+B[0-9.]+|MSS\s+SP-\d+)\b", re.I)
+ASTM_RE = re.compile(r"\bASTM\s+([A-Z0-9 .\-]+)", re.I)
 
 PIPE_IDS = {100, 101, 102, 103}
 WELD_IDS = {120}
@@ -44,6 +50,27 @@ KIND_MAP = {
     136: "Filter",
 }
 
+KNOWN_META = {"-20", "-21", "-22", "-26", "-30", "-31", "-37", "-39", "-40", "-46", "-70"}
+
+def derive_material_properties(materials):
+    text = " | ".join(
+        f"{m.get('code','')} {m.get('description','')}"
+        for m in materials
+    )
+
+    dns = DN_RE.findall(text)
+    schs = SCH_RE.findall(text)
+    classes = CLASS_RE.findall(text)
+    stds = STD_RE.findall(text)
+    astms = ASTM_RE.findall(text)
+
+    return {
+        "dn_values": sorted(set(dns)),
+        "schedules": sorted(set(schs)),
+        "pressure_classes": sorted(set(classes)),
+        "standards": sorted(set(stds)),
+        "astm_materials": sorted(set(a.strip() for a in astms)),
+    }
 
 def _clean_line(line: str) -> str:
     return line.replace("\x00", "").lstrip("\ufeff").rstrip()
@@ -64,18 +91,11 @@ def _extract_ints_after_record_id(line: str):
 
 
 def _extract_text_segments(line: str):
-    """
-    Pull text-ish comma-separated fragments from lines such as:
-      120 .... ,      ,       0 ,BW  ,      0     1
-      149 .... ,FLOW, ...
-      150 .... ,NCU7, ...
-    """
     segments = [seg.strip() for seg in line.split(",")]
     out = []
     for seg in segments:
         if not seg:
             continue
-        # Skip purely numeric fragments
         if re.fullmatch(r"[+\-]?\d+(\s+[+\-]?\d+)*", seg):
             continue
         if any(ch.isalpha() for ch in seg):
@@ -109,22 +129,13 @@ def _append_meta(item, meta_key, text):
     item["_meta"].setdefault(meta_key, []).append(text)
 
 
-def _collect_candidate_records(text: str):
+def _collect_candidate_records(text: str, filename: str):
     scene = {
-        "pipes": [],
-        "fittings": [],
-        "welds": [],
-        "supports": [],
-        "markers": [],
+        "pipes": [], "fittings": [], "welds": [], "supports": [], "markers": [],
         "stats": {
-            "total_lines": 0,
-            "parsed_records": 0,
-            "pipe_count": 0,
-            "fitting_count": 0,
-            "weld_count": 0,
-            "support_count": 0,
-            "marker_count": 0,
-            "scale_factor": 1.0,
+            "total_lines": 0, "parsed_records": 0, "pipe_count": 0,
+            "fitting_count": 0, "weld_count": 0, "support_count": 0,
+            "marker_count": 0, "scale_factor": 1.0,
         },
     }
 
@@ -144,21 +155,17 @@ def _collect_candidate_records(text: str):
         if record_id is None:
             continue
 
-        # Negative metadata lines
         if record_id < 0:
             if current_item is None:
                 continue
 
             text_part = line[len(str(record_id)):].strip()
-
             if record_id == -1:
-                # continuation line
                 if current_meta_key and current_item["_meta"].get(current_meta_key):
                     current_item["_meta"][current_meta_key][-1] += " " + text_part
             else:
                 current_meta_key = str(record_id)
                 _append_meta(current_item, current_meta_key, text_part)
-
             continue
 
         current_meta_key = None
@@ -167,65 +174,31 @@ def _collect_candidate_records(text: str):
         inline_code = text_segments[0] if text_segments else ""
 
         item = None
-
         if record_id in PIPE_IDS and len(nums) >= 6:
-            item = {
-                "uid": uid_counter,
-                "record_id": record_id,
-                "kind": _kind_name(record_id),
-                "inline_code": inline_code,
-                "start_raw": [nums[0], nums[1], nums[2]],
-                "end_raw": [nums[3], nums[4], nums[5]],
-                "_meta": {},
-            }
+            item = {"start_raw": [nums[0], nums[1], nums[2]], "end_raw": [nums[3], nums[4], nums[5]]}
             scene["pipes"].append(item)
-
         elif record_id in FITTING_IDS and len(nums) >= 6:
-            item = {
-                "uid": uid_counter,
-                "record_id": record_id,
-                "kind": _kind_name(record_id),
-                "inline_code": inline_code,
-                "start_raw": [nums[0], nums[1], nums[2]],
-                "end_raw": [nums[3], nums[4], nums[5]],
-                "_meta": {},
-            }
+            item = {"start_raw": [nums[0], nums[1], nums[2]], "end_raw": [nums[3], nums[4], nums[5]]}
             scene["fittings"].append(item)
-
         elif record_id in WELD_IDS and len(nums) >= 3:
-            item = {
-                "uid": uid_counter,
-                "record_id": record_id,
-                "kind": _kind_name(record_id),
-                "inline_code": inline_code,
-                "point_raw": [nums[0], nums[1], nums[2]],
-                "_meta": {},
-            }
+            item = {"point_raw": [nums[0], nums[1], nums[2]]}
             scene["welds"].append(item)
-
         elif record_id == 150 and len(nums) >= 3:
-            item = {
-                "uid": uid_counter,
-                "record_id": record_id,
-                "kind": _kind_name(record_id),
-                "inline_code": inline_code,
-                "point_raw": [nums[0], nums[1], nums[2]],
-                "_meta": {},
-            }
+            item = {"point_raw": [nums[0], nums[1], nums[2]]}
             scene["supports"].append(item)
-
         elif record_id == 149 and len(nums) >= 3:
-            item = {
-                "uid": uid_counter,
-                "record_id": record_id,
-                "kind": _kind_name(record_id),
-                "inline_code": inline_code,
-                "point_raw": [nums[0], nums[1], nums[2]],
-                "_meta": {},
-            }
+            item = {"point_raw": [nums[0], nums[1], nums[2]]}
             scene["markers"].append(item)
 
         if item is not None:
+            item.update({
+                "uid": uid_counter,
+                "record_id": record_id,
+                "kind": _kind_name(record_id),
+                "inline_code": inline_code,
+                "_meta": {},
+                "filename": filename
+            })
             current_item = item
             uid_counter += 1
 
@@ -234,97 +207,49 @@ def _collect_candidate_records(text: str):
 
 def _build_reference_scale(scene):
     magnitudes = []
-
     for bucket in ("pipes", "fittings"):
         for item in scene[bucket]:
-            s = item["start_raw"]
-            e = item["end_raw"]
-            if not _all_zero_point(s):
-                magnitudes.append(_point_magnitude(s))
-            if not _all_zero_point(e):
-                magnitudes.append(_point_magnitude(e))
+            if not _all_zero_point(item["start_raw"]): magnitudes.append(_point_magnitude(item["start_raw"]))
+            if not _all_zero_point(item["end_raw"]): magnitudes.append(_point_magnitude(item["end_raw"]))
 
     for bucket in ("welds", "supports", "markers"):
         for item in scene[bucket]:
-            p = item["point_raw"]
-            if not _all_zero_point(p):
-                magnitudes.append(_point_magnitude(p))
+            if not _all_zero_point(item["point_raw"]): magnitudes.append(_point_magnitude(item["point_raw"]))
 
-    if not magnitudes:
-        return 1.0
-
-    return median(magnitudes)
+    return median(magnitudes) if magnitudes else 1.0
 
 
 def _is_valid_geometry_record(item, reference_scale):
     low_limit = max(reference_scale * 0.1, 1000)
 
     if _record_is_point_to_point(item):
-        s = item["start_raw"]
-        e = item["end_raw"]
-
-        if _all_zero_point(s) and _all_zero_point(e):
-            return False
-
-        if _point_magnitude(s) < low_limit and _point_magnitude(e) < low_limit:
-            return False
-
+        s, e = item["start_raw"], item["end_raw"]
+        if _all_zero_point(s) and _all_zero_point(e): return False
+        if _point_magnitude(s) < low_limit and _point_magnitude(e) < low_limit: return False
         return True
 
     if _record_is_single_point(item):
         p = item["point_raw"]
-
-        if _all_zero_point(p):
-            return False
-
-        if _point_magnitude(p) < low_limit:
-            return False
-
+        if _all_zero_point(p): return False
+        if _point_magnitude(p) < low_limit: return False
         return True
-
     return False
 
 
 def _filter_scene(scene):
-    reference_scale = _build_reference_scale(scene)
-
-    filtered = {
-        "pipes": [],
-        "fittings": [],
-        "welds": [],
-        "supports": [],
-        "markers": [],
-        "stats": {
-            "total_lines": scene["stats"]["total_lines"],
-            "parsed_records": 0,
-            "pipe_count": 0,
-            "fitting_count": 0,
-            "weld_count": 0,
-            "support_count": 0,
-            "marker_count": 0,
-            "scale_factor": 1.0,
-            "reference_scale": reference_scale,
-        },
-    }
+    ref_scale = _build_reference_scale(scene)
+    filtered = {"pipes": [], "fittings": [], "welds": [], "supports": [], "markers": [], "stats": scene["stats"]}
+    filtered["stats"]["reference_scale"] = ref_scale
 
     for bucket in ("pipes", "fittings", "welds", "supports", "markers"):
         for item in scene[bucket]:
-            if _is_valid_geometry_record(item, reference_scale):
+            if _is_valid_geometry_record(item, ref_scale):
                 filtered[bucket].append(item)
 
-    filtered["stats"]["pipe_count"] = len(filtered["pipes"])
-    filtered["stats"]["fitting_count"] = len(filtered["fittings"])
-    filtered["stats"]["weld_count"] = len(filtered["welds"])
-    filtered["stats"]["support_count"] = len(filtered["supports"])
-    filtered["stats"]["marker_count"] = len(filtered["markers"])
-    filtered["stats"]["parsed_records"] = (
-        filtered["stats"]["pipe_count"]
-        + filtered["stats"]["fitting_count"]
-        + filtered["stats"]["weld_count"]
-        + filtered["stats"]["support_count"]
-        + filtered["stats"]["marker_count"]
-    )
-
+    for k in ["pipe", "fitting", "weld", "support", "marker"]:
+        filtered["stats"][f"{k}_count"] = len(filtered[f"{k}s"])
+        
+    filtered["stats"]["parsed_records"] = sum(filtered["stats"][f"{k}_count"] for k in ["pipe", "fitting", "weld", "support", "marker"])
     return filtered
 
 
@@ -332,33 +257,37 @@ def _build_properties(item):
     meta = item.get("_meta", {})
 
     materials = []
-    codes = meta.get("-20", [])
-    descs = meta.get("-21", [])
-
-    max_len = max(len(codes), len(descs))
-    for i in range(max_len):
+    codes, descs = meta.get("-20", []), meta.get("-21", [])
+    for i in range(max(len(codes), len(descs))):
         materials.append({
             "code": codes[i] if i < len(codes) else "",
             "description": descs[i] if i < len(descs) else "",
         })
+
+    unmapped = {k: v for k, v in meta.items() if k not in KNOWN_META}
 
     props = {
         "uid": item.get("uid"),
         "record_id": item.get("record_id"),
         "kind": item.get("kind"),
         "inline_code": item.get("inline_code", ""),
-        "component_ref": " | ".join(meta.get("-39", [])),
+        "materials": materials,
+        "instrument_tag": " | ".join(meta.get("-22", [])),
+        "insulation_spec": " | ".join(meta.get("-26", [])),
         "pipeline_ref": " | ".join(meta.get("-30", [])),
+        "spool_ref": " | ".join(meta.get("-31", [])),
+        "component_ref": " | ".join(meta.get("-39", [])),
+        "direction": " | ".join(meta.get("-40", []) + meta.get("-46", [])),
         "support_code": " | ".join(meta.get("-70", [])),
         "notes": meta.get("-37", []),
-        "materials": materials,
+        "unmapped_meta": unmapped,
         "raw_meta": meta,
+        "filename": item.get("filename"),
     }
 
     if "start_raw" in item:
         props["raw_start"] = item["start_raw"]
         props["raw_end"] = item["end_raw"]
-
     if "point_raw" in item:
         props["raw_point"] = item["point_raw"]
 
@@ -367,57 +296,32 @@ def _build_properties(item):
 
 def _normalize_points(scene):
     all_points = []
-
-    for item in scene["pipes"]:
-        all_points.append(tuple(item["start_raw"]))
-        all_points.append(tuple(item["end_raw"]))
-
-    for item in scene["fittings"]:
-        all_points.append(tuple(item["start_raw"]))
-        all_points.append(tuple(item["end_raw"]))
-
-    for item in scene["welds"]:
-        all_points.append(tuple(item["point_raw"]))
-
-    for item in scene["supports"]:
-        all_points.append(tuple(item["point_raw"]))
-
-    for item in scene["markers"]:
-        all_points.append(tuple(item["point_raw"]))
+    for bucket in ("pipes", "fittings"):
+        for item in scene[bucket]:
+            all_points.extend([tuple(item["start_raw"]), tuple(item["end_raw"])])
+    for bucket in ("welds", "supports", "markers"):
+        for item in scene[bucket]:
+            all_points.append(tuple(item["point_raw"]))
 
     if not all_points:
-        scene["stats"]["scale_factor"] = 1.0
+        scene["stats"]["scale_factor"], scene["stats"]["raw_bounds"] = 1.0, {}
         return scene
 
-    xs = [p[0] for p in all_points]
-    ys = [p[1] for p in all_points]
-    zs = [p[2] for p in all_points]
-
+    xs, ys, zs = [p[0] for p in all_points], [p[1] for p in all_points], [p[2] for p in all_points]
     min_x, max_x = min(xs), max(xs)
     min_y, max_y = min(ys), max(ys)
     min_z, max_z = min(zs), max(zs)
-
-    cx = (min_x + max_x) / 2.0
-    cy = (min_y + max_y) / 2.0
-    cz = (min_z + max_z) / 2.0
-
-    span_x = max_x - min_x
-    span_y = max_y - min_y
-    span_z = max_z - min_z
-    max_span = max(span_x, span_y, span_z, 1.0)
-
-    scale = 250.0 / max_span
+    
+    cx, cy, cz = (min_x + max_x) / 2.0, (min_y + max_y) / 2.0, (min_z + max_z) / 2.0
+    # Convert typical mm measurements to meters for stable WebGL scale without collapsing faraway pipelines
+    scale = 0.001
 
     def tx(p):
-        x = (p[0] - cx) * scale
-        y = (p[2] - cz) * scale
-        z = (p[1] - cy) * scale
-        return [x, y, z]
+        return [(p[0] - cx) * scale, (p[2] - cz) * scale, (p[1] - cy) * scale]
 
     for bucket in ("pipes", "fittings"):
         for item in scene[bucket]:
-            item["start"] = tx(item["start_raw"])
-            item["end"] = tx(item["end_raw"])
+            item["start"], item["end"] = tx(item["start_raw"]), tx(item["end_raw"])
             item["properties"] = _build_properties(item)
 
     for bucket in ("welds", "supports", "markers"):
@@ -425,34 +329,61 @@ def _normalize_points(scene):
             item["point"] = tx(item["point_raw"])
             item["properties"] = _build_properties(item)
 
-    scene["stats"]["scale_factor"] = scale
-    scene["stats"]["raw_bounds"] = {
-        "min_x": min_x, "max_x": max_x,
-        "min_y": min_y, "max_y": max_y,
-        "min_z": min_z, "max_z": max_z,
-    }
-
+    scene["stats"].update({"scale_factor": scale, "raw_bounds": {
+        "min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y, "min_z": min_z, "max_z": max_z
+    }})
     return scene
 
 
 def _strip_internal(scene):
     for bucket in ("pipes", "fittings"):
         for item in scene[bucket]:
-            item.pop("start_raw", None)
-            item.pop("end_raw", None)
-            item.pop("_meta", None)
-
+            item.pop("start_raw", None); item.pop("end_raw", None); item.pop("_meta", None)
     for bucket in ("welds", "supports", "markers"):
         for item in scene[bucket]:
-            item.pop("point_raw", None)
-            item.pop("_meta", None)
-
+            item.pop("point_raw", None); item.pop("_meta", None)
     return scene
 
 
-def parse_idf_text(text: str):
-    scene = _collect_candidate_records(text)
-    scene = _filter_scene(scene)
-    scene = _normalize_points(scene)
-    scene = _strip_internal(scene)
-    return scene
+def parse_multiple_idf_texts(file_payloads, project):
+    combined_scene = {"pipes": [], "fittings": [], "welds": [], "supports": [], "markers": [], "stats": {"total_lines": 0}}
+    
+    db_files = {}
+    for filename, text in file_payloads:
+        idf_file = IDFFile.objects.create(project=project, filename=filename)
+        db_files[filename] = idf_file
+        
+        scene = _collect_candidate_records(text, filename)
+        for bucket in ["pipes", "fittings", "welds", "supports", "markers"]:
+            combined_scene[bucket].extend(scene[bucket])
+        combined_scene["stats"]["total_lines"] += scene["stats"]["total_lines"]
+        
+    combined_scene = _filter_scene(combined_scene)
+    combined_scene = _normalize_points(combined_scene)
+    
+    bounds = combined_scene["stats"].get("raw_bounds", {})
+    if bounds:
+        IDFFile.objects.filter(id__in=[f.id for f in db_files.values()]).update(**bounds)
+
+    db_components = []
+    bucket_keys = ["pipes", "fittings", "welds", "supports", "markers"]
+    for bucket in bucket_keys:
+        for item in combined_scene[bucket]:
+            p = item["properties"]
+            lines = p.get('pipeline_ref', '')
+            db_components.append(IDFComponent(
+                idf_file=db_files[p["filename"]],
+                project=project,
+                uid=p["uid"],
+                record_id=p["record_id"],
+                kind=p["kind"],
+                line_id=lines if len(lines) <= 100 else lines[:100],
+                properties=p
+            ))
+            
+    batch_size = 5000
+    for i in range(0, len(db_components), batch_size):
+        IDFComponent.objects.bulk_create(db_components[i:i+batch_size])
+
+    combined_scene = _strip_internal(combined_scene)
+    return combined_scene

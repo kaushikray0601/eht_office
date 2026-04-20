@@ -2,32 +2,127 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>IDF Upload</title>
+    <title>IDF Upload & Viewer Setup</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
-            font-family: Arial, sans-serif;
-            margin: 30px;
+            background-color: #f1f5f9;
+            background-image: radial-gradient(circle at top right, #e2e8f0 0%, transparent 40%),
+                              radial-gradient(circle at bottom left, #e2e8f0 0%, transparent 40%);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            color: #1e293b;
         }
-        .box {
-            max-width: 700px;
-            border: 1px solid #ccc;
-            padding: 20px;
-            border-radius: 8px;
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.75);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.8);
+            box-shadow: 0 8px 32px rgba(31, 38, 135, 0.08);
         }
-        button {
-            padding: 10px 16px;
-            cursor: pointer;
+        
+        /* Clean up Django form inputs */
+        input[type="file"], select {
+            width: 100%;
+            font-size: 0.875rem;
+            color: #334155;
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid rgba(203, 213, 225, 0.8);
+            border-radius: 0.375rem;
+            padding: 0.5rem;
+            transition: all 0.2s;
+            box-shadow: inset 0 1px 2px rgba(0,0,0,0.02);
         }
+        input[type="file"]::file-selector-button {
+            margin-right: 1rem; padding: 0.25rem 0.75rem;
+            border-radius: 0.25rem; border: none;
+            background: #e2e8f0; color: #1e293b;
+            font-weight: 500; cursor: pointer; transition: all 0.2s;
+        }
+        input[type="file"]::file-selector-button:hover { background: #cbd5e1; }
+        select:focus { outline: none; border-color: #94a3b8; box-shadow: 0 0 0 1px #94a3b8; }
     </style>
 </head>
-<body>
-    <div class="box">
-        <h2>Upload Plant / Isogen IDF</h2>
-        <form method="post" enctype="multipart/form-data">
+<body class="min-h-screen flex items-center justify-center p-6 bg-slate-50">
+    <div class="glass-panel w-full max-w-lg rounded-xl p-10 space-y-8">
+        <div class="text-center">
+            <h1 class="text-[22px] font-medium text-slate-800 tracking-wide">ELECSENSE <span class="text-slate-500">Pipeline</span></h1>
+            <p class="text-[13px] text-slate-600 tracking-wide mt-2">Select project and upload pipeline structures</p>
+        </div>
+        
+        {% if messages %}
+            <div class="bg-white/80 border border-slate-200 shadow-sm text-slate-700 px-4 py-3 rounded-md relative text-sm text-center" role="alert">
+                {% for message in messages %}
+                    <span class="block sm:inline">{{ message }}</span>
+                {% endfor %}
+            </div>
+        {% endif %}
+
+        <form method="post" enctype="multipart/form-data" id="uploadForm" class="space-y-6">
             {% csrf_token %}
-            {{ form.as_p }}
-            <button type="submit">Upload and View</button>
+            
+            <div class="space-y-5">
+                {% for field in form %}
+                    <div class="flex flex-col space-y-1.5">
+                        <label for="{{ field.id_for_label }}" class="font-medium text-slate-700 text-[13px] tracking-wide">{{ field.label }}</label>
+                        {{ field }}
+                        {% if field.help_text %}
+                            <p class="text-[11px] text-slate-500">{{ field.help_text }}</p>
+                        {% endif %}
+                        {% if field.errors %}
+                            <p class="text-red-500 text-xs mt-1 font-medium">{{ field.errors|striptags }}</p>
+                        {% endif %}
+                    </div>
+                {% endfor %}
+            </div>
+
+            <div class="pt-6">
+                <button type="submit" id="submitBtn" class="w-full bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white tracking-wide font-medium py-3 px-4 rounded shadow-md text-sm transition duration-200 hover:-translate-y-0.5">
+                    Process & View 3D Pipeline
+                </button>
+            </div>
         </form>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+             const fileInput = document.querySelector('input[name="idf_files"]');
+             const dirInput = document.querySelector('input[name="idf_directory"]');
+             const form = document.getElementById('uploadForm');
+             const btn = document.getElementById('submitBtn');
+             const projectSelect = document.querySelector('select[name="project"]');
+             
+             // Auto-submit functionality wrapper
+             const triggerSubmit = () => {
+                 if (!projectSelect.value) {
+                     alert("Please select a Project before uploading files.");
+                     if(fileInput) fileInput.value = "";
+                     if(dirInput) dirInput.value = "";
+                     return;
+                 }
+                 
+                 btn.innerHTML = `
+                     <span class="inline-flex items-center">
+                         <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                         Processing Files...
+                     </span>
+                 `;
+                 btn.disabled = true;
+                 form.submit();
+             };
+
+             const handleAutoSubmit = (e) => {
+                 if (e.target.files.length > 0) {
+                     triggerSubmit();
+                 }
+             };
+
+             if (fileInput) fileInput.addEventListener('change', handleAutoSubmit);
+             if (dirInput) dirInput.addEventListener('change', handleAutoSubmit);
+             
+             // In case the user selects files THEN changes project dropdown, we shouldn't auto submit on project change,
+             // let the user manually click Upload since the file input 'change' event already fired (and was blocked if proj was empty).
+        });
+    </script>
 </body>
 </html>
