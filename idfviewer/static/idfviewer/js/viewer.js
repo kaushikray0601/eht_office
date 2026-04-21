@@ -4,6 +4,14 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const sceneDataEl = document.getElementById('scene-data');
 const container = document.getElementById('viewer');
 const propsContent = document.getElementById('props-content');
+const pageBody = document.body;
+const navPanelToggleBtn = document.getElementById('navpanel-toggle');
+const navPanelReopenBtn = document.getElementById('navpanel-reopen');
+const toggleAllHierarchy = document.getElementById('toggleAllHierarchy');
+const hierarchySelectionCount = document.getElementById('hierarchySelectionCount');
+const hContent = document.getElementById("hierarchy-content");
+const richSymbolToggle = document.getElementById('toggleRichSymbols');
+const contextLabelToggle = document.getElementById('toggleContextLabels');
 
 if (!sceneDataEl) throw new Error("scene-data script tag not found");
 if (!container) throw new Error("viewer container not found");
@@ -57,6 +65,7 @@ scene.add(gridHelper);
 
 let axesHelper = new THREE.AxesHelper(80);
 scene.add(axesHelper);
+let ground = null;
 
 const modelGroup = new THREE.Group();
 scene.add(modelGroup);
@@ -65,6 +74,7 @@ const raycaster = new THREE.Raycaster();
 const mouse = new THREE.Vector2();
 const selectableMeshes = [];
 const manuallyHiddenItems = new Set();
+const contextLabels = [];
 
 let selectedGroup = null;
 
@@ -94,15 +104,28 @@ function getItemVisibilityKey(item) {
     return `${getHierarchyFile(item)}___${props.uid ?? "no-uid"}___${props.record_id ?? item.kind ?? "item"}`;
 }
 
-function registerSelectable(mesh, item, selectGroup) {
+function setNavPanelCollapsed(collapsed) {
+    pageBody.classList.toggle('nav-collapsed', collapsed);
+    if (navPanelToggleBtn) {
+        navPanelToggleBtn.textContent = collapsed ? "Show" : "Hide";
+    }
+    setTimeout(() => {
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+    }, 230);
+}
+
+function registerSelectable(mesh, item, selectGroup, { richSymbol = false } = {}) {
     mesh.userData.item = item;
     mesh.userData.selectGroup = selectGroup;
     mesh.userData.hierarchyKey = getHierarchyKey(item);
     mesh.userData.visibilityKey = getItemVisibilityKey(item);
+    mesh.userData.isRichSymbol = richSymbol;
     selectableMeshes.push(mesh);
 }
 
-function addCylinderBetweenPoints(startArr, endArr, radius, color, item, selectGroup) {
+function addCylinderBetweenPoints(startArr, endArr, radius, color, item, selectGroup, { richSymbol = false } = {}) {
     const start = vecFromArray(startArr);
     const end = vecFromArray(endArr);
 
@@ -115,7 +138,7 @@ function addCylinderBetweenPoints(startArr, endArr, radius, color, item, selectG
         const s = new THREE.Mesh(g, m);
         s.position.copy(start);
         modelGroup.add(s);
-        registerSelectable(s, item, selectGroup);
+        registerSelectable(s, item, selectGroup, { richSymbol });
         selectGroup.push(s);
         return s;
     }
@@ -134,31 +157,156 @@ function addCylinderBetweenPoints(startArr, endArr, radius, color, item, selectG
     );
 
     modelGroup.add(cylinder);
-    registerSelectable(cylinder, item, selectGroup);
+    registerSelectable(cylinder, item, selectGroup, { richSymbol });
     selectGroup.push(cylinder);
     return cylinder;
 }
 
-function addSphere(pointArr, color, radius, item, selectGroup) {
+function addSphere(pointArr, color, radius, item, selectGroup, { richSymbol = false } = {}) {
     const geometry = new THREE.SphereGeometry(radius, 14, 14);
     const material = new THREE.MeshStandardMaterial({ color });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(vecFromArray(pointArr));
     modelGroup.add(mesh);
-    registerSelectable(mesh, item, selectGroup);
+    registerSelectable(mesh, item, selectGroup, { richSymbol });
     selectGroup.push(mesh);
     return mesh;
 }
 
-function addCube(pointArr, color, size, item, selectGroup) {
+function addCube(pointArr, color, size, item, selectGroup, { richSymbol = false } = {}) {
     const geometry = new THREE.BoxGeometry(size, size, size);
     const material = new THREE.MeshStandardMaterial({ color });
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.copy(vecFromArray(pointArr));
     modelGroup.add(mesh);
-    registerSelectable(mesh, item, selectGroup);
+    registerSelectable(mesh, item, selectGroup, { richSymbol });
     selectGroup.push(mesh);
     return mesh;
+}
+
+function addStandaloneMesh(mesh, item, selectGroup, { richSymbol = false, selectable = true } = {}) {
+    modelGroup.add(mesh);
+    if (selectable) {
+        registerSelectable(mesh, item, selectGroup, { richSymbol });
+        selectGroup.push(mesh);
+    }
+    return mesh;
+}
+
+function orientObjectToDirection(object, direction) {
+    const safeDirection = direction && direction.lengthSq() > 0.000001
+        ? direction.clone().normalize()
+        : new THREE.Vector3(1, 0, 0);
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    object.quaternion.setFromUnitVectors(yAxis, safeDirection);
+}
+
+function getSegmentDirection(startArr, endArr) {
+    return vecFromArray(endArr).sub(vecFromArray(startArr)).normalize();
+}
+
+function pointAlongSegment(startArr, endArr, t) {
+    return [
+        startArr[0] + (endArr[0] - startArr[0]) * t,
+        startArr[1] + (endArr[1] - startArr[1]) * t,
+        startArr[2] + (endArr[2] - startArr[2]) * t,
+    ];
+}
+
+function midpointOfSegment(startArr, endArr) {
+    return pointAlongSegment(startArr, endArr, 0.5);
+}
+
+const segmentSources = [...(sceneData.pipes || []), ...(sceneData.fittings || [])]
+    .filter(item => item.start && item.end)
+    .map(item => {
+        const start = vecFromArray(item.start);
+        const end = vecFromArray(item.end);
+        const delta = new THREE.Vector3().subVectors(end, start);
+        return {
+            start,
+            end,
+            direction: delta.lengthSq() > 0.000001 ? delta.normalize() : new THREE.Vector3(1, 0, 0),
+        };
+    });
+
+function findNearestDirection(pointArr) {
+    if (!segmentSources.length) return new THREE.Vector3(1, 0, 0);
+    const point = vecFromArray(pointArr);
+    let bestDistance = Infinity;
+    let bestDirection = segmentSources[0].direction.clone();
+
+    segmentSources.forEach(source => {
+        const segment = new THREE.Vector3().subVectors(source.end, source.start);
+        const lengthSq = segment.lengthSq();
+        if (lengthSq < 0.000001) return;
+        const t = THREE.MathUtils.clamp(
+            new THREE.Vector3().subVectors(point, source.start).dot(segment) / lengthSq,
+            0,
+            1
+        );
+        const closestPoint = source.start.clone().add(segment.multiplyScalar(t));
+        const distanceSq = point.distanceToSquared(closestPoint);
+        if (distanceSq < bestDistance) {
+            bestDistance = distanceSq;
+            bestDirection = source.direction.clone();
+        }
+    });
+
+    return bestDirection;
+}
+
+function getItemDirection(item) {
+    if (item.start && item.end) {
+        return getSegmentDirection(item.start, item.end);
+    }
+    if (item.point) {
+        return findNearestDirection(item.point);
+    }
+    return new THREE.Vector3(1, 0, 0);
+}
+
+function getHorizontalPerpendicular(direction) {
+    const side = new THREE.Vector3(-direction.z, 0, direction.x);
+    if (side.lengthSq() < 0.000001) {
+        return new THREE.Vector3(0, 0, 1);
+    }
+    return side.normalize();
+}
+
+function addOrientedCylinderAt(pointArr, direction, radius, length, color, item, selectGroup, options = {}) {
+    const geometry = new THREE.CylinderGeometry(radius, radius, length, 12);
+    const material = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(vecFromArray(pointArr));
+    orientObjectToDirection(mesh, direction);
+    return addStandaloneMesh(mesh, item, selectGroup, options);
+}
+
+function addOrientedConeAt(pointArr, direction, radius, length, color, item, selectGroup, options = {}) {
+    const geometry = new THREE.ConeGeometry(radius, length, 14);
+    const material = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(vecFromArray(pointArr));
+    orientObjectToDirection(mesh, direction);
+    return addStandaloneMesh(mesh, item, selectGroup, options);
+}
+
+function addOrientedBoxAt(pointArr, direction, width, height, depth, color, item, selectGroup, options = {}) {
+    const geometry = new THREE.BoxGeometry(width, height, depth);
+    const material = new THREE.MeshStandardMaterial({ color });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(vecFromArray(pointArr));
+    orientObjectToDirection(mesh, direction);
+    return addStandaloneMesh(mesh, item, selectGroup, options);
+}
+
+function addOctahedronAt(pointArr, color, size, item, selectGroup, options = {}) {
+    const geometry = new THREE.OctahedronGeometry(size);
+    const material = new THREE.MeshStandardMaterial({ color, flatShading: true });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.copy(vecFromArray(pointArr));
+    return addStandaloneMesh(mesh, item, selectGroup, options);
 }
 
 // Calculate dynamic geometry sizing to prevent support cubes swallowing pipelines when scaling varies drastically
@@ -185,8 +333,310 @@ const sizes = {
     fittingGlandRad: baseRadius * 2.1,
     weldRad: baseRadius * 2.1,
     supportSize: baseRadius * 4.5,
-    markerRad: baseRadius * 2.5
+    supportStem: baseRadius * 4.2,
+    supportPlate: baseRadius * 7.5,
+    supportFrameWidth: baseRadius * 6.5,
+    markerRad: baseRadius * 2.5,
+    arrowShaft: baseRadius * 0.8,
+    arrowLength: baseRadius * 9,
+    labelLift: baseRadius * 7,
+    labelScale: baseRadius * 10
 };
+
+function clampLabelText(text, maxChars = 30) {
+    const normalized = (text || "").replace(/\s+/g, " ").trim();
+    if (!normalized) return "";
+    return normalized.length > maxChars ? normalized.slice(0, maxChars - 1) + "…" : normalized;
+}
+
+function getContextLabelText(item) {
+    const props = getItemProperties(item);
+    if (props.notes && props.notes.length) return clampLabelText(props.notes[0], 34);
+    if (item.kind === "Support") return clampLabelText(props.support_code || props.inline_code, 22);
+    if (item.kind === "Marker") return clampLabelText(props.inline_code || props.component_ref, 16);
+    if (props.kind === "Valve" || props.kind === "Flange") return clampLabelText(props.component_ref, 22);
+    return "";
+}
+
+function createTextSprite(text, tone = {}) {
+    const label = clampLabelText(text);
+    if (!label) return null;
+
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    const fontSize = 34;
+    const paddingX = 22;
+    const paddingY = 12;
+    ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
+    const textWidth = Math.ceil(ctx.measureText(label).width);
+    canvas.width = textWidth + paddingX * 2;
+    canvas.height = fontSize + paddingY * 2;
+
+    ctx.font = `600 ${fontSize}px Inter, system-ui, sans-serif`;
+    ctx.fillStyle = tone.background || 'rgba(255,255,255,0.92)';
+    ctx.strokeStyle = tone.border || 'rgba(148,163,184,0.65)';
+    ctx.lineWidth = 2;
+
+    const radius = 12;
+    const x = 1;
+    const y = 1;
+    const width = canvas.width - 2;
+    const height = canvas.height - 2;
+    ctx.beginPath();
+    ctx.moveTo(x + radius, y);
+    ctx.lineTo(x + width - radius, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+    ctx.lineTo(x + width, y + height - radius);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+    ctx.lineTo(x + radius, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+    ctx.lineTo(x, y + radius);
+    ctx.quadraticCurveTo(x, y, x + radius, y);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = tone.text || '#1e293b';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, paddingX, canvas.height / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    const material = new THREE.SpriteMaterial({
+        map: texture,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+    });
+    const sprite = new THREE.Sprite(material);
+    const aspect = canvas.width / canvas.height;
+    sprite.scale.set(sizes.labelScale * aspect, sizes.labelScale, 1);
+    return sprite;
+}
+
+function addContextLabel(item, pointArr, text, tone = {}) {
+    const sprite = createTextSprite(text, tone);
+    if (!sprite) return;
+    sprite.position.copy(vecFromArray(pointArr)).add(new THREE.Vector3(0, sizes.labelLift, 0));
+    sprite.userData.hierarchyKey = getHierarchyKey(item);
+    sprite.userData.visibilityKey = getItemVisibilityKey(item);
+    modelGroup.add(sprite);
+    contextLabels.push(sprite);
+}
+
+function addFittingAccent(item, selectGroup) {
+    const recordId = item.record_id ?? item.properties?.record_id;
+    const direction = getItemDirection(item);
+    const midpoint = midpointOfSegment(item.start, item.end);
+
+    if (recordId === 130) {
+        addOctahedronAt(midpoint, 0x0f766e, sizes.fittingGlandRad * 0.85, item, selectGroup, { richSymbol: true });
+        addOrientedBoxAt(
+            [midpoint[0], midpoint[1] + sizes.fittingGlandRad * 1.15, midpoint[2]],
+            getHorizontalPerpendicular(direction),
+            sizes.fittingRad * 0.45,
+            sizes.fittingGlandRad * 1.8,
+            sizes.fittingRad * 0.45,
+            0x134e4a,
+            item,
+            selectGroup,
+            { richSymbol: true }
+        );
+        return;
+    }
+
+    if (recordId === 105 || recordId === 107) {
+        addOrientedCylinderAt(
+            pointAlongSegment(item.start, item.end, 0.38),
+            direction,
+            sizes.fittingGlandRad * 0.7,
+            sizes.fittingRad * 1.4,
+            0x1d4ed8,
+            item,
+            selectGroup,
+            { richSymbol: true }
+        );
+        addOrientedCylinderAt(
+            pointAlongSegment(item.start, item.end, 0.62),
+            direction,
+            sizes.fittingGlandRad * 0.7,
+            sizes.fittingRad * 1.4,
+            0x1d4ed8,
+            item,
+            selectGroup,
+            { richSymbol: true }
+        );
+        return;
+    }
+
+    if (recordId === 110) {
+        addOrientedCylinderAt(
+            midpoint,
+            direction,
+            sizes.fittingGlandRad * 0.68,
+            sizes.fittingRad * 0.55,
+            0xf59e0b,
+            item,
+            selectGroup,
+            { richSymbol: true }
+        );
+        return;
+    }
+
+    if (recordId === 115) {
+        addCube(midpoint, 0x92400e, sizes.fittingGlandRad * 1.2, item, selectGroup, { richSymbol: true });
+        return;
+    }
+
+    addSphere(midpoint, 0x2563eb, sizes.fittingGlandRad, item, selectGroup);
+}
+
+function addFlowMarkerSymbol(item, selectGroup) {
+    const direction = getItemDirection(item);
+    const anchor = vecFromArray(item.point);
+    const shaftLength = sizes.arrowLength * 0.6;
+    const shaftCenter = anchor.clone().add(direction.clone().multiplyScalar(shaftLength * 0.2));
+    const coneCenter = anchor.clone().add(direction.clone().multiplyScalar(shaftLength * 0.75));
+
+    addSphere(item.point, 0xea580c, sizes.markerRad * 0.78, item, selectGroup);
+    addOrientedCylinderAt(
+        [shaftCenter.x, shaftCenter.y, shaftCenter.z],
+        direction,
+        sizes.arrowShaft,
+        shaftLength,
+        0xf97316,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+    addOrientedConeAt(
+        [coneCenter.x, coneCenter.y, coneCenter.z],
+        direction,
+        sizes.markerRad * 1.3,
+        sizes.arrowLength * 0.32,
+        0xfb923c,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+}
+
+function addFloorSupportSymbol(item, selectGroup) {
+    const direction = getItemDirection(item);
+    const anchor = vecFromArray(item.point);
+    const platePoint = anchor.clone().add(new THREE.Vector3(0, -sizes.supportStem * 0.45, 0));
+
+    addCube(item.point, 0x16a34a, sizes.supportSize * 0.42, item, selectGroup);
+    addOrientedCylinderAt(
+        [anchor.x, anchor.y - sizes.supportStem * 0.2, anchor.z],
+        new THREE.Vector3(0, 1, 0),
+        sizes.arrowShaft * 0.85,
+        sizes.supportStem * 0.7,
+        0x15803d,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+    addOrientedBoxAt(
+        [platePoint.x, platePoint.y, platePoint.z],
+        new THREE.Vector3(0, 1, 0),
+        sizes.supportPlate,
+        sizes.arrowShaft * 1.6,
+        sizes.supportPlate * 0.78,
+        0x166534,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+    addOrientedBoxAt(
+        [anchor.x, anchor.y - sizes.supportStem * 0.05, anchor.z],
+        direction,
+        sizes.arrowShaft * 1.2,
+        sizes.supportFrameWidth,
+        sizes.arrowShaft * 1.2,
+        0x22c55e,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+}
+
+function addNozzleSupportSymbol(item, selectGroup) {
+    const direction = getItemDirection(item);
+    const side = getHorizontalPerpendicular(direction);
+    const anchor = vecFromArray(item.point);
+    const halfWidth = sizes.supportFrameWidth * 0.34;
+    const topY = anchor.y + sizes.supportStem * 0.26;
+    const lowerY = anchor.y - sizes.supportStem * 0.34;
+
+    addCube(item.point, 0x16a34a, sizes.supportSize * 0.38, item, selectGroup);
+    addOrientedCylinderAt(
+        [anchor.x + side.x * halfWidth, (topY + lowerY) / 2, anchor.z + side.z * halfWidth],
+        new THREE.Vector3(0, 1, 0),
+        sizes.arrowShaft * 0.72,
+        topY - lowerY,
+        0x15803d,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+    addOrientedCylinderAt(
+        [anchor.x - side.x * halfWidth, (topY + lowerY) / 2, anchor.z - side.z * halfWidth],
+        new THREE.Vector3(0, 1, 0),
+        sizes.arrowShaft * 0.72,
+        topY - lowerY,
+        0x15803d,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+    addOrientedBoxAt(
+        [anchor.x, topY, anchor.z],
+        side,
+        sizes.arrowShaft * 1.1,
+        sizes.supportFrameWidth,
+        sizes.arrowShaft * 1.1,
+        0x22c55e,
+        item,
+        selectGroup,
+        { richSymbol: true }
+    );
+}
+
+function applySceneVisibility({ refit = false } = {}) {
+    const pipeToggles = hContent ? document.querySelectorAll('.pipe-toggle') : [];
+    const activeHierarchyKeys = new Set();
+    if (pipeToggles.length) {
+        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
+            activeHierarchyKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
+        });
+    }
+
+    selectableMeshes.forEach(mesh => {
+        const hierarchyVisible = pipeToggles.length
+            ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
+            : true;
+        const itemVisible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
+        const richVisible = mesh.userData.isRichSymbol
+            ? (richSymbolToggle ? richSymbolToggle.checked : true)
+            : true;
+        mesh.visible = hierarchyVisible && itemVisible && richVisible;
+    });
+
+    contextLabels.forEach(sprite => {
+        const hierarchyVisible = pipeToggles.length
+            ? activeHierarchyKeys.has(sprite.userData.hierarchyKey)
+            : true;
+        const itemVisible = !manuallyHiddenItems.has(sprite.userData.visibilityKey);
+        const labelVisible = contextLabelToggle ? contextLabelToggle.checked : true;
+        sprite.visible = hierarchyVisible && itemVisible && labelVisible;
+    });
+
+    if (refit) {
+        fitCameraToObject(modelGroup);
+    }
+}
 
 function addPipe(item) {
     const selectGroup = [];
@@ -196,9 +646,16 @@ function addPipe(item) {
 function addFitting(item) {
     const selectGroup = [];
     addCylinderBetweenPoints(item.start, item.end, sizes.fittingRad, 0x2563eb, item, selectGroup);
+    addFittingAccent(item, selectGroup);
 
-    const midpoint = [(item.start[0] + item.end[0]) / 2, (item.start[1] + item.end[1]) / 2, (item.start[2] + item.end[2]) / 2];
-    addSphere(midpoint, 0x2563eb, sizes.fittingGlandRad, item, selectGroup);
+    const labelText = getContextLabelText(item);
+    if (labelText) {
+        addContextLabel(item, midpointOfSegment(item.start, item.end), labelText, {
+            background: 'rgba(219, 234, 254, 0.94)',
+            border: 'rgba(59, 130, 246, 0.45)',
+            text: '#1d4ed8',
+        });
+    }
 }
 
 function addWeld(item) {
@@ -208,12 +665,53 @@ function addWeld(item) {
 
 function addSupport(item) {
     const selectGroup = [];
-    addCube(item.point, 0x16a34a, sizes.supportSize, item, selectGroup);
+    const supportCode = (getItemProperties(item).inline_code || "").toUpperCase();
+    if (supportCode === "FLOR") {
+        addFloorSupportSymbol(item, selectGroup);
+    } else if (supportCode.startsWith("NCU")) {
+        addNozzleSupportSymbol(item, selectGroup);
+    } else {
+        addCube(item.point, 0x16a34a, sizes.supportSize, item, selectGroup);
+        addOrientedBoxAt(
+            [item.point[0], item.point[1] - sizes.supportStem * 0.22, item.point[2]],
+            new THREE.Vector3(0, 1, 0),
+            sizes.supportPlate * 0.85,
+            sizes.arrowShaft * 1.2,
+            sizes.supportPlate * 0.55,
+            0x166534,
+            item,
+            selectGroup,
+            { richSymbol: true }
+        );
+    }
+
+    const labelText = getContextLabelText(item);
+    if (labelText) {
+        addContextLabel(item, item.point, labelText, {
+            background: 'rgba(240, 253, 244, 0.94)',
+            border: 'rgba(34, 197, 94, 0.42)',
+            text: '#166534',
+        });
+    }
 }
 
 function addMarker(item) {
     const selectGroup = [];
-    addSphere(item.point, 0xea580c, sizes.markerRad, item, selectGroup);
+    const markerCode = (getItemProperties(item).inline_code || "").toUpperCase();
+    if (markerCode === "FLOW") {
+        addFlowMarkerSymbol(item, selectGroup);
+    } else {
+        addSphere(item.point, 0xea580c, sizes.markerRad, item, selectGroup);
+    }
+
+    const labelText = getContextLabelText(item);
+    if (labelText) {
+        addContextLabel(item, item.point, labelText, {
+            background: 'rgba(255, 247, 237, 0.96)',
+            border: 'rgba(249, 115, 22, 0.38)',
+            text: '#c2410c',
+        });
+    }
 }
 
 (sceneData.pipes || []).forEach(addPipe);
@@ -233,7 +731,6 @@ selectableMeshes.forEach(mesh => {
     hierarchy[file][pipe].push(mesh);
 });
 
-const hContent = document.getElementById("hierarchy-content");
 if (hContent) {
     let html = "";
     Object.keys(hierarchy).forEach(file => {
@@ -257,33 +754,32 @@ if (hContent) {
     });
     hContent.innerHTML = html || "<span class='text-gray-400'>No hierarchy data found.</span>";
 
-    function getActiveHierarchyKeys() {
-        const activeKeys = new Set();
-        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
-            activeKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
+    function syncFileToggleStates() {
+        document.querySelectorAll('.file-toggle').forEach(fileToggle => {
+            const childPipes = Array.from(document.querySelectorAll(`.pipe-toggle[data-file="${fileToggle.dataset.file}"]`));
+            const checkedCount = childPipes.filter(cb => cb.checked).length;
+            fileToggle.checked = childPipes.length > 0 && checkedCount === childPipes.length;
+            fileToggle.indeterminate = checkedCount > 0 && checkedCount < childPipes.length;
         });
-        return activeKeys;
     }
 
-    function syncVisibility({ refit = true } = {}) {
-        const pipeToggles = document.querySelectorAll('.pipe-toggle');
-        const activeHierarchyKeys = getActiveHierarchyKeys();
-
-        selectableMeshes.forEach(mesh => {
-            const hierarchyVisible = pipeToggles.length
-                ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
-                : true;
-            const itemVisible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
-            mesh.visible = hierarchyVisible && itemVisible;
-        });
-
-        if (refit) {
-            fitCameraToObject(modelGroup);
+    function syncMasterHierarchyToggle() {
+        if (!toggleAllHierarchy) return;
+        const pipeToggles = Array.from(document.querySelectorAll('.pipe-toggle'));
+        const checkedCount = pipeToggles.filter(cb => cb.checked).length;
+        toggleAllHierarchy.checked = pipeToggles.length > 0 && checkedCount === pipeToggles.length;
+        toggleAllHierarchy.indeterminate = checkedCount > 0 && checkedCount < pipeToggles.length;
+        if (hierarchySelectionCount) {
+            hierarchySelectionCount.textContent = pipeToggles.length
+                ? `${checkedCount}/${pipeToggles.length} lines visible`
+                : "No Lines";
         }
     }
 
     function updateVisibility() {
-        syncVisibility();
+        syncFileToggleStates();
+        syncMasterHierarchyToggle();
+        applySceneVisibility({ refit: true });
     }
 
     document.querySelectorAll('.file-toggle').forEach(cb => {
@@ -301,7 +797,20 @@ if (hContent) {
         cb.addEventListener('change', updateVisibility);
     });
 
-    syncVisibility({ refit: false });
+    if (toggleAllHierarchy) {
+        toggleAllHierarchy.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            document.querySelectorAll('.file-toggle, .pipe-toggle').forEach(cb => {
+                cb.checked = isChecked;
+                cb.indeterminate = false;
+            });
+            updateVisibility();
+        });
+    }
+
+    syncFileToggleStates();
+    syncMasterHierarchyToggle();
+    applySceneVisibility({ refit: false });
 }
 
 // -------------------------------------------------
@@ -366,6 +875,7 @@ function fitCameraToObject(object) {
     axesHelper = new THREE.AxesHelper(axesSize);
     axesHelper.position.copy(gridHelper.position);
     scene.add(axesHelper);
+    syncGroundPlaneToGrid();
 
     const offset = new THREE.Vector3(1.4, 1.0, 1.2).normalize().multiplyScalar(radius * 2.8);
 
@@ -414,24 +924,7 @@ function focusOnSelection() {
 function hideSelection() {
     if (!selectedGroup) return;
     selectedGroup.forEach(mesh => manuallyHiddenItems.add(mesh.userData.visibilityKey));
-    if (hContent) {
-        const pipeToggles = document.querySelectorAll('.pipe-toggle');
-        const activeHierarchyKeys = new Set();
-        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
-            activeHierarchyKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
-        });
-        selectableMeshes.forEach(mesh => {
-            const hierarchyVisible = pipeToggles.length
-                ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
-                : true;
-            const itemVisible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
-            mesh.visible = hierarchyVisible && itemVisible;
-        });
-    } else {
-        selectableMeshes.forEach(mesh => {
-            mesh.visible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
-        });
-    }
+    applySceneVisibility({ refit: false });
     clearHighlight();
     propsContent.innerHTML = `
         <div class="text-center mt-10">
@@ -456,19 +949,21 @@ const btnShowHidden = document.getElementById('btnShowHidden');
 if(btnShowHidden) {
     btnShowHidden.addEventListener('click', () => {
         manuallyHiddenItems.clear();
-        const pipeToggles = document.querySelectorAll('.pipe-toggle');
-        const activeHierarchyKeys = new Set();
-        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
-            activeHierarchyKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
-        });
-        selectableMeshes.forEach(mesh => {
-            const hierarchyVisible = pipeToggles.length
-                ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
-                : true;
-            mesh.visible = hierarchyVisible;
-        });
+        applySceneVisibility({ refit: false });
         btnShowHidden.classList.add('hidden');
         fitCameraToObject(modelGroup);
+    });
+}
+
+if (richSymbolToggle) {
+    richSymbolToggle.addEventListener('change', () => {
+        applySceneVisibility({ refit: false });
+    });
+}
+
+if (contextLabelToggle) {
+    contextLabelToggle.addEventListener('change', () => {
+        applySceneVisibility({ refit: false });
     });
 }
 
@@ -642,10 +1137,17 @@ const groundMat = new THREE.MeshStandardMaterial({
     opacity: 0.8, 
     transparent: true 
 });
-const ground = new THREE.Mesh(groundGeo, groundMat);
+ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = -2; // Send ground slightly down so z-fighting doesn't happen with 0-origin pipes
+ground.visible = false;
 scene.add(ground);
+
+function syncGroundPlaneToGrid() {
+    if (!ground) return;
+    ground.position.y = gridHelper.position.y - 0.05;
+}
+
+syncGroundPlaneToGrid();
 
 // ----------- PLOT PLAN MAP GENERATION -----------
 let currentMapTexture = null;
@@ -671,6 +1173,8 @@ if (plotInput) {
                 groundMat.color.setHex(0xffffff); // remove base color mapping to show pure texture
                 groundMat.opacity = 1.0;
                 groundMat.needsUpdate = true;
+                ground.visible = true;
+                syncGroundPlaneToGrid();
                 
                 // Align map roughly with the active camera focus
                 if (controls.target) {
@@ -698,6 +1202,18 @@ function updatePlotPlan() {
     ground.scale.set(scale, scale, 1);
     ground.position.x = ox;
     ground.position.z = oz;
+}
+
+if (navPanelToggleBtn) {
+    navPanelToggleBtn.addEventListener('click', () => {
+        setNavPanelCollapsed(true);
+    });
+}
+
+if (navPanelReopenBtn) {
+    navPanelReopenBtn.addEventListener('click', () => {
+        setNavPanelCollapsed(false);
+    });
 }
 
 if (document.getElementById('ppScale')) {

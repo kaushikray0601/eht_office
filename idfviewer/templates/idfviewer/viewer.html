@@ -27,16 +27,36 @@
         #navpanel {
             position: absolute; top: 60px; left: 0; bottom: 0; width: 300px;
             z-index: 15; border-right: 1px solid rgba(226, 232, 240, 0.8);
+            transition: transform 0.22s ease, opacity 0.22s ease;
         }
         #viewer {
             position: absolute; top: 60px; left: 300px; right: 340px; bottom: 0;
             background: radial-gradient(circle at center, #f8fafc 0%, #e2e8f0 100%);
+            transition: left 0.22s ease;
         }
         #sidepanel {
             position: absolute; top: 60px; right: 0; width: 340px; bottom: 0;
             border-left: 1px solid rgba(226, 232, 240, 0.8);
             overflow-y: auto; padding: 24px; z-index: 15;
             box-shadow: -4px 0 20px rgba(0,0,0,0.02);
+        }
+        body.nav-collapsed #navpanel {
+            transform: translateX(-100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        body.nav-collapsed #viewer {
+            left: 0;
+        }
+        #navpanel-reopen {
+            position: absolute;
+            top: 72px;
+            left: 12px;
+            z-index: 18;
+            display: none;
+        }
+        body.nav-collapsed #navpanel-reopen {
+            display: inline-flex;
         }
         
         /* Minimalist scrollbars */
@@ -67,15 +87,29 @@
         </div>
 
         <a href="{% url 'idf_upload' %}" class="text-[12px] font-medium text-white bg-slate-800 hover:bg-slate-700 px-5 py-2 rounded-md shadow-md transition">Upload New</a>
-    </div>
+	    </div>
 
-    <!-- LEFT HIERARCHY PANEL -->
-    <div id="navpanel" class="glass-sidebar flex flex-col">
-        <h3 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest p-5 border-b border-slate-200">Assets & Hierarchy</h3>
-        
-        <div id="hierarchy-content" class="flex-grow p-4 space-y-3 overflow-y-auto">
-            <!-- Populated by viewer.js -->
-        </div>
+        <button id="navpanel-reopen" class="glass-sidebar items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm hover:bg-white/90 transition">
+            <span>Show Assets</span>
+        </button>
+
+	    <!-- LEFT HIERARCHY PANEL -->
+	    <div id="navpanel" class="glass-sidebar flex flex-col">
+	        <div class="flex items-center justify-between p-5 border-b border-slate-200">
+	            <h3 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest">Assets & Hierarchy</h3>
+	            <button id="navpanel-toggle" class="rounded border border-slate-200 bg-white/70 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-600 shadow-sm hover:bg-white transition">Hide</button>
+	        </div>
+	        <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-slate-200 bg-slate-50/70">
+	            <label class="flex items-center gap-2 text-[11px] font-medium text-slate-700 cursor-pointer">
+	                <input id="toggleAllHierarchy" type="checkbox" class="rounded border-slate-300 text-slate-700 focus:ring-0" checked>
+	                <span>Check All / Uncheck All</span>
+	            </label>
+	            <span id="hierarchySelectionCount" class="text-[10px] uppercase tracking-wide text-slate-500">All Visible</span>
+	        </div>
+	        
+	        <div id="hierarchy-content" class="flex-grow p-4 space-y-3 overflow-y-auto">
+	            <!-- Populated by viewer.js -->
+	        </div>
 
         <div class="p-5 border-t border-slate-200 bg-slate-50/50">
             <h4 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest mb-3">Map Overlay</h4>
@@ -145,6 +179,25 @@
                         <input type="checkbox" class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="unmapped"> <span>Unmapped</span>
                     </label>
                 </div>
+                <div class="mb-4 rounded-md border border-slate-200 bg-white/80 p-3">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 mb-3">Scene Overlays</div>
+                    <div class="space-y-2 text-[11px] text-slate-700 font-medium">
+                        <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                            <input id="toggleRichSymbols" type="checkbox" checked class="rounded border-slate-300 text-slate-700 focus:ring-0">
+                            <span>Rich Symbols</span>
+                        </label>
+                        <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
+                            <input id="toggleContextLabels" type="checkbox" class="rounded border-slate-300 text-slate-700 focus:ring-0">
+                            <span>Context Labels</span>
+                        </label>
+                    </div>
+                    <p class="mt-3 text-[10px] leading-relaxed text-slate-500">
+                        Uses IDF hints like <span class="font-semibold text-slate-600">FLOW</span>,
+                        <span class="font-semibold text-slate-600">FLOR</span>,
+                        <span class="font-semibold text-slate-600">NCU*</span>,
+                        component refs, support codes, and notes where available.
+                    </p>
+                </div>
                 <button id="btnShowHidden" class="hidden w-full bg-slate-200 border border-slate-300 hover:bg-slate-300 text-slate-800 font-medium py-1.5 rounded transition shadow-sm text-[11px]">Restore Hidden Objects</button>
             </div>
         </div>
@@ -170,6 +223,69 @@
     }
     </script>
 
-    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}"></script>
+    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260421_symbols_01"></script>
+    <script>
+        (function () {
+            const body = document.body;
+            const collapseBtn = document.getElementById('navpanel-toggle');
+            const reopenBtn = document.getElementById('navpanel-reopen');
+            const masterToggle = document.getElementById('toggleAllHierarchy');
+            const selectionCount = document.getElementById('hierarchySelectionCount');
+
+            function updateSelectionCount() {
+                if (!selectionCount) return;
+                const pipes = Array.from(document.querySelectorAll('.pipe-toggle'));
+                const checked = pipes.filter(cb => cb.checked).length;
+                selectionCount.textContent = pipes.length ? `${checked}/${pipes.length} lines visible` : 'No Lines';
+                if (masterToggle) {
+                    masterToggle.checked = pipes.length > 0 && checked === pipes.length;
+                    masterToggle.indeterminate = checked > 0 && checked < pipes.length;
+                }
+            }
+
+            if (collapseBtn) {
+                collapseBtn.addEventListener('click', function () {
+                    body.classList.add('nav-collapsed');
+                });
+            }
+
+            if (reopenBtn) {
+                reopenBtn.addEventListener('click', function () {
+                    body.classList.remove('nav-collapsed');
+                });
+            }
+
+            if (masterToggle) {
+                masterToggle.addEventListener('change', function (event) {
+                    const isChecked = event.target.checked;
+                    const fileToggles = Array.from(document.querySelectorAll('.file-toggle'));
+                    const pipeToggles = Array.from(document.querySelectorAll('.pipe-toggle'));
+
+                    if (fileToggles.length) {
+                        fileToggles.forEach(cb => {
+                            cb.checked = isChecked;
+                            cb.indeterminate = false;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                        });
+                    } else {
+                        pipeToggles.forEach(cb => {
+                            cb.checked = isChecked;
+                            cb.dispatchEvent(new Event('change', { bubbles: true }));
+                        });
+                    }
+
+                    updateSelectionCount();
+                });
+            }
+
+            document.addEventListener('change', function (event) {
+                if (event.target.matches('.pipe-toggle, .file-toggle')) {
+                    updateSelectionCount();
+                }
+            });
+
+            updateSelectionCount();
+        }());
+    </script>
 </body>
 </html>
