@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Saved Pipeline Files</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            background-color: #f1f5f9;
+            background-image: radial-gradient(circle at top right, #e2e8f0 0%, transparent 42%),
+                              radial-gradient(circle at bottom left, #dbeafe 0%, transparent 38%);
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            -webkit-font-smoothing: antialiased;
+            color: #1e293b;
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(18px);
+            border: 1px solid rgba(255, 255, 255, 0.85);
+            box-shadow: 0 14px 40px rgba(15, 23, 42, 0.08);
+        }
+    </style>
+</head>
+<body class="min-h-screen p-6 md:p-10">
+    <div class="mx-auto max-w-6xl space-y-6">
+        <div class="flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+                <p class="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-500">Pipeline Archive</p>
+                <h1 class="mt-2 text-3xl font-semibold text-slate-900">Saved Pipeline Files</h1>
+                <p class="mt-2 max-w-2xl text-sm leading-relaxed text-slate-600">
+                    Open a saved file back in the 3D viewer, or download the stored component set as JSON for review and handover.
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <a href="{% url 'idf_upload' %}" class="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">Upload / Preview</a>
+            </div>
+        </div>
+
+        <div class="glass-panel rounded-2xl p-5">
+            <form method="get" class="flex flex-col gap-4 md:flex-row md:items-end">
+                <div class="w-full max-w-sm">
+                    <label for="project_id" class="mb-2 block text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Project Filter</label>
+                    <select id="project_id" name="project_id" class="w-full rounded-md border border-slate-300 bg-white px-4 py-2 text-sm text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+                        <option value="">All Projects</option>
+                        {% for project in projects %}
+                            <option value="{{ project.proj_id }}" {% if selected_project_id == project.proj_id %}selected{% endif %}>{{ project.proj_id }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <button type="submit" class="rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-slate-700">Filter</button>
+            </form>
+        </div>
+
+        <div class="glass-panel overflow-hidden rounded-2xl">
+            {% if saved_files %}
+                <div class="overflow-x-auto">
+                    <table class="min-w-full divide-y divide-slate-200 text-sm">
+                        <thead class="bg-slate-50/80">
+                            <tr class="text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                <th class="px-5 py-4">Project</th>
+                                <th class="px-5 py-4">File</th>
+                                <th class="px-5 py-4">Format</th>
+                                <th class="px-5 py-4">Components</th>
+                                <th class="px-5 py-4">Breakdown</th>
+                                <th class="px-5 py-4">Saved</th>
+                                <th class="px-5 py-4 text-right">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100 bg-white/80 text-slate-700">
+                            {% for saved_file in saved_files %}
+                                <tr class="hover:bg-slate-50/70">
+                                    <td class="px-5 py-4 font-medium text-slate-800">{{ saved_file.project.proj_id }}</td>
+                                    <td class="px-5 py-4">
+                                        <div class="font-medium text-slate-900">{{ saved_file.filename }}</div>
+                                        <div class="mt-1 text-xs text-slate-500">ID {{ saved_file.id }}</div>
+                                    </td>
+                                    <td class="px-5 py-4">{{ saved_file.source_format }}</td>
+                                    <td class="px-5 py-4 font-medium">{{ saved_file.component_count }}</td>
+                                    <td class="px-5 py-4 text-xs text-slate-500">
+                                        P {{ saved_file.pipe_count }} /
+                                        F {{ saved_file.fitting_count }} /
+                                        W {{ saved_file.weld_count }} /
+                                        S {{ saved_file.support_count }} /
+                                        M {{ saved_file.marker_count }}
+                                    </td>
+                                    <td class="px-5 py-4 text-xs text-slate-500">{{ saved_file.saved_at_display|date:"Y-m-d H:i" }}</td>
+                                    <td class="px-5 py-4">
+                                        <div class="flex justify-end gap-2">
+                                            <a href="{% url 'idf_saved_file' saved_file.id %}" class="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">Open</a>
+                                            <a href="{% url 'idf_saved_file_download' saved_file.id %}" class="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">Download</a>
+                                        </div>
+                                    </td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            {% else %}
+                <div class="px-6 py-16 text-center">
+                    <p class="text-lg font-medium text-slate-800">No saved pipeline files yet.</p>
+                    <p class="mt-2 text-sm text-slate-500">Preview an IDF or PCF file first, then use the save button in the viewer when you want to keep it.</p>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>

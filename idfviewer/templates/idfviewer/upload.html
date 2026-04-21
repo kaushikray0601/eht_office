@@ -48,6 +48,7 @@
         <div class="text-center">
             <h1 class="text-[22px] font-medium text-slate-800 tracking-wide">ELECSENSE <span class="text-slate-500">Pipeline</span></h1>
             <p class="text-[13px] text-slate-600 tracking-wide mt-2">Select project and upload IDF or PCF pipeline data</p>
+            <p class="text-[11px] text-slate-500 tracking-wide mt-2">Uploads now open in preview mode first. Components are stored only when you save them from the viewer.</p>
         </div>
         
         {% if messages %}
@@ -80,6 +81,10 @@
                 <button type="submit" id="submitBtn" class="w-full bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white tracking-wide font-medium py-3 px-4 rounded shadow-md text-sm transition duration-200 hover:-translate-y-0.5">
                     Process & View 3D Pipeline
                 </button>
+            </div>
+
+            <div class="pt-1 text-center">
+                <a href="{% url 'idf_saved_library' %}" class="text-[12px] font-medium text-slate-600 hover:text-slate-900 transition">Browse Saved Pipeline Files</a>
             </div>
         </form>
     </div>

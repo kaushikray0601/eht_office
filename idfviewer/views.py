@@ -1,10 +1,23 @@
-from django.shortcuts import render, redirect
+import codecs
+import json
+import re
+
 from django.contrib import messages
+from django.http import JsonResponse
+from django.shortcuts import get_object_or_404, render
+from django.views.decorators.http import require_http_methods
+
+from eht.models import ProjectData
+
 from .forms import PipelineUploadForm
+from .models import IDFFile
 from .parser import parse_multiple_idf_texts
 from .pcf_parser import parse_multiple_pcf_texts
-import codecs
-import re
+from .services import (
+    build_download_payload,
+    build_scene_from_saved_file,
+    persist_preview_scene,
+)
 
 
 def decode_pipeline_bytes(raw: bytes) -> str:
@@ -46,18 +59,28 @@ def detect_pipeline_format(filename: str, text: str) -> str | None:
     return None
 
 
+def _viewer_context(scene, project, filename, saved_file=None):
+    return {
+        "scene": scene,
+        "filename": filename,
+        "project": project,
+        "saved_file": saved_file,
+        "is_saved_scene": bool(saved_file),
+    }
+
+
 def upload_idf_view(request):
     if request.method == "POST":
         form = PipelineUploadForm(request.POST, request.FILES)
         if form.is_valid():
             project = form.cleaned_data["project"]
-            f1 = form.cleaned_data.get('idf_files') or []
-            f2 = form.cleaned_data.get('idf_directory') or []
+            f1 = form.cleaned_data.get("idf_files") or []
+            f2 = form.cleaned_data.get("idf_directory") or []
             all_files = f1 + f2
 
             grouped_payloads = {"IDF": [], "PCF": []}
             for uf in all_files:
-                fname = uf.name.split('/')[-1]
+                fname = uf.name.split("/")[-1]
                 raw = uf.read()
                 text = decode_pipeline_bytes(raw)
                 detected_format = detect_pipeline_format(fname, text)
@@ -85,13 +108,67 @@ def upload_idf_view(request):
             return render(
                 request,
                 "idfviewer/viewer.html",
-                {
-                    "scene": scene,
-                    "filename": filename,
-                    "project": project
-                },
+                _viewer_context(scene, project, filename),
             )
     else:
         form = PipelineUploadForm()
 
     return render(request, "idfviewer/upload.html", {"form": form})
+
+
+@require_http_methods(["POST"])
+def save_preview_view(request):
+    try:
+        payload = json.loads(request.body.decode("utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return JsonResponse({"error": "Invalid request payload."}, status=400)
+
+    project_id = str(payload.get("project_id", "")).strip()
+    scene = payload.get("scene")
+    force = bool(payload.get("force"))
+
+    if not project_id:
+        return JsonResponse({"error": "Project is required."}, status=400)
+    if not isinstance(scene, dict):
+        return JsonResponse({"error": "Scene data is required."}, status=400)
+
+    project = get_object_or_404(ProjectData, proj_id=project_id)
+    results = persist_preview_scene(project, scene, force=force)
+    status_code = 409 if results["conflicts"] and not force else 200
+    return JsonResponse(results, status=status_code)
+
+
+def saved_library_view(request):
+    selected_project_id = (request.GET.get("project_id") or "").strip()
+    saved_files = IDFFile.objects.select_related("project").order_by("-last_saved_at", "-uploaded_at", "-pk")
+    if selected_project_id:
+        saved_files = saved_files.filter(project_id=selected_project_id)
+
+    return render(
+        request,
+        "idfviewer/library.html",
+        {
+            "projects": ProjectData.objects.order_by("proj_id"),
+            "saved_files": saved_files[:200],
+            "selected_project_id": selected_project_id,
+        },
+    )
+
+
+def saved_file_view(request, file_id):
+    saved_file = get_object_or_404(IDFFile.objects.select_related("project"), pk=file_id)
+    scene = build_scene_from_saved_file(saved_file)
+    return render(
+        request,
+        "idfviewer/viewer.html",
+        _viewer_context(scene, saved_file.project, saved_file.filename, saved_file=saved_file),
+    )
+
+
+def download_saved_file_view(request, file_id):
+    saved_file = get_object_or_404(IDFFile.objects.select_related("project"), pk=file_id)
+    payload = build_download_payload(saved_file)
+    response = JsonResponse(payload, json_dumps_params={"indent": 2})
+    download_name = re.sub(r"[^A-Za-z0-9._-]+", "_", saved_file.filename or "pipeline")
+    response["Content-Disposition"] = f'attachment; filename="{download_name}.json"'
+    return response

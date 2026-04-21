@@ -1,6 +1,5 @@
 import re
 from statistics import median
-from .models import IDFFile, IDFComponent
 
 RECORD_ID_RE = re.compile(r"^\s*([+-]?\d+)")
 DN_RE = re.compile(r"\bDN\s*(\d+)\b", re.I)
@@ -411,46 +410,17 @@ def parse_multiple_idf_texts(file_payloads, project):
             "source_label": "IDF Scene",
         },
     }
-    
-    db_files = {}
+
     for filename, text in file_payloads:
-        idf_file = IDFFile.objects.create(project=project, filename=filename, source_format="IDF")
-        db_files[filename] = idf_file
-        
         scene = _collect_candidate_records(text, filename)
         for bucket in ["pipes", "fittings", "welds", "supports", "markers"]:
             combined_scene[bucket].extend(scene[bucket])
         combined_scene["stats"]["total_lines"] += scene["stats"]["total_lines"]
-        
+
     combined_scene = _filter_scene(combined_scene)
     combined_scene["stats"]["source_format"] = "IDF"
     combined_scene["stats"]["source_label"] = "IDF Scene"
     combined_scene = _normalize_points(combined_scene)
-    
-    bounds = combined_scene["stats"].get("raw_bounds", {})
-    if bounds:
-        IDFFile.objects.filter(id__in=[f.id for f in db_files.values()]).update(**bounds)
-
-    db_components = []
-    bucket_keys = ["pipes", "fittings", "welds", "supports", "markers"]
-    for bucket in bucket_keys:
-        for item in combined_scene[bucket]:
-            p = item["properties"]
-            lines = p.get('pipeline_ref', '')
-            db_components.append(IDFComponent(
-                idf_file=db_files[p["filename"]],
-                project=project,
-                uid=p["uid"],
-                record_id=p["record_id"],
-                kind=p["kind"],
-                source_format="IDF",
-                line_id=lines if len(lines) <= 100 else lines[:100],
-                properties=p
-            ))
-            
-    batch_size = 5000
-    for i in range(0, len(db_components), batch_size):
-        IDFComponent.objects.bulk_create(db_components[i:i+batch_size])
 
     combined_scene = _strip_internal(combined_scene)
     return combined_scene

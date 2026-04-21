@@ -2,7 +2,6 @@ import re
 from copy import deepcopy
 from textwrap import dedent
 
-from .models import IDFComponent, IDFFile
 from .parser import _filter_scene, derive_material_properties
 
 
@@ -519,11 +518,7 @@ def parse_multiple_pcf_texts(file_payloads, project):
         },
     }
 
-    db_files = {}
     for filename, text in file_payloads:
-        idf_file = IDFFile.objects.create(project=project, filename=filename, source_format="PCF")
-        db_files[filename] = idf_file
-
         file_meta, components, materials = _parse_document(text)
         combined_scene["stats"]["total_lines"] += len(text.splitlines())
 
@@ -537,31 +532,5 @@ def parse_multiple_pcf_texts(file_payloads, project):
     combined_scene["stats"]["source_format"] = "PCF"
     combined_scene["stats"]["source_label"] = "PCF Scene"
     combined_scene = _normalize_scene(combined_scene)
-
-    bounds = combined_scene["stats"].get("raw_bounds", {})
-    if bounds:
-        IDFFile.objects.filter(id__in=[file_obj.id for file_obj in db_files.values()]).update(**bounds)
-
-    db_components = []
-    for bucket in ("pipes", "fittings", "welds", "supports", "markers"):
-        for item in combined_scene[bucket]:
-            props = item["properties"]
-            line_id = props.get("pipeline_ref", "")
-            db_components.append(
-                IDFComponent(
-                    idf_file=db_files[props["filename"]],
-                    project=project,
-                    uid=item["uid"],
-                    record_id=item["record_id"],
-                    kind=props.get("kind", item["kind"]),
-                    source_format="PCF",
-                    line_id=line_id if len(line_id) <= 100 else line_id[:100],
-                    properties=props,
-                )
-            )
-
-    batch_size = 5000
-    for idx in range(0, len(db_components), batch_size):
-        IDFComponent.objects.bulk_create(db_components[idx:idx + batch_size])
 
     return _strip_internal(combined_scene)

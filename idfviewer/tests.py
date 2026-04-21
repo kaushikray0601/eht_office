@@ -1,8 +1,15 @@
-from django.test import SimpleTestCase
+import json
+from decimal import Decimal
 
-from .parser import _collect_candidate_records, _filter_scene, _normalize_points
+from django.test import SimpleTestCase, TestCase
+
+from eht.models import ProjectData
+
+from .models import IDFComponent, IDFFile, IDFFileSaveEvent
+from .parser import _collect_candidate_records, _filter_scene, _normalize_points, parse_multiple_idf_texts
 from .pcf_parser import _component_to_scene_items, _normalize_scene as _normalize_pcf_scene
 from .pcf_parser import _parse_document, _strip_internal as _strip_pcf_internal
+from .services import build_scene_from_saved_file
 
 
 def _parse_scene(text):
@@ -150,3 +157,236 @@ class ParserRegressionTests(SimpleTestCase):
         roles = sorted(item["properties"].get("geometry_role") for item in scene["fittings"])
         self.assertEqual(roles, ["branch", "main_run"])
         self.assertTrue(any("branch1_point" in item["properties"] for item in scene["fittings"]))
+
+
+def make_project():
+    return ProjectData.objects.create(
+        proj_id="PIPE_TEST",
+        min_amb_t=Decimal("0.00"),
+        max_amb_t=Decimal("50.00"),
+        startup_t=Decimal("10.00"),
+        area_class="SAFE",
+        temp_class="T3",
+        voltage=Decimal("230.00"),
+        max_cb_size=20,
+        restrict_cb_current=Decimal("20.00"),
+        vendor="THR",
+        spiral_wrap_allowed=True,
+        spiral_factor=Decimal("1.00"),
+        valve_factor=Decimal("0.00"),
+        flange_factor=Decimal("0.00"),
+        support_factor=Decimal("0.00"),
+        margin_on_tracer_lengths=Decimal("5.00"),
+        voltage_var_factor=Decimal("1.00"),
+        res_tol=Decimal("1.00"),
+        termination_margin=Decimal("100.00"),
+        heat_loss_sf=Decimal("1.00"),
+        rtd_thrm="TI",
+        wind_speed=Decimal("1.00"),
+        req_local_isolator="required",
+        caution_label_interval=Decimal("10.00"),
+        k_factor_ccons=Decimal("1.00"),
+        isolator_location="incomingOnly",
+        ckt_ln=Decimal("10.00"),
+        loop_ln=Decimal("10.00"),
+        acc_power_density=Decimal("1.00"),
+        tracer_temp_factor=Decimal("1.00"),
+        alpha_for_res=Decimal("1.0000"),
+        allowablevdrop=Decimal("5.00"),
+    )
+
+
+def make_preview_scene(filename="alpha.idf", line_id="LINE-01", component_ref="PIPE-A"):
+    return {
+        "pipes": [
+            {
+                "uid": 1,
+                "record_id": 100,
+                "kind": "Pipe",
+                "start": [0.0, 0.0, 0.0],
+                "end": [10.0, 0.0, 0.0],
+                "properties": {
+                    "uid": 1,
+                    "record_id": 100,
+                    "kind": "Pipe",
+                    "filename": filename,
+                    "source_format": "IDF",
+                    "pipeline_ref": line_id,
+                    "component_ref": component_ref,
+                    "raw_start": [1000, 2000, 3000],
+                    "raw_end": [2000, 2000, 3000],
+                    "materials": [],
+                    "notes": [],
+                },
+            }
+        ],
+        "fittings": [],
+        "welds": [],
+        "supports": [
+            {
+                "uid": 2,
+                "record_id": 150,
+                "kind": "Support",
+                "point": [5.0, 0.0, 0.0],
+                "properties": {
+                    "uid": 2,
+                    "record_id": 150,
+                    "kind": "Support",
+                    "filename": filename,
+                    "source_format": "IDF",
+                    "pipeline_ref": line_id,
+                    "support_code": "SUP-01",
+                    "raw_point": [1500, 2000, 3000],
+                    "materials": [],
+                    "notes": [],
+                },
+            }
+        ],
+        "markers": [],
+        "stats": {
+            "source_format": "IDF",
+            "source_label": "IDF Scene",
+            "pipe_count": 1,
+            "fitting_count": 0,
+            "weld_count": 0,
+            "support_count": 1,
+            "marker_count": 0,
+        },
+    }
+
+
+class SavedPipelineFlowTests(TestCase):
+    def setUp(self):
+        self.project = make_project()
+
+    def test_parse_multiple_idf_texts_no_longer_persists_automatically(self):
+        scene = parse_multiple_idf_texts(
+            [
+                (
+                    "sample.idf",
+                    """
+                    -30 LINE-01
+                    100 2000 3000 4000 3000 3000 4000,      ,       0 ,    ,      0  1001
+                    -39 PIPE-A
+                    150 2500 3000 4000
+                    -70 SUP-01
+                    """,
+                )
+            ],
+            self.project,
+        )
+
+        self.assertEqual(scene["stats"]["source_format"], "IDF")
+        self.assertEqual(IDFFile.objects.count(), 0)
+        self.assertEqual(IDFComponent.objects.count(), 0)
+
+    def test_save_preview_creates_file_and_components(self):
+        response = self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": make_preview_scene()}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(IDFFile.objects.count(), 1)
+        self.assertEqual(IDFComponent.objects.count(), 2)
+        saved_file = IDFFile.objects.get()
+        self.assertEqual(saved_file.component_count, 2)
+        self.assertEqual(saved_file.pipe_count, 1)
+        self.assertEqual(saved_file.support_count, 1)
+        self.assertEqual(IDFFileSaveEvent.objects.count(), 1)
+
+    def test_duplicate_save_refreshes_existing_file_without_duplicate_components(self):
+        first = self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": make_preview_scene()}),
+            content_type="application/json",
+        )
+        self.assertEqual(first.status_code, 200)
+
+        second = self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": make_preview_scene()}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(second.status_code, 200)
+        payload = second.json()
+        self.assertEqual(len(payload["refreshed"]), 1)
+        self.assertEqual(IDFFile.objects.count(), 1)
+        self.assertEqual(IDFComponent.objects.count(), 2)
+        self.assertEqual(IDFFileSaveEvent.objects.count(), 1)
+
+    def test_conflicting_save_requires_confirmation_then_replaces_components(self):
+        original_scene = make_preview_scene()
+        changed_scene = make_preview_scene(component_ref="PIPE-B")
+        changed_scene["welds"] = [
+            {
+                "uid": 3,
+                "record_id": 120,
+                "kind": "Weld",
+                "point": [7.0, 0.0, 0.0],
+                "properties": {
+                    "uid": 3,
+                    "record_id": 120,
+                    "kind": "Weld",
+                    "filename": "alpha.idf",
+                    "source_format": "IDF",
+                    "pipeline_ref": "LINE-01",
+                    "raw_point": [1750, 2000, 3000],
+                    "materials": [],
+                    "notes": [],
+                },
+            }
+        ]
+        changed_scene["stats"]["weld_count"] = 1
+
+        self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": original_scene}),
+            content_type="application/json",
+        )
+
+        conflict = self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": changed_scene}),
+            content_type="application/json",
+        )
+        self.assertEqual(conflict.status_code, 409)
+        self.assertEqual(conflict.json()["conflicts"][0]["new_component_count"], 3)
+
+        replaced = self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": changed_scene, "force": True}),
+            content_type="application/json",
+        )
+        self.assertEqual(replaced.status_code, 200)
+        saved_file = IDFFile.objects.get()
+        self.assertEqual(saved_file.component_count, 3)
+        self.assertEqual(saved_file.weld_count, 1)
+        self.assertEqual(IDFComponent.objects.count(), 3)
+        self.assertEqual(IDFFileSaveEvent.objects.count(), 2)
+
+    def test_saved_file_can_be_rebuilt_for_viewer_and_downloaded(self):
+        self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": make_preview_scene()}),
+            content_type="application/json",
+        )
+        saved_file = IDFFile.objects.get()
+
+        scene = build_scene_from_saved_file(saved_file)
+        self.assertEqual(scene["stats"]["pipe_count"], 1)
+        self.assertEqual(scene["stats"]["support_count"], 1)
+        self.assertEqual(len(scene["pipes"]), 1)
+        self.assertEqual(len(scene["supports"]), 1)
+
+        viewer_response = self.client.get(f"/idfviewer/saved/{saved_file.id}/")
+        self.assertEqual(viewer_response.status_code, 200)
+        self.assertContains(viewer_response, "Saved Dataset")
+
+        download_response = self.client.get(f"/idfviewer/saved/{saved_file.id}/download/")
+        self.assertEqual(download_response.status_code, 200)
+        payload = json.loads(download_response.content)
+        self.assertEqual(payload["component_count"], 2)
+        self.assertEqual(len(payload["components"]), 2)
