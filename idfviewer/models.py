@@ -1,6 +1,11 @@
 from django.db import models
 
 class IDFFile(models.Model):
+    FORMAT_CHOICES = [
+        ('IDF', 'IDF'),
+        ('PCF', 'PCF'),
+    ]
+
     project = models.ForeignKey(
         'eht.ProjectData',
         to_field='proj_id',
@@ -9,6 +14,7 @@ class IDFFile(models.Model):
         related_name='idf_files'
     )
     filename = models.CharField(max_length=255)
+    source_format = models.CharField(max_length=10, choices=FORMAT_CHOICES, default='IDF')
     uploaded_at = models.DateTimeField(auto_now_add=True)
     
     # Store standard global bounding boxes if needed later
@@ -23,7 +29,7 @@ class IDFFile(models.Model):
         ordering = ['-uploaded_at']
 
     def __str__(self):
-        return f"{self.filename} ({self.project.proj_id})"
+        return f"{self.filename} [{self.source_format}] ({self.project.proj_id})"
 
 
 class IDFComponent(models.Model):
@@ -39,6 +45,7 @@ class IDFComponent(models.Model):
     uid = models.IntegerField()
     record_id = models.IntegerField()
     kind = models.CharField(max_length=50)
+    source_format = models.CharField(max_length=10, choices=IDFFile.FORMAT_CHOICES, default='IDF')
     line_id = models.CharField(max_length=100, blank=True, default='')
 
     # Using JSONField for flexible dynamic storage of coordinates, arrays and variable metadata
@@ -49,10 +56,11 @@ class IDFComponent(models.Model):
         indexes = [
             models.Index(fields=['project', 'line_id']),
             models.Index(fields=['kind']),
+            models.Index(fields=['project', 'source_format']),
         ]
 
     def __str__(self):
-        return f"{self.kind} ({self.line_id})"
+        return f"{self.kind} [{self.source_format}] ({self.line_id})"
 
 class PlotPlanOverlay(models.Model):
     project = models.OneToOneField(

@@ -74,7 +74,9 @@
     <div class="glass-topbar absolute top-0 left-0 right-0 h-[60px] px-6 z-20 flex items-center justify-between">
         <div class="flex items-center space-x-4">
             <h1 class="text-[17px] font-medium text-slate-800 tracking-wide">ELECSENSE <span class="text-slate-500">Pipeline</span></h1>
-            <span class="text-[11px] font-medium text-slate-700 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">Batched Scene</span>
+            <span class="text-[11px] font-medium text-slate-700 bg-slate-100 px-2.5 py-1 rounded border border-slate-200">
+                {{ scene.stats.source_label|default:"Batched Scene" }}
+            </span>
             <span class="text-[11px] font-medium text-blue-800 bg-blue-50 px-2.5 py-1 rounded border border-blue-200" id="header-proj-id" data-proj-id="{{ project.proj_id }}">Project: {{ project.proj_id }}</span>
         </div>
         
@@ -223,7 +225,7 @@
     }
     </script>
 
-    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260421_symbols_01"></script>
+    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260421_pcf_01"></script>
     <script>
         (function () {
             const body = document.body;

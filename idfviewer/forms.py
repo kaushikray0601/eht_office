@@ -17,7 +17,7 @@ class MultipleFileField(forms.FileField):
             result = [single_file_clean(data, initial)] if data else []
         return result
 
-class IDFUploadForm(forms.Form):
+class PipelineUploadForm(forms.Form):
     project = forms.ModelChoiceField(
         queryset=ProjectData.objects.all(),
         label="Select Project",
@@ -29,14 +29,14 @@ class IDFUploadForm(forms.Form):
     )
     
     idf_files = MultipleFileField(
-        label="Select IDF File(s)",
-        help_text="Upload single or multiple regular files",
+        label="Select Pipeline File(s)",
+        help_text="Upload one or more .idf or .pcf files",
         required=False,
     )
 
     idf_directory = MultipleFileField(
         label="Or Select a Folder",
-        help_text="Upload an entire folder (Chrome/Edge/Firefox)",
+        help_text="Upload a folder containing .idf or .pcf files",
         required=False,
     )
 
@@ -56,3 +56,6 @@ class IDFUploadForm(forms.Form):
             raise forms.ValidationError("Please select file(s) or a folder to upload.")
             
         return cleaned_data
+
+
+IDFUploadForm = PipelineUploadForm

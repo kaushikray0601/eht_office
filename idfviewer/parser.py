@@ -318,6 +318,8 @@ def _build_properties(item):
     unmapped = {k: v for k, v in meta.items() if k not in KNOWN_META}
 
     props = {
+        "source_format": "IDF",
+        "source_record": item.get("record_id"),
         "uid": item.get("uid"),
         "record_id": item.get("record_id"),
         "kind": item.get("kind"),
@@ -397,11 +399,22 @@ def _strip_internal(scene):
 
 
 def parse_multiple_idf_texts(file_payloads, project):
-    combined_scene = {"pipes": [], "fittings": [], "welds": [], "supports": [], "markers": [], "stats": {"total_lines": 0}}
+    combined_scene = {
+        "pipes": [],
+        "fittings": [],
+        "welds": [],
+        "supports": [],
+        "markers": [],
+        "stats": {
+            "total_lines": 0,
+            "source_format": "IDF",
+            "source_label": "IDF Scene",
+        },
+    }
     
     db_files = {}
     for filename, text in file_payloads:
-        idf_file = IDFFile.objects.create(project=project, filename=filename)
+        idf_file = IDFFile.objects.create(project=project, filename=filename, source_format="IDF")
         db_files[filename] = idf_file
         
         scene = _collect_candidate_records(text, filename)
@@ -410,6 +423,8 @@ def parse_multiple_idf_texts(file_payloads, project):
         combined_scene["stats"]["total_lines"] += scene["stats"]["total_lines"]
         
     combined_scene = _filter_scene(combined_scene)
+    combined_scene["stats"]["source_format"] = "IDF"
+    combined_scene["stats"]["source_label"] = "IDF Scene"
     combined_scene = _normalize_points(combined_scene)
     
     bounds = combined_scene["stats"].get("raw_bounds", {})
@@ -428,6 +443,7 @@ def parse_multiple_idf_texts(file_payloads, project):
                 uid=p["uid"],
                 record_id=p["record_id"],
                 kind=p["kind"],
+                source_format="IDF",
                 line_id=lines if len(lines) <= 100 else lines[:100],
                 properties=p
             ))

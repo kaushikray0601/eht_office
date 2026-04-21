@@ -1,14 +1,16 @@
 from django.shortcuts import render, redirect
 from django.contrib import messages
-from .forms import IDFUploadForm
+from .forms import PipelineUploadForm
 from .parser import parse_multiple_idf_texts
+from .pcf_parser import parse_multiple_pcf_texts
 import codecs
+import re
 
 
-def decode_idf_bytes(raw: bytes) -> str:
+def decode_pipeline_bytes(raw: bytes) -> str:
     """
-    Robust decoder for plant IDF files.
-    Many exports from PDMS/Isodraft come as UTF-16 LE.
+    Robust decoder for plant pipeline files.
+    IDF files are often UTF-16 LE, while PCF is usually plain text.
     """
     encodings_to_try = []
 
@@ -29,42 +31,67 @@ def decode_idf_bytes(raw: bytes) -> str:
     return raw.decode("latin-1", errors="replace")
 
 
+def detect_pipeline_format(filename: str, text: str) -> str | None:
+    lower_name = filename.lower()
+    if lower_name.endswith(".idf"):
+        return "IDF"
+    if lower_name.endswith(".pcf"):
+        return "PCF"
+
+    head = text[:4000].upper()
+    if "PIPELINE-REFERENCE" in head and "MATERIALS" in head and ("END-POINT" in head or "CO-ORDS" in head):
+        return "PCF"
+    if re.search(r"^\s*[+-]?\d+", text, re.MULTILINE):
+        return "IDF"
+    return None
+
+
 def upload_idf_view(request):
     if request.method == "POST":
-        form = IDFUploadForm(request.POST, request.FILES)
+        form = PipelineUploadForm(request.POST, request.FILES)
         if form.is_valid():
             project = form.cleaned_data["project"]
             f1 = form.cleaned_data.get('idf_files') or []
             f2 = form.cleaned_data.get('idf_directory') or []
             all_files = f1 + f2
 
-            file_payloads = []
+            grouped_payloads = {"IDF": [], "PCF": []}
             for uf in all_files:
-                # Some browsers prefix directory files with full path
                 fname = uf.name.split('/')[-1]
-                if not fname.lower().endswith('.idf'):
-                    continue
                 raw = uf.read()
-                text = decode_idf_bytes(raw)
-                file_payloads.append((fname, text))
+                text = decode_pipeline_bytes(raw)
+                detected_format = detect_pipeline_format(fname, text)
+                if detected_format:
+                    grouped_payloads[detected_format].append((fname, text))
 
-            if not file_payloads:
-                messages.error(request, "No valid .idf files found in upload.")
+            idf_payloads = grouped_payloads["IDF"]
+            pcf_payloads = grouped_payloads["PCF"]
+
+            if idf_payloads and pcf_payloads:
+                messages.error(request, "Please upload only one source format at a time. Mixed IDF and PCF batches are not yet supported in a single scene.")
                 return render(request, "idfviewer/upload.html", {"form": form})
 
-            # Process through the upgraded parser which populates the DB and returns the unified scene
-            scene = parse_multiple_idf_texts(file_payloads, project)
+            if not idf_payloads and not pcf_payloads:
+                messages.error(request, "No valid .idf or .pcf files found in upload.")
+                return render(request, "idfviewer/upload.html", {"form": form})
+
+            if pcf_payloads:
+                scene = parse_multiple_pcf_texts(pcf_payloads, project)
+                filename = f"Batch: {len(pcf_payloads)} PCF file(s)"
+            else:
+                scene = parse_multiple_idf_texts(idf_payloads, project)
+                filename = f"Batch: {len(idf_payloads)} IDF file(s)"
 
             return render(
                 request,
                 "idfviewer/viewer.html",
                 {
                     "scene": scene,
-                    "filename": f"Batch: {len(file_payloads)} files",
+                    "filename": filename,
                     "project": project
                 },
             )
     else:
-        form = IDFUploadForm()
+        form = PipelineUploadForm()
 
     return render(request, "idfviewer/upload.html", {"form": form})

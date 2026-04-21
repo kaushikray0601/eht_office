@@ -309,6 +309,14 @@ function addOctahedronAt(pointArr, color, size, item, selectGroup, options = {})
     return addStandaloneMesh(mesh, item, selectGroup, options);
 }
 
+function safeRenderEnhancement(name, item, fn) {
+    try {
+        fn();
+    } catch (error) {
+        console.error(`[idfviewer] ${name} enhancement failed`, item, error);
+    }
+}
+
 // Calculate dynamic geometry sizing to prevent support cubes swallowing pipelines when scaling varies drastically
 let pipeLengths = [];
 (sceneData.pipes || []).forEach(p => {
@@ -426,7 +434,9 @@ function addContextLabel(item, pointArr, text, tone = {}) {
 }
 
 function addFittingAccent(item, selectGroup) {
-    const recordId = item.record_id ?? item.properties?.record_id;
+    const recordId = item.record_id !== undefined
+        ? item.record_id
+        : (item.properties ? item.properties.record_id : undefined);
     const direction = getItemDirection(item);
     const midpoint = midpointOfSegment(item.start, item.end);
 
@@ -488,8 +498,6 @@ function addFittingAccent(item, selectGroup) {
         addCube(midpoint, 0x92400e, sizes.fittingGlandRad * 1.2, item, selectGroup, { richSymbol: true });
         return;
     }
-
-    addSphere(midpoint, 0x2563eb, sizes.fittingGlandRad, item, selectGroup);
 }
 
 function addFlowMarkerSymbol(item, selectGroup) {
@@ -499,7 +507,6 @@ function addFlowMarkerSymbol(item, selectGroup) {
     const shaftCenter = anchor.clone().add(direction.clone().multiplyScalar(shaftLength * 0.2));
     const coneCenter = anchor.clone().add(direction.clone().multiplyScalar(shaftLength * 0.75));
 
-    addSphere(item.point, 0xea580c, sizes.markerRad * 0.78, item, selectGroup);
     addOrientedCylinderAt(
         [shaftCenter.x, shaftCenter.y, shaftCenter.z],
         direction,
@@ -527,7 +534,6 @@ function addFloorSupportSymbol(item, selectGroup) {
     const anchor = vecFromArray(item.point);
     const platePoint = anchor.clone().add(new THREE.Vector3(0, -sizes.supportStem * 0.45, 0));
 
-    addCube(item.point, 0x16a34a, sizes.supportSize * 0.42, item, selectGroup);
     addOrientedCylinderAt(
         [anchor.x, anchor.y - sizes.supportStem * 0.2, anchor.z],
         new THREE.Vector3(0, 1, 0),
@@ -570,7 +576,6 @@ function addNozzleSupportSymbol(item, selectGroup) {
     const topY = anchor.y + sizes.supportStem * 0.26;
     const lowerY = anchor.y - sizes.supportStem * 0.34;
 
-    addCube(item.point, 0x16a34a, sizes.supportSize * 0.38, item, selectGroup);
     addOrientedCylinderAt(
         [anchor.x + side.x * halfWidth, (topY + lowerY) / 2, anchor.z + side.z * halfWidth],
         new THREE.Vector3(0, 1, 0),
@@ -646,14 +651,17 @@ function addPipe(item) {
 function addFitting(item) {
     const selectGroup = [];
     addCylinderBetweenPoints(item.start, item.end, sizes.fittingRad, 0x2563eb, item, selectGroup);
-    addFittingAccent(item, selectGroup);
+    addSphere(midpointOfSegment(item.start, item.end), 0x2563eb, sizes.fittingGlandRad, item, selectGroup);
+    safeRenderEnhancement("fitting", item, () => addFittingAccent(item, selectGroup));
 
     const labelText = getContextLabelText(item);
     if (labelText) {
-        addContextLabel(item, midpointOfSegment(item.start, item.end), labelText, {
-            background: 'rgba(219, 234, 254, 0.94)',
-            border: 'rgba(59, 130, 246, 0.45)',
-            text: '#1d4ed8',
+        safeRenderEnhancement("fitting-label", item, () => {
+            addContextLabel(item, midpointOfSegment(item.start, item.end), labelText, {
+                background: 'rgba(219, 234, 254, 0.94)',
+                border: 'rgba(59, 130, 246, 0.45)',
+                text: '#1d4ed8',
+            });
         });
     }
 }
@@ -665,51 +673,56 @@ function addWeld(item) {
 
 function addSupport(item) {
     const selectGroup = [];
+    addCube(item.point, 0x16a34a, sizes.supportSize, item, selectGroup);
     const supportCode = (getItemProperties(item).inline_code || "").toUpperCase();
     if (supportCode === "FLOR") {
-        addFloorSupportSymbol(item, selectGroup);
+        safeRenderEnhancement("support-floor", item, () => addFloorSupportSymbol(item, selectGroup));
     } else if (supportCode.startsWith("NCU")) {
-        addNozzleSupportSymbol(item, selectGroup);
+        safeRenderEnhancement("support-nozzle", item, () => addNozzleSupportSymbol(item, selectGroup));
     } else {
-        addCube(item.point, 0x16a34a, sizes.supportSize, item, selectGroup);
-        addOrientedBoxAt(
-            [item.point[0], item.point[1] - sizes.supportStem * 0.22, item.point[2]],
-            new THREE.Vector3(0, 1, 0),
-            sizes.supportPlate * 0.85,
-            sizes.arrowShaft * 1.2,
-            sizes.supportPlate * 0.55,
-            0x166534,
-            item,
-            selectGroup,
-            { richSymbol: true }
-        );
+        safeRenderEnhancement("support-generic", item, () => {
+            addOrientedBoxAt(
+                [item.point[0], item.point[1] - sizes.supportStem * 0.22, item.point[2]],
+                new THREE.Vector3(0, 1, 0),
+                sizes.supportPlate * 0.85,
+                sizes.arrowShaft * 1.2,
+                sizes.supportPlate * 0.55,
+                0x166534,
+                item,
+                selectGroup,
+                { richSymbol: true }
+            );
+        });
     }
 
     const labelText = getContextLabelText(item);
     if (labelText) {
-        addContextLabel(item, item.point, labelText, {
-            background: 'rgba(240, 253, 244, 0.94)',
-            border: 'rgba(34, 197, 94, 0.42)',
-            text: '#166534',
+        safeRenderEnhancement("support-label", item, () => {
+            addContextLabel(item, item.point, labelText, {
+                background: 'rgba(240, 253, 244, 0.94)',
+                border: 'rgba(34, 197, 94, 0.42)',
+                text: '#166534',
+            });
         });
     }
 }
 
 function addMarker(item) {
     const selectGroup = [];
+    addSphere(item.point, 0xea580c, sizes.markerRad, item, selectGroup);
     const markerCode = (getItemProperties(item).inline_code || "").toUpperCase();
     if (markerCode === "FLOW") {
-        addFlowMarkerSymbol(item, selectGroup);
-    } else {
-        addSphere(item.point, 0xea580c, sizes.markerRad, item, selectGroup);
+        safeRenderEnhancement("marker-flow", item, () => addFlowMarkerSymbol(item, selectGroup));
     }
 
     const labelText = getContextLabelText(item);
     if (labelText) {
-        addContextLabel(item, item.point, labelText, {
-            background: 'rgba(255, 247, 237, 0.96)',
-            border: 'rgba(249, 115, 22, 0.38)',
-            text: '#c2410c',
+        safeRenderEnhancement("marker-label", item, () => {
+            addContextLabel(item, item.point, labelText, {
+                background: 'rgba(255, 247, 237, 0.96)',
+                border: 'rgba(249, 115, 22, 0.38)',
+                text: '#c2410c',
+            });
         });
     }
 }
@@ -796,17 +809,6 @@ if (hContent) {
     document.querySelectorAll('.pipe-toggle').forEach(cb => {
         cb.addEventListener('change', updateVisibility);
     });
-
-    if (toggleAllHierarchy) {
-        toggleAllHierarchy.addEventListener('change', (e) => {
-            const isChecked = e.target.checked;
-            document.querySelectorAll('.file-toggle, .pipe-toggle').forEach(cb => {
-                cb.checked = isChecked;
-                cb.indeterminate = false;
-            });
-            updateVisibility();
-        });
-    }
 
     syncFileToggleStates();
     syncMasterHierarchyToggle();
@@ -984,6 +986,8 @@ function renderProperties(item) {
         .map(cb => cb.value);
 
     let html = `
+        <div class="prop-row"><span class="prop-key">Source Format</span><span class="prop-val">${escapeHtml(p.source_format || "IDF")}</span></div>
+        <div class="prop-row"><span class="prop-key">Source Record</span><span class="prop-val">${escapeHtml(p.source_record || p.record_id || "")}</span></div>
         <div class="prop-row"><span class="prop-key">Kind</span><span class="prop-val">${escapeHtml(p.kind || "")}</span></div>
         <div class="prop-row"><span class="prop-key">Record ID</span><span class="prop-val">${escapeHtml(p.record_id || "")}</span></div>
         <div class="prop-row"><span class="prop-key">File Source</span><span class="prop-val">${escapeHtml(p.filename || "")}</span></div>
@@ -993,6 +997,27 @@ function renderProperties(item) {
 
     if (activeFilters.includes("pipeline_ref")) {
         html += `<div class="prop-row"><span class="prop-key">Pipeline System</span><span class="prop-val font-semibold text-blue-700">${escapeHtml(p.pipeline_ref || p.spool_ref || "Unknown")}</span></div>`;
+    }
+    if (p.piping_spec) {
+        html += `<div class="prop-row"><span class="prop-key">Piping Spec</span><span class="prop-val">${escapeHtml(p.piping_spec)}</span></div>`;
+    }
+    if (p.tracing_spec || p.tracing_on) {
+        html += `<div class="prop-row"><span class="prop-key">Tracing</span><span class="prop-val">${escapeHtml(p.tracing_spec || "Specified")} ${p.tracing_on ? "<span class='text-emerald-700 font-semibold'>(ON)</span>" : ""}</span></div>`;
+    }
+    if (p.item_code) {
+        html += `<div class="prop-row"><span class="prop-key">Item Code</span><span class="prop-val">${escapeHtml(p.item_code)}</span></div>`;
+    }
+    if (p.description) {
+        html += `<div class="prop-row"><span class="prop-key">Description</span><span class="prop-val">${escapeHtml(p.description)}</span></div>`;
+    }
+    if (p.connection_reference) {
+        html += `<div class="prop-row"><span class="prop-key">Connection Ref</span><span class="prop-val">${escapeHtml(p.connection_reference)}</span></div>`;
+    }
+    if (p.support_type || p.support_direction || p.support_name) {
+        html += `<div class="prop-row"><span class="prop-key">Support Detail</span><span class="prop-val">${escapeHtml([p.support_type, p.support_direction, p.support_name].filter(Boolean).join(" | "))}</span></div>`;
+    }
+    if (p.flow_value) {
+        html += `<div class="prop-row"><span class="prop-key">Flow Value</span><span class="prop-val">${escapeHtml(p.flow_value)}</span></div>`;
     }
     if (activeFilters.includes("support_code")) {
         html += `<div class="prop-row"><span class="prop-key">Support Code</span><span class="prop-val">${escapeHtml(p.support_code || "N/A")}</span></div>`;
@@ -1040,7 +1065,14 @@ function renderProperties(item) {
         const rawCoords = p.raw_point
             ? `Point: ${escapeHtml(JSON.stringify(p.raw_point))}`
             : `Start: ${escapeHtml(JSON.stringify(p.raw_start || []))}\nEnd: ${escapeHtml(JSON.stringify(p.raw_end || []))}`;
+        const extraCoords = [
+            p.centre_point ? `Centre: ${escapeHtml(JSON.stringify(p.centre_point))}` : "",
+            p.branch1_point ? `Branch1: ${escapeHtml(JSON.stringify(p.branch1_point))}` : "",
+        ].filter(Boolean).join("\n");
         html += `<div class="prop-row"><span class="prop-key mb-1">Raw Coordinates</span><pre class="prop-val bg-gray-100 p-2 rounded text-xs overflow-x-auto border">${rawCoords}</pre></div>`;
+        if (extraCoords) {
+            html += `<div class="prop-row"><span class="prop-key mb-1">Extra Geometry</span><pre class="prop-val bg-gray-100 p-2 rounded text-xs overflow-x-auto border">${extraCoords}</pre></div>`;
+        }
     }
 
     if (activeFilters.includes("unmapped")) {
