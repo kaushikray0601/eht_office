@@ -86,13 +86,24 @@ function getItemProperties(item) {
     return item.properties || {};
 }
 
+function getSourceFormat(item) {
+    return String(getItemProperties(item).source_format || "").toUpperCase();
+}
+
 function getHierarchyFile(item) {
     return getItemProperties(item).filename || "Unknown File";
 }
 
 function getHierarchyPipe(item) {
     const props = getItemProperties(item);
-    return props.pipeline_ref || props.spool_ref || "Unknown Line";
+    return (
+        props.pipeline_ref
+        || props.spool_ref
+        || props.hierarchy_group
+        || props.storey_name
+        || props.ifc_class
+        || "Unknown Group"
+    );
 }
 
 function getHierarchyKey(item) {
@@ -359,6 +370,7 @@ function clampLabelText(text, maxChars = 30) {
 
 function getContextLabelText(item) {
     const props = getItemProperties(item);
+    if (getSourceFormat(item) === "IFC") return "";
     if (props.notes && props.notes.length) return clampLabelText(props.notes[0], 34);
     if (item.kind === "Support") return clampLabelText(props.support_code || props.inline_code, 22);
     if (item.kind === "Marker") return clampLabelText(props.inline_code || props.component_ref, 16);
@@ -727,11 +739,43 @@ function addMarker(item) {
     }
 }
 
+function addIfcMesh(item) {
+    const meshData = item.mesh || {};
+    const positions = Array.isArray(meshData.positions) ? meshData.positions : [];
+    const indices = Array.isArray(meshData.indices) ? meshData.indices : [];
+    if (!positions.length || !indices.length) return;
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+
+    const colorArray = Array.isArray(meshData.color) && meshData.color.length >= 3
+        ? meshData.color
+        : [0.45, 0.55, 0.72];
+    const color = new THREE.Color(colorArray[0], colorArray[1], colorArray[2]);
+    const material = new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.72,
+        metalness: 0.08,
+        side: THREE.DoubleSide,
+    });
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+
+    const selectGroup = [];
+    addStandaloneMesh(mesh, item, selectGroup);
+}
+
 (sceneData.pipes || []).forEach(addPipe);
 (sceneData.fittings || []).forEach(addFitting);
 (sceneData.welds || []).forEach(addWeld);
 (sceneData.supports || []).forEach(addSupport);
 (sceneData.markers || []).forEach(addMarker);
+(sceneData.meshes || []).forEach(addIfcMesh);
 
 // ----------- HIERARCHY TREE GENERATION -----------
 const hierarchy = {}; 
@@ -826,6 +870,7 @@ if (thicknessSlider) {
         
         modelGroup.children.forEach(mesh => {
             if (!mesh.geometry) return;
+            if (mesh.userData && mesh.userData.item && getSourceFormat(mesh.userData.item) === "IFC") return;
             // Cylinder Y is the length, X & Z are the radius.
             if (mesh.geometry.type === 'CylinderGeometry') {
                 mesh.scale.set(val, 1, val);
@@ -859,7 +904,14 @@ function fitCameraToObject(object) {
 
     const sphere = box.getBoundingSphere(new THREE.Sphere());
     const center = sphere.center.clone();
-    const radius = Math.max(sphere.radius, 10);
+    const hasVisibleIfcGeometry = selectableMeshes.some(mesh =>
+        mesh.visible
+        && mesh.userData
+        && mesh.userData.item
+        && getSourceFormat(mesh.userData.item) === "IFC"
+    );
+    const minimumRadius = hasVisibleIfcGeometry ? 0.5 : 10;
+    const radius = Math.max(sphere.radius, minimumRadius);
     
     // Dynamically adjust Grid and Axes to match the viewed content box
     scene.remove(gridHelper);
@@ -984,6 +1036,9 @@ function renderProperties(item) {
     const activeFilters = Array.from(document.querySelectorAll('.prop-filter'))
         .filter(cb => cb.checked)
         .map(cb => cb.value);
+    const sourceFormat = String(p.source_format || "IDF").toUpperCase();
+    const hierarchyLabel = sourceFormat === "IFC" ? "Spatial Group" : "Pipeline System";
+    const hierarchyValue = p.pipeline_ref || p.spool_ref || p.hierarchy_group || p.ifc_class || "Unknown";
 
     let html = `
         <div class="prop-row"><span class="prop-key">Source Format</span><span class="prop-val">${escapeHtml(p.source_format || "IDF")}</span></div>
@@ -996,7 +1051,26 @@ function renderProperties(item) {
     `;
 
     if (activeFilters.includes("pipeline_ref")) {
-        html += `<div class="prop-row"><span class="prop-key">Pipeline System</span><span class="prop-val font-semibold text-blue-700">${escapeHtml(p.pipeline_ref || p.spool_ref || "Unknown")}</span></div>`;
+        html += `<div class="prop-row"><span class="prop-key">${escapeHtml(hierarchyLabel)}</span><span class="prop-val font-semibold text-blue-700">${escapeHtml(hierarchyValue)}</span></div>`;
+    }
+    if (sourceFormat === "IFC") {
+        html += `<div class="prop-row"><span class="prop-key">IFC Class</span><span class="prop-val">${escapeHtml(p.ifc_class || "")}</span></div>`;
+        html += `<div class="prop-row"><span class="prop-key">Global ID</span><span class="prop-val">${escapeHtml(p.global_id || "")}</span></div>`;
+        if (p.name) {
+            html += `<div class="prop-row"><span class="prop-key">Name</span><span class="prop-val">${escapeHtml(p.name)}</span></div>`;
+        }
+        if (p.object_type) {
+            html += `<div class="prop-row"><span class="prop-key">Object Type</span><span class="prop-val">${escapeHtml(p.object_type)}</span></div>`;
+        }
+        if (p.predefined_type) {
+            html += `<div class="prop-row"><span class="prop-key">Predefined Type</span><span class="prop-val">${escapeHtml(p.predefined_type)}</span></div>`;
+        }
+        if (p.tag) {
+            html += `<div class="prop-row"><span class="prop-key">Tag</span><span class="prop-val">${escapeHtml(p.tag)}</span></div>`;
+        }
+        if (p.spatial_path && p.spatial_path.length) {
+            html += `<div class="prop-row"><span class="prop-key">Spatial Path</span><span class="prop-val">${escapeHtml(p.spatial_path.join(" > "))}</span></div>`;
+        }
     }
     if (p.piping_spec) {
         html += `<div class="prop-row"><span class="prop-key">Piping Spec</span><span class="prop-val">${escapeHtml(p.piping_spec)}</span></div>`;
@@ -1056,13 +1130,43 @@ function renderProperties(item) {
         html += `<div class="prop-row"><span class="prop-key mb-1">Materials</span><div class="prop-val">${materialsHtml}</div></div>`;
     }
 
+    if (sourceFormat === "IFC" && p.property_sets && Object.keys(p.property_sets).length) {
+        const propertySetHtml = Object.entries(p.property_sets).map(([name, values]) => `
+            <div class="mb-3 rounded border border-slate-200 bg-white/90">
+                <div class="border-b border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700">${escapeHtml(name)}</div>
+                <div class="px-2 py-2 text-[11px] space-y-1">
+                    ${Object.entries(values || {}).map(([key, value]) => `
+                        <div><span class="font-medium text-slate-500">${escapeHtml(key)}:</span> <span class="text-slate-800">${escapeHtml(value)}</span></div>
+                    `).join("")}
+                </div>
+            </div>
+        `).join("");
+        html += `<div class="prop-row"><span class="prop-key mb-1">Property Sets</span><div class="prop-val">${propertySetHtml}</div></div>`;
+    }
+
+    if (sourceFormat === "IFC" && p.quantities && Object.keys(p.quantities).length) {
+        const quantityHtml = Object.entries(p.quantities).map(([name, values]) => `
+            <div class="mb-3 rounded border border-slate-200 bg-white/90">
+                <div class="border-b border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700">${escapeHtml(name)}</div>
+                <div class="px-2 py-2 text-[11px] space-y-1">
+                    ${Object.entries(values || {}).map(([key, value]) => `
+                        <div><span class="font-medium text-slate-500">${escapeHtml(key)}:</span> <span class="text-slate-800">${escapeHtml(value)}</span></div>
+                    `).join("")}
+                </div>
+            </div>
+        `).join("");
+        html += `<div class="prop-row"><span class="prop-key mb-1">Quantities</span><div class="prop-val">${quantityHtml}</div></div>`;
+    }
+
     const notesHtml = (p.notes && p.notes.length)
         ? `<ul class="list-disc pl-4 text-xs text-red-600 space-y-1">${p.notes.map(n => `<li>${escapeHtml(n)}</li>`).join("")}</ul>`
         : "<span class='text-gray-400 italic'>No notes.</span>";
     html += `<div class="prop-row"><span class="prop-key mb-1">Notes & Warnings</span><div class="prop-val">${notesHtml}</div></div>`;
 
     if (activeFilters.includes("raw_coords")) {
-        const rawCoords = p.raw_point
+        const rawCoords = sourceFormat === "IFC"
+            ? `Bounds: ${escapeHtml(JSON.stringify(p.raw_bounds || {}))}`
+            : p.raw_point
             ? `Point: ${escapeHtml(JSON.stringify(p.raw_point))}`
             : `Start: ${escapeHtml(JSON.stringify(p.raw_start || []))}\nEnd: ${escapeHtml(JSON.stringify(p.raw_end || []))}`;
         const extraCoords = [
@@ -1139,7 +1243,7 @@ renderer.domElement.addEventListener("click", (event) => {
                 <svg class="mx-auto h-12 w-12 text-gray-300 mb-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 15l-2 5L9 9l11 4-5 2zm0 0l5 5M7.188 2.239l.777 2.897M5.136 7.965l-2.898-.777M13.95 4.05l-2.122 2.122m-5.657 5.656l-2.12 2.122" />
                 </svg>
-                <p>Click on any pipe, fitting, weld, support, or marker to view its details.</p>
+                <p>Click on any rendered object to view its details.</p>
             </div>
         `;
         return;

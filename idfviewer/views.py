@@ -10,6 +10,7 @@ from django.views.decorators.http import require_http_methods
 from eht.models import ProjectData
 
 from .forms import PipelineUploadForm
+from .ifc_parser import IFCDependencyError, IFCParseError, parse_multiple_ifc_uploads
 from .models import IDFFile
 from .parser import parse_multiple_idf_texts
 from .pcf_parser import parse_multiple_pcf_texts
@@ -50,22 +51,28 @@ def detect_pipeline_format(filename: str, text: str) -> str | None:
         return "IDF"
     if lower_name.endswith(".pcf"):
         return "PCF"
+    if lower_name.endswith(".ifc"):
+        return "IFC"
 
     head = text[:4000].upper()
     if "PIPELINE-REFERENCE" in head and "MATERIALS" in head and ("END-POINT" in head or "CO-ORDS" in head):
         return "PCF"
+    if "ISO-10303-21" in head and "FILE_SCHEMA" in head and "IFC" in head:
+        return "IFC"
     if re.search(r"^\s*[+-]?\d+", text, re.MULTILINE):
         return "IDF"
     return None
 
 
 def _viewer_context(scene, project, filename, saved_file=None):
+    stats = scene.get("stats") or {}
     return {
         "scene": scene,
         "filename": filename,
         "project": project,
         "saved_file": saved_file,
         "is_saved_scene": bool(saved_file),
+        "save_supported": bool(stats.get("save_supported", True)) and not saved_file,
     }
 
 
@@ -78,32 +85,47 @@ def upload_idf_view(request):
             f2 = form.cleaned_data.get("idf_directory") or []
             all_files = f1 + f2
 
-            grouped_payloads = {"IDF": [], "PCF": []}
+            grouped_payloads = {"IDF": [], "PCF": [], "IFC": []}
             for uf in all_files:
                 fname = uf.name.split("/")[-1]
                 raw = uf.read()
                 text = decode_pipeline_bytes(raw)
                 detected_format = detect_pipeline_format(fname, text)
                 if detected_format:
-                    grouped_payloads[detected_format].append((fname, text))
+                    if detected_format == "IFC":
+                        grouped_payloads[detected_format].append((fname, raw))
+                    else:
+                        grouped_payloads[detected_format].append((fname, text))
 
             idf_payloads = grouped_payloads["IDF"]
             pcf_payloads = grouped_payloads["PCF"]
+            ifc_payloads = grouped_payloads["IFC"]
 
-            if idf_payloads and pcf_payloads:
-                messages.error(request, "Please upload only one source format at a time. Mixed IDF and PCF batches are not yet supported in a single scene.")
+            active_formats = [name for name, payloads in grouped_payloads.items() if payloads]
+            if len(active_formats) > 1:
+                messages.error(request, "Please upload only one source format at a time. Mixed IDF, PCF, and IFC batches are not yet supported in a single scene.")
                 return render(request, "idfviewer/upload.html", {"form": form})
 
-            if not idf_payloads and not pcf_payloads:
-                messages.error(request, "No valid .idf or .pcf files found in upload.")
+            if not idf_payloads and not pcf_payloads and not ifc_payloads:
+                messages.error(request, "No valid .idf, .pcf, or .ifc files found in upload.")
                 return render(request, "idfviewer/upload.html", {"form": form})
 
-            if pcf_payloads:
-                scene = parse_multiple_pcf_texts(pcf_payloads, project)
-                filename = f"Batch: {len(pcf_payloads)} PCF file(s)"
-            else:
-                scene = parse_multiple_idf_texts(idf_payloads, project)
-                filename = f"Batch: {len(idf_payloads)} IDF file(s)"
+            try:
+                if ifc_payloads:
+                    scene = parse_multiple_ifc_uploads(ifc_payloads, project)
+                    filename = f"Batch: {len(ifc_payloads)} IFC file(s)"
+                elif pcf_payloads:
+                    scene = parse_multiple_pcf_texts(pcf_payloads, project)
+                    filename = f"Batch: {len(pcf_payloads)} PCF file(s)"
+                else:
+                    scene = parse_multiple_idf_texts(idf_payloads, project)
+                    filename = f"Batch: {len(idf_payloads)} IDF file(s)"
+            except IFCDependencyError as exc:
+                messages.error(request, str(exc))
+                return render(request, "idfviewer/upload.html", {"form": form})
+            except IFCParseError as exc:
+                messages.error(request, str(exc))
+                return render(request, "idfviewer/upload.html", {"form": form})
 
             return render(
                 request,
@@ -131,6 +153,12 @@ def save_preview_view(request):
         return JsonResponse({"error": "Project is required."}, status=400)
     if not isinstance(scene, dict):
         return JsonResponse({"error": "Scene data is required."}, status=400)
+    source_format = str(((scene.get("stats") or {}).get("source_format") or "")).upper()
+    if source_format == "IFC":
+        return JsonResponse(
+            {"error": "IFC preview save is not enabled yet. Large IFC persistence will be added in a dedicated backend pass."},
+            status=400,
+        )
 
     project = get_object_or_404(ProjectData, proj_id=project_id)
     results = persist_preview_scene(project, scene, force=force)

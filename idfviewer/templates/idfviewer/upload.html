@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Pipeline Upload & Viewer Setup</title>
+    <title>Pipeline And Reference Model Upload</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
         body {
@@ -47,8 +47,8 @@
     <div class="glass-panel w-full max-w-lg rounded-xl p-10 space-y-8">
         <div class="text-center">
             <h1 class="text-[22px] font-medium text-slate-800 tracking-wide">ELECSENSE <span class="text-slate-500">Pipeline</span></h1>
-            <p class="text-[13px] text-slate-600 tracking-wide mt-2">Select project and upload IDF or PCF pipeline data</p>
-            <p class="text-[11px] text-slate-500 tracking-wide mt-2">Uploads now open in preview mode first. Components are stored only when you save them from the viewer.</p>
+            <p class="text-[13px] text-slate-600 tracking-wide mt-2">Select project and upload IDF, PCF, or IFC engineering data</p>
+            <p class="text-[11px] text-slate-500 tracking-wide mt-2">Uploads now open in preview mode first. IDF and PCF can be saved from the viewer. IFC preview is enabled first while large-model storage is being designed.</p>
         </div>
         
         {% if messages %}
@@ -79,7 +79,7 @@
 
             <div class="pt-6">
                 <button type="submit" id="submitBtn" class="w-full bg-slate-800 border border-slate-700 hover:bg-slate-700 text-white tracking-wide font-medium py-3 px-4 rounded shadow-md text-sm transition duration-200 hover:-translate-y-0.5">
-                    Process & View 3D Pipeline
+                    Process & View 3D Model
                 </button>
             </div>
 

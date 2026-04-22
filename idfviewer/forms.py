@@ -30,13 +30,13 @@ class PipelineUploadForm(forms.Form):
     
     idf_files = MultipleFileField(
         label="Select Pipeline File(s)",
-        help_text="Upload one or more .idf or .pcf files",
+        help_text="Upload one or more .idf, .pcf, or .ifc files",
         required=False,
     )
 
     idf_directory = MultipleFileField(
         label="Or Select a Folder",
-        help_text="Upload a folder containing .idf or .pcf files",
+        help_text="Upload a folder containing .idf, .pcf, or .ifc files",
         required=False,
     )
 

@@ -1,15 +1,20 @@
 import json
 from decimal import Decimal
+from pathlib import Path
+from unittest.mock import patch
 
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
 
 from eht.models import ProjectData
 
+from .ifc_parser import _normalize_ifc_scene, parse_multiple_ifc_uploads
 from .models import IDFComponent, IDFFile, IDFFileSaveEvent
 from .parser import _collect_candidate_records, _filter_scene, _normalize_points, parse_multiple_idf_texts
 from .pcf_parser import _component_to_scene_items, _normalize_scene as _normalize_pcf_scene
 from .pcf_parser import _parse_document, _strip_internal as _strip_pcf_internal
 from .services import build_scene_from_saved_file
+from .views import detect_pipeline_format
 
 
 def _parse_scene(text):
@@ -158,6 +163,60 @@ class ParserRegressionTests(SimpleTestCase):
         self.assertEqual(roles, ["branch", "main_run"])
         self.assertTrue(any("branch1_point" in item["properties"] for item in scene["fittings"]))
 
+    def test_detect_pipeline_format_recognizes_ifc(self):
+        self.assertEqual(
+            detect_pipeline_format("sample.ifc", "ISO-10303-21;\nFILE_SCHEMA(('IFC2X3'));"),
+            "IFC",
+        )
+
+    def test_ifc_scene_normalization_builds_mesh_payload_and_disables_save(self):
+        scene = {
+            "pipes": [],
+            "fittings": [],
+            "welds": [],
+            "supports": [],
+            "markers": [],
+            "meshes": [
+                {
+                    "uid": 1,
+                    "record_id": 9100,
+                    "kind": "IfcColumn",
+                    "mesh_vertices_raw": [
+                        [1000.0, 2000.0, 3000.0],
+                        [2000.0, 2000.0, 3000.0],
+                        [2000.0, 3000.0, 3000.0],
+                    ],
+                    "mesh_indices_raw": [0, 1, 2],
+                    "properties": {
+                        "source_format": "IFC",
+                        "display_color": [0.3, 0.4, 0.5],
+                    },
+                }
+            ],
+            "stats": {"source_format": "IFC", "source_label": "IFC Scene"},
+        }
+
+        normalized = _normalize_ifc_scene(scene)
+
+        self.assertEqual(normalized["stats"]["mesh_count"], 1)
+        self.assertFalse(normalized["stats"]["save_supported"])
+        self.assertEqual(normalized["stats"]["scale_factor"], 1.0)
+        self.assertEqual(normalized["meshes"][0]["mesh"]["indices"], [0, 1, 2])
+        self.assertEqual(len(normalized["meshes"][0]["mesh"]["positions"]), 9)
+
+    def test_sample_ifc_parses_with_expected_meshes_and_metadata(self):
+        raw = Path("/home/kr/mydev/eht_office/eht/4001-A51A-01.ifc").read_bytes()
+
+        scene = parse_multiple_ifc_uploads([("4001-A51A-01.ifc", raw)], None)
+
+        self.assertEqual(scene["stats"]["source_format"], "IFC")
+        self.assertEqual(scene["stats"]["mesh_count"], 2)
+        self.assertEqual(scene["stats"]["scale_factor"], 1.0)
+        first = scene["meshes"][0]["properties"]
+        self.assertEqual(first["ifc_class"], "IfcColumn")
+        self.assertEqual(first["component_ref"], "H467")
+        self.assertTrue(first["materials"])
+
 
 def make_project():
     return ProjectData.objects.create(
@@ -251,6 +310,76 @@ def make_preview_scene(filename="alpha.idf", line_id="LINE-01", component_ref="P
             "weld_count": 0,
             "support_count": 1,
             "marker_count": 0,
+        },
+    }
+
+
+def make_ifc_preview_scene(filename="sample.ifc"):
+    return {
+        "pipes": [],
+        "fittings": [],
+        "welds": [],
+        "supports": [],
+        "markers": [],
+        "meshes": [
+            {
+                "uid": 1,
+                "record_id": 9100,
+                "kind": "IfcColumn",
+                "mesh": {
+                    "positions": [
+                        -1.0, -1.0, 0.0,
+                        1.0, -1.0, 0.0,
+                        1.0, 1.0, 0.0,
+                        -1.0, 1.0, 0.0,
+                    ],
+                    "indices": [0, 1, 2, 0, 2, 3],
+                    "color": [0.4, 0.5, 0.8],
+                },
+                "properties": {
+                    "source_format": "IFC",
+                    "source_record": "IfcColumn",
+                    "record_id": 9100,
+                    "kind": "IfcColumn",
+                    "filename": filename,
+                    "ifc_class": "IfcColumn",
+                    "global_id": "ABC123",
+                    "component_ref": "H467",
+                    "name": "CABLE TRAY",
+                    "hierarchy_group": "IfcBuildingStorey:Level 1 / IfcColumn",
+                    "spatial_path": [
+                        "IfcSite:Main Site",
+                        "IfcBuilding:Main Building",
+                        "IfcBuildingStorey:Level 1",
+                    ],
+                    "materials": [{"code": "", "description": "STEEL/S355J2"}],
+                    "property_sets": {"Pset_ColumnCommon": {"Reference": "H467"}},
+                    "quantities": {"BaseQuantities": {"NetWeight": 11.8}},
+                    "display_color": [0.4, 0.5, 0.8],
+                    "raw_bounds": {
+                        "min_x": 0.0,
+                        "max_x": 1000.0,
+                        "min_y": 0.0,
+                        "max_y": 1000.0,
+                        "min_z": 0.0,
+                        "max_z": 100.0,
+                    },
+                    "notes": [],
+                },
+            }
+        ],
+        "stats": {
+            "total_lines": 1,
+            "source_format": "IFC",
+            "source_label": "Batched IFC Scene",
+            "pipe_count": 0,
+            "fitting_count": 0,
+            "weld_count": 0,
+            "support_count": 0,
+            "marker_count": 0,
+            "mesh_count": 1,
+            "ifc_object_count": 1,
+            "save_supported": False,
         },
     }
 
@@ -390,3 +519,32 @@ class SavedPipelineFlowTests(TestCase):
         payload = json.loads(download_response.content)
         self.assertEqual(payload["component_count"], 2)
         self.assertEqual(len(payload["components"]), 2)
+
+    @patch("idfviewer.views.parse_multiple_ifc_uploads")
+    def test_ifc_upload_renders_preview_and_hides_save_button(self, mock_parse_ifc):
+        mock_parse_ifc.return_value = make_ifc_preview_scene()
+        upload = SimpleUploadedFile(
+            "sample.ifc",
+            b"ISO-10303-21;\nFILE_SCHEMA(('IFC2X3'));",
+            content_type="application/octet-stream",
+        )
+
+        response = self.client.post(
+            "/idfviewer/",
+            data={"project": self.project.proj_id, "idf_files": [upload]},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Batched IFC Scene")
+        self.assertContains(response, "IFC preview save pending backend design")
+        self.assertContains(response, "IFC Objects (1)")
+
+    def test_ifc_preview_save_is_rejected(self):
+        response = self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": make_ifc_preview_scene()}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("IFC preview save is not enabled yet", response.json()["error"])
