@@ -3,6 +3,7 @@ import logging
 import os
 from collections import Counter
 from io import BytesIO
+from time import perf_counter
 
 import pandas as pd
 from django.conf import settings
@@ -85,6 +86,28 @@ def copy_project_setup(source_project, target_project):
     for field_name in PROJECT_DATA_TEMPLATE_FIELDS:
         setattr(target_project, field_name, getattr(source_project, field_name))
 
+
+def emit_timing(message):
+    if not getattr(settings, "EHT_TIMING_LOGS", False):
+        return
+    print(message, flush=True)
+    logger.warning(message)
+
+
+def _timed_json_response(payload, *, status=200, context_label='response'):
+    serialization_started = perf_counter()
+    serialized_payload = json.dumps(payload, default=str)
+    serialization_duration = perf_counter() - serialization_started
+    payload_size_bytes = len(serialized_payload.encode('utf-8'))
+    emit_timing(
+        "EHT timing | {label} | response_build={duration:.3f}s | response_bytes={payload_bytes}".format(
+            label=context_label,
+            duration=serialization_duration,
+            payload_bytes=payload_size_bytes,
+        )
+    )
+    return JsonResponse(payload, status=status)
+
 # Create your views here.
 def index(request):
     context = {'key1': 'value1','key2': 'value2' }
@@ -119,6 +142,7 @@ def calculate_view(request, project_id=None):
     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
 
     if request.method == 'POST':
+        request_started = perf_counter()
         file = request.FILES.get('file')
         if not file: return JsonResponse({'error': 'No file uploaded'}, status=400)
         if not project_id:
@@ -126,52 +150,111 @@ def calculate_view(request, project_id=None):
 
         try:
             # Step 1: Sanitize the file
+            sanitize_started = perf_counter()
             valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
+            sanitize_duration = perf_counter() - sanitize_started
+            emit_timing(
+                "EHT timing | calculate_view | project={project} | sanitize={duration:.3f}s | valid_rows={valid_rows} | invalid_rows={invalid_rows}".format(
+                    project=project_id,
+                    duration=sanitize_duration,
+                    valid_rows=len(valid_process_line_data),
+                    invalid_rows=len(invalid_data),
+                )
+            )
             if not valid_process_line_data and invalid_data:
                 error_file_name = os.path.basename(error_file_path)
                 error_file_url = reverse('download_error_file', args=[error_file_name])
-                return JsonResponse({
+                response = _timed_json_response({
                     'error': 'No valid rows were found in the uploaded file. The existing project workspace was left unchanged.',
                     'error_file_url': error_file_url,
-                }, status=400)
+                }, status=400, context_label='calculate_view_invalid_only')
+                emit_timing(
+                    "EHT timing | calculate_view | project={project} | total_request={duration:.3f}s".format(
+                        project=project_id,
+                        duration=perf_counter() - request_started,
+                    )
+                )
+                return response
 
             if not valid_process_line_data:
                 return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
 
+            replace_started = perf_counter()
+            clear_duration = 0.0
+            upload_duration = 0.0
             with transaction.atomic():
+                clear_started = perf_counter()
                 clear_project_workspace_data(project_id)
+                clear_duration = perf_counter() - clear_started
+                upload_started = perf_counter()
                 uploaded_count = upload_inputData_in_DB(valid_process_line_data, project_id)
+                upload_duration = perf_counter() - upload_started
+            replace_duration = perf_counter() - replace_started
+            emit_timing(
+                "EHT timing | calculate_view | project={project} | replace_and_upload={duration:.3f}s | clear={clear:.3f}s | upload={upload:.3f}s | commit={commit:.3f}s | uploaded_rows={uploaded_rows}".format(
+                    project=project_id,
+                    duration=replace_duration,
+                    clear=clear_duration,
+                    upload=upload_duration,
+                    commit=max(replace_duration - clear_duration - upload_duration, 0.0),
+                    uploaded_rows=uploaded_count,
+                )
+            )
 
-                # If invalid data exists, store only the valid pending rows and ask the user to review the error file.
-                if invalid_data:
-                    error_file_name = os.path.basename(error_file_path)
-                    error_file_url = reverse('download_error_file', args=[error_file_name])
-                    return JsonResponse({
-                        'valid_data_with_error': True,
-                        'error_file_url': error_file_url,
-                        'project_id': project_id,
-                        'uploaded_rows': uploaded_count,
-                        'success': 'Partial valid data uploaded. Download the error file and confirm the pending rows when ready.',
-                    }, status=200)
-                        
-                # If all data is valid, proceed directly to the calculation stage.
+            # If invalid data exists, store only the valid pending rows and ask the user to review the error file.
+            if invalid_data:
+                error_file_name = os.path.basename(error_file_path)
+                error_file_url = reverse('download_error_file', args=[error_file_name])
+                response = _timed_json_response({
+                    'valid_data_with_error': True,
+                    'error_file_url': error_file_url,
+                    'project_id': project_id,
+                    'uploaded_rows': uploaded_count,
+                    'success': 'Partial valid data uploaded. Download the error file and confirm the pending rows when ready.',
+                }, status=200, context_label='calculate_view_partial_valid')
+                emit_timing(
+                    "EHT timing | calculate_view | project={project} | total_request={duration:.3f}s".format(
+                        project=project_id,
+                        duration=perf_counter() - request_started,
+                    )
+                )
+                return response
+
+            # Confirm the uploaded rows in a short transaction before calculation/storage work begins.
+            confirm_started = perf_counter()
+            with transaction.atomic():
                 status_ok, valid_data, updated_count = update_pending_status(project_id)
+            confirm_duration = perf_counter() - confirm_started
+            emit_timing(
+                "EHT timing | calculate_view | project={project} | confirm_pending={duration:.3f}s | confirmed_rows={confirmed_rows}".format(
+                    project=project_id,
+                    duration=confirm_duration,
+                    confirmed_rows=updated_count,
+                )
+            )
 
-                if not status_ok:
-                    raise ValidationError('Failed to confirm uploaded data.')
+            if not status_ok:
+                raise ValidationError('Failed to confirm uploaded data.')
 
-                if updated_count == 0:
-                    return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
+            if updated_count == 0:
+                return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
 
-                calculation_result, result_counts = run_project_calculations(project_id)
-            return JsonResponse({
+            calculation_result, result_counts = run_project_calculations(project_id)
+            response = _timed_json_response({
                 'success': 'Input file processed and calculations completed successfully.',
                 'project_id': project_id,
                 'confirmed_rows': updated_count,
                 'result_counts': result_counts,
                 'calculation_result': calculation_result,
-            })           
-        
+            }, context_label='calculate_view_success')
+            emit_timing(
+                "EHT timing | calculate_view | project={project} | total_request={duration:.3f}s".format(
+                    project=project_id,
+                    duration=perf_counter() - request_started,
+                )
+            )
+            return response
+
         except ValidationError as e:
             logger.error(f"Validation error: {str(e)}")
             return JsonResponse({'error': str(e)}, status=400)
@@ -460,6 +543,68 @@ def _build_sld_workspace_data(project_id):
     }
 
 
+def _filter_sld_workspace_data_by_line(project_id, sld_data, selected_line_id):
+    if not selected_line_id:
+        return sld_data
+
+    payload = sld_data['payload']
+    target_group = next(
+        (group for group in payload['line_groups'] if group['line_id'].casefold() == selected_line_id.casefold()),
+        None,
+    )
+    if target_group is None:
+        return sld_data
+
+    normalized_line_id = target_group['line_id']
+    filtered_nodes = [
+        node for node in payload['nodes']
+        if normalized_line_id in node.get('line_ids', [])
+    ]
+    component_ids = {node['component_id'] for node in filtered_nodes}
+    filtered_edges = [
+        edge for edge in payload['edges']
+        if edge['from_component_id'] in component_ids
+        and edge['to_component_id'] in component_ids
+        and normalized_line_id in edge.get('line_ids', [])
+    ]
+    filtered_payload = {
+        **payload,
+        'nodes': filtered_nodes,
+        'edges': filtered_edges,
+        'line_groups': [target_group],
+        'meta': {
+            'branch_count': len(target_group['branch_indices']),
+            'node_count': len(filtered_nodes),
+            'edge_count': len(filtered_edges),
+        },
+    }
+    filtered_layout = get_project_sld_layout(project_id, payload=filtered_payload)
+
+    filtered_component_summary = [
+        row for row in sld_data['component_summary']
+        if any(node['component_type'] == row['component_type'] for node in filtered_nodes)
+    ]
+    filtered_line_summary = [
+        row for row in sld_data['line_summary']
+        if row['line_id'].casefold() == normalized_line_id.casefold()
+    ]
+
+    return {
+        **sld_data,
+        'payload': filtered_payload,
+        'layout': filtered_layout,
+        'component_summary': filtered_component_summary,
+        'line_summary': filtered_line_summary,
+        'summary': {
+            'line_group_count': 1,
+            'branch_count': len(target_group['branch_indices']),
+            'node_count': len(filtered_nodes),
+            'edge_count': len(filtered_edges),
+        },
+        'selected_line_id': normalized_line_id,
+    }
+
+
 def boq_view(request):
     project_id = request.GET.get('project_id')
     context = _get_project_workspace_context(request, project_id)
@@ -546,6 +691,7 @@ def boq_line_detail_view(request):
 
 def sld_workspace_view(request):
     project_id = request.GET.get('project_id')
+    selected_line_id = (request.GET.get('line_id') or '').strip()
     context = _get_project_workspace_context(request, project_id)
     sld_data = {
         'summary': {
@@ -577,10 +723,18 @@ def sld_workspace_view(request):
         },
         'component_summary': [],
         'line_summary': [],
+        'selected_line_id': '',
     }
+    selected_line_error = ''
 
     if project_id and context['project_setup']:
         sld_data = _build_sld_workspace_data(project_id)
+        if selected_line_id:
+            known_line_ids = {row['line_id'] for row in sld_data['line_summary']}
+            if selected_line_id in known_line_ids:
+                sld_data = _filter_sld_workspace_data_by_line(project_id, sld_data, selected_line_id)
+            else:
+                selected_line_error = f"No SLD line group was found for line ID '{selected_line_id}'."
 
     context.update({
         'sld_summary': sld_data['summary'],
@@ -593,6 +747,9 @@ def sld_workspace_view(request):
         'sld_layout_url': reverse('sld_layout_view'),
         'sld_layout_reset_url': reverse('sld_layout_reset_view'),
         'sld_validation_url': reverse('sld_validation_view'),
+        'sld_selected_line_id': sld_data.get('selected_line_id', ''),
+        'sld_selected_line_query': selected_line_id,
+        'sld_selected_line_error': selected_line_error,
     })
     return render(request, 'eht/partials/sld_tab.html', context)
 
@@ -841,13 +998,23 @@ def download_error_file(request, file_name):
 @login_required
 def confirm_valid_data(request):
     if request.method == 'POST':
+        request_started = perf_counter()
         project_id = request.POST.get('project_id')
         if not project_id:
             return JsonResponse({'error': 'Project ID is required.'}, status=400)
 
         try:            
             with transaction.atomic():
+                confirm_started = perf_counter()
                 status_ok, valid_data, updated_count = update_pending_status(project_id)
+                confirm_duration = perf_counter() - confirm_started
+                emit_timing(
+                    "EHT timing | confirm_valid_data | project={project} | confirm_pending={duration:.3f}s | confirmed_rows={confirmed_rows}".format(
+                        project=project_id,
+                        duration=confirm_duration,
+                        confirmed_rows=updated_count,
+                    )
+                )
                 if not status_ok:
                     raise ValidationError('Failed to confirm valid uploaded data.')
 
@@ -855,18 +1022,25 @@ def confirm_valid_data(request):
                     return JsonResponse({'error': 'No valid uploaded data is pending confirmation.'}, status=400)
 
                 calculation_result, result_counts = run_project_calculations(project_id)
-            logger.info(
-                "Project ID: %s - Pending rows confirmed and calculations completed for %s row(s).",
-                project_id,
-                updated_count,
-            )
-            return JsonResponse({
+                logger.info(
+                    "Project ID: %s - Pending rows confirmed and calculations completed for %s row(s).",
+                    project_id,
+                    updated_count,
+                )
+            response = _timed_json_response({
                 'success': 'Valid data confirmed and calculations completed successfully.',
                 'project_id': project_id,
                 'confirmed_rows': updated_count,
                 'result_counts': result_counts,
                 'calculation_result': calculation_result,
-            }, status=200)
+            }, status=200, context_label='confirm_valid_data_success')
+            emit_timing(
+                "EHT timing | confirm_valid_data | project={project} | total_request={duration:.3f}s".format(
+                    project=project_id,
+                    duration=perf_counter() - request_started,
+                )
+            )
+            return response
         except Exception as e:
             logger.error(f"Project ID: {project_id} - Failed to confirm 'EHT Input data': {str(e)}", exc_info=True)
             return JsonResponse({'error': f"Failed to confirm valid data: {str(e)}"}, status=500)
@@ -966,6 +1140,7 @@ def upload_inputData_in_DB(valid_data, project_id):
     try:
         if not valid_data:
             return 0
+        build_started = perf_counter()
         valid_rows = [
             HeatTracingInput(               
                 proj_id=project_id,
@@ -994,7 +1169,18 @@ def upload_inputData_in_DB(valid_data, project_id):
             )
             for row in valid_data
         ]
-        HeatTracingInput.objects.bulk_create(valid_rows)
+        build_duration = perf_counter() - build_started
+        bulk_create_started = perf_counter()
+        HeatTracingInput.objects.bulk_create(valid_rows, batch_size=500)
+        bulk_create_duration = perf_counter() - bulk_create_started
+        emit_timing(
+            "EHT timing | upload_inputData_in_DB | project={project} | rows={rows} | build={build:.3f}s | bulk_create={bulk_create:.3f}s".format(
+                project=project_id,
+                rows=len(valid_rows),
+                build=build_duration,
+                bulk_create=bulk_create_duration,
+            )
+        )
         return len(valid_rows)
 
     except Exception as e:

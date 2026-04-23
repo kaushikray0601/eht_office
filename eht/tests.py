@@ -7,6 +7,7 @@ import pandas as pd
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.db import connection
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from openpyxl import load_workbook
@@ -904,7 +905,7 @@ class StoreCalculatedResultsTests(TestCase):
             'tracer_power_param': [],
         })
 
-        with patch('eht.data_service.ProcessLineCalculation.objects.create', side_effect=RuntimeError('boom')):
+        with patch('eht.data_service.ProcessLineCalculation.objects.bulk_create', side_effect=RuntimeError('boom')):
             with self.assertRaises(RuntimeError):
                 store_calculated_results('p1', {
                     'heat_loss': [
@@ -1230,6 +1231,39 @@ class SldLayoutTests(TestCase):
         reloaded_layout = get_project_sld_layout('p1', payload=payload)
         self.assertFalse(reloaded_layout['meta']['has_saved_layout'])
         self.assertEqual(reloaded_layout['meta']['saved_count'], 0)
+
+    def test_sld_layout_view_merges_partial_position_updates_without_deleting_other_saved_nodes(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        all_positions = {
+            node['component_id']: {'x': 100 + index * 10, 'y': 200 + index * 5}
+            for index, node in enumerate(payload['nodes'], start=1)
+        }
+        self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': all_positions}),
+            content_type='application/json',
+        )
+
+        preserved_component_id = payload['nodes'][0]['component_id']
+        updated_component_id = payload['nodes'][1]['component_id']
+        partial_update = {
+            updated_component_id: {'x': 999, 'y': 777},
+        }
+
+        response = self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': partial_update}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        layout_payload = self.client.get(reverse('sld_layout_view'), {'project_id': 'p1'}).json()
+        self.assertEqual(layout_payload['positions'][updated_component_id]['x'], 999)
+        self.assertEqual(layout_payload['positions'][updated_component_id]['y'], 777)
+        self.assertEqual(layout_payload['positions'][preserved_component_id]['x'], all_positions[preserved_component_id]['x'])
+        self.assertEqual(layout_payload['positions'][preserved_component_id]['y'], all_positions[preserved_component_id]['y'])
+        self.assertEqual(layout_payload['meta']['save_mode'], 'merge')
 
     def test_saved_layout_survives_recalculation_when_component_ids_are_stable(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -1559,6 +1593,50 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Save Layout')
         self.assertContains(response, 'Reset Layout')
 
+    def test_sld_workspace_view_supports_line_focused_rendering(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+
+        response = self.client.get(
+            reverse('sld_workspace_view'),
+            {'project_id': 'p1', 'line_id': 'LINE-002'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Focused view for line')
+        self.assertContains(response, 'LINE-002')
+        self.assertContains(response, 'data-selected-line-id="LINE-002"')
+        self.assertContains(response, 'Property Inspector')
+        self.assertContains(response, 'id="sld-fit-view"')
+        self.assertContains(response, 'id="sld-export-svg"')
+
+    def test_sld_workspace_view_reports_unknown_line_focus_request(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(
+            reverse('sld_workspace_view'),
+            {'project_id': 'p1', 'line_id': 'LINE-999'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'No SLD line group was found for line ID')
+        self.assertContains(response, 'LINE-999')
+
+    def test_sld_workspace_view_renders_inspector_and_navigation_tools(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(
+            reverse('sld_workspace_view'),
+            {'project_id': 'p1'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Property Inspector')
+        self.assertContains(response, 'Select a component in the diagram')
+        self.assertContains(response, 'id="sld-zoom-in"')
+        self.assertContains(response, 'id="sld-zoom-out"')
+        self.assertContains(response, 'id="sld-fit-view"')
+        self.assertContains(response, 'id="sld-export-svg"')
+
     def test_sld_payload_view_returns_json_graph_payload(self):
         make_calculated_project_snapshot()
 
@@ -1764,6 +1842,52 @@ class CalculateViewHardeningTests(TestCase):
         replacement_line = HeatTracingInput.objects.get(proj_id='p1', line_id='LINE-NEW')
         self.assertEqual(replacement_line.status, 'pending')
         self.assertEqual(HeatTracingInput.objects.filter(proj_id='p1').count(), 1)
+
+    def test_calculate_view_runs_calculations_outside_upload_transaction(self):
+        valid_rows = [{
+            'XLID': 1,
+            'Line_ID': 'LINE-NEW',
+            'Service_Type': 'EP',
+            'Line_Size': 2.0,
+            'Line_Length': 11.0,
+            'Ins_Mat_Type': 'Mineral Wool',
+            'Insul_Thick': 50.0,
+            'Maint_T': 120.0,
+            'Oper_T': 100.0,
+            'Design_T': 140.0,
+            'IsDeleted': False,
+            'PID_No': '',
+            'Area': '',
+            'Train': '',
+            'Valve_Qty': 0,
+            'Flange_Qty': 0,
+            'Support_Qty': 0,
+            'Pipe_Mat_Class': '',
+            'Emergency_Supply': False,
+            'Discipline': '',
+            'Remarks': '',
+        }]
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        def fake_run_project_calculations(project_id):
+            self.assertFalse(connection.in_atomic_block)
+            return ({'heat_loss': []}, {'heat_loss': 0, 'selected_tracers': 0, 'alternative_tracers': 0, 'power_distribution': 0, 'boq_lines': 0, 'consolidated_boq_items': 0, 'tracer_power_param': 0})
+
+        with patch('eht.views.sanitize_file', return_value=(valid_rows, [], '')), patch(
+            'eht.views.run_project_calculations',
+            side_effect=fake_run_project_calculations,
+        ):
+            response = self.client.post(
+                reverse('calculate_view'),
+                {'project_id': 'p1', 'file': upload},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(HeatTracingInput.objects.get(proj_id='p1').status, 'confirmed')
 
     def test_confirm_valid_data_rejects_requests_when_no_rows_are_pending(self):
         line = self.create_pending_line(status='confirmed')

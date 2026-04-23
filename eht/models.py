@@ -143,6 +143,10 @@ class HeatTracingInput(models.Model):
     class Meta:
         verbose_name = "Heat Tracing Input"
         verbose_name_plural = "Heat Tracing Inputs"
+        indexes = [
+            models.Index(fields=['proj_id']),
+            models.Index(fields=['proj_id', 'status']),
+        ]
 
 # This table holds thermal conductivity data for insulation materials
 class ElecEHT_ThermalConductivity(models.Model):

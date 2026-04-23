@@ -106,13 +106,13 @@ Exit criteria:
 - layout persistence no longer depends on fragile whole-document assumptions
 
 Tasks:
-- [ ] Decide whether layout saves are full-document snapshots or patch/delta updates
-- [ ] If staying with full-document save, enforce that contract strictly in API and client
-- [ ] If moving to partial updates, redesign `save_project_sld_layout()` to stop deleting omitted nodes
+- [x] Decide whether layout saves are full-document snapshots or patch/delta updates
+- [x] If staying with full-document save, enforce that contract strictly in API and client
+- [x] If moving to partial updates, redesign `save_project_sld_layout()` to stop deleting omitted nodes
 - [ ] Add optimistic version checks or last-modified checks for concurrent save safety
 - [ ] Persist viewport preferences separately from node coordinates if useful
-- [ ] Add tests for partial node visibility/filtering without accidental layout deletion
-- [ ] Add tests for project recalculation where stable component IDs keep prior layout where valid
+- [x] Add tests for partial node visibility/filtering without accidental layout deletion
+- [x] Add tests for project recalculation where stable component IDs keep prior layout where valid
 
 Recommended file focus:
 - [eht/sld_layout.py](/home/kr/mydev/eht_office/eht/sld_layout.py:35)
@@ -234,15 +234,15 @@ Sprint A:
 - [ ] add regression tests for regenerate + reload
 
 Sprint B:
-- [ ] redesign layout save contract
-- [ ] preserve layout safely across valid recalculation changes
-- [ ] add line-focused browsing
-- [ ] add collapsed validation drilldown
+- [x] redesign layout save contract
+- [x] preserve layout safely across valid recalculation changes
+- [x] add line-focused browsing
+- [x] add collapsed validation drilldown
 
 Sprint C:
 - [ ] improve symbol readability and visual grouping
-- [ ] add property inspector and path highlighting
-- [ ] add export and fit/navigation tools
+- [x] add property inspector and path highlighting
+- [x] add export and fit/navigation tools
 
 ## 6. Delivery Risks
 

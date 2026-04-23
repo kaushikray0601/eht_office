@@ -17,6 +17,15 @@
         return NODE_STYLE[componentType] || { width: 100, height: 40, fill: '#f8fafc', stroke: '#1f3447' };
     }
 
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     function getSldCsrfToken() {
         if (typeof window.getCSRFToken === 'function') {
             return window.getCSRFToken();
@@ -346,6 +355,122 @@
         return link;
     }
 
+    function applyDefaultElementStyle(element) {
+        const meta = element.prop('sldMeta') || {};
+        const node = meta.node;
+        if (!node) {
+            return;
+        }
+        const style = getNodeStyle(node.component_type);
+        if (node.component_type === 'EndTermination') {
+            element.attr({
+                body: {
+                    fill: style.fill,
+                    stroke: style.stroke,
+                    strokeWidth: 2,
+                    opacity: 1,
+                },
+            });
+            return;
+        }
+        element.attr({
+            body: {
+                fill: style.fill,
+                stroke: style.stroke,
+                strokeWidth: 1.8,
+                opacity: 1,
+            },
+            label: {
+                fill: '#17324d',
+            },
+        });
+    }
+
+    function applyMutedElementStyle(element) {
+        const meta = element.prop('sldMeta') || {};
+        const node = meta.node;
+        if (!node) {
+            return;
+        }
+        if (node.component_type === 'EndTermination') {
+            element.attr({
+                body: {
+                    opacity: 0.25,
+                },
+            });
+            return;
+        }
+        element.attr({
+            body: {
+                opacity: 0.2,
+            },
+            label: {
+                fill: '#829ab1',
+            },
+        });
+    }
+
+    function applyPathElementStyle(element, isSelected) {
+        const meta = element.prop('sldMeta') || {};
+        const node = meta.node;
+        if (!node) {
+            return;
+        }
+        const style = getNodeStyle(node.component_type);
+        const stroke = isSelected ? '#c05621' : '#2f6c43';
+        const fill = isSelected ? '#fff1e6' : style.fill;
+        if (node.component_type === 'EndTermination') {
+            element.attr({
+                body: {
+                    fill: isSelected ? '#c05621' : '#2f6c43',
+                    stroke: stroke,
+                    strokeWidth: isSelected ? 3 : 2.5,
+                    opacity: 1,
+                },
+            });
+            return;
+        }
+        element.attr({
+            body: {
+                fill: fill,
+                stroke: stroke,
+                strokeWidth: isSelected ? 3 : 2.4,
+                opacity: 1,
+            },
+            label: {
+                fill: '#102a43',
+            },
+        });
+    }
+
+    function applyDefaultLinkStyle(link) {
+        link.attr({
+            line: {
+                stroke: '#1f3447',
+                strokeWidth: 2,
+                opacity: 1,
+            },
+        });
+    }
+
+    function applyMutedLinkStyle(link) {
+        link.attr({
+            line: {
+                opacity: 0.15,
+            },
+        });
+    }
+
+    function applyPathLinkStyle(link, isAdjacent) {
+        link.attr({
+            line: {
+                stroke: isAdjacent ? '#c05621' : '#2f6c43',
+                strokeWidth: isAdjacent ? 3.4 : 2.8,
+                opacity: 1,
+            },
+        });
+    }
+
     function updateSavedCountBadge(root, savedCount) {
         const panel = root.closest('.sld-panel');
         const badge = panel ? panel.querySelector('.sld-saved-count-badge') : null;
@@ -368,6 +493,55 @@
             root.__sldState.isDirty = isDirty;
             root.__sldState.hasSavedLayout = hasSavedLayout;
         }
+    }
+
+    function getSelectionSummaryContainer(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-selection-summary') : null;
+    }
+
+    function getInspectorDetailsContainer(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-inspector-details') : null;
+    }
+
+    function buildInspectorRows(node, relatedNodeCount, adjacentEdgeCount) {
+        const metadata = node.metadata || {};
+        const rows = [
+            ['Tag', node.display_tag || '-'],
+            ['Component', node.display_name || node.component_type],
+            ['Type', node.component_type],
+            ['Line IDs', (node.line_ids || []).join(', ') || '-'],
+            ['Branch', node.branch_index !== null && node.branch_index !== undefined ? node.branch_index : '-'],
+            ['Circuit', node.circuit_index !== null && node.circuit_index !== undefined ? node.circuit_index : '-'],
+            ['Path Nodes', relatedNodeCount],
+            ['Path Links', adjacentEdgeCount],
+        ];
+        Object.keys(metadata).sort().forEach(function (key) {
+            const value = metadata[key];
+            if (value === null || value === undefined || value === '') {
+                return;
+            }
+            rows.push([key.replace(/_/g, ' '), Array.isArray(value) ? value.join(', ') : value]);
+        });
+        return rows;
+    }
+
+    function renderInspector(root, node, relatedNodeCount, adjacentEdgeCount) {
+        const summary = getSelectionSummaryContainer(root);
+        const details = getInspectorDetailsContainer(root);
+        if (!summary || !details) {
+            return;
+        }
+        if (!node) {
+            summary.textContent = 'Select a component in the diagram to inspect its details and highlight the connected path.';
+            details.innerHTML = '';
+            return;
+        }
+        summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. Connected path highlighting is limited to the current rendered graph.`;
+        details.innerHTML = buildInspectorRows(node, relatedNodeCount, adjacentEdgeCount).map(function (row) {
+            return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
+        }).join('');
     }
 
     function collectComponentPositions(state) {
@@ -433,6 +607,139 @@
     function refreshDerivedGeometry(root) {
         refreshDynamicLabels(root);
         updateLinkGeometry(root);
+    }
+
+    function buildGraphAdjacency(payload) {
+        const adjacency = {};
+        const edgesByComponent = {};
+        (payload.nodes || []).forEach(function (node) {
+            adjacency[node.component_id] = new Set();
+            edgesByComponent[node.component_id] = [];
+        });
+        (payload.edges || []).forEach(function (edge) {
+            if (!adjacency[edge.from_component_id]) {
+                adjacency[edge.from_component_id] = new Set();
+                edgesByComponent[edge.from_component_id] = [];
+            }
+            if (!adjacency[edge.to_component_id]) {
+                adjacency[edge.to_component_id] = new Set();
+                edgesByComponent[edge.to_component_id] = [];
+            }
+            adjacency[edge.from_component_id].add(edge.to_component_id);
+            adjacency[edge.to_component_id].add(edge.from_component_id);
+            edgesByComponent[edge.from_component_id].push(edge);
+            edgesByComponent[edge.to_component_id].push(edge);
+        });
+        return { adjacency: adjacency, edgesByComponent: edgesByComponent };
+    }
+
+    function highlightSelection(root, componentId) {
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+        state.selectedComponentId = componentId || null;
+        const adjacency = state.graphAdjacency || {};
+        const edgesByComponent = state.edgesByComponent || {};
+
+        if (!componentId || !state.nodeByComponentId[componentId]) {
+            Object.keys(state.elementByComponentId).forEach(function (id) {
+                applyDefaultElementStyle(state.elementByComponentId[id]);
+            });
+            Object.keys(state.linkByEdgeKey).forEach(function (edgeKey) {
+                applyDefaultLinkStyle(state.linkByEdgeKey[edgeKey].link);
+            });
+            renderInspector(root, null, 0, 0);
+            return;
+        }
+
+        const visited = new Set();
+        const queue = [componentId];
+        while (queue.length) {
+            const current = queue.shift();
+            if (visited.has(current)) {
+                continue;
+            }
+            visited.add(current);
+            (adjacency[current] || new Set()).forEach(function (neighbor) {
+                if (!visited.has(neighbor)) {
+                    queue.push(neighbor);
+                }
+            });
+        }
+
+        Object.keys(state.elementByComponentId).forEach(function (id) {
+            if (!visited.has(id)) {
+                applyMutedElementStyle(state.elementByComponentId[id]);
+            } else {
+                applyPathElementStyle(state.elementByComponentId[id], id === componentId);
+            }
+        });
+
+        const adjacentKeys = new Set((edgesByComponent[componentId] || []).map(getEdgeKey));
+        Object.keys(state.linkByEdgeKey).forEach(function (edgeKey) {
+            const entry = state.linkByEdgeKey[edgeKey];
+            const edge = entry.edge;
+            const inPath = visited.has(edge.from_component_id) && visited.has(edge.to_component_id);
+            if (!inPath) {
+                applyMutedLinkStyle(entry.link);
+            } else {
+                applyPathLinkStyle(entry.link, adjacentKeys.has(edgeKey));
+            }
+        });
+
+        renderInspector(root, state.nodeByComponentId[componentId], visited.size, adjacentKeys.size);
+    }
+
+    function zoomPaper(root, scaleFactor) {
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+        const nextScale = Math.max(0.35, Math.min(1.8, Number((state.scale * scaleFactor).toFixed(3))));
+        state.scale = nextScale;
+        state.paper.scale(nextScale, nextScale);
+    }
+
+    function fitPaperToContent(root) {
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+        const area = state.graph.getBBox(state.graph.getElements());
+        if (!area || !area.width || !area.height) {
+            return;
+        }
+        const hostWidth = root.clientWidth || 1200;
+        const hostHeight = root.clientHeight || 420;
+        const scale = Math.max(0.4, Math.min(1.25, Math.min((hostWidth - 40) / area.width, (hostHeight - 40) / area.height)));
+        state.scale = Number(scale.toFixed(3));
+        state.paper.scale(state.scale, state.scale);
+        const shell = root;
+        const centeredLeft = Math.max(0, (area.x * state.scale) - ((hostWidth - area.width * state.scale) / 2));
+        const centeredTop = Math.max(0, (area.y * state.scale) - ((hostHeight - area.height * state.scale) / 2));
+        shell.scrollLeft = centeredLeft;
+        shell.scrollTop = centeredTop;
+    }
+
+    function exportPaperAsSvg(root) {
+        const state = root.__sldState;
+        if (!state || !state.paper || !state.paper.svg) {
+            return;
+        }
+        const svgMarkup = state.paper.svg.outerHTML;
+        const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const projectId = root.dataset.projectId || 'project';
+        link.href = url;
+        link.download = `${projectId}_sld.svg`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(function () {
+            URL.revokeObjectURL(url);
+        }, 0);
     }
 
     function scheduleDerivedGeometryRefresh(root) {
@@ -541,17 +848,22 @@
 
         graph.resetCells(cells);
 
+        const graphConnections = buildGraphAdjacency(payload);
         root.__sldState = {
             payload: payload,
             graph: graph,
             paper: paper,
+            scale: 1,
             elementByComponentId: elementByComponentId,
             endLabelByComponentId: endLabelByComponentId,
             lineLabelByLineId: lineLabelByLineId,
             linkByEdgeKey: linkByEdgeKey,
             nodeByComponentId: nodeByComponentId,
+            graphAdjacency: graphConnections.adjacency,
+            edgesByComponent: graphConnections.edgesByComponent,
             isDirty: false,
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
+            selectedComponentId: null,
         };
 
         graph.on('change:position', function (cell) {
@@ -563,9 +875,55 @@
             setDirtyState(root, true, true);
         });
 
+        paper.on('element:pointerclick', function (elementView) {
+            const meta = elementView.model.prop('sldMeta') || {};
+            if (!meta.componentId) {
+                return;
+            }
+            highlightSelection(root, meta.componentId);
+        });
+
+        paper.on('blank:pointerdown', function () {
+            highlightSelection(root, null);
+        });
+
         refreshDerivedGeometry(root);
         updateSavedCountBadge(root, (savedLayout && savedLayout.meta && savedLayout.meta.saved_count) || 0);
         setDirtyState(root, false, !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout));
+        highlightSelection(root, null);
+        fitPaperToContent(root);
+    }
+
+    function filterPayloadForSelectedLine(payload, selectedLineId) {
+        if (!selectedLineId) {
+            return payload;
+        }
+        const targetGroup = (payload.line_groups || []).find(function (lineGroup) {
+            return lineGroup.line_id === selectedLineId;
+        });
+        if (!targetGroup) {
+            return payload;
+        }
+        const nodes = payload.nodes.filter(function (node) {
+            return (node.line_ids || []).includes(selectedLineId);
+        });
+        const componentIds = new Set(nodes.map(function (node) { return node.component_id; }));
+        const edges = payload.edges.filter(function (edge) {
+            return componentIds.has(edge.from_component_id)
+                && componentIds.has(edge.to_component_id)
+                && (edge.line_ids || []).includes(selectedLineId);
+        });
+        return {
+            project_id: payload.project_id,
+            nodes: nodes,
+            edges: edges,
+            line_groups: [targetGroup],
+            meta: {
+                branch_count: (targetGroup.branch_indices || []).length,
+                node_count: nodes.length,
+                edge_count: edges.length,
+            },
+        };
     }
 
     function fetchSavedLayout(projectId, layoutUrl) {
@@ -580,6 +938,7 @@
         const payloadUrl = root.dataset.sldPayloadUrl;
         const layoutUrl = root.dataset.sldLayoutUrl;
         const projectId = root.dataset.projectId;
+        const selectedLineId = root.dataset.selectedLineId;
         if (!payloadUrl || !layoutUrl || !projectId) {
             return;
         }
@@ -591,12 +950,13 @@
             type: 'GET',
             data: { project_id: projectId },
             success: function (payload) {
+                const filteredPayload = filterPayloadForSelectedLine(payload, selectedLineId);
                 fetchSavedLayout(projectId, layoutUrl)
                     .done(function (savedLayout) {
-                        renderSldGraph(root, payload, savedLayout);
+                        renderSldGraph(root, filteredPayload, savedLayout);
                     })
                     .fail(function () {
-                        renderSldGraph(root, payload, { positions: {}, meta: { saved_count: 0, has_saved_layout: false } });
+                        renderSldGraph(root, filteredPayload, { positions: {}, meta: { saved_count: 0, has_saved_layout: false, save_mode: 'merge' } });
                     });
             },
             error: function (xhr) {
@@ -701,6 +1061,38 @@
             return;
         }
         resetCurrentLayout(root);
+    });
+
+    $(document).on('click', '#sld-fit-view', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root) {
+            return;
+        }
+        fitPaperToContent(root);
+    });
+
+    $(document).on('click', '#sld-zoom-in', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root) {
+            return;
+        }
+        zoomPaper(root, 1.12);
+    });
+
+    $(document).on('click', '#sld-zoom-out', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root) {
+            return;
+        }
+        zoomPaper(root, 0.9);
+    });
+
+    $(document).on('click', '#sld-export-svg', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root) {
+            return;
+        }
+        exportPaperAsSvg(root);
     });
 
     window.initializeSldWorkspace = function (container) {

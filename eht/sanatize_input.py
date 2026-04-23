@@ -1,6 +1,9 @@
+import logging
 import os
+from time import perf_counter
 import pandas as pd
 from mimetypes import guess_type
+from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.utils.timezone import now, timedelta
 from django.http import JsonResponse
@@ -17,6 +20,16 @@ def index2(request):
 import pandas as pd
 from django.core.exceptions import ValidationError
 from .models import HeatTracingInput
+
+
+logger = logging.getLogger(__name__)
+
+
+def emit_timing(message):
+    if not getattr(settings, "EHT_TIMING_LOGS", False):
+        return
+    print(message, flush=True)
+    logger.warning(message)
 
 # Constants
 ALLOWED_EXTENSIONS = ['.xlsx']
@@ -65,13 +78,16 @@ def lock_user_account(user, session):                                    #Lock t
 # ---------------input validation -----------------------
 
 def sanitize_file(file, session, user):
+    overall_started = perf_counter()
 
     if not sanitize_file_basic_check(file, session, user):
         raise ValidationError(f"Your uploaded input file could not be processed. Check the file template.")
     
     # Read the Excel file
     try:
+        read_started = perf_counter()
         df = pd.read_excel(file)
+        read_duration = perf_counter() - read_started
     except Exception as e:
         raise ValidationError("Invalid Excel file. Please ensure it follows the template.")     
 
@@ -106,6 +122,7 @@ def sanitize_file(file, session, user):
 
     df['_error_row_number'] = [get_row_number(idx, row) for idx, row in df.iterrows()]
 
+    validation_started = perf_counter()
     # Validate each row    
     for idx, row in df.iterrows():
         row_number = row['_error_row_number']
@@ -167,6 +184,8 @@ def sanitize_file(file, session, user):
             })
             valid_rows.pop(idx, None)
         
+    validation_duration = perf_counter() - validation_started
+
     # Write errors to Excel file
     error_file_path= ''
     if invalid_data:
@@ -199,10 +218,26 @@ def sanitize_file(file, session, user):
         for row_number, messages in row_error_map.items():
             df.loc[df['_error_row_number'] == row_number, error_column] = "; ".join(messages)
 
+        error_write_started = perf_counter()
         error_file_path = os.path.join('file_storage/error_file', 'error_file.xlsx')
         df.drop(columns=['_error_row_number']).to_excel(error_file_path, index=False, engine='openpyxl')
+        error_write_duration = perf_counter() - error_write_started
+    else:
+        error_write_duration = 0.0
 
     valid_data = list(valid_rows.values())
+    total_duration = perf_counter() - overall_started
+    emit_timing(
+        "EHT timing | sanitize_file | rows={rows} | read={read:.3f}s | validate={validate:.3f}s | error_write={error_write:.3f}s | total={total:.3f}s | valid_rows={valid_rows} | invalid_rows={invalid_rows}".format(
+            rows=len(df.index),
+            read=read_duration,
+            validate=validation_duration,
+            error_write=error_write_duration,
+            total=total_duration,
+            valid_rows=len(valid_data),
+            invalid_rows=len(invalid_data),
+        )
+    )
     return valid_data, invalid_data, error_file_path  # Return sanitized data
 
 

@@ -89,6 +89,7 @@ WSGI_APPLICATION = 'ELECSENSE.wsgi.application'
 # https://docs.djangoproject.com/en/4.2/ref/settings/#databases
 
 USE_POSTGRES = env.bool("USE_POSTGRES", default=False)
+EHT_TIMING_LOGS = env.bool("EHT_TIMING_LOGS", default=False)
 
 SQLITE_DB_PATH = BASE_DIR / env("SQLITE_DB_NAME", default="db.sqlite3")
 SQLITE_SOURCE_DB_PATH = BASE_DIR / env("SQLITE_SOURCE_DB_NAME", default="db.sqlite3")

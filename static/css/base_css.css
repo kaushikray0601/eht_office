@@ -425,3 +425,30 @@ footer {
     background: rgba(255, 255, 255, 0.52);
     border: 1px solid rgba(148, 163, 184, 0.16);
 }
+
+.sld-inspector-panel {
+    min-height: 340px;
+}
+
+.sld-inspector-details {
+    display: grid;
+    grid-template-columns: minmax(92px, 112px) 1fr;
+    gap: 0.45rem 0.75rem;
+    align-items: start;
+}
+
+.sld-inspector-details dt {
+    margin: 0;
+    color: #486581;
+    font-size: 0.8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.sld-inspector-details dd {
+    margin: 0;
+    color: #102a43;
+    font-size: 0.92rem;
+    word-break: break-word;
+}

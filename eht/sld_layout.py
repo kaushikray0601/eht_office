@@ -28,6 +28,7 @@ def get_project_sld_layout(project_id, payload=None):
             'saved_count': len(layout_rows),
             'node_count': len(valid_component_ids),
             'has_saved_layout': bool(layout_rows),
+            'save_mode': 'merge',
         },
     }
 
@@ -54,11 +55,6 @@ def save_project_sld_layout(project_id, positions, payload=None):
         }
 
     SLDNodeLayout.objects.filter(project=project).exclude(component_id__in=valid_component_ids).delete()
-    if valid_component_ids:
-        SLDNodeLayout.objects.filter(project=project, component_id__in=valid_component_ids).exclude(
-            component_id__in=normalized_positions.keys()
-        ).delete()
-
     saved_count = 0
     for component_id, coords in normalized_positions.items():
         node = valid_nodes[component_id]
@@ -83,6 +79,7 @@ def save_project_sld_layout(project_id, positions, payload=None):
         'project_id': project_id,
         'saved_count': saved_count,
         'ignored_component_ids': ignored_component_ids,
+        'save_mode': 'merge',
     }
 
 

@@ -1,6 +1,8 @@
 from decimal import Decimal
+from time import perf_counter
 
 import pandas as pd
+from django.conf import settings
 from django.db import transaction
 from django.db.models import FloatField
 from django.db.models.functions import Cast
@@ -24,6 +26,20 @@ from .models import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def emit_timing(message, *args):
+    if not getattr(settings, "EHT_TIMING_LOGS", False):
+        return
+    if args:
+        logger.warning(message, *args)
+        try:
+            print(message % args, flush=True)
+        except Exception:
+            pass
+        return
+    print(message, flush=True)
+    logger.warning(message)
 
 BOQ_ITEM_METADATA = {
     'MCB': {'description': 'Miniature Circuit Breaker', 'unit': 'EA'},
@@ -169,6 +185,7 @@ def fetch_project_data(project_id):
 @transaction.atomic
 def clear_project_workspace_data(project_id):
     """Delete all uploaded inputs and derived outputs for a project in one clean reset."""
+    clear_started = perf_counter()
     if not project_id:
         return {
             'project_id': project_id,
@@ -179,35 +196,54 @@ def clear_project_workspace_data(project_id):
 
     project_line_ids = list(HeatTracingInput.objects.filter(proj_id=project_id).values_list('uid', flat=True))
     project_line_uid_strings = [str(uid) for uid in project_line_ids]
-
+    input_lines = len(project_line_ids)
+    boq_items = BOQ.objects.filter(project_id=project_id).count()
     derived_rows = 0
+
     if project_line_ids:
-        derived_rows += HeatLoss.objects.filter(line_id__in=project_line_ids).delete()[0]
-        derived_rows += SelectedTracer.objects.filter(line_id__in=project_line_ids).delete()[0]
-        derived_rows += AlternateTracer.objects.filter(line_id__in=project_line_ids).delete()[0]
-        derived_rows += PowerDistribution.objects.filter(line_id__in=project_line_ids).delete()[0]
-        derived_rows += ProcessLineCalculation.objects.filter(line_id__in=project_line_ids).delete()[0]
+        derived_rows += HeatLoss.objects.filter(line_id__in=project_line_ids).count()
+        derived_rows += SelectedTracer.objects.filter(line_id__in=project_line_ids).count()
+        derived_rows += AlternateTracer.objects.filter(line_id__in=project_line_ids).count()
+        derived_rows += PowerDistribution.objects.filter(line_id__in=project_line_ids).count()
+        derived_rows += PowerDistributionBranch.objects.filter(distribution_id__in=project_line_uid_strings).count()
+        derived_rows += ProcessLineCalculation.objects.filter(line_id__in=project_line_ids).count()
+        derived_rows += BOQ.objects.filter(line_id__in=project_line_ids).count()
 
+    # Delete consolidated BOQ rows explicitly. Line-scoped BOQ rows are removed via input cascade.
+    consolidated_boq_rows = BOQ.objects.filter(project_id=project_id, line__isnull=True).delete()[0]
+    HeatTracingInput.objects.filter(proj_id=project_id).delete()
+
+    orphan_rows = 0
+    if project_line_uid_strings:
         # Defensive cleanup for any legacy/orphaned rows keyed only by stored UID text.
-        derived_rows += HeatLoss.objects.filter(uid__in=project_line_uid_strings).delete()[0]
-        derived_rows += PowerDistribution.objects.filter(uid__in=project_line_uid_strings).delete()[0]
-        derived_rows += ProcessLineCalculation.objects.filter(uid__in=project_line_uid_strings).delete()[0]
+        orphan_rows += HeatLoss.objects.filter(uid__in=project_line_uid_strings).delete()[0]
+        orphan_rows += PowerDistribution.objects.filter(uid__in=project_line_uid_strings).delete()[0]
+        orphan_rows += ProcessLineCalculation.objects.filter(uid__in=project_line_uid_strings).delete()[0]
 
-    boq_items = BOQ.objects.filter(project_id=project_id).delete()[0]
-    input_lines = HeatTracingInput.objects.filter(proj_id=project_id).delete()[0]
+    total_duration = perf_counter() - clear_started
+    emit_timing(
+        "EHT timing | clear_project_workspace_data | project=%s | input_lines=%s | boq_items=%s | derived_rows=%s | consolidated_boq=%s | orphan_cleanup=%s | total=%.3fs",
+        project_id,
+        input_lines,
+        boq_items,
+        derived_rows,
+        consolidated_boq_rows,
+        orphan_rows,
+        total_duration,
+    )
 
     logger.info(
         "Project ID: %s - Workspace reset complete. Deleted %s input line(s), %s BOQ row(s), %s derived row(s).",
         project_id,
         input_lines,
         boq_items,
-        derived_rows,
+        derived_rows + orphan_rows,
     )
     return {
         'project_id': project_id,
         'input_lines': input_lines,
         'boq_items': boq_items,
-        'derived_rows': derived_rows,
+        'derived_rows': derived_rows + orphan_rows,
     }
 
 
@@ -236,30 +272,34 @@ def store_calculated_results(project_id, aggregated_results):
     if alternative_tracers is None:
         alternative_tracers = aggregated_results.get('alternate_tracers', [])
 
-    # Storing Heat Loss Data
+    heat_loss_rows = []
     for item in aggregated_results.get('heat_loss', []):
         normalized_item = _normalize_payload(item)
         line = project_lines.get(str(normalized_item['uid']))
         if not line:
             continue
-        HeatLoss.objects.create(
+        heat_loss_rows.append(HeatLoss(
             uid=str(normalized_item['uid']),
             line=line,
             heat_loss=normalized_item['heat_loss'],
             tracer_adder=normalized_item['tracer_adder'],
-        )
+        ))
+    if heat_loss_rows:
+        HeatLoss.objects.bulk_create(heat_loss_rows, batch_size=500)
 
-    # Storing Selected Tracers Data
+    selected_tracer_rows = []
     for item in aggregated_results.get('selected_tracers', []):
         normalized_item = _normalize_payload(item)
         line = project_lines.get(str(normalized_item['uid']))
         if not line:
             continue
         transformed_item = _transform_tracer_item(normalized_item)
-        SelectedTracer.objects.create(line=line, **transformed_item)
+        selected_tracer_rows.append(SelectedTracer(line=line, **transformed_item))
+    if selected_tracer_rows:
+        SelectedTracer.objects.bulk_create(selected_tracer_rows, batch_size=500)
     
-    # Storing Alternate Tracers Data
     alternate_rank_by_line = {}
+    alternate_tracer_rows = []
     for item in alternative_tracers:
         normalized_item = _normalize_payload(item)
         line_uid = str(normalized_item['uid'])
@@ -268,26 +308,30 @@ def store_calculated_results(project_id, aggregated_results):
             continue
         alternate_rank_by_line[line_uid] = alternate_rank_by_line.get(line_uid, 0) + 1
         transformed_item = _transform_tracer_item(normalized_item)
-        AlternateTracer.objects.create(
+        alternate_tracer_rows.append(AlternateTracer(
             line=line,
             option_rank=alternate_rank_by_line[line_uid],
             **transformed_item,
-        )
+        ))
+    if alternate_tracer_rows:
+        AlternateTracer.objects.bulk_create(alternate_tracer_rows, batch_size=500)
     
-    # Storing Power Distribution Data
+    power_distribution_rows = []
+    power_distribution_branch_rows = []
     for item in aggregated_results.get('power_distribution', []):
         normalized_item = _normalize_payload(item)
-        line = project_lines.get(str(normalized_item['uid']))
+        distribution_uid = str(normalized_item['uid'])
+        line = project_lines.get(distribution_uid)
         if not line:
             continue
-        power_distribution = PowerDistribution.objects.create(
-            uid=str(normalized_item['uid']),
+        power_distribution_rows.append(PowerDistribution(
+            uid=distribution_uid,
             line=line,
             total_circuits=normalized_item['total_circuits'],
-        )
+        ))
         for branch_index, branch in enumerate(normalized_item.get('branches', []), start=1):
-            PowerDistributionBranch.objects.create(
-                distribution=power_distribution,
+            power_distribution_branch_rows.append(PowerDistributionBranch(
+                distribution_id=distribution_uid,
                 branch_index=branch_index,
                 branch_type=branch['type'],
                 circuit_count=branch['circuit_count'],
@@ -295,16 +339,20 @@ def store_calculated_results(project_id, aggregated_results):
                 cable_length_db_to_jb=branch['cable_length_db_to_jb'] or 0,
                 cable_length_jb_to_jb=branch.get('cable_length_jb_to_jb'),
                 tagged_components=branch.get('tagged_components', {}),
-            )
+            ))
+    if power_distribution_rows:
+        PowerDistribution.objects.bulk_create(power_distribution_rows, batch_size=500)
+    if power_distribution_branch_rows:
+        PowerDistributionBranch.objects.bulk_create(power_distribution_branch_rows, batch_size=500)
     
-    # Storing BOQ Data
+    boq_rows = []
     for line_uid, boq_items in aggregated_results.get('boq_per_line', {}).items():
         line = project_lines.get(str(line_uid))
         if not line:
             continue
         for item_code, quantity in _normalize_payload(boq_items).items():
             metadata = _get_boq_metadata(item_code)
-            BOQ.objects.create(
+            boq_rows.append(BOQ(
                 uid=str(line.uid),
                 project=project,
                 line=line,
@@ -313,11 +361,11 @@ def store_calculated_results(project_id, aggregated_results):
                 item_description=metadata['description'],
                 quantity=quantity,
                 unit=metadata['unit'],
-            )
+            ))
 
     for item_code, quantity in _normalize_payload(aggregated_results.get('consolidated_boq', {})).items():
         metadata = _get_boq_metadata(item_code)
-        BOQ.objects.create(
+        boq_rows.append(BOQ(
             uid=f'{project_id}:consolidated',
             project=project,
             line=None,
@@ -326,9 +374,11 @@ def store_calculated_results(project_id, aggregated_results):
             item_description=metadata['description'],
             quantity=quantity,
             unit=metadata['unit'],
-        )
+        ))
+    if boq_rows:
+        BOQ.objects.bulk_create(boq_rows, batch_size=500)
     
-    # Storing Consolidated Power Data
+    process_line_calc_rows = []
     for item in aggregated_results.get('tracer_power_param', []):
         normalized_item = _normalize_payload(item)
         uid = str(normalized_item['uid'])
@@ -337,7 +387,7 @@ def store_calculated_results(project_id, aggregated_results):
             continue
         heat_loss = heat_loss_lookup.get(uid, {})
         selected_tracer = selected_tracer_lookup.get(uid, {})
-        ProcessLineCalculation.objects.create(
+        process_line_calc_rows.append(ProcessLineCalculation(
             uid=uid,
             line=line,
             line_size=_to_builtin(line.line_size),
@@ -354,7 +404,9 @@ def store_calculated_results(project_id, aggregated_results):
             pipe_size_mm=normalized_item.get('pipe_size_mm', 0),
             spiral_factor=selected_tracer.get('Spiral_Factor', 0),
             remarks='',
-        )
+        ))
+    if process_line_calc_rows:
+        ProcessLineCalculation.objects.bulk_create(process_line_calc_rows, batch_size=500)
     
     return True
 

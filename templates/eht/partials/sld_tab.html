@@ -65,9 +65,68 @@
                         <span class="badge text-bg-light border">JSON Endpoint Ready</span>
                     </div>
                 </div>
+                <form method="get" class="row g-2 align-items-end mb-3">
+                    <input type="hidden" name="project_id" value="{{ project_id }}">
+                    <div class="col-md-5 col-lg-4">
+                        <label for="sld-line-id" class="form-label small text-muted mb-1">Focus Line ID</label>
+                        <input
+                            type="text"
+                            id="sld-line-id"
+                            name="line_id"
+                            class="form-control form-control-sm"
+                            value="{{ sld_selected_line_query }}"
+                            placeholder="Leave blank to show all lines"
+                        >
+                    </div>
+                    <div class="col-auto">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Show Line</button>
+                    </div>
+                    {% if sld_selected_line_id %}
+                        <div class="col-auto">
+                            <a href="?project_id={{ project_id }}" class="btn btn-outline-secondary btn-sm">Show All</a>
+                        </div>
+                    {% endif %}
+                    {% if sld_selected_line_error %}
+                        <div class="col-12">
+                            <div class="alert alert-warning py-2 mb-0">{{ sld_selected_line_error }}</div>
+                        </div>
+                    {% elif sld_selected_line_id %}
+                        <div class="col-12">
+                            <div class="alert alert-info py-2 mb-0">Focused view for line <strong>{{ sld_selected_line_id }}</strong>. Saved layout positions outside this line are preserved.</div>
+                        </div>
+                    {% endif %}
+                </form>
                 <div class="sld-layout-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
                     <div class="small text-muted">Drag component nodes to adjust the layout, then save to persist the coordinates for this project.</div>
                     <div class="d-flex flex-wrap gap-2">
+                        <button
+                            type="button"
+                            id="sld-fit-view"
+                            class="btn btn-outline-dark btn-sm"
+                        >
+                            <i class="bi bi-arrows-fullscreen me-1"></i>Fit View
+                        </button>
+                        <button
+                            type="button"
+                            id="sld-zoom-out"
+                            class="btn btn-outline-dark btn-sm"
+                        >
+                            <i class="bi bi-zoom-out me-1"></i>Zoom Out
+                        </button>
+                        <button
+                            type="button"
+                            id="sld-zoom-in"
+                            class="btn btn-outline-dark btn-sm"
+                        >
+                            <i class="bi bi-zoom-in me-1"></i>Zoom In
+                        </button>
+                        <button
+                            type="button"
+                            id="sld-export-svg"
+                            class="btn btn-outline-dark btn-sm"
+                        >
+                            <i class="bi bi-download me-1"></i>Export SVG
+                        </button>
                         <button
                             type="button"
                             id="sld-save-layout"
@@ -90,17 +149,34 @@
                         </button>
                     </div>
                 </div>
-                <div
-                    id="sld-diagram-shell"
-                    class="sld-diagram-shell"
-                    data-project-id="{{ project_id }}"
-                    data-sld-payload-url="{{ sld_payload_url }}"
-                    data-sld-layout-url="{{ sld_layout_url }}"
-                    data-sld-layout-reset-url="{{ sld_layout_reset_url }}"
-                >
-                    <div class="sld-diagram-shell__inner">
-                        <div class="fw-semibold text-dark mb-2">Loading persisted SLD layout</div>
-                        <div class="text-muted small mb-0">Payload source: <code>{{ sld_payload_url }}?project_id={{ project_id }}</code></div>
+                <div class="row g-3 align-items-stretch">
+                    <div class="col-xl-9">
+                        <div
+                            id="sld-diagram-shell"
+                            class="sld-diagram-shell"
+                            data-project-id="{{ project_id }}"
+                            data-sld-payload-url="{{ sld_payload_url }}"
+                            data-sld-layout-url="{{ sld_layout_url }}"
+                            data-sld-layout-reset-url="{{ sld_layout_reset_url }}"
+                            data-selected-line-id="{{ sld_selected_line_id }}"
+                        >
+                            <div class="sld-diagram-shell__inner">
+                                <div class="fw-semibold text-dark mb-2">Loading persisted SLD layout</div>
+                                <div class="text-muted small mb-0">Payload source: <code>{{ sld_payload_url }}?project_id={{ project_id }}</code></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-xl-3">
+                        <div class="workspace-section h-100 sld-inspector-panel">
+                            <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                                <h6 class="mb-0">Property Inspector</h6>
+                                <span class="badge text-bg-light border">Selection</span>
+                            </div>
+                            <div id="sld-selection-summary" class="small text-muted mb-3">
+                                Select a component in the diagram to inspect its details and highlight the connected path.
+                            </div>
+                            <dl id="sld-inspector-details" class="sld-inspector-details mb-0"></dl>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -122,98 +198,103 @@
                         <span class="badge text-bg-light border">JSON Endpoint: {{ sld_validation_url }}</span>
                     </div>
                 </div>
+                <details class="workspace-section">
+                    <summary class="d-flex justify-content-between align-items-center flex-wrap gap-2" style="cursor:pointer;">
+                        <span class="fw-semibold">Validation Details</span>
+                        <span class="small text-muted">Overall: {{ sld_validation.status }} | Passed: {{ sld_validation.summary.passed_count }} | Warnings: {{ sld_validation.summary.warning_count }} | Failures: {{ sld_validation.summary.failed_count }}</span>
+                    </summary>
+                    <div class="row g-3 mb-4 mt-2">
+                        <div class="col-sm-6 col-xl-3">
+                            <div class="workspace-metric-card h-100">
+                                <div class="workspace-metric-label">Overall Status</div>
+                                <div class="fs-5 fw-semibold text-capitalize">{{ sld_validation.status }}</div>
+                            </div>
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <div class="workspace-metric-card h-100">
+                                <div class="workspace-metric-label">Checks Passed</div>
+                                <div class="fs-4 fw-semibold">{{ sld_validation.summary.passed_count }}</div>
+                            </div>
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <div class="workspace-metric-card h-100">
+                                <div class="workspace-metric-label">Warnings</div>
+                                <div class="fs-4 fw-semibold">{{ sld_validation.summary.warning_count }}</div>
+                            </div>
+                        </div>
+                        <div class="col-sm-6 col-xl-3">
+                            <div class="workspace-metric-card h-100">
+                                <div class="workspace-metric-label">Failures</div>
+                                <div class="fs-4 fw-semibold">{{ sld_validation.summary.failed_count }}</div>
+                            </div>
+                        </div>
+                    </div>
 
-                <div class="row g-3 mb-4">
-                    <div class="col-sm-6 col-xl-3">
-                        <div class="workspace-metric-card h-100">
-                            <div class="workspace-metric-label">Overall Status</div>
-                            <div class="fs-5 fw-semibold text-capitalize">{{ sld_validation.status }}</div>
-                        </div>
-                    </div>
-                    <div class="col-sm-6 col-xl-3">
-                        <div class="workspace-metric-card h-100">
-                            <div class="workspace-metric-label">Checks Passed</div>
-                            <div class="fs-4 fw-semibold">{{ sld_validation.summary.passed_count }}</div>
-                        </div>
-                    </div>
-                    <div class="col-sm-6 col-xl-3">
-                        <div class="workspace-metric-card h-100">
-                            <div class="workspace-metric-label">Warnings</div>
-                            <div class="fs-4 fw-semibold">{{ sld_validation.summary.warning_count }}</div>
-                        </div>
-                    </div>
-                    <div class="col-sm-6 col-xl-3">
-                        <div class="workspace-metric-card h-100">
-                            <div class="workspace-metric-label">Failures</div>
-                            <div class="fs-4 fw-semibold">{{ sld_validation.summary.failed_count }}</div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="row g-4">
-                    <div class="col-lg-6">
-                        <div class="table-responsive">
-                            <table class="table table-sm compact-data-table align-middle mb-0">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">Project Check</th>
-                                        <th scope="col">Status</th>
-                                        <th scope="col">Details</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for check in sld_validation.checks %}
+                    <div class="row g-4">
+                        <div class="col-lg-6">
+                            <div class="table-responsive">
+                                <table class="table table-sm compact-data-table align-middle mb-0">
+                                    <thead>
                                         <tr>
-                                            <td>{{ check.label }}</td>
-                                            <td>
-                                                {% if check.status == 'passed' %}
-                                                    <span class="badge text-bg-success">Passed</span>
-                                                {% elif check.status == 'warning' %}
-                                                    <span class="badge text-bg-warning text-dark">Warning</span>
-                                                {% else %}
-                                                    <span class="badge text-bg-danger">Failed</span>
-                                                {% endif %}
-                                            </td>
-                                            <td class="small text-muted">{{ check.details }}</td>
+                                            <th scope="col">Project Check</th>
+                                            <th scope="col">Status</th>
+                                            <th scope="col">Details</th>
                                         </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        {% for check in sld_validation.checks %}
+                                            <tr>
+                                                <td>{{ check.label }}</td>
+                                                <td>
+                                                    {% if check.status == 'passed' %}
+                                                        <span class="badge text-bg-success">Passed</span>
+                                                    {% elif check.status == 'warning' %}
+                                                        <span class="badge text-bg-warning text-dark">Warning</span>
+                                                    {% else %}
+                                                        <span class="badge text-bg-danger">Failed</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td class="small text-muted">{{ check.details }}</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
-                    </div>
-                    <div class="col-lg-6">
-                        <div class="table-responsive">
-                            <table class="table table-sm compact-data-table align-middle mb-0">
-                                <thead>
-                                    <tr>
-                                        <th scope="col">Line / Branch</th>
-                                        <th scope="col">Status</th>
-                                        <th scope="col">Counts</th>
-                                        <th scope="col">Details</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for check in sld_validation.branch_checks %}
+                        <div class="col-lg-6">
+                            <div class="table-responsive">
+                                <table class="table table-sm compact-data-table align-middle mb-0">
+                                    <thead>
                                         <tr>
-                                            <td>{{ check.line_id }} / B{{ check.branch_index }}</td>
-                                            <td>
-                                                {% if check.status == 'passed' %}
-                                                    <span class="badge text-bg-success">Passed</span>
-                                                {% elif check.status == 'warning' %}
-                                                    <span class="badge text-bg-warning text-dark">Warning</span>
-                                                {% else %}
-                                                    <span class="badge text-bg-danger">Failed</span>
-                                                {% endif %}
-                                            </td>
-                                            <td class="small text-muted">{{ check.component_count }} node(s), {{ check.edge_count }} edge(s)</td>
-                                            <td class="small text-muted">{{ check.details }}</td>
+                                            <th scope="col">Line / Branch</th>
+                                            <th scope="col">Status</th>
+                                            <th scope="col">Counts</th>
+                                            <th scope="col">Details</th>
                                         </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
+                                    </thead>
+                                    <tbody>
+                                        {% for check in sld_validation.branch_checks %}
+                                            <tr>
+                                                <td>{{ check.line_id }} / B{{ check.branch_index }}</td>
+                                                <td>
+                                                    {% if check.status == 'passed' %}
+                                                        <span class="badge text-bg-success">Passed</span>
+                                                    {% elif check.status == 'warning' %}
+                                                        <span class="badge text-bg-warning text-dark">Warning</span>
+                                                    {% else %}
+                                                        <span class="badge text-bg-danger">Failed</span>
+                                                    {% endif %}
+                                                </td>
+                                                <td class="small text-muted">{{ check.component_count }} node(s), {{ check.edge_count }} edge(s)</td>
+                                                <td class="small text-muted">{{ check.details }}</td>
+                                            </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
-                </div>
+                </details>
             </div>
 
             <div class="row g-4">
