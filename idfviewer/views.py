@@ -5,11 +5,13 @@ import re
 from django.contrib import messages
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404, render
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from eht.models import ProjectData
 
 from .forms import PipelineUploadForm
+from .analysis_utils import nearest_structure_report
 from .ifc_parser import IFCDependencyError, IFCParseError, parse_multiple_ifc_uploads
 from .models import IDFFile
 from .parser import parse_multiple_idf_texts
@@ -76,6 +78,7 @@ def _viewer_context(scene, project, filename, saved_file=None):
     }
 
 
+@ensure_csrf_cookie
 def upload_idf_view(request):
     if request.method == "POST":
         form = PipelineUploadForm(request.POST, request.FILES)
@@ -166,6 +169,55 @@ def save_preview_view(request):
     return JsonResponse(results, status=status_code)
 
 
+@require_http_methods(["POST"])
+def analyze_nearest_structure_view(request):
+    scene_payload = request.POST.get("scene", "")
+    if not scene_payload:
+        return JsonResponse({"error": "Scene data is required."}, status=400)
+
+    try:
+        scene = json.loads(scene_payload)
+    except json.JSONDecodeError:
+        return JsonResponse({"error": "Invalid scene payload."}, status=400)
+
+    source_format = str(((scene.get("stats") or {}).get("source_format") or "")).upper()
+    if source_format == "IFC":
+        return JsonResponse(
+            {"error": "Nearest-structure analysis expects an IDF or PCF scene as the active pipeline view."},
+            status=400,
+        )
+
+    pipeline_count = sum(len(scene.get(bucket, []) or []) for bucket in ("pipes", "fittings", "welds", "supports", "markers"))
+    if pipeline_count == 0:
+        return JsonResponse({"error": "No pipeline geometry found in the current scene."}, status=400)
+
+    reference_files = request.FILES.getlist("ifc_files")
+    if not reference_files:
+        return JsonResponse({"error": "Please choose one or more IFC files for analysis."}, status=400)
+
+    ifc_payloads = []
+    for upload in reference_files:
+        filename = upload.name.split("/")[-1]
+        if not filename.lower().endswith(".ifc"):
+            continue
+        ifc_payloads.append((filename, upload.read()))
+
+    if not ifc_payloads:
+        return JsonResponse({"error": "No valid IFC files were provided."}, status=400)
+
+    try:
+        ifc_scene = parse_multiple_ifc_uploads(ifc_payloads, None)
+    except IFCDependencyError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+    except IFCParseError as exc:
+        return JsonResponse({"error": str(exc)}, status=400)
+
+    report = nearest_structure_report(scene, ifc_scene)
+    report["source_format"] = source_format
+    report["ifc_source_label"] = f"{len(ifc_payloads)} IFC file(s)"
+    return JsonResponse(report)
+
+
 def saved_library_view(request):
     selected_project_id = (request.GET.get("project_id") or "").strip()
     saved_files = IDFFile.objects.select_related("project").order_by("-last_saved_at", "-uploaded_at", "-pk")
@@ -183,6 +235,7 @@ def saved_library_view(request):
     )
 
 
+@ensure_csrf_cookie
 def saved_file_view(request, file_id):
     saved_file = get_object_or_404(IDFFile.objects.select_related("project"), pk=file_id)
     scene = build_scene_from_saved_file(saved_file)

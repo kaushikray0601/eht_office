@@ -9,6 +9,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.db.models import Prefetch
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
@@ -31,7 +32,7 @@ from .models import (
     is_default_project_id,
 )
 from .pipeline import run_project_calculations
-from .sanatize_input import *  # sanitize_file
+from .sanatize_input import sanitize_file
 from .sld_layout import get_project_sld_layout, reset_project_sld_layout, save_project_sld_layout
 from .sld_payload import build_project_sld_payload
 from .sld_validation import validate_project_sld_payload
@@ -120,37 +121,49 @@ def calculate_view(request, project_id=None):
     if request.method == 'POST':
         file = request.FILES.get('file')
         if not file: return JsonResponse({'error': 'No file uploaded'}, status=400)
+        if not project_id:
+            return JsonResponse({'error': 'Project ID is required before uploading input data.'}, status=400)
 
         try:
             # Step 1: Sanitize the file
             valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
-            if project_id:
-                clear_project_workspace_data(project_id)
-            # Save valid data to the database with a "pending" status
-            if valid_process_line_data:
-                upload_inputData_in_DB(valid_process_line_data, project_id)
-
-            # If invalid data exists, send the error file and ask for user confirmation            
-            if invalid_data:
+            if not valid_process_line_data and invalid_data:
                 error_file_name = os.path.basename(error_file_path)
-                error_file_url = reverse('download_error_file', args=[error_file_name])  # A dedicated endpoint for file download
-                # Return JSON metadata with the download URL
+                error_file_url = reverse('download_error_file', args=[error_file_name])
                 return JsonResponse({
-                    'valid_data_with_error': True,
+                    'error': 'No valid rows were found in the uploaded file. The existing project workspace was left unchanged.',
                     'error_file_url': error_file_url,
-                    'success': 'Partial valid data uploaded. Download the error file.',
-                }, status=200)
-                        
-            # If all data is valid, proceed directly to the calculation stage                    
-            status_ok, valid_data, updated_count = update_pending_status(project_id)     
+                }, status=400)
 
-            if not status_ok:
-                return JsonResponse({'error': 'Failed to confirm uploaded data.'}, status=500)
-
-            if updated_count == 0:
+            if not valid_process_line_data:
                 return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
 
-            calculation_result, result_counts = run_project_calculations(project_id)
+            with transaction.atomic():
+                clear_project_workspace_data(project_id)
+                uploaded_count = upload_inputData_in_DB(valid_process_line_data, project_id)
+
+                # If invalid data exists, store only the valid pending rows and ask the user to review the error file.
+                if invalid_data:
+                    error_file_name = os.path.basename(error_file_path)
+                    error_file_url = reverse('download_error_file', args=[error_file_name])
+                    return JsonResponse({
+                        'valid_data_with_error': True,
+                        'error_file_url': error_file_url,
+                        'project_id': project_id,
+                        'uploaded_rows': uploaded_count,
+                        'success': 'Partial valid data uploaded. Download the error file and confirm the pending rows when ready.',
+                    }, status=200)
+                        
+                # If all data is valid, proceed directly to the calculation stage.
+                status_ok, valid_data, updated_count = update_pending_status(project_id)
+
+                if not status_ok:
+                    raise ValidationError('Failed to confirm uploaded data.')
+
+                if updated_count == 0:
+                    return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
+
+                calculation_result, result_counts = run_project_calculations(project_id)
             return JsonResponse({
                 'success': 'Input file processed and calculations completed successfully.',
                 'project_id': project_id,
@@ -833,14 +846,15 @@ def confirm_valid_data(request):
             return JsonResponse({'error': 'Project ID is required.'}, status=400)
 
         try:            
-            status_ok, valid_data, updated_count = update_pending_status(project_id)
-            if not status_ok:
-                return JsonResponse({'error': 'Failed to confirm valid uploaded data.'}, status=500)
+            with transaction.atomic():
+                status_ok, valid_data, updated_count = update_pending_status(project_id)
+                if not status_ok:
+                    raise ValidationError('Failed to confirm valid uploaded data.')
 
-            if updated_count == 0:
-                return JsonResponse({'error': 'No valid uploaded data is pending confirmation.'}, status=400)
+                if updated_count == 0:
+                    return JsonResponse({'error': 'No valid uploaded data is pending confirmation.'}, status=400)
 
-            calculation_result, result_counts = run_project_calculations(project_id)
+                calculation_result, result_counts = run_project_calculations(project_id)
             logger.info(
                 "Project ID: %s - Pending rows confirmed and calculations completed for %s row(s).",
                 project_id,
@@ -946,7 +960,12 @@ def log_failed_attempt(user, ip_address):
 
 # Bulk upload valid/sanitized input data into database
 def upload_inputData_in_DB(valid_data, project_id):
+    if not project_id:
+        raise ValidationError("Project ID is required before storing input rows.")
+
     try:
+        if not valid_data:
+            return 0
         valid_rows = [
             HeatTracingInput(               
                 proj_id=project_id,
@@ -976,9 +995,11 @@ def upload_inputData_in_DB(valid_data, project_id):
             for row in valid_data
         ]
         HeatTracingInput.objects.bulk_create(valid_rows)
+        return len(valid_rows)
 
     except Exception as e:
         logger.error("Failed to upload input data for project %s: %s", project_id, str(e), exc_info=True)
+        raise
 
 # Update input data status from 'pending' to confirm
 
@@ -1010,7 +1031,3 @@ def my_logout(request):
 
 def my_register(request):    
     return render(request, 'eht/my_register.html')
-
-#  generate SLD
-def sld(request):      
-    return render(request, 'eht/sld.html', {})

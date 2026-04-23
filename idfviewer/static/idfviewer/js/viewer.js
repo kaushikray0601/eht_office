@@ -10,8 +10,18 @@ const navPanelReopenBtn = document.getElementById('navpanel-reopen');
 const toggleAllHierarchy = document.getElementById('toggleAllHierarchy');
 const hierarchySelectionCount = document.getElementById('hierarchySelectionCount');
 const hContent = document.getElementById("hierarchy-content");
+const hierarchySearchInput = document.getElementById('hierarchySearchInput');
+const hierarchySearchStatus = document.getElementById('hierarchySearchStatus');
+const searchFocusBtn = document.getElementById('searchFocusBtn');
+const searchIsolateBtn = document.getElementById('searchIsolateBtn');
+const searchClearBtn = document.getElementById('searchClearBtn');
 const richSymbolToggle = document.getElementById('toggleRichSymbols');
 const contextLabelToggle = document.getElementById('toggleContextLabels');
+const ifcOpacityWrap = document.getElementById('ifcOpacityWrap');
+const ifcOpacitySlider = document.getElementById('ifcOpacitySlider');
+const ifcOpacityValue = document.getElementById('ifcOpacityValue');
+const ifcClassFilterWrap = document.getElementById('ifcClassFilterWrap');
+const ifcClassFilters = document.getElementById('ifcClassFilters');
 
 if (!sceneDataEl) throw new Error("scene-data script tag not found");
 if (!container) throw new Error("viewer container not found");
@@ -75,6 +85,8 @@ const mouse = new THREE.Vector2();
 const selectableMeshes = [];
 const manuallyHiddenItems = new Set();
 const contextLabels = [];
+const leafRepresentatives = new Map();
+let hierarchySearchMatches = new Set();
 
 let selectedGroup = null;
 
@@ -106,8 +118,61 @@ function getHierarchyPipe(item) {
     );
 }
 
-function getHierarchyKey(item) {
-    return `${getHierarchyFile(item)}___${getHierarchyPipe(item)}`;
+function getHierarchyGroup(item) {
+    return getHierarchyPipe(item);
+}
+
+function getHierarchyGroupKey(item) {
+    return `${getHierarchyFile(item)}___${getHierarchyGroup(item)}`;
+}
+
+function getHierarchyLeafLabel(item) {
+    const props = getItemProperties(item);
+    if (getSourceFormat(item) === "IFC") {
+        return (
+            props.component_ref
+            || props.name
+            || props.global_id
+            || props.tag
+            || `${props.ifc_class || item.kind || "IFC Object"} ${props.uid ?? item.uid ?? ""}`.trim()
+        );
+    }
+    return getHierarchyGroup(item);
+}
+
+function getHierarchyLeafKey(item) {
+    if (getSourceFormat(item) !== "IFC") {
+        return getHierarchyGroupKey(item);
+    }
+    const props = getItemProperties(item);
+    return `${getHierarchyGroupKey(item)}___${props.global_id || props.uid || props.component_ref || props.name || item.kind || "object"}`;
+}
+
+function getHierarchySearchText(item) {
+    const props = getItemProperties(item);
+    const materials = (props.materials || [])
+        .map((entry) => `${entry.code || ""} ${entry.description || ""}`.trim())
+        .join(" ");
+    const spatialPath = Array.isArray(props.spatial_path) ? props.spatial_path.join(" ") : "";
+    return [
+        getHierarchyFile(item),
+        getHierarchyGroup(item),
+        getHierarchyLeafLabel(item),
+        props.component_ref,
+        props.name,
+        props.global_id,
+        props.ifc_class,
+        props.tag,
+        props.pipeline_ref,
+        props.spool_ref,
+        props.support_code,
+        props.inline_code,
+        props.description,
+        props.object_type,
+        props.predefined_type,
+        materials,
+        spatialPath,
+    ].join(" ").toLowerCase();
 }
 
 function getItemVisibilityKey(item) {
@@ -130,10 +195,18 @@ function setNavPanelCollapsed(collapsed) {
 function registerSelectable(mesh, item, selectGroup, { richSymbol = false } = {}) {
     mesh.userData.item = item;
     mesh.userData.selectGroup = selectGroup;
-    mesh.userData.hierarchyKey = getHierarchyKey(item);
+    mesh.userData.groupKey = getHierarchyGroupKey(item);
+    mesh.userData.leafKey = getHierarchyLeafKey(item);
+    mesh.userData.leafLabel = getHierarchyLeafLabel(item);
     mesh.userData.visibilityKey = getItemVisibilityKey(item);
     mesh.userData.isRichSymbol = richSymbol;
+    mesh.userData.ifcClass = getItemProperties(item).ifc_class || "";
     selectableMeshes.push(mesh);
+
+    const existing = leafRepresentatives.get(mesh.userData.leafKey);
+    if (!existing || (existing.userData.isRichSymbol && !richSymbol)) {
+        leafRepresentatives.set(mesh.userData.leafKey, mesh);
+    }
 }
 
 function addCylinderBetweenPoints(startArr, endArr, radius, color, item, selectGroup, { richSymbol = false } = {}) {
@@ -439,7 +512,7 @@ function addContextLabel(item, pointArr, text, tone = {}) {
     const sprite = createTextSprite(text, tone);
     if (!sprite) return;
     sprite.position.copy(vecFromArray(pointArr)).add(new THREE.Vector3(0, sizes.labelLift, 0));
-    sprite.userData.hierarchyKey = getHierarchyKey(item);
+    sprite.userData.leafKey = getHierarchyLeafKey(item);
     sprite.userData.visibilityKey = getItemVisibilityKey(item);
     modelGroup.add(sprite);
     contextLabels.push(sprite);
@@ -621,34 +694,57 @@ function addNozzleSupportSymbol(item, selectGroup) {
     );
 }
 
-function applySceneVisibility({ refit = false } = {}) {
-    const pipeToggles = hContent ? document.querySelectorAll('.pipe-toggle') : [];
-    const activeHierarchyKeys = new Set();
-    if (pipeToggles.length) {
-        document.querySelectorAll('.pipe-toggle:checked').forEach(cb => {
-            activeHierarchyKeys.add(cb.dataset.file + "___" + cb.dataset.pipe);
-        });
+function getCheckedLeafKeys() {
+    const leafToggles = hContent ? Array.from(document.querySelectorAll('.leaf-toggle')) : [];
+    if (!leafToggles.length) return null;
+    return new Set(leafToggles.filter(cb => cb.checked).map(cb => cb.dataset.leafKey));
+}
+
+function getActiveIfcClasses() {
+    const filters = Array.from(document.querySelectorAll('.ifc-class-filter'));
+    if (!filters.length) return null;
+    return new Set(filters.filter(cb => cb.checked).map(cb => cb.value));
+}
+
+function applyIfcOpacity() {
+    const opacity = ifcOpacitySlider ? parseFloat(ifcOpacitySlider.value) : 1.0;
+    if (ifcOpacityValue) {
+        ifcOpacityValue.textContent = opacity.toFixed(2);
     }
 
     selectableMeshes.forEach(mesh => {
-        const hierarchyVisible = pipeToggles.length
-            ? activeHierarchyKeys.has(mesh.userData.hierarchyKey)
-            : true;
+        if (!mesh.userData || !mesh.userData.item || getSourceFormat(mesh.userData.item) !== "IFC") return;
+        if (!mesh.material) return;
+        mesh.material.transparent = opacity < 0.999;
+        mesh.material.opacity = opacity;
+        mesh.material.needsUpdate = true;
+    });
+}
+
+function applySceneVisibility({ refit = false } = {}) {
+    const activeLeafKeys = getCheckedLeafKeys();
+    const activeIfcClasses = getActiveIfcClasses();
+
+    selectableMeshes.forEach(mesh => {
+        const leafVisible = activeLeafKeys ? activeLeafKeys.has(mesh.userData.leafKey) : true;
         const itemVisible = !manuallyHiddenItems.has(mesh.userData.visibilityKey);
         const richVisible = mesh.userData.isRichSymbol
             ? (richSymbolToggle ? richSymbolToggle.checked : true)
             : true;
-        mesh.visible = hierarchyVisible && itemVisible && richVisible;
+        const classVisible = mesh.userData.ifcClass
+            ? (!activeIfcClasses || activeIfcClasses.has(mesh.userData.ifcClass))
+            : true;
+        mesh.visible = leafVisible && itemVisible && richVisible && classVisible;
     });
 
     contextLabels.forEach(sprite => {
-        const hierarchyVisible = pipeToggles.length
-            ? activeHierarchyKeys.has(sprite.userData.hierarchyKey)
-            : true;
+        const leafVisible = activeLeafKeys ? activeLeafKeys.has(sprite.userData.leafKey) : true;
         const itemVisible = !manuallyHiddenItems.has(sprite.userData.visibilityKey);
         const labelVisible = contextLabelToggle ? contextLabelToggle.checked : true;
-        sprite.visible = hierarchyVisible && itemVisible && labelVisible;
+        sprite.visible = leafVisible && itemVisible && labelVisible;
     });
+
+    applyIfcOpacity();
 
     if (refit) {
         fitCameraToObject(modelGroup);
@@ -777,86 +873,336 @@ function addIfcMesh(item) {
 (sceneData.markers || []).forEach(addMarker);
 (sceneData.meshes || []).forEach(addIfcMesh);
 
-// ----------- HIERARCHY TREE GENERATION -----------
-const hierarchy = {}; 
-selectableMeshes.forEach(mesh => {
-    const file = getHierarchyFile(mesh.userData.item);
-    const pipe = getHierarchyPipe(mesh.userData.item);
-    
-    if (!hierarchy[file]) hierarchy[file] = {};
-    if (!hierarchy[file][pipe]) hierarchy[file][pipe] = [];
-    hierarchy[file][pipe].push(mesh);
-});
+function buildIfcClassFilterUI() {
+    if (!ifcClassFilters || !ifcClassFilterWrap) return;
 
-if (hContent) {
-    let html = "";
-    Object.keys(hierarchy).forEach(file => {
-        html += `
-        <div class="mb-2">
-            <label class="flex items-center text-xs font-medium text-gray-700 p-1 rounded hover:bg-black/5 transition cursor-pointer">
-                <input type="checkbox" class="file-toggle mr-2 h-3.5 w-3.5 text-blue-500 rounded border-gray-300 focus:ring-0" checked data-file="${escapeHtml(file)}"> 
-                <span class="truncate" title="${escapeHtml(file)}">${escapeHtml(file)}</span>
-            </label>
-            <div class="pl-5 mt-1 border-l border-gray-100 space-y-1 py-1">
-        `;
-        Object.keys(hierarchy[file]).forEach(pipe => {
-            html += `
-            <label class="flex items-center text-gray-500 hover:text-gray-800 transition cursor-pointer text-[11px] font-normal tracking-wide">
-                <input type="checkbox" class="pipe-toggle mr-2 h-3 w-3 text-gray-400 rounded border-gray-200 focus:ring-0" checked data-file="${escapeHtml(file)}" data-pipe="${escapeHtml(pipe)}"> 
-                <span class="truncate" title="${escapeHtml(pipe)}">${escapeHtml(pipe)}</span>
-            </label>
-            `;
+    const classCounts = new Map();
+    leafRepresentatives.forEach(mesh => {
+        const ifcClass = mesh.userData.ifcClass;
+        if (!ifcClass) return;
+        classCounts.set(ifcClass, (classCounts.get(ifcClass) || 0) + 1);
+    });
+
+    const sorted = Array.from(classCounts.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    if (!sorted.length) {
+        ifcClassFilterWrap.classList.add('hidden');
+        if (ifcOpacityWrap) ifcOpacityWrap.classList.add('hidden');
+        return;
+    }
+
+    ifcClassFilterWrap.classList.remove('hidden');
+    if (ifcOpacityWrap) ifcOpacityWrap.classList.remove('hidden');
+    ifcClassFilters.innerHTML = sorted.map(([className, count]) => `
+        <label class="flex items-center justify-between gap-2 cursor-pointer hover:text-slate-900 transition">
+            <span class="flex items-center gap-2">
+                <input type="checkbox" class="ifc-class-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="${escapeHtml(className)}" checked>
+                <span>${escapeHtml(className)}</span>
+            </span>
+            <span class="text-[10px] text-slate-400">${count}</span>
+        </label>
+    `).join("");
+
+    document.querySelectorAll('.ifc-class-filter').forEach(cb => {
+        cb.addEventListener('change', () => {
+            applySceneVisibility({ refit: true });
         });
+    });
+}
+
+function buildHierarchyTree() {
+    if (!hContent) return;
+
+    const hierarchy = {};
+    leafRepresentatives.forEach(mesh => {
+        const item = mesh.userData.item;
+        const file = getHierarchyFile(item);
+        const group = getHierarchyGroup(item);
+        const groupKey = getHierarchyGroupKey(item);
+        const leafKey = getHierarchyLeafKey(item);
+        const leafLabel = getHierarchyLeafLabel(item);
+        const sourceFormat = getSourceFormat(item);
+
+        if (!hierarchy[file]) hierarchy[file] = { groups: {} };
+        if (!hierarchy[file].groups[groupKey]) {
+            hierarchy[file].groups[groupKey] = {
+                group,
+                groupKey,
+                sourceFormat,
+                items: [],
+            };
+        }
+
+        hierarchy[file].groups[groupKey].items.push({
+            leafKey,
+            leafLabel,
+            searchText: getHierarchySearchText(item),
+        });
+    });
+
+    const sortedFiles = Object.keys(hierarchy).sort((a, b) => a.localeCompare(b));
+    let html = "";
+
+    sortedFiles.forEach(file => {
+        const fileEntry = hierarchy[file];
+        const groups = Object.values(fileEntry.groups).sort((a, b) => a.group.localeCompare(b.group));
+        html += `
+            <div class="hierarchy-file mb-2" data-file="${escapeHtml(file)}">
+                <label class="flex items-center text-xs font-medium text-gray-700 p-1 rounded hover:bg-black/5 transition cursor-pointer">
+                    <input type="checkbox" class="file-toggle mr-2 h-3.5 w-3.5 text-blue-500 rounded border-gray-300 focus:ring-0" checked data-file="${escapeHtml(file)}">
+                    <span class="truncate" title="${escapeHtml(file)}">${escapeHtml(file)}</span>
+                </label>
+                <div class="hierarchy-file-children pl-5 mt-1 border-l border-gray-100 space-y-1 py-1">
+        `;
+
+        groups.forEach(groupEntry => {
+            const isIfcGroup = groupEntry.sourceFormat === "IFC";
+            const sortedItems = groupEntry.items.sort((a, b) => a.leafLabel.localeCompare(b.leafLabel));
+
+            if (isIfcGroup) {
+                html += `
+                    <div class="hierarchy-group" data-group-key="${escapeHtml(groupEntry.groupKey)}" data-file="${escapeHtml(file)}">
+                        <label class="flex items-center text-gray-600 hover:text-gray-900 transition cursor-pointer text-[11px] font-medium tracking-wide">
+                            <input type="checkbox" class="group-toggle mr-2 h-3 w-3 text-gray-500 rounded border-gray-200 focus:ring-0" checked data-file="${escapeHtml(file)}" data-group-key="${escapeHtml(groupEntry.groupKey)}">
+                            <span class="truncate" title="${escapeHtml(groupEntry.group)}">${escapeHtml(groupEntry.group)}</span>
+                        </label>
+                        <div class="pl-4 mt-1 border-l border-gray-100 space-y-1">
+                            ${sortedItems.map(entry => `
+                                <label class="hierarchy-leaf-row flex items-center text-gray-500 hover:text-gray-800 transition cursor-pointer text-[11px] font-normal tracking-wide" data-leaf-key="${escapeHtml(entry.leafKey)}" data-group-key="${escapeHtml(groupEntry.groupKey)}" data-file="${escapeHtml(file)}" data-search-text="${escapeHtml(entry.searchText)}">
+                                    <input type="checkbox" class="leaf-toggle mr-2 h-3 w-3 text-gray-400 rounded border-gray-200 focus:ring-0" checked data-file="${escapeHtml(file)}" data-group-key="${escapeHtml(groupEntry.groupKey)}" data-leaf-key="${escapeHtml(entry.leafKey)}">
+                                    <span class="truncate" title="${escapeHtml(entry.leafLabel)}">${escapeHtml(entry.leafLabel)}</span>
+                                </label>
+                            `).join("")}
+                        </div>
+                    </div>
+                `;
+            } else {
+                const entry = sortedItems[0];
+                html += `
+                    <label class="hierarchy-leaf-row flex items-center text-gray-500 hover:text-gray-800 transition cursor-pointer text-[11px] font-normal tracking-wide" data-leaf-key="${escapeHtml(entry.leafKey)}" data-group-key="${escapeHtml(groupEntry.groupKey)}" data-file="${escapeHtml(file)}" data-search-text="${escapeHtml(entry.searchText)}">
+                        <input type="checkbox" class="leaf-toggle mr-2 h-3 w-3 text-gray-400 rounded border-gray-200 focus:ring-0" checked data-file="${escapeHtml(file)}" data-group-key="${escapeHtml(groupEntry.groupKey)}" data-leaf-key="${escapeHtml(entry.leafKey)}">
+                        <span class="truncate" title="${escapeHtml(entry.leafLabel)}">${escapeHtml(entry.leafLabel)}</span>
+                    </label>
+                `;
+            }
+        });
+
         html += `</div></div>`;
     });
+
     hContent.innerHTML = html || "<span class='text-gray-400'>No hierarchy data found.</span>";
+}
 
-    function syncFileToggleStates() {
-        document.querySelectorAll('.file-toggle').forEach(fileToggle => {
-            const childPipes = Array.from(document.querySelectorAll(`.pipe-toggle[data-file="${fileToggle.dataset.file}"]`));
-            const checkedCount = childPipes.filter(cb => cb.checked).length;
-            fileToggle.checked = childPipes.length > 0 && checkedCount === childPipes.length;
-            fileToggle.indeterminate = checkedCount > 0 && checkedCount < childPipes.length;
-        });
+function syncGroupToggleStates() {
+    document.querySelectorAll('.group-toggle').forEach(groupToggle => {
+        const leafToggles = Array.from(document.querySelectorAll('.leaf-toggle')).filter(cb => cb.dataset.groupKey === groupToggle.dataset.groupKey);
+        const checkedCount = leafToggles.filter(cb => cb.checked).length;
+        groupToggle.checked = leafToggles.length > 0 && checkedCount === leafToggles.length;
+        groupToggle.indeterminate = checkedCount > 0 && checkedCount < leafToggles.length;
+    });
+}
+
+function syncFileToggleStates() {
+    document.querySelectorAll('.file-toggle').forEach(fileToggle => {
+        const leafToggles = Array.from(document.querySelectorAll('.leaf-toggle')).filter(cb => cb.dataset.file === fileToggle.dataset.file);
+        const checkedCount = leafToggles.filter(cb => cb.checked).length;
+        fileToggle.checked = leafToggles.length > 0 && checkedCount === leafToggles.length;
+        fileToggle.indeterminate = checkedCount > 0 && checkedCount < leafToggles.length;
+    });
+}
+
+function syncMasterHierarchyToggle() {
+    if (!toggleAllHierarchy) return;
+    const leafToggles = Array.from(document.querySelectorAll('.leaf-toggle'));
+    const checkedCount = leafToggles.filter(cb => cb.checked).length;
+    toggleAllHierarchy.checked = leafToggles.length > 0 && checkedCount === leafToggles.length;
+    toggleAllHierarchy.indeterminate = checkedCount > 0 && checkedCount < leafToggles.length;
+    if (hierarchySelectionCount) {
+        hierarchySelectionCount.textContent = leafToggles.length
+            ? `${checkedCount}/${leafToggles.length} assets visible`
+            : "No Assets";
     }
+}
 
-    function syncMasterHierarchyToggle() {
-        if (!toggleAllHierarchy) return;
-        const pipeToggles = Array.from(document.querySelectorAll('.pipe-toggle'));
-        const checkedCount = pipeToggles.filter(cb => cb.checked).length;
-        toggleAllHierarchy.checked = pipeToggles.length > 0 && checkedCount === pipeToggles.length;
-        toggleAllHierarchy.indeterminate = checkedCount > 0 && checkedCount < pipeToggles.length;
-        if (hierarchySelectionCount) {
-            hierarchySelectionCount.textContent = pipeToggles.length
-                ? `${checkedCount}/${pipeToggles.length} lines visible`
-                : "No Lines";
+function getCurrentSearchQuery() {
+    return hierarchySearchInput ? hierarchySearchInput.value.trim().toLowerCase() : "";
+}
+
+function findMatchingLeafKeys(query) {
+    if (!query) {
+        return new Set(Array.from(leafRepresentatives.keys()));
+    }
+    const matches = new Set();
+    document.querySelectorAll('.hierarchy-leaf-row').forEach(row => {
+        const haystack = String(row.dataset.searchText || "").toLowerCase();
+        if (haystack.includes(query)) {
+            matches.add(row.dataset.leafKey);
+        }
+    });
+    return matches;
+}
+
+function applyHierarchySearchFilter() {
+    const query = getCurrentSearchQuery();
+    hierarchySearchMatches = findMatchingLeafKeys(query);
+
+    document.querySelectorAll('.hierarchy-leaf-row').forEach(row => {
+        const visible = !query || hierarchySearchMatches.has(row.dataset.leafKey);
+        row.classList.toggle('hidden', !visible);
+    });
+
+    document.querySelectorAll('.hierarchy-group').forEach(groupRow => {
+        const visibleChildren = Array.from(groupRow.querySelectorAll('.hierarchy-leaf-row')).some(row => !row.classList.contains('hidden'));
+        groupRow.classList.toggle('hidden', !visibleChildren);
+    });
+
+    document.querySelectorAll('.hierarchy-file').forEach(fileRow => {
+        const visibleChildren = Array.from(fileRow.querySelectorAll('.hierarchy-leaf-row')).some(row => !row.classList.contains('hidden'));
+        fileRow.classList.toggle('hidden', !visibleChildren);
+    });
+
+    if (hierarchySearchStatus) {
+        if (!query) {
+            hierarchySearchStatus.textContent = 'Search the current hierarchy';
+        } else {
+            hierarchySearchStatus.textContent = hierarchySearchMatches.size
+                ? `${hierarchySearchMatches.size} match${hierarchySearchMatches.size === 1 ? '' : 'es'}`
+                : 'No matches found';
         }
     }
+}
 
-    function updateVisibility() {
-        syncFileToggleStates();
-        syncMasterHierarchyToggle();
-        applySceneVisibility({ refit: true });
+function updateHierarchyState({ refit = false } = {}) {
+    syncGroupToggleStates();
+    syncFileToggleStates();
+    syncMasterHierarchyToggle();
+    applyHierarchySearchFilter();
+    applySceneVisibility({ refit });
+}
+
+function selectLeafKey(leafKey, { isolate = false, refit = true } = {}) {
+    const mesh = leafRepresentatives.get(leafKey);
+    if (!mesh) return false;
+
+    if (isolate) {
+        document.querySelectorAll('.leaf-toggle').forEach(cb => {
+            cb.checked = cb.dataset.leafKey === leafKey;
+        });
+        updateHierarchyState({ refit: false });
     }
 
+    clearHighlight();
+    selectedGroup = mesh.userData.selectGroup || [mesh];
+    applyHighlight(selectedGroup);
+    renderProperties(mesh.userData.item);
+    if (refit) {
+        focusOnSelection();
+    }
+    return true;
+}
+
+function focusSearchMatches({ isolate = false } = {}) {
+    const query = getCurrentSearchQuery();
+    if (!query) {
+        if (hierarchySearchStatus) {
+            hierarchySearchStatus.textContent = 'Type a search term first';
+        }
+        return;
+    }
+    const matches = findMatchingLeafKeys(query);
+    if (!matches.size) {
+        if (hierarchySearchStatus) {
+            hierarchySearchStatus.textContent = 'No matches found';
+        }
+        return;
+    }
+
+    if (isolate) {
+        document.querySelectorAll('.leaf-toggle').forEach(cb => {
+            cb.checked = matches.has(cb.dataset.leafKey);
+        });
+        updateHierarchyState({ refit: true });
+    }
+
+    const firstMatch = Array.from(matches)[0];
+    selectLeafKey(firstMatch, { isolate: false, refit: true });
+}
+
+buildHierarchyTree();
+buildIfcClassFilterUI();
+
+if (hContent) {
     document.querySelectorAll('.file-toggle').forEach(cb => {
         cb.addEventListener('change', (e) => {
             const isChecked = e.target.checked;
             const file = e.target.dataset.file;
-            document.querySelectorAll(`.pipe-toggle[data-file="${file}"]`).forEach(pcb => {
-                pcb.checked = isChecked;
+            document.querySelectorAll('.leaf-toggle').forEach(leafToggle => {
+                if (leafToggle.dataset.file === file) leafToggle.checked = isChecked;
             });
-            updateVisibility();
+            updateHierarchyState({ refit: true });
         });
     });
 
-    document.querySelectorAll('.pipe-toggle').forEach(cb => {
-        cb.addEventListener('change', updateVisibility);
+    document.querySelectorAll('.group-toggle').forEach(cb => {
+        cb.addEventListener('change', (e) => {
+            const isChecked = e.target.checked;
+            const groupKey = e.target.dataset.groupKey;
+            document.querySelectorAll('.leaf-toggle').forEach(leafToggle => {
+                if (leafToggle.dataset.groupKey === groupKey) leafToggle.checked = isChecked;
+            });
+            updateHierarchyState({ refit: true });
+        });
     });
 
-    syncFileToggleStates();
-    syncMasterHierarchyToggle();
-    applySceneVisibility({ refit: false });
+    document.querySelectorAll('.leaf-toggle').forEach(cb => {
+        cb.addEventListener('change', () => updateHierarchyState({ refit: true }));
+    });
+
+    document.querySelectorAll('.hierarchy-leaf-row').forEach(row => {
+        row.addEventListener('click', (event) => {
+            if (event.target && event.target.tagName === 'INPUT') return;
+            selectLeafKey(row.dataset.leafKey, { refit: false });
+        });
+        row.addEventListener('dblclick', () => {
+            selectLeafKey(row.dataset.leafKey, { refit: true });
+        });
+    });
+
+    if (toggleAllHierarchy) {
+        toggleAllHierarchy.addEventListener('change', (event) => {
+            const isChecked = event.target.checked;
+            document.querySelectorAll('.leaf-toggle').forEach(cb => {
+                cb.checked = isChecked;
+            });
+            updateHierarchyState({ refit: true });
+        });
+    }
+
+    if (hierarchySearchInput) {
+        hierarchySearchInput.addEventListener('input', () => {
+            applyHierarchySearchFilter();
+        });
+    }
+
+    if (searchFocusBtn) {
+        searchFocusBtn.addEventListener('click', () => focusSearchMatches({ isolate: false }));
+    }
+
+    if (searchIsolateBtn) {
+        searchIsolateBtn.addEventListener('click', () => focusSearchMatches({ isolate: true }));
+    }
+
+    if (searchClearBtn) {
+        searchClearBtn.addEventListener('click', () => {
+            if (hierarchySearchInput) hierarchySearchInput.value = '';
+            applyHierarchySearchFilter();
+            document.querySelectorAll('.leaf-toggle').forEach(cb => {
+                cb.checked = true;
+            });
+            updateHierarchyState({ refit: true });
+        });
+    }
+
+    updateHierarchyState({ refit: false });
 }
 
 // -------------------------------------------------
@@ -1021,6 +1367,12 @@ if (contextLabelToggle) {
     });
 }
 
+if (ifcOpacitySlider) {
+    ifcOpacitySlider.addEventListener('input', () => {
+        applyIfcOpacity();
+    });
+}
+
 function escapeHtml(value) {
     if (value === null || value === undefined) return "";
     return String(value)
@@ -1029,6 +1381,14 @@ function escapeHtml(value) {
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+}
+
+function getCookieValue(name) {
+    const cookieValue = document.cookie
+        .split(';')
+        .map((cookie) => cookie.trim())
+        .find((cookie) => cookie.startsWith(name + '='));
+    return cookieValue ? decodeURIComponent(cookieValue.split('=').slice(1).join('=')) : '';
 }
 
 function renderProperties(item) {
@@ -1364,6 +1724,151 @@ if (document.getElementById('ppScale')) {
     });
 }
 // -------------------------------------------------
+
+const nearestIfcInput = document.getElementById('nearestIfcInput');
+const nearestStructureBtn = document.getElementById('runNearestStructureBtn');
+const nearestStructureStatus = document.getElementById('nearestStructureStatus');
+const nearestStructureResults = document.getElementById('nearestStructureResults');
+
+function findLeafKeyForPipelineLine(lineKey, lineLabel) {
+    for (const [leafKey, mesh] of leafRepresentatives.entries()) {
+        const props = getItemProperties(mesh.userData.item);
+        const candidateLineKey = String(props.pipeline_ref || props.spool_ref || "").trim();
+        const candidateLabel = getHierarchyLeafLabel(mesh.userData.item);
+        if ((lineKey && candidateLineKey === lineKey) || (lineLabel && candidateLabel === lineLabel)) {
+            return leafKey;
+        }
+    }
+    return "";
+}
+
+function renderNearestStructureResults(payload) {
+    if (!nearestStructureResults) return;
+
+    const rows = payload.results || [];
+    const summary = payload.summary || {};
+    if (!rows.length) {
+        nearestStructureResults.classList.add('hidden');
+        if (nearestStructureStatus) {
+            nearestStructureStatus.textContent = summary.warning || 'No nearest-structure matches were produced from the uploaded IFC files.';
+        }
+        return;
+    }
+
+    if (nearestStructureStatus) {
+        const baseSummary = `Analyzed ${summary.line_count || 0} pipeline lines against ${summary.ifc_object_count || 0} IFC objects from ${payload.ifc_source_label || 'the uploaded IFC files'}.`;
+        nearestStructureStatus.textContent = summary.warning ? `${baseSummary} ${summary.warning}` : baseSummary;
+    }
+
+    nearestStructureResults.classList.remove('hidden');
+    nearestStructureResults.innerHTML = `
+        <div class="border-b border-slate-200 bg-slate-50 px-3 py-2 text-[10px] font-semibold uppercase tracking-[0.16em] text-slate-500">
+            Ranked By Nearest Approximate Distance
+        </div>
+        ${summary.warning ? `
+            <div class="border-b border-amber-200 bg-amber-50 px-3 py-2 text-[10px] leading-relaxed text-amber-800">
+                ${escapeHtml(summary.warning)}
+            </div>
+        ` : ''}
+        <div class="divide-y divide-slate-100">
+            ${rows.map((row) => {
+                const distanceClass = row.distance_m <= 0.5
+                    ? 'text-emerald-700'
+                    : row.distance_m <= 2.0
+                        ? 'text-amber-700'
+                        : 'text-slate-700';
+                const title = row.component_ref || row.name || row.ifc_class;
+                return `
+                    <button type="button" class="nearest-result-row w-full px-3 py-3 text-[11px] text-left hover:bg-slate-50 transition" data-line-key="${escapeHtml(row.line_key || '')}" data-line-label="${escapeHtml(row.line_label || '')}">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="font-semibold text-slate-800 truncate" title="${escapeHtml(row.line_label)}">${escapeHtml(row.line_label)}</div>
+                                <div class="mt-1 truncate text-slate-500" title="${escapeHtml(title)}">${escapeHtml(title)}</div>
+                            </div>
+                            <div class="text-right">
+                                <div class="font-semibold ${distanceClass}">${escapeHtml(row.distance_m.toFixed(3))} m</div>
+                                <div class="text-[10px] text-slate-400">${escapeHtml(Math.round(row.distance_mm))} mm</div>
+                            </div>
+                        </div>
+                        <div class="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[10px] text-slate-500">
+                            <div><span class="font-medium text-slate-600">IFC Class:</span> ${escapeHtml(row.ifc_class || '')}</div>
+                            <div><span class="font-medium text-slate-600">Storey:</span> ${escapeHtml(row.storey_name || 'Unknown')}</div>
+                            <div><span class="font-medium text-slate-600">Ref:</span> ${escapeHtml(row.component_ref || 'N/A')}</div>
+                            <div><span class="font-medium text-slate-600">File:</span> ${escapeHtml(row.ifc_file || '')}</div>
+                        </div>
+                    </button>
+                `;
+            }).join('')}
+        </div>
+    `;
+
+    nearestStructureResults.querySelectorAll('.nearest-result-row').forEach((button) => {
+        button.addEventListener('click', () => {
+            const leafKey = findLeafKeyForPipelineLine(button.dataset.lineKey, button.dataset.lineLabel);
+            if (leafKey) {
+                selectLeafKey(leafKey, { isolate: true, refit: true });
+            } else if (nearestStructureStatus) {
+                nearestStructureStatus.textContent = `The report found ${button.dataset.lineLabel}, but that line is not currently available in the visible hierarchy.`;
+            }
+        });
+    });
+}
+
+if (nearestStructureBtn) {
+    const activeSceneFormat = String((sceneData.stats || {}).source_format || '').toUpperCase();
+    if (activeSceneFormat === 'IFC') {
+        nearestStructureBtn.disabled = true;
+        nearestStructureBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        if (nearestStructureStatus) {
+            nearestStructureStatus.textContent = 'Open an IDF or PCF pipeline scene first, then compare it against IFC reference files here.';
+        }
+    } else {
+        nearestStructureBtn.addEventListener('click', async () => {
+            if (!nearestIfcInput || !nearestIfcInput.files || !nearestIfcInput.files.length) {
+                if (nearestStructureStatus) {
+                    nearestStructureStatus.textContent = 'Choose one or more IFC files before running the nearest-structure analysis.';
+                }
+                return;
+            }
+
+            const originalLabel = nearestStructureBtn.textContent;
+            nearestStructureBtn.disabled = true;
+            nearestStructureBtn.textContent = 'Analyzing...';
+            if (nearestStructureStatus) {
+                nearestStructureStatus.textContent = 'Parsing IFC reference files and comparing them against the active pipeline scene...';
+            }
+
+            const formData = new FormData();
+            formData.append('scene', JSON.stringify(sceneData));
+            Array.from(nearestIfcInput.files).forEach((file) => {
+                formData.append('ifc_files', file);
+            });
+
+            try {
+                const response = await fetch(nearestStructureBtn.dataset.analyzeUrl, {
+                    method: 'POST',
+                    headers: {
+                        'X-CSRFToken': getCookieValue('csrftoken'),
+                    },
+                    body: formData,
+                });
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload.error || 'Unable to analyze the nearest structure for the current scene.');
+                }
+                renderNearestStructureResults(payload);
+            } catch (error) {
+                nearestStructureResults.classList.add('hidden');
+                if (nearestStructureStatus) {
+                    nearestStructureStatus.textContent = error.message || 'Unable to analyze the nearest structure for the current scene.';
+                }
+            } finally {
+                nearestStructureBtn.disabled = false;
+                nearestStructureBtn.textContent = originalLabel;
+            }
+        });
+    }
+}
 
 window.addEventListener("resize", () => {
     camera.aspect = container.clientWidth / container.clientHeight;

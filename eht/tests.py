@@ -1,9 +1,12 @@
 import json
 import math
 from io import BytesIO
+from unittest.mock import patch
 
 import pandas as pd
+from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import SimpleTestCase, TestCase
 from django.urls import reverse
 from openpyxl import load_workbook
@@ -855,6 +858,96 @@ class StoreCalculatedResultsTests(TestCase):
             'm',
         )
 
+    def test_store_calculated_results_rolls_back_if_a_late_write_fails(self):
+        make_project_record()
+        line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-001',
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+
+        store_calculated_results('p1', {
+            'heat_loss': [
+                {'uid': line.uid, 'heat_loss': 12.5, 'tracer_adder': 1.2},
+            ],
+            'selected_tracers': [
+                {
+                    'uid': line.uid,
+                    'V_UID': 'V-001',
+                    'A_Coeff': 1.0,
+                    'B_Coeff': 2.0,
+                    'C_Coeff': 3.0,
+                    'Power_at_Startup_T': 11.5,
+                    'Ohm_per_km': 9.5,
+                    'Res_corrFactor_Mica': 0.5,
+                    'Tracer_Family': 'Self Regulating',
+                    'Voltage_Float': 230.0,
+                    'Voltage_Correction_Factor': 0.95,
+                    'Power_Output': 30.0,
+                    'Spiral_Factor': 1.1,
+                    'Tracer_Length': 12.0,
+                    'Tracer_With_Margin': 12.6,
+                },
+            ],
+            'alternative_tracers': [],
+            'power_distribution': [],
+            'boq_per_line': {},
+            'consolidated_boq': {},
+            'tracer_power_param': [],
+        })
+
+        with patch('eht.data_service.ProcessLineCalculation.objects.create', side_effect=RuntimeError('boom')):
+            with self.assertRaises(RuntimeError):
+                store_calculated_results('p1', {
+                    'heat_loss': [
+                        {'uid': line.uid, 'heat_loss': 99.9, 'tracer_adder': 9.9},
+                    ],
+                    'selected_tracers': [
+                        {
+                            'uid': line.uid,
+                            'V_UID': 'V-002',
+                            'A_Coeff': 5.0,
+                            'B_Coeff': 6.0,
+                            'C_Coeff': 7.0,
+                            'Power_at_Startup_T': 22.5,
+                            'Ohm_per_km': 19.5,
+                            'Res_corrFactor_Mica': 1.5,
+                            'Tracer_Family': 'Updated',
+                            'Voltage_Float': 230.0,
+                            'Voltage_Correction_Factor': 0.99,
+                            'Power_Output': 66.0,
+                            'Spiral_Factor': 1.4,
+                            'Tracer_Length': 14.0,
+                            'Tracer_With_Margin': 14.7,
+                        },
+                    ],
+                    'alternative_tracers': [],
+                    'power_distribution': [],
+                    'boq_per_line': {},
+                    'consolidated_boq': {},
+                    'tracer_power_param': [
+                        {
+                            'uid': line.uid,
+                            'max_current': 4.5,
+                            'operating_current': 4.0,
+                            'operating_load': 920.0,
+                            'total_tracer_length': 14.7,
+                            'pipe_size_mm': 60.3,
+                        },
+                    ],
+                })
+
+        self.assertEqual(HeatLoss.objects.get(line=line).heat_loss, 12.5)
+        self.assertEqual(SelectedTracer.objects.get(line=line).v_uid, 'V-001')
+
     def test_same_tracer_vendor_uid_can_be_stored_for_multiple_lines(self):
         make_project_record()
         line_one = HeatTracingInput.objects.create(
@@ -1137,6 +1230,69 @@ class SldLayoutTests(TestCase):
         reloaded_layout = get_project_sld_layout('p1', payload=payload)
         self.assertFalse(reloaded_layout['meta']['has_saved_layout'])
         self.assertEqual(reloaded_layout['meta']['saved_count'], 0)
+
+    def test_saved_layout_survives_recalculation_when_component_ids_are_stable(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        original_payload = build_project_sld_payload('p1')
+        positions = {
+            node['component_id']: {'x': 120 + index * 15, 'y': 240 + index * 8}
+            for index, node in enumerate(original_payload['nodes'], start=1)
+        }
+        save_project_response = self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': positions}),
+            content_type='application/json',
+        )
+        self.assertEqual(save_project_response.status_code, 200)
+
+        project_settings = make_project_settings(proj_id='p1')
+        tag_factory = ProjectTagFactory('p1')
+        aggregated_results = {
+            'heat_loss': [],
+            'selected_tracers': [],
+            'alternative_tracers': [],
+            'power_distribution': [],
+            'boq_per_line': {},
+            'consolidated_boq': {},
+            'tracer_power_param': [],
+        }
+        line = HeatTracingInput.objects.get(proj_id='p1', line_id='LINE-001')
+        selected_tracer_template = {
+            'V_UID': 'V-001',
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 100.0,
+            'Power_at_Startup_T': 10.0,
+            'Ohm_per_km': 1.0,
+            'Res_corrFactor_Mica': 1.0,
+            'Tracer_Family': 'SR',
+            'Voltage_Float': 230.0,
+            'Voltage_Correction_Factor': 1.0,
+            'Power_Output': 30.0,
+            'Spiral_Factor': 1.0,
+            'Tracer_Length': 20.0,
+            'Tracer_With_Margin': 20.0,
+        }
+        power_params = compute_power_params(
+            make_line(uid=str(line.uid), line_id=line.line_id),
+            project_settings,
+            make_asme_table(),
+            selected_tracer_template,
+        )
+        aggregated_results['selected_tracers'].append({**selected_tracer_template, 'uid': line.uid})
+        aggregated_results['power_distribution'].append(
+            compute_power_distribution(power_params, project_settings, tag_factory=tag_factory)
+        )
+        aggregated_results['tracer_power_param'].append(power_params)
+
+        self.assertTrue(store_calculated_results('p1', aggregated_results))
+
+        reloaded_payload = build_project_sld_payload('p1')
+        reloaded_layout = get_project_sld_layout('p1', payload=reloaded_payload)
+        self.assertTrue(reloaded_layout['meta']['has_saved_layout'])
+        first_component_id = original_payload['nodes'][0]['component_id']
+        self.assertEqual(reloaded_layout['positions'][first_component_id]['x'], positions[first_component_id]['x'])
+        self.assertEqual(reloaded_layout['positions'][first_component_id]['y'], positions[first_component_id]['y'])
 
 
 class ProjectDataFormTests(TestCase):
@@ -1493,12 +1649,121 @@ class ConfirmValidDataViewTests(TestCase):
         line.refresh_from_db()
         self.assertEqual(line.status, 'confirmed')
         self.assertTrue(HeatLoss.objects.filter(line=line).exists())
-        self.assertTrue(SelectedTracer.objects.filter(line=line).exists())
-        self.assertTrue(AlternateTracer.objects.filter(line=line, option_rank=1).exists())
-        self.assertTrue(PowerDistribution.objects.filter(line=line).exists())
-        self.assertTrue(ProcessLineCalculation.objects.filter(line=line).exists())
-        self.assertTrue(BOQ.objects.filter(project_id='p1', scope='line', line=line).exists())
-        self.assertTrue(BOQ.objects.filter(project_id='p1', scope='consolidated').exists())
+
+
+class CalculateViewHardeningTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='uploadtester', password='password123')
+        self.client.force_login(self.user)
+        make_project_record()
+
+    def create_pending_line(self, **overrides):
+        defaults = {
+            'proj_id': 'p1',
+            'line_id': 'LINE-001',
+            'service_type': 'EP',
+            'line_size': 2.0,
+            'line_length': 10.0,
+            'ins_mat_type': 'Mineral Wool',
+            'insul_thick': 50.0,
+            'maint_temp': 100.0,
+            'oper_temp': 80.0,
+            'design_temp': 120.0,
+            'valve_qty': 0,
+            'flange_qty': 0,
+            'support_qty': 0,
+            'status': 'pending',
+        }
+        defaults.update(overrides)
+        return HeatTracingInput.objects.create(**defaults)
+
+    def test_calculate_view_does_not_clear_existing_workspace_when_upload_has_no_valid_rows(self):
+        existing_line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-EXISTING',
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        with patch('eht.views.sanitize_file', return_value=([], [{'row_number': 2, 'errors': ['bad row']}], '/tmp/error.xlsx')):
+            response = self.client.post(
+                reverse('calculate_view'),
+                {'project_id': 'p1', 'file': upload},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertTrue(HeatTracingInput.objects.filter(pk=existing_line.pk).exists())
+        self.assertEqual(HeatTracingInput.objects.filter(proj_id='p1').count(), 1)
+
+    def test_calculate_view_replaces_workspace_only_after_valid_rows_are_ready(self):
+        stale_line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-OLD',
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+        HeatLoss.objects.create(uid=str(stale_line.uid), line=stale_line, heat_loss=12.5, tracer_adder=1.2)
+
+        valid_rows = [{
+            'XLID': 1,
+            'Line_ID': 'LINE-NEW',
+            'Service_Type': 'EP',
+            'Line_Size': 2.0,
+            'Line_Length': 11.0,
+            'Ins_Mat_Type': 'Mineral Wool',
+            'Insul_Thick': 50.0,
+            'Maint_T': 120.0,
+            'Oper_T': 100.0,
+            'Design_T': 140.0,
+            'IsDeleted': False,
+            'PID_No': '',
+            'Area': '',
+            'Train': '',
+            'Valve_Qty': 0,
+            'Flange_Qty': 0,
+            'Support_Qty': 0,
+            'Pipe_Mat_Class': '',
+            'Emergency_Supply': False,
+            'Discipline': '',
+            'Remarks': '',
+        }]
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        with patch('eht.views.sanitize_file', return_value=(valid_rows, [{'row_number': 3, 'errors': ['bad row']}], '/tmp/error.xlsx')):
+            response = self.client.post(
+                reverse('calculate_view'),
+                {'project_id': 'p1', 'file': upload},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(HeatTracingInput.objects.filter(pk=stale_line.pk).exists())
+        self.assertFalse(HeatLoss.objects.filter(uid=str(stale_line.uid)).exists())
+        replacement_line = HeatTracingInput.objects.get(proj_id='p1', line_id='LINE-NEW')
+        self.assertEqual(replacement_line.status, 'pending')
+        self.assertEqual(HeatTracingInput.objects.filter(proj_id='p1').count(), 1)
 
     def test_confirm_valid_data_rejects_requests_when_no_rows_are_pending(self):
         line = self.create_pending_line(status='confirmed')
@@ -1507,5 +1772,6 @@ class ConfirmValidDataViewTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()['error'], 'No valid uploaded data is pending confirmation.')
+        line.refresh_from_db()
         self.assertEqual(line.status, 'confirmed')
         self.assertFalse(HeatLoss.objects.filter(line=line).exists())

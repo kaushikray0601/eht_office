@@ -214,6 +214,7 @@ def clear_project_workspace_data(project_id):
 # Store calculated data in the database
 
 # Function to store aggregated_results into the database
+@transaction.atomic
 def store_calculated_results(project_id, aggregated_results):
     project = ProjectData.objects.get(proj_id=project_id)
     project_lines = {

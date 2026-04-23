@@ -2,6 +2,21 @@
 
 This tracker is derived from [CODEBASE_REVIEW_2026-04-17.md](/home/kr/mydev/eht_office/NOTES/CODEBASE_REVIEW_2026-04-17.md:1) and is intended to be worked through in order.
 
+Current architecture/program references:
+- [Diagram Platform Decision Memo](/home/kr/mydev/eht_office/NOTES/DIAGRAM_PLATFORM_DECISION_MEMO_2026-04-23.md:1)
+- [Diagram Platform Target Architecture](/home/kr/mydev/eht_office/NOTES/DIAGRAM_PLATFORM_TARGET_ARCHITECTURE.md:1)
+- [SLD Refactor And Build Roadmap](/home/kr/mydev/eht_office/NOTES/SLD_REFACTOR_BUILD_ROADMAP.md:1)
+- [EHT SLD Graph Contract](/home/kr/mydev/eht_office/NOTES/EHT_SLD_GRAPH_CONTRACT.md:1)
+
+Program-level SLD execution baseline:
+- [ ] Phase 1: Hardening the current EHT SLD foundation
+- [ ] Phase 2: Stabilize the graph model
+- [ ] Phase 3: Layout persistence and edit safety
+- [ ] Phase 4: Professional EHT SLD UX
+- [ ] Phase 5: Controlled domain editing
+- [ ] Phase 6: Extract reusable diagram-core pieces
+- [ ] Phase 7: Prepare multi-module adoption
+
 - [x] Task 1: Stabilize result persistence for the current calculation payloads so calculations can complete without runtime storage errors.
 - [x] Task 2: Redesign result models so persisted rows are project-safe and line-safe instead of overwriting by tracer catalog ID, and so BOQ data can be stored as real line items instead of being skipped.
 - [x] Task 3: Finish the partial-invalid upload flow so "proceed with valid rows" actually runs calculations and stores outputs.

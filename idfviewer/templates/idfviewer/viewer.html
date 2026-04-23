@@ -73,7 +73,7 @@
 <body>
     <div class="glass-topbar absolute top-0 left-0 right-0 h-[60px] px-6 z-20 flex items-center justify-between">
         <div class="flex items-center space-x-4 min-w-0">
-            <h1 class="text-[17px] font-medium text-slate-800 tracking-wide shrink-0">ELECSENSE <span class="text-slate-500">Pipeline</span></h1>
+            <h1 class="text-[17px] font-medium text-slate-800 tracking-wide shrink-0">ELECSENSE <span class="text-slate-500">3D</span></h1>
             <span class="hidden lg:inline-flex max-w-[260px] truncate text-[11px] font-medium text-slate-600 bg-slate-100 px-2.5 py-1 rounded border border-slate-200" title="{{ filename }}">
                 {{ filename }}
             </span>
@@ -129,6 +129,15 @@
 	            </label>
 	            <span id="hierarchySelectionCount" class="text-[10px] uppercase tracking-wide text-slate-500">All Visible</span>
 	        </div>
+            <div class="px-5 py-3 border-b border-slate-200 bg-white/75 space-y-2">
+                <input id="hierarchySearchInput" type="search" placeholder="Search line, IFC object, tag, material..." class="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-[11px] text-slate-700 shadow-sm outline-none transition focus:border-slate-400">
+                <div class="grid grid-cols-3 gap-2">
+                    <button id="searchFocusBtn" type="button" class="rounded border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-700 shadow-sm transition hover:bg-slate-50">Focus</button>
+                    <button id="searchIsolateBtn" type="button" class="rounded border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-700 shadow-sm transition hover:bg-slate-50">Isolate</button>
+                    <button id="searchClearBtn" type="button" class="rounded border border-slate-200 bg-white px-2 py-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-700 shadow-sm transition hover:bg-slate-50">Clear</button>
+                </div>
+                <div id="hierarchySearchStatus" class="text-[10px] uppercase tracking-wide text-slate-500">Search the current hierarchy</div>
+            </div>
 	        
 	        <div id="hierarchy-content" class="flex-grow p-4 space-y-3 overflow-y-auto">
 	            <!-- Populated by viewer.js -->
@@ -204,6 +213,13 @@
                     </div>
                     <input type="range" id="thicknessSlider" min="0.1" max="10.0" step="0.1" value="1.0" class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-600">
                 </div>
+                <div id="ifcOpacityWrap" class="mb-4 pt-2 border-t border-slate-100 hidden">
+                    <div class="flex justify-between items-center mb-1">
+                        <label class="text-[11px] font-medium text-slate-500 tracking-wide">IFC Opacity</label>
+                        <span id="ifcOpacityValue" class="text-[11px] font-semibold text-slate-700">1.00</span>
+                    </div>
+                    <input type="range" id="ifcOpacitySlider" min="0.05" max="1.0" step="0.05" value="1.0" class="w-full h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-600">
+                </div>
                 <div class="grid grid-cols-2 gap-y-3 gap-x-2 text-[11px] mb-4 text-slate-700 font-medium">
                     <label class="flex items-center space-x-2 cursor-pointer hover:text-slate-900 transition">
                         <input type="checkbox" checked class="prop-filter rounded border-slate-300 text-slate-700 focus:ring-0" value="pipeline_ref"> <span>Pipeline Ref</span>
@@ -246,7 +262,26 @@
                         component refs, support codes, and notes where available.
                     </p>
                 </div>
+                <div id="ifcClassFilterWrap" class="mb-4 rounded-md border border-slate-200 bg-white/80 p-3 hidden">
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 mb-3">IFC Class Filters</div>
+                    <div id="ifcClassFilters" class="space-y-2 text-[11px] text-slate-700 font-medium"></div>
+                </div>
                 <button id="btnShowHidden" class="hidden w-full bg-slate-200 border border-slate-300 hover:bg-slate-300 text-slate-800 font-medium py-1.5 rounded transition shadow-sm text-[11px]">Restore Hidden Objects</button>
+            </div>
+        </div>
+
+        <div class="mb-6 rounded-lg border border-sky-200 bg-sky-50/70 p-4 shadow-sm">
+            <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">Nearest Structure</div>
+            <p class="mt-2 text-[11px] leading-relaxed text-slate-600">
+                Analyze the active IDF or PCF scene against one or more IFC reference files to find the nearest structural object for each pipeline line using raw plant coordinates.
+            </p>
+            <div class="mt-3 space-y-3">
+                <input type="file" id="nearestIfcInput" accept=".ifc" multiple class="w-full text-xs text-slate-700 border border-slate-300 rounded p-1 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:bg-slate-200 file:text-slate-800 file:font-medium hover:file:bg-slate-300 bg-white cursor-pointer transition shadow-sm">
+                <button id="runNearestStructureBtn" type="button" data-analyze-url="{% url 'idf_analyze_nearest_structure' %}" class="w-full bg-sky-700 hover:bg-sky-600 text-white font-medium py-2 rounded transition shadow-md text-[11px]">
+                    Analyze Nearest Structure
+                </button>
+                <div id="nearestStructureStatus" class="text-[11px] text-slate-500">Upload one or more IFC files to compare against the current pipeline scene.</div>
+                <div id="nearestStructureResults" class="max-h-72 overflow-y-auto rounded border border-slate-200 bg-white/90 hidden"></div>
             </div>
         </div>
 
@@ -271,24 +306,19 @@
     }
     </script>
 
-    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260423_ifc_scale_fix_01"></script>
+    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260423_ifc_tools_01"></script>
     <script>
         (function () {
             const body = document.body;
             const collapseBtn = document.getElementById('navpanel-toggle');
             const reopenBtn = document.getElementById('navpanel-reopen');
-            const masterToggle = document.getElementById('toggleAllHierarchy');
             const selectionCount = document.getElementById('hierarchySelectionCount');
 
             function updateSelectionCount() {
                 if (!selectionCount) return;
-                const pipes = Array.from(document.querySelectorAll('.pipe-toggle'));
-                const checked = pipes.filter(cb => cb.checked).length;
-                selectionCount.textContent = pipes.length ? `${checked}/${pipes.length} lines visible` : 'No Lines';
-                if (masterToggle) {
-                    masterToggle.checked = pipes.length > 0 && checked === pipes.length;
-                    masterToggle.indeterminate = checked > 0 && checked < pipes.length;
-                }
+                const leaves = Array.from(document.querySelectorAll('.leaf-toggle'));
+                const checked = leaves.filter(cb => cb.checked).length;
+                selectionCount.textContent = leaves.length ? `${checked}/${leaves.length} assets visible` : 'No Assets';
             }
 
             if (collapseBtn) {
@@ -303,31 +333,8 @@
                 });
             }
 
-            if (masterToggle) {
-                masterToggle.addEventListener('change', function (event) {
-                    const isChecked = event.target.checked;
-                    const fileToggles = Array.from(document.querySelectorAll('.file-toggle'));
-                    const pipeToggles = Array.from(document.querySelectorAll('.pipe-toggle'));
-
-                    if (fileToggles.length) {
-                        fileToggles.forEach(cb => {
-                            cb.checked = isChecked;
-                            cb.indeterminate = false;
-                            cb.dispatchEvent(new Event('change', { bubbles: true }));
-                        });
-                    } else {
-                        pipeToggles.forEach(cb => {
-                            cb.checked = isChecked;
-                            cb.dispatchEvent(new Event('change', { bubbles: true }));
-                        });
-                    }
-
-                    updateSelectionCount();
-                });
-            }
-
             document.addEventListener('change', function (event) {
-                if (event.target.matches('.pipe-toggle, .file-toggle')) {
+                if (event.target.matches('.leaf-toggle, .group-toggle, .file-toggle')) {
                     updateSelectionCount();
                 }
             });

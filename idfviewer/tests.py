@@ -4,17 +4,19 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.test import RequestFactory
 from django.test import SimpleTestCase, TestCase
 
 from eht.models import ProjectData
 
+from .analysis_utils import nearest_structure_report
 from .ifc_parser import _normalize_ifc_scene, parse_multiple_ifc_uploads
 from .models import IDFComponent, IDFFile, IDFFileSaveEvent
 from .parser import _collect_candidate_records, _filter_scene, _normalize_points, parse_multiple_idf_texts
 from .pcf_parser import _component_to_scene_items, _normalize_scene as _normalize_pcf_scene
 from .pcf_parser import _parse_document, _strip_internal as _strip_pcf_internal
 from .services import build_scene_from_saved_file
-from .views import detect_pipeline_format
+from .views import analyze_nearest_structure_view, detect_pipeline_format
 
 
 def _parse_scene(text):
@@ -205,7 +207,10 @@ class ParserRegressionTests(SimpleTestCase):
         self.assertEqual(len(normalized["meshes"][0]["mesh"]["positions"]), 9)
 
     def test_sample_ifc_parses_with_expected_meshes_and_metadata(self):
-        raw = Path("/home/kr/mydev/eht_office/eht/4001-A51A-01.ifc").read_bytes()
+        sample_path = Path("/home/kr/mydev/eht_office/eht/4001-A51A-01.ifc")
+        if not sample_path.exists():
+            self.skipTest("Sample IFC file is not available in this workspace.")
+        raw = sample_path.read_bytes()
 
         scene = parse_multiple_ifc_uploads([("4001-A51A-01.ifc", raw)], None)
 
@@ -216,6 +221,154 @@ class ParserRegressionTests(SimpleTestCase):
         self.assertEqual(first["ifc_class"], "IfcColumn")
         self.assertEqual(first["component_ref"], "H467")
         self.assertTrue(first["materials"])
+
+    def test_nearest_structure_report_matches_pipeline_line_to_ifc_bounds(self):
+        pipeline_scene = {
+            "pipes": [
+                {
+                    "uid": 1,
+                    "record_id": 100,
+                    "kind": "Pipe",
+                    "properties": {
+                        "filename": "sample.idf",
+                        "pipeline_ref": "LINE-100",
+                        "raw_start": [1000.0, 1000.0, 1000.0],
+                        "raw_end": [3000.0, 1000.0, 1000.0],
+                    },
+                }
+            ],
+            "fittings": [],
+            "welds": [],
+            "supports": [],
+            "markers": [],
+            "stats": {"source_format": "IDF"},
+        }
+        ifc_scene = {
+            "meshes": [
+                {
+                    "uid": 10,
+                    "properties": {
+                        "ifc_class": "IfcColumn",
+                        "component_ref": "COL-A",
+                        "name": "Column A",
+                        "storey_name": "L1",
+                        "material_names": ["STEEL"],
+                        "filename": "sample.ifc",
+                        "raw_bounds": {
+                            "min_x": 3.2,
+                            "max_x": 3.4,
+                            "min_y": 0.8,
+                            "max_y": 1.2,
+                            "min_z": 0.8,
+                            "max_z": 1.2,
+                        },
+                    },
+                }
+            ]
+        }
+
+        report = nearest_structure_report(pipeline_scene, ifc_scene)
+
+        self.assertEqual(report["summary"]["line_count"], 1)
+        self.assertEqual(report["summary"]["ifc_object_count"], 1)
+        self.assertEqual(len(report["results"]), 1)
+        row = report["results"][0]
+        self.assertEqual(row["line_label"], "LINE-100")
+        self.assertEqual(row["component_ref"], "COL-A")
+        self.assertAlmostEqual(row["distance_m"], 0.2, places=6)
+
+    def test_nearest_structure_report_warns_when_coordinate_frames_are_far_apart(self):
+        pipeline_scene = {
+            "pipes": [
+                {
+                    "uid": 1,
+                    "record_id": 100,
+                    "kind": "Pipe",
+                    "properties": {
+                        "filename": "sample.idf",
+                        "pipeline_ref": "LINE-200",
+                        "raw_start": [1000.0, 1000.0, 1000.0],
+                        "raw_end": [3000.0, 1000.0, 1000.0],
+                    },
+                }
+            ],
+            "fittings": [],
+            "welds": [],
+            "supports": [],
+            "markers": [],
+            "stats": {"source_format": "IDF"},
+        }
+        ifc_scene = {
+            "meshes": [
+                {
+                    "uid": 10,
+                    "properties": {
+                        "ifc_class": "IfcColumn",
+                        "component_ref": "COL-FAR",
+                        "name": "Far Column",
+                        "storey_name": "L1",
+                        "material_names": ["STEEL"],
+                        "filename": "sample.ifc",
+                        "raw_bounds": {
+                            "min_x": 5000.0,
+                            "max_x": 5000.5,
+                            "min_y": 5000.0,
+                            "max_y": 5000.5,
+                            "min_z": 100.0,
+                            "max_z": 101.0,
+                        },
+                    },
+                }
+            ]
+        }
+
+        report = nearest_structure_report(pipeline_scene, ifc_scene)
+        self.assertTrue(report["summary"]["warning"])
+
+
+class AnalysisViewTests(SimpleTestCase):
+    def setUp(self):
+        self.factory = RequestFactory()
+
+    @patch("idfviewer.views.parse_multiple_ifc_uploads")
+    def test_analyze_nearest_structure_view_returns_report(self, mock_parse_ifc):
+        mock_parse_ifc.return_value = {
+            "meshes": [
+                {
+                    "uid": 10,
+                    "properties": {
+                        "ifc_class": "IfcColumn",
+                        "component_ref": "COL-A",
+                        "name": "Column A",
+                        "storey_name": "L1",
+                        "material_names": ["STEEL"],
+                        "filename": "sample.ifc",
+                        "raw_bounds": {
+                            "min_x": 3.2,
+                            "max_x": 3.4,
+                            "min_y": 0.8,
+                            "max_y": 1.2,
+                            "min_z": 0.8,
+                            "max_z": 1.2,
+                        },
+                    },
+                }
+            ]
+        }
+        request = self.factory.post(
+            "/idfviewer/analyze-nearest-structure/",
+            data={
+                "scene": json.dumps(make_preview_scene()),
+                "ifc_files": SimpleUploadedFile("sample.ifc", b"ISO-10303-21;", content_type="application/octet-stream"),
+            },
+        )
+
+        response = analyze_nearest_structure_view(request)
+        self.assertEqual(response.status_code, 200)
+        payload = json.loads(response.content)
+        self.assertEqual(payload["summary"]["line_count"], 1)
+        self.assertEqual(payload["summary"]["ifc_object_count"], 1)
+        self.assertEqual(payload["results"][0]["component_ref"], "COL-A")
 
 
 def make_project():
