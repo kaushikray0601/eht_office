@@ -44,14 +44,19 @@ class ProjectTagFactory:
         self._counters[component_type] += 1
 
         display_tag = f'{prefix}_{counter_value:03d}'
-        line_scope = str(line_id or line_uid or 'line')
+        line_uid_scope = str(line_uid or line_id or 'line')
+        display_line_scope = str(line_id or '')
         id_parts = [
             self.project_id,
-            f'line:{line_scope}',
+            f'line_uid:{line_uid_scope}',
+        ]
+        if display_line_scope:
+            id_parts.append(f'line:{display_line_scope}')
+        id_parts.extend([
             f'branch:{branch_index}',
             component_type,
             f'seq:{sequence_index}',
-        ]
+        ])
         if circuit_index is not None:
             id_parts.append(f'ckt:{circuit_index}')
         component_id = ':'.join(id_parts)
@@ -78,6 +83,7 @@ def build_connection(source_component, target_component):
         'from_display_tag': source_component['display_tag'],
         'to_display_tag': target_component['display_tag'],
         'line_ids': source_component.get('line_ids', []),
+        'line_uid': source_component.get('line_uid'),
         'branch_index': source_component.get('branch_index'),
         'circuit_index': target_component.get('circuit_index'),
     }

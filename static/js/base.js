@@ -105,16 +105,26 @@ function resetBootstrapTables(container) {
     enhanceBootstrapTableUi(container);
 }
 
-function loadWorkspaceTab(buttonElement, extraData = {}) {
-    const $button = $(buttonElement);
-    const url = $button.data('url');
-    const target = $button.attr('data-bs-target');
+function scrollWorkspaceContentIntoView(target, selector) {
+    const root = document.querySelector(target);
+    if (!root) {
+        return;
+    }
+    const scrollTarget = selector ? root.querySelector(selector) : root;
+    if (!scrollTarget) {
+        return;
+    }
+    requestAnimationFrame(function () {
+        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+}
 
+function loadWorkspaceContent(url, target, extraData = {}, options = {}) {
     if (!url || url === '#' || !target) {
         return;
     }
 
-    const projectId = getSelectedProjectId();
+    const projectId = extraData.project_id || getSelectedProjectId();
     if (!projectId) {
         renderWorkspacePlaceholder(target, 'Select a project in the Project Data form before loading this tab.', 'warning');
         return;
@@ -124,13 +134,16 @@ function loadWorkspaceTab(buttonElement, extraData = {}) {
     $.ajax({
         url: url,
         type: 'GET',
-        data: { project_id: projectId, ...extraData },
+        data: { ...extraData, project_id: projectId },
         success: function (html) {
             $(target).html(html);
             initializeBootstrapTables(target);
             resetBootstrapTables(target);
             if (window.initializeSldWorkspace) {
                 window.initializeSldWorkspace(target);
+            }
+            if (options.scrollToSelector) {
+                scrollWorkspaceContentIntoView(target, options.scrollToSelector);
             }
         },
         error: function (xhr) {
@@ -141,6 +154,20 @@ function loadWorkspaceTab(buttonElement, extraData = {}) {
             renderWorkspacePlaceholder(target, errorMessage, 'danger');
         }
     });
+}
+
+function loadWorkspaceTab(buttonElement, extraData = {}) {
+    const $button = $(buttonElement);
+    loadWorkspaceContent($button.data('url'), $button.attr('data-bs-target'), extraData);
+}
+
+function loadWorkspaceFilterForm(formElement, tabSelector, targetFallback) {
+    const activeButton = document.querySelector(tabSelector);
+    const formData = Object.fromEntries(new FormData(formElement).entries());
+    const url = formElement.dataset.url || (activeButton ? activeButton.dataset.url : '');
+    const target = activeButton ? activeButton.getAttribute('data-bs-target') : targetFallback;
+    const scrollToSelector = formElement.dataset.scrollTo || '';
+    loadWorkspaceContent(url, target, formData, { scrollToSelector: scrollToSelector });
 }
 
 window.loadWorkspaceTab = loadWorkspaceTab;
@@ -212,9 +239,7 @@ document.addEventListener('shown.bs.tab', function (event) {
 
 $(document).on('submit', '#boq-line-filter-form', function (e) {
     e.preventDefault();
-    const activeButton = document.querySelector('button.nav-link#boq-tab');
-    const formData = Object.fromEntries(new FormData(this).entries());
-    loadWorkspaceTab(activeButton, formData);
+    loadWorkspaceFilterForm(this, 'button.nav-link#boq-tab', '#boq-tab-pane');
 });
 
 $(document).on('change', '#boq-line-filter-form select[name="line_id"]', function () {
@@ -226,6 +251,24 @@ $(document).on('change', '#boq-line-filter-form select[name="line_id"]', functio
 $(document).on('click', '#boq-line-filter-reset', function () {
     const activeButton = document.querySelector('button.nav-link#boq-tab');
     loadWorkspaceTab(activeButton);
+});
+
+$(document).on('submit', '#sld-line-filter-form', function (e) {
+    e.preventDefault();
+    loadWorkspaceFilterForm(this, 'button.nav-link#sld-tab', '#sld-tab-pane');
+});
+
+$(document).on('click', '#sld-line-filter-reset', function () {
+    const activeButton = document.querySelector('button.nav-link#sld-tab');
+    if (!activeButton) {
+        return;
+    }
+    loadWorkspaceContent(
+        activeButton.dataset.url,
+        activeButton.getAttribute('data-bs-target'),
+        {},
+        { scrollToSelector: '.sld-panel' }
+    );
 });
 
 $(document).on('click', '.boq-line-quick-view', function () {

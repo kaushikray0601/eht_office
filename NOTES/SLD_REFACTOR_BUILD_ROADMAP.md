@@ -1,6 +1,7 @@
 # SLD Refactor And Build Roadmap
 
 Date: 2026-04-23
+Last updated: 2026-04-25
 
 Status: Execution baseline
 
@@ -42,8 +43,8 @@ Tasks:
 - [x] Write centralized-vs-distributed decision memo
 - [x] Write target architecture reference
 - [x] Write phase-by-phase roadmap with trackable tasks
-- [ ] Update existing notes that still describe the SLD as only a prototype
-- [ ] Add a short architecture/roadmap index entry to `README.md`
+- [x] Update existing notes that still describe the SLD as only a prototype
+- [x] Add a short architecture/roadmap index entry to `README.md`
 
 ### Phase 1. Hardening The Current EHT SLD Foundation
 
@@ -82,12 +83,12 @@ Exit criteria:
 - layout and graph concerns are cleanly separated
 
 Tasks:
-- [ ] Introduce explicit graph schema versioning in payloads
+- [x] Introduce explicit graph schema versioning in payloads
 - [ ] Define a normalized internal graph contract for nodes, edges, groups, and annotations
 - [ ] Separate generated graph payload from future user-edit overrides
 - [ ] Review whether branch JSON remains the generated source or whether a normalized graph table is required next
 - [ ] Define how future manual edits will be represented without corrupting generated topology
-- [ ] Add tests for graph determinism across repeated recalculation runs
+- [x] Add tests for graph determinism across repeated graph builds
 - [ ] Add tests for backward compatibility with legacy branch JSON fallback
 
 Recommended file focus:
@@ -107,7 +108,7 @@ Exit criteria:
 
 Tasks:
 - [x] Decide whether layout saves are full-document snapshots or patch/delta updates
-- [x] If staying with full-document save, enforce that contract strictly in API and client
+- [x] Record that the current API uses merge-style coordinate updates rather than full-document replacement
 - [x] If moving to partial updates, redesign `save_project_sld_layout()` to stop deleting omitted nodes
 - [ ] Add optimistic version checks or last-modified checks for concurrent save safety
 - [ ] Persist viewport preferences separately from node coordinates if useful
@@ -132,11 +133,14 @@ Tasks:
 - [ ] Improve symbol readability: cable labels/specs out of cramped boxes
 - [ ] Simplify tracer and end-termination labeling
 - [ ] Add stronger per-line grouping cues
-- [ ] Add line search/select and one-line focused viewing mode
-- [ ] Add collapsible validation sections and branch-detail drilldown
-- [ ] Add click/hover path highlighting from MCB to end termination
-- [ ] Add property inspector panel for selected components
+- [x] Add basic line search/select and one-line focused viewing mode
+- [x] Make line-focused browsing fully AJAX/server-backed so large projects do not require full-payload browser filtering
+- [x] Add collapsible validation sections and branch-detail drilldown
+- [x] Add click selection highlighting for the currently connected rendered graph
+- [x] Refine path highlighting to show the true source-to-selected path instead of the whole connected component
+- [x] Add property inspector panel for selected components
 - [ ] Add export to PNG/PDF for the current rendered view
+- [x] Add fit/zoom/export SVG navigation tools
 - [ ] Add a “fit selected line” and “fit all” navigation flow
 - [ ] Add workspace loading/error states that feel production-grade
 
@@ -227,11 +231,11 @@ Reason:
 If we start the next implementation sprint now, I recommend this sprint scope:
 
 Sprint A:
-- [ ] make calculation/result persistence atomic
-- [ ] harden upload replacement flow
-- [ ] remove the old standalone prototype route
-- [ ] document the canonical graph contract
-- [ ] add regression tests for regenerate + reload
+- [x] make calculation/result persistence atomic
+- [x] harden upload replacement flow
+- [x] remove the old standalone prototype route
+- [x] document the canonical graph contract
+- [x] add regression tests for regenerate + reload
 
 Sprint B:
 - [x] redesign layout save contract
@@ -243,6 +247,16 @@ Sprint C:
 - [ ] improve symbol readability and visual grouping
 - [x] add property inspector and path highlighting
 - [x] add export and fit/navigation tools
+
+Current next sprint:
+- [x] restore trustworthy test coverage around upload/confirm calculation transaction boundaries
+- [x] fix the SLD line-focus form so it reloads the workspace tab through the canonical AJAX tab loader
+- [x] add server-side `line_id` filtering for SLD payload/layout flows to avoid full-payload client filtering on large projects
+- [x] reduce redundant SLD endpoint work so payload-only requests do not also build layout and validation data
+- [x] add graph schema versioning and determinism tests
+- [x] add duplicate `line_id` collision coverage and line-UID-backed physical line ownership
+- [x] define display-tag stability boundary: stable for the same sorted line set, allowed to renumber when line membership/order changes
+- [x] refine source-to-selected path highlighting semantics before advanced regrouping
 
 ## 6. Delivery Risks
 

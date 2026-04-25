@@ -8,7 +8,7 @@ from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.test import SimpleTestCase, TestCase
+from django.test import SimpleTestCase, TestCase, TransactionTestCase
 from django.urls import reverse
 from openpyxl import load_workbook
 
@@ -39,7 +39,7 @@ from eht.models import (
     is_default_project_id,
 )
 from eht.sld_layout import get_project_sld_layout
-from eht.sld_payload import build_project_sld_payload
+from eht.sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
 from eht.sld_validation import validate_project_sld_payload
 
 
@@ -728,6 +728,42 @@ class OrchestrationTests(SimpleTestCase):
         self.assertIn('TRACER', result['boq_per_line']['L1'])
         self.assertIn('MCB', result['consolidated_boq'])
 
+    def test_orchestrate_calculations_keeps_display_tags_stable_for_same_line_set(self):
+        vendor_data = make_tracer_vendor_data().assign(C_Coeff=[30.0, 25.0, 20.0])
+        project_settings = make_project_settings(proj_id='p1')
+        lines = [
+            make_line(uid='L2', line_id='LINE-002', xlid=2, valve_qty=0, support_qty=0, flange_qty=0),
+            make_line(uid='L1', line_id='LINE-001', xlid=1, valve_qty=0, support_qty=0, flange_qty=0),
+        ]
+
+        first_result = orchestrate_calculations(
+            process_lines=lines,
+            vendor_data=vendor_data,
+            project_settings=project_settings,
+            asme_b36_table=make_asme_table(),
+            thermal_cond_data=make_thermal_table(),
+        )
+        second_result = orchestrate_calculations(
+            process_lines=list(reversed(lines)),
+            vendor_data=vendor_data,
+            project_settings=project_settings,
+            asme_b36_table=make_asme_table(),
+            thermal_cond_data=make_thermal_table(),
+        )
+
+        def key_tags(result):
+            return [
+                (
+                    distribution['uid'],
+                    distribution['branches'][0]['tagged_components']['MCB'],
+                    distribution['branches'][0]['tagged_components']['Downstream'][0]['Tracer'],
+                )
+                for distribution in result['power_distribution']
+            ]
+
+        self.assertEqual(key_tags(first_result), key_tags(second_result))
+        self.assertEqual(key_tags(first_result), [('L1', 'MCB_001', 'Tracer_001'), ('L2', 'MCB_002', 'Tracer_002')])
+
 
 class StoreCalculatedResultsTests(TestCase):
     def test_store_calculated_results_handles_current_orchestration_payload(self):
@@ -1107,6 +1143,7 @@ class SldPayloadTests(TestCase):
         payload = build_project_sld_payload('p1')
 
         self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['schema_version'], SLD_GRAPH_SCHEMA_VERSION)
         self.assertEqual(payload['meta']['branch_count'], 2)
         self.assertEqual(payload['meta']['node_count'], 28)
         self.assertEqual(payload['meta']['edge_count'], 26)
@@ -1114,6 +1151,7 @@ class SldPayloadTests(TestCase):
             {group['line_id'] for group in payload['line_groups']},
             {'LINE-001', 'LINE-002'},
         )
+        self.assertEqual(len({group['line_uid'] for group in payload['line_groups']}), 2)
 
         component_ids = [node['component_id'] for node in payload['nodes']]
         component_uids = [node['component_uid'] for node in payload['nodes']]
@@ -1127,6 +1165,48 @@ class SldPayloadTests(TestCase):
         self.assertIn('MCB_002', display_tags)
         self.assertTrue(any('line:LINE-001' in component_id for component_id in component_ids))
         self.assertTrue(any('line:LINE-002' in component_id for component_id in component_ids))
+        self.assertTrue(all('line_uid:' in component_id for component_id in component_ids))
+
+    def test_build_project_sld_payload_keeps_duplicate_line_ids_distinct_by_line_uid(self):
+        lines = make_rich_sld_project_snapshot('p1', ['LINE-DUP', 'LINE-DUP'])
+        expected_line_uids = {str(line.uid) for line in lines}
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertEqual(payload['meta']['branch_count'], 2)
+        self.assertEqual(payload['meta']['node_count'], 28)
+        self.assertEqual([group['line_id'] for group in payload['line_groups']], ['LINE-DUP', 'LINE-DUP'])
+        self.assertEqual({group['line_uid'] for group in payload['line_groups']}, expected_line_uids)
+        self.assertTrue(all(group['branch_indices'] == [1] for group in payload['line_groups']))
+
+        component_ids = [node['component_id'] for node in payload['nodes']]
+        component_uids = [node['component_uid'] for node in payload['nodes']]
+        node_line_uids = {node['line_uid'] for node in payload['nodes']}
+        edge_line_uids = {edge['line_uid'] for edge in payload['edges']}
+
+        self.assertEqual(len(component_ids), len(set(component_ids)))
+        self.assertEqual(len(component_uids), len(set(component_uids)))
+        self.assertEqual(node_line_uids, expected_line_uids)
+        self.assertEqual(edge_line_uids, expected_line_uids)
+        for line_uid in expected_line_uids:
+            self.assertTrue(any(f'line_uid:{line_uid}' in component_id for component_id in component_ids))
+        self.assertTrue(any('line:LINE-DUP' in component_id for component_id in component_ids))
+
+    def test_build_project_sld_payload_is_deterministic_for_repeated_builds(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+
+        first_payload = build_project_sld_payload('p1')
+        second_payload = build_project_sld_payload('p1')
+
+        self.assertEqual(first_payload, second_payload)
+        self.assertEqual(
+            json.dumps(first_payload, sort_keys=True),
+            json.dumps(second_payload, sort_keys=True),
+        )
+        self.assertEqual(
+            [group['line_id'] for group in first_payload['line_groups']],
+            ['LINE-001', 'LINE-002'],
+        )
 
     def test_build_project_sld_payload_falls_back_for_legacy_branch_json(self):
         line = make_calculated_project_snapshot()
@@ -1134,10 +1214,14 @@ class SldPayloadTests(TestCase):
         payload = build_project_sld_payload('p1')
 
         self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['schema_version'], SLD_GRAPH_SCHEMA_VERSION)
         self.assertEqual(payload['meta']['branch_count'], 1)
         self.assertEqual(payload['meta']['node_count'], 4)
         self.assertEqual(payload['meta']['edge_count'], 3)
-        self.assertEqual(payload['line_groups'], [{'line_id': line.line_id, 'branch_indices': [1]}])
+        self.assertEqual(
+            payload['line_groups'],
+            [{'line_id': line.line_id, 'line_uid': str(line.uid), 'branch_indices': [1]}],
+        )
 
         nodes_by_tag = {node['display_tag']: node for node in payload['nodes']}
         self.assertEqual(nodes_by_tag['MCB_001']['component_type'], 'MCB')
@@ -1174,7 +1258,29 @@ class SldValidationTests(TestCase):
         self.assertEqual(report['summary']['failed_count'], 0)
         self.assertEqual(report['summary']['warning_count'], 0)
         self.assertGreater(report['summary']['passed_count'], 0)
+        self.assertTrue(any(check['code'] == 'schema_version_supported' for check in report['checks']))
         self.assertTrue(all(check['status'] == 'passed' for check in report['checks']))
+        self.assertTrue(all(check['status'] == 'passed' for check in report['branch_checks']))
+
+    def test_validate_project_sld_payload_flags_unsupported_schema_version(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        payload['schema_version'] = 999
+
+        report = validate_project_sld_payload('p1', payload=payload)
+
+        schema_check = next(check for check in report['checks'] if check['code'] == 'schema_version_supported')
+        self.assertEqual(report['status'], 'failed')
+        self.assertEqual(schema_check['status'], 'failed')
+
+    def test_validate_project_sld_payload_accepts_duplicate_line_ids_with_distinct_line_uids(self):
+        lines = make_rich_sld_project_snapshot('p1', ['LINE-DUP', 'LINE-DUP'])
+        expected_line_uids = {str(line.uid) for line in lines}
+
+        report = validate_project_sld_payload('p1')
+
+        self.assertEqual(report['status'], 'passed')
+        self.assertEqual({check['line_uid'] for check in report['branch_checks']}, expected_line_uids)
         self.assertTrue(all(check['status'] == 'passed' for check in report['branch_checks']))
 
     def test_validate_project_sld_payload_flags_duplicate_display_tags(self):
@@ -1264,6 +1370,48 @@ class SldLayoutTests(TestCase):
         self.assertEqual(layout_payload['positions'][preserved_component_id]['x'], all_positions[preserved_component_id]['x'])
         self.assertEqual(layout_payload['positions'][preserved_component_id]['y'], all_positions[preserved_component_id]['y'])
         self.assertEqual(layout_payload['meta']['save_mode'], 'merge')
+
+    def test_sld_layout_view_filters_saved_positions_for_selected_line(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        payload = build_project_sld_payload('p1')
+        all_positions = {
+            node['component_id']: {'x': 100 + index * 10, 'y': 200 + index * 5}
+            for index, node in enumerate(payload['nodes'], start=1)
+        }
+        line_two_component_ids = {
+            node['component_id']
+            for node in payload['nodes']
+            if 'LINE-002' in node.get('line_ids', [])
+        }
+
+        save_response = self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': all_positions}),
+            content_type='application/json',
+        )
+        self.assertEqual(save_response.status_code, 200)
+
+        load_response = self.client.get(
+            reverse('sld_layout_view'),
+            {'project_id': 'p1', 'line_id': 'line-002'},
+        )
+
+        self.assertEqual(load_response.status_code, 200)
+        layout_payload = load_response.json()
+        self.assertEqual(layout_payload['meta']['node_count'], len(line_two_component_ids))
+        self.assertEqual(set(layout_payload['positions']), line_two_component_ids)
+        self.assertTrue(layout_payload['meta']['has_saved_layout'])
+
+    def test_sld_layout_view_returns_unknown_line_filter_error(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(
+            reverse('sld_layout_view'),
+            {'project_id': 'p1', 'line_id': 'LINE-999'},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn('LINE-999', response.json()['error'])
 
     def test_saved_layout_survives_recalculation_when_component_ids_are_stable(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -1598,7 +1746,7 @@ class ResultAndBoqViewTests(TestCase):
 
         response = self.client.get(
             reverse('sld_workspace_view'),
-            {'project_id': 'p1', 'line_id': 'LINE-002'},
+            {'project_id': 'p1', 'line_id': 'line-002'},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -1606,8 +1754,14 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'LINE-002')
         self.assertContains(response, 'data-selected-line-id="LINE-002"')
         self.assertContains(response, 'Property Inspector')
+        self.assertContains(response, 'id="sld-line-filter-form"')
+        self.assertContains(response, f'action="{reverse("base")}#sld-tab-pane"')
+        self.assertContains(response, f'data-url="{reverse("sld_workspace_view")}"')
+        self.assertContains(response, 'data-scroll-to=".sld-panel"')
         self.assertContains(response, 'id="sld-fit-view"')
         self.assertContains(response, 'id="sld-export-svg"')
+        self.assertContains(response, 'id="sld-line-filter-reset"')
+        self.assertNotContains(response, 'href="?project_id=p1"')
 
     def test_sld_workspace_view_reports_unknown_line_focus_request(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -1645,12 +1799,82 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertEqual(payload['project_id'], 'p1')
+        self.assertEqual(payload['schema_version'], SLD_GRAPH_SCHEMA_VERSION)
         self.assertEqual(payload['meta']['branch_count'], 1)
         self.assertEqual(payload['meta']['node_count'], 4)
         self.assertEqual(payload['meta']['edge_count'], 3)
         self.assertIn('nodes', payload)
         self.assertIn('edges', payload)
         self.assertTrue(any(node['display_tag'] == 'MCB_001' for node in payload['nodes']))
+
+    def test_sld_payload_view_supports_line_filtering(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        full_payload = build_project_sld_payload('p1')
+        line_two_component_ids = {
+            node['component_id']
+            for node in full_payload['nodes']
+            if 'LINE-002' in node.get('line_ids', [])
+        }
+
+        response = self.client.get(
+            reverse('sld_payload_view'),
+            {'project_id': 'p1', 'line_id': 'line-002'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['schema_version'], SLD_GRAPH_SCHEMA_VERSION)
+        self.assertEqual([group['line_id'] for group in payload['line_groups']], ['LINE-002'])
+        self.assertEqual(payload['meta']['branch_count'], 1)
+        self.assertEqual(payload['meta']['node_count'], len(line_two_component_ids))
+        self.assertEqual(set(node['component_id'] for node in payload['nodes']), line_two_component_ids)
+        self.assertTrue(all('LINE-002' in node.get('line_ids', []) for node in payload['nodes']))
+        self.assertTrue(all('LINE-002' in edge.get('line_ids', []) for edge in payload['edges']))
+
+    def test_sld_payload_view_line_filter_keeps_duplicate_line_ids_distinct(self):
+        lines = make_rich_sld_project_snapshot('p1', ['LINE-DUP', 'LINE-DUP'])
+        expected_line_uids = {str(line.uid) for line in lines}
+
+        response = self.client.get(
+            reverse('sld_payload_view'),
+            {'project_id': 'p1', 'line_id': 'line-dup'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload['meta']['branch_count'], 2)
+        self.assertEqual([group['line_id'] for group in payload['line_groups']], ['LINE-DUP', 'LINE-DUP'])
+        self.assertEqual({group['line_uid'] for group in payload['line_groups']}, expected_line_uids)
+        self.assertEqual({node['line_uid'] for node in payload['nodes']}, expected_line_uids)
+        self.assertEqual({edge['line_uid'] for edge in payload['edges']}, expected_line_uids)
+        self.assertEqual(
+            len([node['component_id'] for node in payload['nodes']]),
+            len({node['component_id'] for node in payload['nodes']}),
+        )
+
+    def test_sld_payload_view_reports_unknown_line_filter(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(
+            reverse('sld_payload_view'),
+            {'project_id': 'p1', 'line_id': 'LINE-999'},
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn('LINE-999', response.json()['error'])
+
+    def test_sld_payload_view_does_not_build_layout_or_validation(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        with (
+            patch('eht.views.get_project_sld_layout') as layout_mock,
+            patch('eht.views.validate_project_sld_payload') as validation_mock,
+        ):
+            response = self.client.get(reverse('sld_payload_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        layout_mock.assert_not_called()
+        validation_mock.assert_not_called()
 
     def test_sld_validation_view_returns_project_report(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -1664,6 +1888,24 @@ class ResultAndBoqViewTests(TestCase):
         self.assertIn('summary', report)
         self.assertIn('checks', report)
         self.assertIn('branch_checks', report)
+
+    def test_sld_validation_view_does_not_load_layout(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        with patch('eht.views.get_project_sld_layout') as layout_mock:
+            response = self.client.get(reverse('sld_validation_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        layout_mock.assert_not_called()
+
+    def test_sld_layout_view_does_not_run_validation(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        with patch('eht.views.validate_project_sld_payload') as validation_mock:
+            response = self.client.get(reverse('sld_layout_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        validation_mock.assert_not_called()
 
 
 class ProjectWorkspaceCleanupTests(TestCase):
@@ -1684,7 +1926,7 @@ class ProjectWorkspaceCleanupTests(TestCase):
         self.assertFalse(BOQ.objects.filter(project_id='p1').exists())
 
 
-class ConfirmValidDataViewTests(TestCase):
+class ConfirmValidDataViewTests(TransactionTestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='tester', password='password123')
         self.client.force_login(self.user)
@@ -1728,8 +1970,33 @@ class ConfirmValidDataViewTests(TestCase):
         self.assertEqual(line.status, 'confirmed')
         self.assertTrue(HeatLoss.objects.filter(line=line).exists())
 
+    def test_confirm_valid_data_runs_calculations_outside_confirmation_transaction(self):
+        line = self.create_pending_line()
 
-class CalculateViewHardeningTests(TestCase):
+        def fake_run_project_calculations(project_id):
+            self.assertFalse(connection.in_atomic_block)
+            return (
+                {'heat_loss': []},
+                {
+                    'heat_loss': 0,
+                    'selected_tracers': 0,
+                    'alternative_tracers': 0,
+                    'power_distribution': 0,
+                    'boq_lines': 0,
+                    'consolidated_boq_items': 0,
+                    'tracer_power_param': 0,
+                },
+            )
+
+        with patch('eht.views.run_project_calculations', side_effect=fake_run_project_calculations):
+            response = self.client.post(reverse('confirm_valid_data'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        line.refresh_from_db()
+        self.assertEqual(line.status, 'confirmed')
+
+
+class CalculateViewHardeningTests(TransactionTestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='uploadtester', password='password123')
         self.client.force_login(self.user)

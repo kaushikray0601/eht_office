@@ -1,6 +1,7 @@
 # EHT SLD Graph Contract
 
 Date: 2026-04-23
+Last updated: 2026-04-25
 
 Status: Canonical contract for the current EHT SLD implementation
 
@@ -39,6 +40,7 @@ The current EHT SLD payload is a JSON object with:
 
 ```json
 {
+  "schema_version": 1,
   "project_id": "p1",
   "nodes": [],
   "edges": [],
@@ -50,6 +52,13 @@ The current EHT SLD payload is a JSON object with:
   }
 }
 ```
+
+Schema versioning:
+- `schema_version` is required at the top level of the public SLD payload.
+- current supported version: `1`
+- rich branch JSON also uses `schema_version` inside `tagged_components`; that
+  internal source-data version is separate from the public graph payload version.
+- validation fails payloads with missing or unsupported public `schema_version`.
 
 ## 4. Node Contract
 
@@ -75,6 +84,9 @@ Rules:
 - must be unique within one project payload
 - should remain stable across recalculation when the underlying topology meaning is unchanged
 - is the key used by saved layout persistence
+- uses the persisted process-line `line_uid` as the line identity scope; the
+  display `line_id` remains payload metadata and may also appear in the readable
+  component ID string, but must not be the only uniqueness scope
 
 `component_uid` is a stable short derived identifier.
 
@@ -87,6 +99,10 @@ Rules:
 Rules:
 - must be unique within one project payload
 - is allowed to change only when tag-generation rules intentionally change
+- remains stable across recalculation for the same stored process-line set and
+  sorted line order
+- may legitimately renumber if process lines are inserted, deleted, or receive a
+  changed sorting identity such as `xlid`, `line_id`, or `uid`
 - must not be used as the primary technical persistence key
 
 ## 5. Edge Contract
@@ -95,6 +111,7 @@ Each edge must contain:
 - `from_component_id`
 - `to_component_id`
 - `line_ids`
+- `line_uid`
 - `branch_index`
 - `circuit_index`
 
@@ -107,11 +124,14 @@ Rules:
 
 Each line group contains:
 - `line_id`
+- `line_uid`
 - `branch_indices`
 
 Rules:
-- each line group represents one stored process line
+- each line group represents one stored process line, keyed by `line_uid`
 - `branch_indices` must match stored `PowerDistributionBranch` ownership for that line
+- duplicate display `line_id` values produce separate line groups with distinct
+  `line_uid` values
 - browser line-focused navigation should rely on this structure rather than re-infer grouping ad hoc
 
 ## 7. Metadata Rules
@@ -153,11 +173,15 @@ Rules:
 - generated graph remains the source for what nodes exist
 - saved layout is valid only for nodes whose `component_id` still exists in the current payload
 
-Current limitation:
-- the save endpoint currently behaves as a full-layout replacement contract
-- omitted nodes may be deleted from saved layout state
+Current behavior:
+- the save endpoint currently uses a merge/patch-style coordinate update
+- omitted nodes are preserved, which allows line-focused or partial saves
+- layout rows for components that no longer exist in the current generated
+  payload are deleted defensively during save
+- the layout response exposes `meta.save_mode = "merge"`
 
-This behavior must be preserved intentionally or redesigned explicitly before partial-save features are introduced.
+This behavior is intentional. Future changes must keep partial saves safe unless
+the API contract is explicitly redesigned and tested.
 
 ## 10. Backward Compatibility
 
@@ -171,9 +195,10 @@ Reference:
 ## 11. Near-Term Contract Decisions
 
 Before advanced editing begins, we must decide:
-- whether layout saves remain full-document snapshots or become patch updates
 - whether user-authored topology deltas are stored separately from generated topology
 - whether a normalized graph table is needed beyond branch JSON
+- how concurrent layout saves will be detected or reconciled
+- how viewport preferences should be persisted separately from node coordinates
 
 ## 12. Current Canonical Endpoints
 
@@ -183,5 +208,14 @@ The canonical EHT SLD endpoints are:
 - validation view: `/sld/validation/`
 - layout load/save: `/sld/layout/`
 - layout reset: `/sld/layout/reset/`
+
+Filtering:
+- `/sld/workspace/`, `/sld/payload/`, and `/sld/layout/` accept an optional
+  `line_id` query parameter for one-line focused browsing.
+- `line_id` matching is case-insensitive, but successful responses normalize the
+  selected line back to the canonical `line_id` from the generated payload.
+- filtered payload/layout responses include only nodes and edges owned by the
+  selected line; layout saves still validate against the full current graph so
+  omitted nodes from other lines are preserved.
 
 The old standalone prototype route is no longer part of the canonical SLD path.

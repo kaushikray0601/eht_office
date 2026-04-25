@@ -2,6 +2,14 @@
 
 Date: 2026-04-17
 
+Current status note, 2026-04-24:
+This document is a historical review snapshot. Several findings were correct at
+the time but have since moved forward. In particular, the old hardcoded SLD
+prototype has been retired, and the current canonical SLD path is the
+project-backed workspace documented in:
+- [SLD_REFACTOR_BUILD_ROADMAP.md](/home/kr/mydev/eht_office/NOTES/SLD_REFACTOR_BUILD_ROADMAP.md:1)
+- [EHT_SLD_GRAPH_CONTRACT.md](/home/kr/mydev/eht_office/NOTES/EHT_SLD_GRAPH_CONTRACT.md:1)
+
 ## 1. Executive Summary
 
 This repository is a partially completed Django application for electrical heat tracing (EHT) design. The intended product flow is clear from the code and the `NOTES/` folder:
@@ -168,6 +176,13 @@ The newer modular design is visible:
 - `eht/data_service.py`: fetch/store helpers
 
 ### 5.6 Early SLD prototype
+
+Current status note, 2026-04-24:
+The details below describe the old prototype state. The standalone
+`templates/eht/sld.html` and `static/js/sld_module.js` path has since been
+removed. The current SLD implementation is rendered inside the main workspace
+from persisted `PowerDistributionBranch.tagged_components`, with layout stored
+in `SLDNodeLayout`.
 
 - `templates/eht/sld.html` and `static/js/sld_module.js` exist.
 - JointJS is loaded.
@@ -731,4 +746,3 @@ In practical terms:
 - You do have a recoverable base.
 - You do not yet have a reliable end-to-end application.
 - The next milestone should be "one project uploads, calculates, stores, and displays results correctly" before adding more features.
-

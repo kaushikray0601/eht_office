@@ -100,6 +100,7 @@ POSTGRES_NAME = env(
     "POSTGRES_DB",
     default=os.getenv("PGDATABASE", POSTGRES_USER),
 )
+POSTGRES_TEST_NAME = env("POSTGRES_TEST_DB", default=f"test_{POSTGRES_NAME}")
 
 if USE_POSTGRES:
     DATABASES = {
@@ -113,6 +114,9 @@ if USE_POSTGRES:
             "CONN_MAX_AGE": env.int("POSTGRES_CONN_MAX_AGE", default=60),
             "OPTIONS": {
                 "connect_timeout": env.int("POSTGRES_CONNECT_TIMEOUT", default=10),
+            },
+            "TEST": {
+                "NAME": POSTGRES_TEST_NAME,
             },
         }
     }

@@ -58,14 +58,21 @@
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                     <div>
                         <h6 class="mb-1">Diagram Canvas</h6>
-                        <p class="text-muted small mb-0">This canvas renders the project-backed SLD payload directly from persisted branch data. Layout persistence and manual regrouping will build on this read-only foundation next.</p>
+                        <p class="text-muted small mb-0">This canvas renders the project-backed SLD payload directly from persisted branch data. Layout positions can be adjusted and saved; manual regrouping remains a later phase.</p>
                     </div>
                     <div class="d-flex flex-wrap gap-2">
                         <span class="badge text-bg-light border sld-saved-count-badge">Saved Nodes: {{ sld_layout.meta.saved_count }}</span>
                         <span class="badge text-bg-light border">JSON Endpoint Ready</span>
                     </div>
                 </div>
-                <form method="get" class="row g-2 align-items-end mb-3">
+                <form
+                    id="sld-line-filter-form"
+                    method="get"
+                    action="{% url 'base' %}#sld-tab-pane"
+                    data-url="{% url 'sld_workspace_view' %}"
+                    data-scroll-to=".sld-panel"
+                    class="row g-2 align-items-end mb-3"
+                >
                     <input type="hidden" name="project_id" value="{{ project_id }}">
                     <div class="col-md-5 col-lg-4">
                         <label for="sld-line-id" class="form-label small text-muted mb-1">Focus Line ID</label>
@@ -83,7 +90,7 @@
                     </div>
                     {% if sld_selected_line_id %}
                         <div class="col-auto">
-                            <a href="?project_id={{ project_id }}" class="btn btn-outline-secondary btn-sm">Show All</a>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-line-filter-reset">Show All</button>
                         </div>
                     {% endif %}
                     {% if sld_selected_line_error %}
@@ -173,7 +180,7 @@
                                 <span class="badge text-bg-light border">Selection</span>
                             </div>
                             <div id="sld-selection-summary" class="small text-muted mb-3">
-                                Select a component in the diagram to inspect its details and highlight the connected path.
+                                Select a component in the diagram to inspect its details and highlight the source path.
                             </div>
                             <dl id="sld-inspector-details" class="sld-inspector-details mb-0"></dl>
                         </div>

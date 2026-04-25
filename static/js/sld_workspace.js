@@ -167,10 +167,17 @@
         return label;
     }
 
+    function nodeBelongsToLineGroup(node, lineGroup) {
+        if (lineGroup.line_uid) {
+            return String(node.line_uid || '') === String(lineGroup.line_uid);
+        }
+        return (node.line_ids || []).includes(lineGroup.line_id);
+    }
+
     function groupNodesByLine(payload) {
         return payload.line_groups.map(function (lineGroup) {
             const lineNodes = payload.nodes.filter(function (node) {
-                return (node.line_ids || []).includes(lineGroup.line_id);
+                return nodeBelongsToLineGroup(node, lineGroup);
             });
             const branches = lineGroup.branch_indices.map(function (branchIndex) {
                 const branchNodes = lineNodes.filter(function (node) {
@@ -265,11 +272,15 @@
         return merged;
     }
 
+    function getLineGroupKey(lineGroup) {
+        return lineGroup.line_uid ? `uid:${lineGroup.line_uid}` : `line:${lineGroup.line_id}`;
+    }
+
     function computeLineLabelPositions(payload, positions) {
         const labelPositions = [];
         payload.line_groups.forEach(function (lineGroup) {
             const lineNodes = payload.nodes.filter(function (node) {
-                return (node.line_ids || []).includes(lineGroup.line_id) && positions[node.component_id];
+                return nodeBelongsToLineGroup(node, lineGroup) && positions[node.component_id];
             });
             if (!lineNodes.length) {
                 return;
@@ -278,6 +289,7 @@
             const minY = Math.min.apply(null, yValues);
             const maxY = Math.max.apply(null, yValues);
             labelPositions.push({
+                lineKey: getLineGroupKey(lineGroup),
                 lineId: lineGroup.line_id,
                 x: 24,
                 y: minY + ((maxY - minY) / 2) - 16,
@@ -461,11 +473,11 @@
         });
     }
 
-    function applyPathLinkStyle(link, isAdjacent) {
+    function applyPathLinkStyle(link, isSelectedLink) {
         link.attr({
             line: {
-                stroke: isAdjacent ? '#c05621' : '#2f6c43',
-                strokeWidth: isAdjacent ? 3.4 : 2.8,
+                stroke: isSelectedLink ? '#c05621' : '#2f6c43',
+                strokeWidth: isSelectedLink ? 3.4 : 2.8,
                 opacity: 1,
             },
         });
@@ -505,7 +517,7 @@
         return panel ? panel.querySelector('#sld-inspector-details') : null;
     }
 
-    function buildInspectorRows(node, relatedNodeCount, adjacentEdgeCount) {
+    function buildInspectorRows(node, pathNodeCount, pathLinkCount) {
         const metadata = node.metadata || {};
         const rows = [
             ['Tag', node.display_tag || '-'],
@@ -514,8 +526,8 @@
             ['Line IDs', (node.line_ids || []).join(', ') || '-'],
             ['Branch', node.branch_index !== null && node.branch_index !== undefined ? node.branch_index : '-'],
             ['Circuit', node.circuit_index !== null && node.circuit_index !== undefined ? node.circuit_index : '-'],
-            ['Path Nodes', relatedNodeCount],
-            ['Path Links', adjacentEdgeCount],
+            ['Path Nodes', pathNodeCount],
+            ['Path Links', pathLinkCount],
         ];
         Object.keys(metadata).sort().forEach(function (key) {
             const value = metadata[key];
@@ -527,19 +539,19 @@
         return rows;
     }
 
-    function renderInspector(root, node, relatedNodeCount, adjacentEdgeCount) {
+    function renderInspector(root, node, pathNodeCount, pathLinkCount) {
         const summary = getSelectionSummaryContainer(root);
         const details = getInspectorDetailsContainer(root);
         if (!summary || !details) {
             return;
         }
         if (!node) {
-            summary.textContent = 'Select a component in the diagram to inspect its details and highlight the connected path.';
+            summary.textContent = 'Select a component in the diagram to inspect its details and highlight the source path.';
             details.innerHTML = '';
             return;
         }
-        summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. Connected path highlighting is limited to the current rendered graph.`;
-        details.innerHTML = buildInspectorRows(node, relatedNodeCount, adjacentEdgeCount).map(function (row) {
+        summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. Highlighted path follows the directed source-to-component route in the current rendered graph.`;
+        details.innerHTML = buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
     }
@@ -597,7 +609,7 @@
 
         const positions = collectComponentPositions(state);
         computeLineLabelPositions(state.payload, positions).forEach(function (lineLabel) {
-            const label = state.lineLabelByLineId[lineLabel.lineId];
+            const label = state.lineLabelByLineKey[lineLabel.lineKey];
             if (label) {
                 label.position(lineLabel.x, lineLabel.y);
             }
@@ -609,28 +621,79 @@
         updateLinkGeometry(root);
     }
 
-    function buildGraphAdjacency(payload) {
-        const adjacency = {};
-        const edgesByComponent = {};
+    function buildGraphNavigation(payload) {
+        const outgoingByComponent = {};
+        const incomingCountByComponent = {};
         (payload.nodes || []).forEach(function (node) {
-            adjacency[node.component_id] = new Set();
-            edgesByComponent[node.component_id] = [];
+            outgoingByComponent[node.component_id] = [];
+            incomingCountByComponent[node.component_id] = 0;
         });
         (payload.edges || []).forEach(function (edge) {
-            if (!adjacency[edge.from_component_id]) {
-                adjacency[edge.from_component_id] = new Set();
-                edgesByComponent[edge.from_component_id] = [];
+            if (!outgoingByComponent[edge.from_component_id]) {
+                outgoingByComponent[edge.from_component_id] = [];
             }
-            if (!adjacency[edge.to_component_id]) {
-                adjacency[edge.to_component_id] = new Set();
-                edgesByComponent[edge.to_component_id] = [];
+            if (incomingCountByComponent[edge.to_component_id] === undefined) {
+                incomingCountByComponent[edge.to_component_id] = 0;
             }
-            adjacency[edge.from_component_id].add(edge.to_component_id);
-            adjacency[edge.to_component_id].add(edge.from_component_id);
-            edgesByComponent[edge.from_component_id].push(edge);
-            edgesByComponent[edge.to_component_id].push(edge);
+            outgoingByComponent[edge.from_component_id].push({
+                edge: edge,
+                targetId: edge.to_component_id,
+                edgeKey: getEdgeKey(edge),
+            });
+            incomingCountByComponent[edge.to_component_id] += 1;
         });
-        return { adjacency: adjacency, edgesByComponent: edgesByComponent };
+        return { outgoingByComponent: outgoingByComponent, incomingCountByComponent: incomingCountByComponent };
+    }
+
+    function findSourcePath(state, componentId) {
+        const nodeIds = Object.keys(state.nodeByComponentId);
+        const preferredSources = nodeIds.filter(function (nodeId) {
+            return state.nodeByComponentId[nodeId].component_type === 'MCB';
+        });
+        const fallbackSources = nodeIds.filter(function (nodeId) {
+            return (state.incomingCountByComponent[nodeId] || 0) === 0;
+        });
+        const sourceIds = preferredSources.length ? preferredSources : fallbackSources;
+        const visited = new Set();
+        const previous = {};
+        const queue = [];
+
+        sourceIds.forEach(function (sourceId) {
+            visited.add(sourceId);
+            previous[sourceId] = null;
+            queue.push(sourceId);
+        });
+
+        // SLD edges are emitted upstream-to-downstream, so this walks the real
+        // source path instead of highlighting every node in the connected graph.
+        while (queue.length && !visited.has(componentId)) {
+            const currentId = queue.shift();
+            (state.outgoingByComponent[currentId] || []).forEach(function (entry) {
+                if (visited.has(entry.targetId)) {
+                    return;
+                }
+                visited.add(entry.targetId);
+                previous[entry.targetId] = {
+                    nodeId: currentId,
+                    edgeKey: entry.edgeKey,
+                };
+                queue.push(entry.targetId);
+            });
+        }
+
+        if (!visited.has(componentId)) {
+            return { nodeIds: new Set([componentId]), edgeKeys: new Set() };
+        }
+
+        const pathNodeIds = new Set([componentId]);
+        const pathEdgeKeys = new Set();
+        let cursorId = componentId;
+        while (previous[cursorId]) {
+            pathEdgeKeys.add(previous[cursorId].edgeKey);
+            cursorId = previous[cursorId].nodeId;
+            pathNodeIds.add(cursorId);
+        }
+        return { nodeIds: pathNodeIds, edgeKeys: pathEdgeKeys };
     }
 
     function highlightSelection(root, componentId) {
@@ -639,8 +702,6 @@
             return;
         }
         state.selectedComponentId = componentId || null;
-        const adjacency = state.graphAdjacency || {};
-        const edgesByComponent = state.edgesByComponent || {};
 
         if (!componentId || !state.nodeByComponentId[componentId]) {
             Object.keys(state.elementByComponentId).forEach(function (id) {
@@ -653,42 +714,29 @@
             return;
         }
 
-        const visited = new Set();
-        const queue = [componentId];
-        while (queue.length) {
-            const current = queue.shift();
-            if (visited.has(current)) {
-                continue;
-            }
-            visited.add(current);
-            (adjacency[current] || new Set()).forEach(function (neighbor) {
-                if (!visited.has(neighbor)) {
-                    queue.push(neighbor);
-                }
-            });
-        }
+        const path = findSourcePath(state, componentId);
 
         Object.keys(state.elementByComponentId).forEach(function (id) {
-            if (!visited.has(id)) {
-                applyMutedElementStyle(state.elementByComponentId[id]);
-            } else {
+            if (path.nodeIds.has(id)) {
                 applyPathElementStyle(state.elementByComponentId[id], id === componentId);
+            } else {
+                applyMutedElementStyle(state.elementByComponentId[id]);
             }
         });
 
-        const adjacentKeys = new Set((edgesByComponent[componentId] || []).map(getEdgeKey));
         Object.keys(state.linkByEdgeKey).forEach(function (edgeKey) {
             const entry = state.linkByEdgeKey[edgeKey];
-            const edge = entry.edge;
-            const inPath = visited.has(edge.from_component_id) && visited.has(edge.to_component_id);
-            if (!inPath) {
-                applyMutedLinkStyle(entry.link);
-            } else {
-                applyPathLinkStyle(entry.link, adjacentKeys.has(edgeKey));
+            if (path.edgeKeys.has(edgeKey)) {
+                applyPathLinkStyle(
+                    entry.link,
+                    entry.edge.from_component_id === componentId || entry.edge.to_component_id === componentId
+                );
+                return;
             }
+            applyMutedLinkStyle(entry.link);
         });
 
-        renderInspector(root, state.nodeByComponentId[componentId], visited.size, adjacentKeys.size);
+        renderInspector(root, state.nodeByComponentId[componentId], path.nodeIds.size, path.edgeKeys.size);
     }
 
     function zoomPaper(root, scaleFactor) {
@@ -803,13 +851,13 @@
         const cells = [];
         const elementByComponentId = {};
         const endLabelByComponentId = {};
-        const lineLabelByLineId = {};
+        const lineLabelByLineKey = {};
         const linkByEdgeKey = {};
         const nodeByComponentId = {};
 
         lineLabels.forEach(function (lineLabel) {
             const label = createLineLabel(lineLabel.lineId, lineLabel.x, lineLabel.y);
-            lineLabelByLineId[lineLabel.lineId] = label;
+            lineLabelByLineKey[lineLabel.lineKey] = label;
             cells.push(label);
         });
 
@@ -848,7 +896,7 @@
 
         graph.resetCells(cells);
 
-        const graphConnections = buildGraphAdjacency(payload);
+        const graphNavigation = buildGraphNavigation(payload);
         root.__sldState = {
             payload: payload,
             graph: graph,
@@ -856,11 +904,11 @@
             scale: 1,
             elementByComponentId: elementByComponentId,
             endLabelByComponentId: endLabelByComponentId,
-            lineLabelByLineId: lineLabelByLineId,
+            lineLabelByLineKey: lineLabelByLineKey,
             linkByEdgeKey: linkByEdgeKey,
             nodeByComponentId: nodeByComponentId,
-            graphAdjacency: graphConnections.adjacency,
-            edgesByComponent: graphConnections.edgesByComponent,
+            outgoingByComponent: graphNavigation.outgoingByComponent,
+            incomingCountByComponent: graphNavigation.incomingCountByComponent,
             isDirty: false,
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
             selectedComponentId: null,
@@ -894,43 +942,15 @@
         fitPaperToContent(root);
     }
 
-    function filterPayloadForSelectedLine(payload, selectedLineId) {
-        if (!selectedLineId) {
-            return payload;
+    function fetchSavedLayout(projectId, layoutUrl, selectedLineId) {
+        const requestData = { project_id: projectId };
+        if (selectedLineId) {
+            requestData.line_id = selectedLineId;
         }
-        const targetGroup = (payload.line_groups || []).find(function (lineGroup) {
-            return lineGroup.line_id === selectedLineId;
-        });
-        if (!targetGroup) {
-            return payload;
-        }
-        const nodes = payload.nodes.filter(function (node) {
-            return (node.line_ids || []).includes(selectedLineId);
-        });
-        const componentIds = new Set(nodes.map(function (node) { return node.component_id; }));
-        const edges = payload.edges.filter(function (edge) {
-            return componentIds.has(edge.from_component_id)
-                && componentIds.has(edge.to_component_id)
-                && (edge.line_ids || []).includes(selectedLineId);
-        });
-        return {
-            project_id: payload.project_id,
-            nodes: nodes,
-            edges: edges,
-            line_groups: [targetGroup],
-            meta: {
-                branch_count: (targetGroup.branch_indices || []).length,
-                node_count: nodes.length,
-                edge_count: edges.length,
-            },
-        };
-    }
-
-    function fetchSavedLayout(projectId, layoutUrl) {
         return $.ajax({
             url: layoutUrl,
             type: 'GET',
-            data: { project_id: projectId },
+            data: requestData,
         });
     }
 
@@ -945,18 +965,22 @@
 
         setSldMessage(root, 'Loading SLD', 'Preparing the stored project graph for rendering.', true);
 
+        const requestData = { project_id: projectId };
+        if (selectedLineId) {
+            requestData.line_id = selectedLineId;
+        }
+
         $.ajax({
             url: payloadUrl,
             type: 'GET',
-            data: { project_id: projectId },
+            data: requestData,
             success: function (payload) {
-                const filteredPayload = filterPayloadForSelectedLine(payload, selectedLineId);
-                fetchSavedLayout(projectId, layoutUrl)
+                fetchSavedLayout(projectId, layoutUrl, selectedLineId)
                     .done(function (savedLayout) {
-                        renderSldGraph(root, filteredPayload, savedLayout);
+                        renderSldGraph(root, payload, savedLayout);
                     })
                     .fail(function () {
-                        renderSldGraph(root, filteredPayload, { positions: {}, meta: { saved_count: 0, has_saved_layout: false, save_mode: 'merge' } });
+                        renderSldGraph(root, payload, { positions: {}, meta: { saved_count: 0, has_saved_layout: false, save_mode: 'merge' } });
                     });
             },
             error: function (xhr) {
@@ -981,16 +1005,21 @@
         const layoutUrl = saveButton.dataset.sldLayoutUrl;
         const projectId = saveButton.dataset.projectId;
         const positions = collectComponentPositions(state);
+        const selectedLineId = root.dataset.selectedLineId;
+        const requestPayload = {
+            project_id: projectId,
+            positions: positions,
+        };
+        if (selectedLineId) {
+            requestPayload.line_id = selectedLineId;
+        }
 
         $.ajax({
             url: layoutUrl,
             type: 'POST',
             headers: { 'X-CSRFToken': getSldCsrfToken() },
             contentType: 'application/json',
-            data: JSON.stringify({
-                project_id: projectId,
-                positions: positions,
-            }),
+            data: JSON.stringify(requestPayload),
             success: function (response) {
                 updateSavedCountBadge(root, response.layout.meta.saved_count);
                 setDirtyState(root, false, response.layout.meta.has_saved_layout);

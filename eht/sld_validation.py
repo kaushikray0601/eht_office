@@ -1,5 +1,5 @@
 from .models import PowerDistributionBranch, ProjectData
-from .sld_payload import build_project_sld_payload
+from .sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
 
 
 UPSTREAM_COMPONENT_ORDER = ['MCB', 'Cable4C', 'Isolator3PH', 'JB3PH']
@@ -117,6 +117,7 @@ def _summarize_branch_validation(branch, branch_nodes, branch_edges, project_set
 
     return {
         'line_id': branch.distribution.line.line_id,
+        'line_uid': str(branch.distribution.line.uid),
         'branch_index': branch.branch_index,
         'branch_type': branch.branch_type,
         'status': status,
@@ -131,7 +132,7 @@ def validate_project_sld_payload(project_id, payload=None):
     branches = list(
         PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
         .select_related('distribution__line')
-        .order_by('distribution__line__line_id', 'branch_index')
+        .order_by('distribution__line__line_id', 'distribution__line__uid', 'branch_index')
     )
     project_setup = ProjectData.objects.filter(proj_id=project_id).first()
 
@@ -144,6 +145,14 @@ def validate_project_sld_payload(project_id, payload=None):
     component_uids = [node['component_uid'] for node in nodes]
     node_by_id = {node['component_id']: node for node in nodes}
 
+    payload_schema_version = payload.get('schema_version')
+    _append_check(
+        checks,
+        code='schema_version_supported',
+        label='SLD graph schema version is supported',
+        status='passed' if payload_schema_version == SLD_GRAPH_SCHEMA_VERSION else 'failed',
+        details=f"Payload schema_version: {payload_schema_version}, supported: {SLD_GRAPH_SCHEMA_VERSION}.",
+    )
     _append_check(
         checks,
         code='branch_count_matches',
@@ -189,13 +198,30 @@ def validate_project_sld_payload(project_id, payload=None):
         ),
     )
 
+    line_groups_missing_uid = [
+        item.get('line_id')
+        for item in payload.get('line_groups', [])
+        if not item.get('line_uid')
+    ]
+    _append_check(
+        checks,
+        code='line_groups_have_line_uid',
+        label='Line groups include stable line UID ownership',
+        status='passed' if not line_groups_missing_uid else 'failed',
+        details=(
+            f"Checked {len(payload.get('line_groups', []))} line groups."
+            if not line_groups_missing_uid
+            else f"{len(line_groups_missing_uid)} line group(s) are missing line_uid."
+        ),
+    )
     line_group_map = {
-        item['line_id']: item['branch_indices']
+        (str(item.get('line_uid', '')), item['line_id']): item['branch_indices']
         for item in payload.get('line_groups', [])
     }
     expected_line_group_map = {}
     for branch in branches:
-        expected_line_group_map.setdefault(branch.distribution.line.line_id, []).append(branch.branch_index)
+        expected_key = (str(branch.distribution.line.uid), branch.distribution.line.line_id)
+        expected_line_group_map.setdefault(expected_key, []).append(branch.branch_index)
     expected_line_group_map = {
         line_id: sorted(indices)
         for line_id, indices in expected_line_group_map.items()
@@ -229,18 +255,32 @@ def validate_project_sld_payload(project_id, payload=None):
 
     for branch in branches:
         line_id = branch.distribution.line.line_id
+        line_uid = str(branch.distribution.line.uid)
         branch_nodes = [
             node for node in nodes
-            if node['branch_index'] == branch.branch_index and line_id in node.get('line_ids', [])
+            if (
+                node['branch_index'] == branch.branch_index
+                and (
+                    str(node.get('line_uid') or '') == line_uid
+                    or (not node.get('line_uid') and line_id in node.get('line_ids', []))
+                )
+            )
         ]
         branch_edges = [
             edge for edge in edges
-            if edge['branch_index'] == branch.branch_index and line_id in edge.get('line_ids', [])
+            if (
+                edge['branch_index'] == branch.branch_index
+                and (
+                    str(edge.get('line_uid') or '') == line_uid
+                    or (not edge.get('line_uid') and line_id in edge.get('line_ids', []))
+                )
+            )
         ]
 
         if project_setup is None:
             branch_checks.append({
                 'line_id': line_id,
+                'line_uid': line_uid,
                 'branch_index': branch.branch_index,
                 'branch_type': branch.branch_type,
                 'status': 'failed',
