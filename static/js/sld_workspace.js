@@ -1,15 +1,16 @@
 (function () {
     const UPSTREAM_COMPONENT_ORDER = ['MCB', 'Cable4C', 'Isolator3PH', 'JB3PH'];
     const DOWNSTREAM_COMPONENT_ORDER = ['Isolator1PH', 'Cable3C', 'JB1PH', 'Tracer', 'EndTermination'];
+    const EXTERNAL_DETAIL_COMPONENTS = new Set(['Cable4C', 'Cable3C', 'Tracer']);
     const NODE_STYLE = {
-        MCB: { width: 108, height: 56, fill: '#f3f7fb', stroke: '#1f3447' },
-        Cable4C: { width: 128, height: 34, fill: '#fff9ef', stroke: '#7a5b2b' },
-        Cable3C: { width: 118, height: 32, fill: '#fff9ef', stroke: '#7a5b2b' },
-        Isolator3PH: { width: 84, height: 34, fill: '#edf6ff', stroke: '#31597f' },
-        Isolator1PH: { width: 84, height: 34, fill: '#edf6ff', stroke: '#31597f' },
+        MCB: { width: 108, height: 54, fill: '#f3f7fb', stroke: '#1f3447' },
+        Cable4C: { width: 132, height: 20, fill: '#fff8e8', stroke: '#7a5b2b' },
+        Cable3C: { width: 120, height: 20, fill: '#fff8e8', stroke: '#7a5b2b' },
+        Isolator3PH: { width: 82, height: 32, fill: '#edf6ff', stroke: '#31597f' },
+        Isolator1PH: { width: 82, height: 32, fill: '#edf6ff', stroke: '#31597f' },
         JB3PH: { width: 96, height: 54, fill: '#f5f8fc', stroke: '#20394f' },
         JB1PH: { width: 78, height: 44, fill: '#f5f8fc', stroke: '#20394f' },
-        Tracer: { width: 120, height: 26, fill: '#eefaf1', stroke: '#2f6c43' },
+        Tracer: { width: 120, height: 20, fill: '#eefaf1', stroke: '#2f6c43' },
         EndTermination: { width: 28, height: 28, fill: '#243b53', stroke: '#1a2735' },
     };
 
@@ -59,35 +60,40 @@
         if (node.component_type === 'MCB' && metadata.breaker_size) {
             return `${metadata.breaker_size}A MCB`;
         }
-        if ((node.component_type === 'Cable4C' || node.component_type === 'Cable3C') && metadata.length_m) {
-            return `${node.display_name}\n${metadata.length_m} m`;
+        return node.display_name || node.component_type;
+    }
+
+    function formatExternalDetail(node) {
+        const metadata = node.metadata || {};
+        if (node.component_type === 'Cable4C' || node.component_type === 'Cable3C') {
+            return metadata.length_m ? `${node.display_name} | ${metadata.length_m} m` : node.display_name;
         }
         if (node.component_type === 'Tracer') {
-            return 'Heat Trace';
+            return node.display_name || 'Heat Trace';
         }
-        if (node.component_type === 'EndTermination') {
-            return 'End';
-        }
-        return node.display_name || node.component_type;
+        return '';
     }
 
     function createLineLabel(lineId, x, y) {
         const label = new joint.shapes.standard.TextBlock();
         label.position(x, y);
-        label.resize(160, 34);
+        label.resize(184, 34);
         label.attr({
             body: {
-                fill: 'transparent',
-                stroke: 'transparent',
+                fill: '#eef4f8',
+                stroke: '#c9d6e2',
+                strokeWidth: 1,
+                rx: 4,
+                ry: 4,
             },
             label: {
-                text: `Line ID: ${lineId}`,
+                text: `Line: ${lineId}`,
                 fill: '#132f4c',
-                fontSize: 18,
+                fontSize: 15,
                 fontWeight: 700,
                 textAnchor: 'start',
                 textVerticalAnchor: 'middle',
-                x: 0,
+                x: 10,
                 y: '50%',
             },
         });
@@ -117,6 +123,7 @@
         }
 
         const rectangle = new joint.shapes.standard.Rectangle();
+        const isExternalDetailNode = EXTERNAL_DETAIL_COMPONENTS.has(node.component_type);
         rectangle.position(position.x, position.y - style.height / 2);
         rectangle.resize(style.width, style.height);
         rectangle.attr({
@@ -124,13 +131,13 @@
                 fill: style.fill,
                 stroke: style.stroke,
                 strokeWidth: 1.8,
-                rx: 10,
-                ry: 10,
+                rx: isExternalDetailNode ? 2 : 4,
+                ry: isExternalDetailNode ? 2 : 4,
             },
             label: {
-                text: `${node.display_tag}\n${formatNodeBody(node)}`,
+                text: isExternalDetailNode ? node.display_tag : `${node.display_tag}\n${formatNodeBody(node)}`,
                 fill: '#17324d',
-                fontSize: 12,
+                fontSize: isExternalDetailNode ? 10 : 12,
                 fontWeight: 600,
                 textVerticalAnchor: 'middle',
                 textAnchor: 'middle',
@@ -141,6 +148,31 @@
         }
         rectangle.prop('sldMeta', { componentId: node.component_id, node: node });
         return rectangle;
+    }
+
+    function createExternalDetailLabel(node, position) {
+        const style = getNodeStyle(node.component_type);
+        const label = new joint.shapes.standard.TextBlock();
+        label.position(position.x - 16, position.y + (style.height / 2) + 7);
+        label.resize(style.width + 32, 26);
+        label.attr({
+            body: {
+                fill: 'transparent',
+                stroke: 'transparent',
+            },
+            label: {
+                text: formatExternalDetail(node),
+                fill: '#486581',
+                fontSize: 10.5,
+                fontWeight: 600,
+                textAnchor: 'middle',
+                textVerticalAnchor: 'top',
+                x: '50%',
+                y: 0,
+            },
+        });
+        label.prop('sldMeta', { type: 'external-detail-label', ownerComponentId: node.component_id });
+        return label;
     }
 
     function createEndTerminationLabel(node, position) {
@@ -163,8 +195,12 @@
                 y: '50%',
             },
         });
-        label.prop('sldMeta', { type: 'end-label', componentId: node.component_id });
+        label.prop('sldMeta', { type: 'end-label', ownerComponentId: node.component_id });
         return label;
+    }
+
+    function shouldRenderExternalDetailLabel(node) {
+        return EXTERNAL_DETAIL_COMPONENTS.has(node.component_type) && !!formatExternalDetail(node);
     }
 
     function nodeBelongsToLineGroup(node, lineGroup) {
@@ -197,7 +233,6 @@
                 };
             });
             return {
-                lineId: lineGroup.line_id,
                 branches: branches,
             };
         });
@@ -207,10 +242,10 @@
         const lineGroups = groupNodesByLine(payload);
         const positions = {};
         const startX = 200;
-        const componentGap = 44;
-        const branchGap = 88;
-        const circuitGap = 94;
-        const lineGap = 96;
+        const componentGap = 48;
+        const branchGap = 102;
+        const circuitGap = 108;
+        const lineGap = 110;
         let currentTop = 60;
 
         lineGroups.forEach(function (lineGroup) {
@@ -507,6 +542,14 @@
         }
     }
 
+    function setFitSelectedLineState(root, enabled) {
+        const panel = root.closest('.sld-panel');
+        const fitButton = panel ? panel.querySelector('#sld-fit-selected-line') : null;
+        if (fitButton) {
+            fitButton.disabled = !enabled;
+        }
+    }
+
     function getSelectionSummaryContainer(root) {
         const panel = root.closest('.sld-panel');
         return panel ? panel.querySelector('#sld-selection-summary') : null;
@@ -595,6 +638,20 @@
         if (!state) {
             return;
         }
+
+        // Labels for cable/tracer metadata are derived from node position instead of
+        // saved separately. That keeps layout persistence focused on component nodes.
+        Object.keys(state.externalDetailLabelByComponentId).forEach(function (componentId) {
+            const label = state.externalDetailLabelByComponentId[componentId];
+            const element = state.elementByComponentId[componentId];
+            const node = state.nodeByComponentId[componentId];
+            if (!label || !element || !node) {
+                return;
+            }
+            const position = element.position();
+            const size = element.size();
+            label.position(position.x - 16, position.y + size.height + 7);
+        });
 
         Object.keys(state.endLabelByComponentId).forEach(function (componentId) {
             const label = state.endLabelByComponentId[componentId];
@@ -710,6 +767,7 @@
             Object.keys(state.linkByEdgeKey).forEach(function (edgeKey) {
                 applyDefaultLinkStyle(state.linkByEdgeKey[edgeKey].link);
             });
+            setFitSelectedLineState(root, false);
             renderInspector(root, null, 0, 0);
             return;
         }
@@ -736,6 +794,7 @@
             applyMutedLinkStyle(entry.link);
         });
 
+        setFitSelectedLineState(root, true);
         renderInspector(root, state.nodeByComponentId[componentId], path.nodeIds.size, path.edgeKeys.size);
     }
 
@@ -749,12 +808,12 @@
         state.paper.scale(nextScale, nextScale);
     }
 
-    function fitPaperToContent(root) {
+    function fitPaperToElements(root, elements) {
         const state = root.__sldState;
         if (!state) {
             return;
         }
-        const area = state.graph.getBBox(state.graph.getElements());
+        const area = state.graph.getBBox(elements);
         if (!area || !area.width || !area.height) {
             return;
         }
@@ -768,6 +827,63 @@
         const centeredTop = Math.max(0, (area.y * state.scale) - ((hostHeight - area.height * state.scale) / 2));
         shell.scrollLeft = centeredLeft;
         shell.scrollTop = centeredTop;
+    }
+
+    function fitPaperToContent(root) {
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+        fitPaperToElements(root, state.graph.getElements());
+    }
+
+    function getSelectedLineElements(state) {
+        const selectedNode = state.nodeByComponentId[state.selectedComponentId];
+        if (!selectedNode) {
+            return [];
+        }
+        const matchingGroups = (state.payload.line_groups || []).filter(function (lineGroup) {
+            return nodeBelongsToLineGroup(selectedNode, lineGroup);
+        });
+        const componentIds = new Set();
+        matchingGroups.forEach(function (lineGroup) {
+            (state.payload.nodes || []).forEach(function (node) {
+                if (nodeBelongsToLineGroup(node, lineGroup)) {
+                    componentIds.add(node.component_id);
+                }
+            });
+        });
+
+        const elements = [];
+        matchingGroups.forEach(function (lineGroup) {
+            const label = state.lineLabelByLineKey[getLineGroupKey(lineGroup)];
+            if (label) {
+                elements.push(label);
+            }
+        });
+        componentIds.forEach(function (componentId) {
+            [
+                state.elementByComponentId[componentId],
+                state.externalDetailLabelByComponentId[componentId],
+                state.endLabelByComponentId[componentId],
+            ].forEach(function (element) {
+                if (element) {
+                    elements.push(element);
+                }
+            });
+        });
+        return elements;
+    }
+
+    function fitSelectedLine(root) {
+        const state = root.__sldState;
+        if (!state || !state.selectedComponentId) {
+            return;
+        }
+        const elements = getSelectedLineElements(state);
+        if (elements.length) {
+            fitPaperToElements(root, elements);
+        }
     }
 
     function exportPaperAsSvg(root) {
@@ -850,6 +966,7 @@
 
         const cells = [];
         const elementByComponentId = {};
+        const externalDetailLabelByComponentId = {};
         const endLabelByComponentId = {};
         const lineLabelByLineKey = {};
         const linkByEdgeKey = {};
@@ -870,6 +987,12 @@
             const element = createComponentElement(node, position);
             elementByComponentId[node.component_id] = element;
             cells.push(element);
+
+            if (shouldRenderExternalDetailLabel(node)) {
+                const detailLabel = createExternalDetailLabel(node, position);
+                externalDetailLabelByComponentId[node.component_id] = detailLabel;
+                cells.push(detailLabel);
+            }
 
             if (node.component_type === 'EndTermination') {
                 const label = createEndTerminationLabel(node, position);
@@ -903,6 +1026,7 @@
             paper: paper,
             scale: 1,
             elementByComponentId: elementByComponentId,
+            externalDetailLabelByComponentId: externalDetailLabelByComponentId,
             endLabelByComponentId: endLabelByComponentId,
             lineLabelByLineKey: lineLabelByLineKey,
             linkByEdgeKey: linkByEdgeKey,
@@ -913,6 +1037,7 @@
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
             selectedComponentId: null,
         };
+        setFitSelectedLineState(root, false);
 
         graph.on('change:position', function (cell) {
             const meta = cell.prop('sldMeta') || {};
@@ -1098,6 +1223,14 @@
             return;
         }
         fitPaperToContent(root);
+    });
+
+    $(document).on('click', '#sld-fit-selected-line', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root) {
+            return;
+        }
+        fitSelectedLine(root);
     });
 
     $(document).on('click', '#sld-zoom-in', function () {

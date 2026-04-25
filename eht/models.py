@@ -1,5 +1,6 @@
-from django.db import models, IntegrityError
+from django.db import models
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
 from django.utils.timezone import now, timedelta
 
 # from django.contrib.postgres.fields import JSONField  # or use TextField if DB doesn't support native JSON
@@ -86,12 +87,28 @@ class ProjectData(models.Model):
     udf2 = models.CharField(max_length=30, null=True, blank=True)
     udf3 = models.CharField(max_length=30, null=True, blank=True)    
 
-    def save(self, *args, **kwargs):                                                                #`save()` method to check project id uniqueness
+    def clean(self):
+        errors = {}
+        if self.min_amb_t is not None and self.max_amb_t is not None and self.min_amb_t > self.max_amb_t:
+            errors['min_amb_t'] = 'Minimum ambient temperature cannot exceed maximum ambient temperature.'
+        for field in ['voltage', 'spiral_factor', 'caution_label_interval', 'ckt_ln']:
+            if getattr(self, field) is not None and getattr(self, field) <= 0:
+                errors[field] = 'Value must be greater than zero.'
+        for field in ['margin_on_tracer_lengths', 'voltage_var_factor', 'res_tol', 'termination_margin', 'wind_speed', 'loop_ln', 'allowablevdrop']:
+            if getattr(self, field) is not None and getattr(self, field) < 0:
+                errors[field] = 'Value cannot be negative.'
+        if self.restrict_cb_current is not None and not (0 < self.restrict_cb_current <= 100):
+            errors['restrict_cb_current'] = 'Circuit breaker loading must be greater than 0 and no more than 100 percent.'
+        if self.heat_loss_sf is not None and self.heat_loss_sf < 1:
+            errors['heat_loss_sf'] = 'Heat loss safety factor must be at least 1.0.'
+        if errors:
+            raise ValidationError(errors)
+
+    def save(self, *args, **kwargs):
         if self.proj_id:
             self.proj_id = self.proj_id.strip()
         self.req_local_isolator = 'not_required' if self.isolator_location == 'noIsolator' else 'required'
-        if ProjectData.objects.filter(proj_id=self.proj_id).exclude(pk=self.pk).exists():
-            raise IntegrityError("A project with this ID already exists.")
+        self.clean()
         super().save(*args, **kwargs)
 
     def __str__(self):

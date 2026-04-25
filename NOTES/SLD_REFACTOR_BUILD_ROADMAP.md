@@ -130,9 +130,9 @@ Exit criteria:
 - validation and engineering metadata are visible in context
 
 Tasks:
-- [ ] Improve symbol readability: cable labels/specs out of cramped boxes
-- [ ] Simplify tracer and end-termination labeling
-- [ ] Add stronger per-line grouping cues
+- [x] Improve symbol readability: cable labels/specs out of cramped boxes
+- [x] Simplify tracer and end-termination labeling
+- [x] Add stronger per-line grouping cues
 - [x] Add basic line search/select and one-line focused viewing mode
 - [x] Make line-focused browsing fully AJAX/server-backed so large projects do not require full-payload browser filtering
 - [x] Add collapsible validation sections and branch-detail drilldown
@@ -141,13 +141,14 @@ Tasks:
 - [x] Add property inspector panel for selected components
 - [ ] Add export to PNG/PDF for the current rendered view
 - [x] Add fit/zoom/export SVG navigation tools
-- [ ] Add a “fit selected line” and “fit all” navigation flow
+- [x] Improve first-pass SLD readability with slimmer cable/tracer symbols, external cable/tracer detail labels, and stronger line group labels
+- [x] Add a “fit selected line” and “fit all” navigation flow
 - [ ] Add workspace loading/error states that feel production-grade
 
 Recommended file focus:
 - [templates/eht/partials/sld_tab.html](/home/kr/mydev/eht_office/templates/eht/partials/sld_tab.html:1)
 - [static/js/sld_workspace.js](/home/kr/mydev/eht_office/static/js/sld_workspace.js:48)
-- [static/css/sld_styles.css](/home/kr/mydev/eht_office/static/css/sld_styles.css:1)
+- [static/css/base_css.css](/home/kr/mydev/eht_office/static/css/base_css.css:386)
 
 ### Phase 5. Controlled Domain Editing
 
@@ -257,6 +258,8 @@ Current next sprint:
 - [x] add duplicate `line_id` collision coverage and line-UID-backed physical line ownership
 - [x] define display-tag stability boundary: stable for the same sorted line set, allowed to renumber when line membership/order changes
 - [x] refine source-to-selected path highlighting semantics before advanced regrouping
+- [x] remove the unused old standalone SLD stylesheet and keep current SLD presentation in the active workspace stylesheet/renderer
+- [x] add fit-all and fit-selected-line canvas navigation
 
 ## 6. Delivery Risks
 

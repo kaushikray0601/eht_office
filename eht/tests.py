@@ -1529,6 +1529,24 @@ class ProjectDataFormTests(TestCase):
         project.refresh_from_db()
         self.assertEqual(project.req_local_isolator, 'not_required')
 
+    def test_form_rejects_project_setup_values_that_break_domain_rules(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        form = ProjectDataForm(data=make_project_form_payload(
+            min_amb_t='45.00',
+            max_amb_t='20.00',
+            restrict_cb_current='125.00',
+            heat_loss_sf='0.80',
+        ))
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('min_amb_t', form.errors)
+        self.assertIn('restrict_cb_current', form.errors)
+        self.assertIn('heat_loss_sf', form.errors)
+
+    def test_project_data_direct_save_runs_domain_validation(self):
+        with self.assertRaises(ValidationError):
+            make_project_record(proj_id='p-invalid', voltage=0)
+
 
 class ProjectDataViewTests(TestCase):
     def test_create_project_data_view_persists_registered_project_id(self):
@@ -1759,6 +1777,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, f'data-url="{reverse("sld_workspace_view")}"')
         self.assertContains(response, 'data-scroll-to=".sld-panel"')
         self.assertContains(response, 'id="sld-fit-view"')
+        self.assertContains(response, 'id="sld-fit-selected-line"')
         self.assertContains(response, 'id="sld-export-svg"')
         self.assertContains(response, 'id="sld-line-filter-reset"')
         self.assertNotContains(response, 'href="?project_id=p1"')
@@ -1789,6 +1808,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'id="sld-zoom-in"')
         self.assertContains(response, 'id="sld-zoom-out"')
         self.assertContains(response, 'id="sld-fit-view"')
+        self.assertContains(response, 'id="sld-fit-selected-line"')
         self.assertContains(response, 'id="sld-export-svg"')
 
     def test_sld_payload_view_returns_json_graph_payload(self):

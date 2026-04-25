@@ -31,12 +31,12 @@ Program-level SLD execution baseline:
   - [x] Task 7.5: Validate generated SLDs against real stored projects in the browser.
   - [x] Task 7.6: Add coordinate persistence so manual layout can be saved and reloaded.
     - [x] Task 7.6.1: Make links and labels fully derived from component-node positions so drag/save/reset behavior stays deterministic.
-    - [ ] Task 7.6.2: Improve symbol readability: move cable labels/specs out of cramped boxes, simplify tracer/end-termination labeling, and tighten geometry sizing.
-    - [ ] Task 7.6.3: Add clearer per-line visual grouping so all circuits belonging to one line are easy to read as a set.
+    - [x] Task 7.6.2: Improve symbol readability: move cable labels/specs out of cramped boxes, simplify tracer/end-termination labeling, and tighten geometry sizing.
+    - [x] Task 7.6.3: Add clearer per-line visual grouping so all circuits belonging to one line are easy to read as a set.
     - [x] Task 7.6.4: Add basic SLD browsing for large projects: search/select by `line_id`, one-line-at-a-time viewing, and collapsed-by-default validation details.
-    - [ ] Task 7.6.5: Review remaining SLD correctness/presentation refinements before starting regrouping logic.
+    - [x] Task 7.6.5: Review remaining SLD correctness/presentation refinements before starting regrouping logic.
   - [ ] Task 7.7: Later enhancement: allow regrouping/reorganization of branches and sources independent of the raw calculation topology.
-- [ ] Task 8: Add automated test coverage for import, calculation, persistence, and reporting flows.
+- [x] Task 8: Add automated test coverage for import, calculation, persistence, and reporting flows.
 
 Active ordered task queue as of 2026-04-25:
 - [x] Task 9.1: Restore trustworthy test coverage around upload/confirm calculation transaction boundaries, including the currently failing hardening test.
@@ -48,15 +48,21 @@ Active ordered task queue as of 2026-04-25:
 - [x] Task 9.7: Add duplicate `line_id` collision coverage and decide whether `component_id` should include internal line UID as well as display `line_id`.
 - [x] Task 9.8: Stabilize engineering display tags across recalculation where feasible, or document when display tags may legitimately renumber.
 - [x] Task 9.9: Refine path highlighting from connected-component highlighting to true source-to-selected path highlighting.
-- [ ] Task 9.10: Continue SLD presentation work: conventional symbol sizing, cable/spec label placement, and clearer per-line grouping.
+- [x] Task 9.10: Continue SLD presentation work: conventional symbol sizing, cable/spec label placement, and clearer per-line grouping.
+- [x] Task 9.11: Add lightweight fit-all and fit-selected-line canvas navigation without introducing a separate navigation model.
 
 Current self-check note:
 - The SLD refactor path remains layered: generated payload, validation, saved layout, and browser rendering stay separate. Duplicate display `line_id` handling is fixed by using `line_uid` for physical line ownership. Display tags are intentionally presentation labels: stable for the same sorted line set, allowed to renumber when the line set or sort identity changes.
 - Simplification pass: removed duplicate browser-side line filtering because `/sld/payload/` is now the canonical server-side line filter. The browser now trusts the endpoint response and only renders it. This keeps filtering rules in one place and avoids maintaining two copies of the same duplicate-`line_id` logic.
 - Path highlighting now follows directed SLD edges from source components to the selected component. The code falls back to zero-incoming nodes only for malformed/legacy graphs without an MCB, so normal project graphs use the electrical source path rather than a whole connected-component highlight.
+- Presentation pass: kept the SLD renderer as the only active diagram presentation code, deleted the unused old standalone SLD stylesheet, slimmed cable/tracer symbols, moved their detail labels outside the cramped symbol bodies, and made line labels read more like grouping anchors.
+- Navigation pass: the existing fit button is now explicitly fit-all, and a fit-line button frames the physical line group for the currently selected component. This stays entirely in the browser because the rendered payload already contains the required line-group ownership.
+- Task 7.6.5 review: no new SLD architecture is needed before regrouping. The follow-up scope should stay bounded to tests and domain validation first; regrouping remains explicitly later under Task 7.7. As part of this review, dead presentation branches left behind by the cable/tracer label move were removed instead of adding more code.
+- Task 8 coverage review: existing tests now cover the import workspace/export, calculation orchestration, result persistence including rollback, result and BOQ views/exports, upload replacement safety, confirm-pending behavior, and the SLD payload/layout/validation path. No extra tests were added in this pass because the target flows are already covered.
+- ProjectData validation pass: added one model-level `clean()` for shared engineering guardrails and kept `save()` scoped to those domain rules plus existing derived-field sync. Field-level validation remains with forms/admin/DB constraints, which avoids surprising direct-save behavior while still catching calculation-breaking setup values early.
 
 Carry-over items:
-- [ ] Add deeper domain/business-rule validation for `ProjectData` so admin-created setup/templates fail early on engineering constraints instead of only on field/model-level validation.
+- [x] Add deeper domain/business-rule validation for `ProjectData` so admin-created setup/templates fail early on engineering constraints instead of only on field/model-level validation.
 - [ ] Refine SLD presentation after the architecture phase: conventional SLD visual language, geometry/symbol sizing, text sizing, page layout, cable/spec label placement, and overall UI polish.
 - [ ] Improve SLD interaction correctness: fully derived link routing on node move/reset, clearer grouping cues per line, and review/reset behavior for saved vs derived visual elements.
 - [ ] Add scalable SLD browsing UX for large projects: server-side filtering by `line_id`, one-line focused browsing, collapsible validation panels, and other large-project readability improvements.
