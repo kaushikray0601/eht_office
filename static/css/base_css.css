@@ -14,11 +14,16 @@
 .main-content {
     transition: all 0.3s ease;
     margin-left: 200px;   /* Adjusted margin when sidebar is expanded */
+    width: calc(100% - 200px);
+    max-width: calc(100% - 200px);
+    flex: 0 0 auto;
 }
 
 /* Main content when sidebar is collapsed */
 .main-content.collapsed {
     margin-left: 25px;              /* Adjusted margin when sidebar is collapsed */
+    width: calc(100% - 25px);
+    max-width: calc(100% - 25px);
 }
 
 /* Button for toggling sidebar */
@@ -384,7 +389,7 @@ footer {
 }
 
 .sld-diagram-shell {
-    min-height: 340px;
+    min-height: clamp(420px, calc(100vh - 360px), 720px);
     border-radius: 0.95rem;
     border: 1px dashed rgba(95, 117, 138, 0.45);
     background:
@@ -411,7 +416,7 @@ footer {
 
 .sld-canvas {
     width: 100%;
-    min-width: 1100px;
+    min-width: min(1280px, 100%);
     min-height: 320px;
 }
 
@@ -428,6 +433,27 @@ footer {
 
 .sld-inspector-panel {
     min-height: 340px;
+}
+
+@media (min-width: 1200px) {
+    .sld-panel .sld-canvas-column {
+        flex: 0 0 auto;
+        width: 82%;
+    }
+
+    .sld-panel .sld-inspector-column {
+        flex: 0 0 auto;
+        width: 18%;
+    }
+}
+
+@media (max-width: 767.98px) {
+    .main-content,
+    .main-content.collapsed {
+        margin-left: 0;
+        width: 100%;
+        max-width: 100%;
+    }
 }
 
 .sld-inspector-details {

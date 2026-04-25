@@ -1402,6 +1402,29 @@ class SldLayoutTests(TestCase):
         self.assertEqual(set(layout_payload['positions']), line_two_component_ids)
         self.assertTrue(layout_payload['meta']['has_saved_layout'])
 
+    def test_sld_layout_save_keeps_generated_topology_unchanged(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        before_payload = build_project_sld_payload('p1')
+        shifted_positions = {
+            node['component_id']: {'x': 400 + index * 20, 'y': 300 + index * 15}
+            for index, node in enumerate(before_payload['nodes'], start=1)
+        }
+
+        response = self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': shifted_positions}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        after_payload = build_project_sld_payload('p1')
+        self.assertEqual(after_payload['line_groups'], before_payload['line_groups'])
+        self.assertEqual(after_payload['edges'], before_payload['edges'])
+        self.assertEqual(
+            [node['component_id'] for node in after_payload['nodes']],
+            [node['component_id'] for node in before_payload['nodes']],
+        )
+
     def test_sld_layout_view_returns_unknown_line_filter_error(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
 
@@ -1748,6 +1771,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'SLD Payload Ready')
         self.assertContains(response, 'SLD Validation')
         self.assertContains(response, 'Validation Passed')
+        self.assertContains(response, 'without changing the calculated topology')
         self.assertContains(response, 'LINE-001')
         self.assertContains(response, reverse('sld_payload_view'))
         self.assertContains(response, reverse('sld_layout_view'))

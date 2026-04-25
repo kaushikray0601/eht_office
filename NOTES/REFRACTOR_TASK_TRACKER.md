@@ -35,7 +35,7 @@ Program-level SLD execution baseline:
     - [x] Task 7.6.3: Add clearer per-line visual grouping so all circuits belonging to one line are easy to read as a set.
     - [x] Task 7.6.4: Add basic SLD browsing for large projects: search/select by `line_id`, one-line-at-a-time viewing, and collapsed-by-default validation details.
     - [x] Task 7.6.5: Review remaining SLD correctness/presentation refinements before starting regrouping logic.
-  - [ ] Task 7.7: Later enhancement: allow regrouping/reorganization of branches and sources independent of the raw calculation topology.
+  - [x] Task 7.7: Later enhancement: allow regrouping/reorganization of branches and sources independent of the raw calculation topology.
 - [x] Task 8: Add automated test coverage for import, calculation, persistence, and reporting flows.
 
 Active ordered task queue as of 2026-04-25:
@@ -60,6 +60,7 @@ Current self-check note:
 - Task 7.6.5 review: no new SLD architecture is needed before regrouping. The follow-up scope should stay bounded to tests and domain validation first; regrouping remains explicitly later under Task 7.7. As part of this review, dead presentation branches left behind by the cable/tracer label move were removed instead of adding more code.
 - Task 8 coverage review: existing tests now cover the import workspace/export, calculation orchestration, result persistence including rollback, result and BOQ views/exports, upload replacement safety, confirm-pending behavior, and the SLD payload/layout/validation path. No extra tests were added in this pass because the target flows are already covered.
 - ProjectData validation pass: added one model-level `clean()` for shared engineering guardrails and kept `save()` scoped to those domain rules plus existing derived-field sync. Field-level validation remains with forms/admin/DB constraints, which avoids surprising direct-save behavior while still catching calculation-breaking setup values early.
+- Task 7.7 regrouping pass: added presentation-only line and branch drag handles in the SLD renderer. The browser moves the relevant component nodes and existing layout save persists only coordinates; generated edges, source paths, branch indices, and calculation-owned topology remain untouched.
 
 Carry-over items:
 - [x] Add deeper domain/business-rule validation for `ProjectData` so admin-created setup/templates fail early on engineering constraints instead of only on field/model-level validation.

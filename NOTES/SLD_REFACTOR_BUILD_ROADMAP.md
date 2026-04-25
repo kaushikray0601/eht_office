@@ -164,7 +164,7 @@ Tasks:
 - [ ] Decide the first allowed edit set:
   `layout only`, `annotation only`, or `approved topology adjustments`
 - [ ] Add annotations/comments without affecting generated topology
-- [ ] Add user-defined grouping or presentation-only grouping
+- [x] Add user-defined grouping or presentation-only grouping
 - [ ] Define edit provenance: generated vs user-added vs user-overridden
 - [ ] Design a review/reset model for returning to generated baseline
 - [ ] Define where cold-cable-length edits belong and how they propagate
@@ -260,6 +260,7 @@ Current next sprint:
 - [x] refine source-to-selected path highlighting semantics before advanced regrouping
 - [x] remove the unused old standalone SLD stylesheet and keep current SLD presentation in the active workspace stylesheet/renderer
 - [x] add fit-all and fit-selected-line canvas navigation
+- [x] add presentation-only line and branch regrouping through layout handles without changing generated topology
 
 ## 6. Delivery Risks
 

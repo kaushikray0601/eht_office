@@ -58,7 +58,7 @@
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                     <div>
                         <h6 class="mb-1">Diagram Canvas</h6>
-                        <p class="text-muted small mb-0">This canvas renders the project-backed SLD payload directly from persisted branch data. Layout positions can be adjusted and saved; manual regrouping remains a later phase.</p>
+                        <p class="text-muted small mb-0">This canvas renders the project-backed SLD payload directly from persisted branch data. Node, branch, and line positions can be adjusted and saved without changing the calculated topology.</p>
                     </div>
                     <div class="d-flex flex-wrap gap-2">
                         <span class="badge text-bg-light border sld-saved-count-badge">Saved Nodes: {{ sld_layout.meta.saved_count }}</span>
@@ -104,7 +104,7 @@
                     {% endif %}
                 </form>
                 <div class="sld-layout-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-                    <div class="small text-muted">Drag component nodes to adjust the layout, then save to persist the coordinates for this project.</div>
+                    <div class="small text-muted">Adjust component nodes or presentation groups, then save to persist coordinates for this project.</div>
                     <div class="d-flex flex-wrap gap-2">
                         <button
                             type="button"
@@ -165,7 +165,7 @@
                     </div>
                 </div>
                 <div class="row g-3 align-items-stretch">
-                    <div class="col-xl-9">
+                    <div class="col-xl-9 sld-canvas-column">
                         <div
                             id="sld-diagram-shell"
                             class="sld-diagram-shell"
@@ -181,7 +181,7 @@
                             </div>
                         </div>
                     </div>
-                    <div class="col-xl-3">
+                    <div class="col-xl-3 sld-inspector-column">
                         <div class="workspace-section h-100 sld-inspector-panel">
                             <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
                                 <h6 class="mb-0">Property Inspector</h6>

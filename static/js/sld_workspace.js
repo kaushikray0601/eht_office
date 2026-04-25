@@ -85,6 +85,7 @@
                 strokeWidth: 1,
                 rx: 4,
                 ry: 4,
+                cursor: 'move',
             },
             label: {
                 text: `Line: ${lineId}`,
@@ -95,9 +96,37 @@
                 textVerticalAnchor: 'middle',
                 x: 10,
                 y: '50%',
+                cursor: 'move',
             },
         });
-        label.prop('sldMeta', { type: 'line-label', lineId: lineId });
+        return label;
+    }
+
+    function createBranchLabel(branchIndex, x, y) {
+        const label = new joint.shapes.standard.TextBlock();
+        label.position(x, y);
+        label.resize(64, 28);
+        label.attr({
+            body: {
+                fill: '#f8fbfd',
+                stroke: '#d3dee8',
+                strokeWidth: 1,
+                rx: 4,
+                ry: 4,
+                cursor: 'move',
+            },
+            label: {
+                text: `B${branchIndex}`,
+                fill: '#486581',
+                fontSize: 12,
+                fontWeight: 700,
+                textAnchor: 'middle',
+                textVerticalAnchor: 'middle',
+                x: '50%',
+                y: '50%',
+                cursor: 'move',
+            },
+        });
         return label;
     }
 
@@ -210,6 +239,28 @@
         return (node.line_ids || []).includes(lineGroup.line_id);
     }
 
+    function getLineGroupKey(lineGroup) {
+        return lineGroup.line_uid ? `uid:${lineGroup.line_uid}` : `line:${lineGroup.line_id}`;
+    }
+
+    function getBranchGroupKey(lineGroup, branchIndex) {
+        return `${getLineGroupKey(lineGroup)}__branch:${branchIndex}`;
+    }
+
+    function getLineComponentIds(payload, lineGroup) {
+        return payload.nodes
+            .filter(function (node) { return nodeBelongsToLineGroup(node, lineGroup); })
+            .map(function (node) { return node.component_id; });
+    }
+
+    function getBranchComponentIds(payload, lineGroup, branchIndex) {
+        return payload.nodes
+            .filter(function (node) {
+                return nodeBelongsToLineGroup(node, lineGroup) && node.branch_index === branchIndex;
+            })
+            .map(function (node) { return node.component_id; });
+    }
+
     function groupNodesByLine(payload) {
         return payload.line_groups.map(function (lineGroup) {
             const lineNodes = payload.nodes.filter(function (node) {
@@ -307,10 +358,6 @@
         return merged;
     }
 
-    function getLineGroupKey(lineGroup) {
-        return lineGroup.line_uid ? `uid:${lineGroup.line_uid}` : `line:${lineGroup.line_id}`;
-    }
-
     function computeLineLabelPositions(payload, positions) {
         const labelPositions = [];
         payload.line_groups.forEach(function (lineGroup) {
@@ -326,8 +373,36 @@
             labelPositions.push({
                 lineKey: getLineGroupKey(lineGroup),
                 lineId: lineGroup.line_id,
+                componentIds: getLineComponentIds(payload, lineGroup),
                 x: 24,
                 y: minY + ((maxY - minY) / 2) - 16,
+            });
+        });
+        return labelPositions;
+    }
+
+    function computeBranchLabelPositions(payload, positions) {
+        const labelPositions = [];
+        payload.line_groups.forEach(function (lineGroup) {
+            lineGroup.branch_indices.forEach(function (branchIndex) {
+                const branchNodes = payload.nodes.filter(function (node) {
+                    return nodeBelongsToLineGroup(node, lineGroup)
+                        && node.branch_index === branchIndex
+                        && positions[node.component_id];
+                });
+                if (!branchNodes.length) {
+                    return;
+                }
+                const yValues = branchNodes.map(function (node) { return positions[node.component_id].y; });
+                const minY = Math.min.apply(null, yValues);
+                const maxY = Math.max.apply(null, yValues);
+                labelPositions.push({
+                    branchKey: getBranchGroupKey(lineGroup, branchIndex),
+                    branchIndex: branchIndex,
+                    componentIds: getBranchComponentIds(payload, lineGroup, branchIndex),
+                    x: 108,
+                    y: minY + ((maxY - minY) / 2) - 14,
+                });
             });
         });
         return labelPositions;
@@ -633,6 +708,50 @@
         });
     }
 
+    function moveAttachedLabels(state, componentId, deltaX, deltaY) {
+        [
+            state.externalDetailLabelByComponentId[componentId],
+            state.endLabelByComponentId[componentId],
+        ].forEach(function (label) {
+            if (!label) {
+                return;
+            }
+            const position = label.position();
+            label.position(position.x + deltaX, position.y + deltaY);
+        });
+    }
+
+    function moveComponentGroup(root, componentIds, deltaX, deltaY) {
+        const state = root.__sldState;
+        if (!state || !componentIds || (!deltaX && !deltaY)) {
+            return;
+        }
+        // Regrouping is presentation-only: move rendered nodes, then save their coordinates.
+        state.isApplyingGroupMove = true;
+        componentIds.forEach(function (componentId) {
+            const element = state.elementByComponentId[componentId];
+            if (!element) {
+                return;
+            }
+            const position = element.position();
+            element.position(position.x + deltaX, position.y + deltaY);
+            moveAttachedLabels(state, componentId, deltaX, deltaY);
+        });
+        state.isApplyingGroupMove = false;
+        updateLinkGeometry(root);
+    }
+
+    function syncGroupHandlePosition(groupHandlePositionById, handle) {
+        if (!groupHandlePositionById || !handle) {
+            return;
+        }
+        const position = handle.position();
+        groupHandlePositionById[handle.id] = {
+            x: position.x,
+            y: position.y,
+        };
+    }
+
     function refreshDynamicLabels(root) {
         const state = root.__sldState;
         if (!state) {
@@ -641,36 +760,49 @@
 
         // Labels for cable/tracer metadata are derived from node position instead of
         // saved separately. That keeps layout persistence focused on component nodes.
-        Object.keys(state.externalDetailLabelByComponentId).forEach(function (componentId) {
-            const label = state.externalDetailLabelByComponentId[componentId];
-            const element = state.elementByComponentId[componentId];
-            const node = state.nodeByComponentId[componentId];
-            if (!label || !element || !node) {
-                return;
-            }
-            const position = element.position();
-            const size = element.size();
-            label.position(position.x - 16, position.y + size.height + 7);
-        });
+        state.isSyncingDerivedGeometry = true;
+        try {
+            Object.keys(state.externalDetailLabelByComponentId).forEach(function (componentId) {
+                const label = state.externalDetailLabelByComponentId[componentId];
+                const element = state.elementByComponentId[componentId];
+                const node = state.nodeByComponentId[componentId];
+                if (!label || !element || !node) {
+                    return;
+                }
+                const position = element.position();
+                const size = element.size();
+                label.position(position.x - 16, position.y + size.height + 7);
+            });
 
-        Object.keys(state.endLabelByComponentId).forEach(function (componentId) {
-            const label = state.endLabelByComponentId[componentId];
-            const element = state.elementByComponentId[componentId];
-            if (!label || !element) {
-                return;
-            }
-            const position = element.position();
-            const size = element.size();
-            label.position(position.x + size.width + 14, position.y - 2);
-        });
+            Object.keys(state.endLabelByComponentId).forEach(function (componentId) {
+                const label = state.endLabelByComponentId[componentId];
+                const element = state.elementByComponentId[componentId];
+                if (!label || !element) {
+                    return;
+                }
+                const position = element.position();
+                const size = element.size();
+                label.position(position.x + size.width + 14, position.y - 2);
+            });
 
-        const positions = collectComponentPositions(state);
-        computeLineLabelPositions(state.payload, positions).forEach(function (lineLabel) {
-            const label = state.lineLabelByLineKey[lineLabel.lineKey];
-            if (label) {
-                label.position(lineLabel.x, lineLabel.y);
-            }
-        });
+            const positions = collectComponentPositions(state);
+            computeLineLabelPositions(state.payload, positions).forEach(function (lineLabel) {
+                const label = state.lineLabelByLineKey[lineLabel.lineKey];
+                if (label) {
+                    label.position(lineLabel.x, lineLabel.y);
+                    syncGroupHandlePosition(state.groupHandlePositionById, label);
+                }
+            });
+            computeBranchLabelPositions(state.payload, positions).forEach(function (branchLabel) {
+                const label = state.branchLabelByBranchKey[branchLabel.branchKey];
+                if (label) {
+                    label.position(branchLabel.x, branchLabel.y);
+                    syncGroupHandlePosition(state.groupHandlePositionById, label);
+                }
+            });
+        } finally {
+            state.isSyncingDerivedGeometry = false;
+        }
     }
 
     function refreshDerivedGeometry(root) {
@@ -860,6 +992,12 @@
             if (label) {
                 elements.push(label);
             }
+            (lineGroup.branch_indices || []).forEach(function (branchIndex) {
+                const branchLabel = state.branchLabelByBranchKey[getBranchGroupKey(lineGroup, branchIndex)];
+                if (branchLabel) {
+                    elements.push(branchLabel);
+                }
+            });
         });
         componentIds.forEach(function (componentId) {
             [
@@ -937,6 +1075,7 @@
         const autoPositions = buildAutoLayout(payload);
         const layoutPositions = mergeSavedPositions(autoPositions, (savedLayout && savedLayout.positions) || {});
         const lineLabels = computeLineLabelPositions(payload, layoutPositions);
+        const branchLabels = computeBranchLabelPositions(payload, layoutPositions);
         const canvasSize = computeCanvasSize(payload, layoutPositions);
 
         const graph = new joint.dia.Graph();
@@ -960,7 +1099,7 @@
             },
             interactive: function (cellView) {
                 const meta = cellView.model.prop('sldMeta') || {};
-                return !!meta.componentId;
+                return !!meta.componentId || !!meta.draggableGroup;
             },
         });
 
@@ -969,12 +1108,34 @@
         const externalDetailLabelByComponentId = {};
         const endLabelByComponentId = {};
         const lineLabelByLineKey = {};
+        const branchLabelByBranchKey = {};
+        const groupHandlePositionById = {};
         const linkByEdgeKey = {};
         const nodeByComponentId = {};
 
         lineLabels.forEach(function (lineLabel) {
             const label = createLineLabel(lineLabel.lineId, lineLabel.x, lineLabel.y);
+            label.prop('sldMeta', {
+                type: 'line-label',
+                lineId: lineLabel.lineId,
+                draggableGroup: true,
+                moveComponentIds: lineLabel.componentIds,
+            });
             lineLabelByLineKey[lineLabel.lineKey] = label;
+            syncGroupHandlePosition(groupHandlePositionById, label);
+            cells.push(label);
+        });
+
+        branchLabels.forEach(function (branchLabel) {
+            const label = createBranchLabel(branchLabel.branchIndex, branchLabel.x, branchLabel.y);
+            label.prop('sldMeta', {
+                type: 'branch-label',
+                branchIndex: branchLabel.branchIndex,
+                draggableGroup: true,
+                moveComponentIds: branchLabel.componentIds,
+            });
+            branchLabelByBranchKey[branchLabel.branchKey] = label;
+            syncGroupHandlePosition(groupHandlePositionById, label);
             cells.push(label);
         });
 
@@ -1029,6 +1190,8 @@
             externalDetailLabelByComponentId: externalDetailLabelByComponentId,
             endLabelByComponentId: endLabelByComponentId,
             lineLabelByLineKey: lineLabelByLineKey,
+            branchLabelByBranchKey: branchLabelByBranchKey,
+            groupHandlePositionById: groupHandlePositionById,
             linkByEdgeKey: linkByEdgeKey,
             nodeByComponentId: nodeByComponentId,
             outgoingByComponent: graphNavigation.outgoingByComponent,
@@ -1036,11 +1199,36 @@
             isDirty: false,
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
             selectedComponentId: null,
+            isApplyingGroupMove: false,
+            isSyncingDerivedGeometry: false,
         };
         setFitSelectedLineState(root, false);
 
         graph.on('change:position', function (cell) {
+            const state = root.__sldState;
+            if (!state || state.isSyncingDerivedGeometry) {
+                return;
+            }
             const meta = cell.prop('sldMeta') || {};
+            if (meta.draggableGroup) {
+                const position = cell.position();
+                const previous = state.groupHandlePositionById[cell.id] || position;
+                state.groupHandlePositionById[cell.id] = {
+                    x: position.x,
+                    y: position.y,
+                };
+                moveComponentGroup(
+                    root,
+                    meta.moveComponentIds || [],
+                    position.x - previous.x,
+                    position.y - previous.y
+                );
+                setDirtyState(root, true, true);
+                return;
+            }
+            if (state.isApplyingGroupMove) {
+                return;
+            }
             if (!meta.componentId) {
                 return;
             }
@@ -1058,6 +1246,10 @@
 
         paper.on('blank:pointerdown', function () {
             highlightSelection(root, null);
+        });
+
+        paper.on('cell:pointerup', function () {
+            refreshDerivedGeometry(root);
         });
 
         refreshDerivedGeometry(root);

@@ -28,6 +28,7 @@ This document covers:
 - edge invariants
 - line-group invariants
 - layout persistence invariants
+- presentation-only regrouping behavior
 
 This document does not yet define:
 - user-authored topology overrides
@@ -179,6 +180,11 @@ Current behavior:
 - layout rows for components that no longer exist in the current generated
   payload are deleted defensively during save
 - the layout response exposes `meta.save_mode = "merge"`
+- line and branch regrouping is presentation-only: browser handles move groups
+  of rendered component nodes, and save persists only the resulting component
+  coordinates
+- group handles are derived from `line_groups` and `branch_indices`; they are
+  not saved as graph nodes and do not change generated edges or branch ownership
 
 This behavior is intentional. Future changes must keep partial saves safe unless
 the API contract is explicitly redesigned and tested.
