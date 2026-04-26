@@ -34,7 +34,7 @@ def get_project_sld_layout(project_id, payload=None):
 
 
 @transaction.atomic
-def save_project_sld_layout(project_id, positions, payload=None):
+def save_project_sld_layout(project_id, positions, payload=None, prune_stale=True):
     payload = payload or build_project_sld_payload(project_id)
     project = ProjectData.objects.get(proj_id=project_id)
     valid_nodes = {node['component_id']: node for node in payload.get('nodes', [])}
@@ -54,7 +54,8 @@ def save_project_sld_layout(project_id, positions, payload=None):
             'y': float(coords['y']),
         }
 
-    SLDNodeLayout.objects.filter(project=project).exclude(component_id__in=valid_component_ids).delete()
+    if prune_stale:
+        SLDNodeLayout.objects.filter(project=project).exclude(component_id__in=valid_component_ids).delete()
     saved_count = 0
     for component_id, coords in normalized_positions.items():
         node = valid_nodes[component_id]

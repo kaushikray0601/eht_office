@@ -15,7 +15,7 @@ COMPONENT_TAG_PREFIXES = {
 
 
 def _stable_component_uid(component_id):
-    return hashlib.sha1(component_id.encode('utf-8')).hexdigest()[:16]
+    return hashlib.sha256(component_id.encode('utf-8')).hexdigest()[:32]
 
 
 class ProjectTagFactory:

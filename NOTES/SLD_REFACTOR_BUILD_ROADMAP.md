@@ -1,7 +1,7 @@
 # SLD Refactor And Build Roadmap
 
 Date: 2026-04-23
-Last updated: 2026-04-25
+Last updated: 2026-04-26
 
 Status: Execution baseline
 
@@ -85,11 +85,11 @@ Exit criteria:
 Tasks:
 - [x] Introduce explicit graph schema versioning in payloads
 - [ ] Define a normalized internal graph contract for nodes, edges, groups, and annotations
-- [ ] Separate generated graph payload from future user-edit overrides
-- [ ] Review whether branch JSON remains the generated source or whether a normalized graph table is required next
-- [ ] Define how future manual edits will be represented without corrupting generated topology
+- [x] Separate generated graph payload from future user-edit overrides
+- [x] Review whether branch JSON remains the generated source or whether a normalized graph table is required next
+- [x] Define how future manual edits will be represented without corrupting generated topology
 - [x] Add tests for graph determinism across repeated graph builds
-- [ ] Add tests for backward compatibility with legacy branch JSON fallback
+- [x] Add tests for backward compatibility with legacy branch JSON fallback
 
 Recommended file focus:
 - [eht/sld_payload.py](/home/kr/mydev/eht_office/eht/sld_payload.py:162)
@@ -161,12 +161,12 @@ Exit criteria:
 - write-back rules are explicit
 
 Tasks:
-- [ ] Decide the first allowed edit set:
+- [x] Decide the first allowed edit set:
   `layout only`, `annotation only`, or `approved topology adjustments`
 - [ ] Add annotations/comments without affecting generated topology
 - [x] Add user-defined grouping or presentation-only grouping
-- [ ] Define edit provenance: generated vs user-added vs user-overridden
-- [ ] Design a review/reset model for returning to generated baseline
+- [x] Define edit provenance: generated vs user-added vs user-overridden
+- [x] Design a review/reset model for returning to generated baseline
 - [ ] Define where cold-cable-length edits belong and how they propagate
 - [ ] Define alternate-tracer reselection workflow and how diagram refresh is communicated
 - [ ] Add tests for reset-to-generated behavior after allowed edits
@@ -252,7 +252,7 @@ Sprint C:
 Current next sprint:
 - [x] restore trustworthy test coverage around upload/confirm calculation transaction boundaries
 - [x] fix the SLD line-focus form so it reloads the workspace tab through the canonical AJAX tab loader
-- [x] add server-side `line_id` filtering for SLD payload/layout flows to avoid full-payload client filtering on large projects
+- [x] add true query-pushed `line_id` filtering for SLD payload/layout/validation flows to avoid full-payload builds on focused views
 - [x] reduce redundant SLD endpoint work so payload-only requests do not also build layout and validation data
 - [x] add graph schema versioning and determinism tests
 - [x] add duplicate `line_id` collision coverage and line-UID-backed physical line ownership

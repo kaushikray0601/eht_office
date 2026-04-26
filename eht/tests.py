@@ -1,5 +1,6 @@
 import json
 import math
+from copy import deepcopy
 from io import BytesIO
 from unittest.mock import patch
 
@@ -30,11 +31,13 @@ from eht.models import (
     HeatLoss,
     HeatTracingInput,
     ManagedProject,
+    MAX_CB_SIZE,
     PowerDistribution,
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
     SLDNodeLayout,
+    SLDTopologyEdit,
     SelectedTracer,
     is_default_project_id,
 )
@@ -1160,7 +1163,7 @@ class SldPayloadTests(TestCase):
         self.assertEqual(len(component_ids), len(set(component_ids)))
         self.assertEqual(len(component_uids), len(set(component_uids)))
         self.assertEqual(len(display_tags), len(set(display_tags)))
-        self.assertTrue(all(len(component_uid) == 16 for component_uid in component_uids))
+        self.assertTrue(all(len(component_uid) == 32 for component_uid in component_uids))
         self.assertIn('MCB_001', display_tags)
         self.assertIn('MCB_002', display_tags)
         self.assertTrue(any('line:LINE-001' in component_id for component_id in component_ids))
@@ -1192,6 +1195,17 @@ class SldPayloadTests(TestCase):
             self.assertTrue(any(f'line_uid:{line_uid}' in component_id for component_id in component_ids))
         self.assertTrue(any('line:LINE-DUP' in component_id for component_id in component_ids))
 
+    def test_build_project_sld_payload_filters_line_at_query_layer(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+
+        payload = build_project_sld_payload('p1', line_id='line-002')
+
+        self.assertEqual(payload['meta']['branch_count'], 1)
+        self.assertEqual([group['line_id'] for group in payload['line_groups']], ['LINE-002'])
+        self.assertTrue(payload['nodes'])
+        self.assertTrue(all(node['line_id'] == 'LINE-002' for node in payload['nodes']))
+        self.assertTrue(all(edge['line_ids'] == ['LINE-002'] for edge in payload['edges']))
+
     def test_build_project_sld_payload_is_deterministic_for_repeated_builds(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
 
@@ -1207,6 +1221,27 @@ class SldPayloadTests(TestCase):
             [group['line_id'] for group in first_payload['line_groups']],
             ['LINE-001', 'LINE-002'],
         )
+
+    def test_build_project_sld_payload_applies_active_topology_edit(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        edited_payload = deepcopy(generated_payload)
+        edited_payload['nodes'][0]['display_tag'] = f"{edited_payload['nodes'][0]['display_tag']}-M"
+
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint='baseline-a',
+            edit_payload={'sld_payload': edited_payload},
+            validation_summary={'status': 'passed'},
+        )
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertTrue(payload['meta']['has_topology_edit'])
+        self.assertEqual(payload['meta']['topology_edit_type'], 'combine_feeders')
+        self.assertTrue(any(node['display_tag'].endswith('-M') for node in payload['nodes']))
 
     def test_build_project_sld_payload_falls_back_for_legacy_branch_json(self):
         line = make_calculated_project_snapshot()
@@ -1293,6 +1328,32 @@ class SldValidationTests(TestCase):
         duplicate_check = next(check for check in report['checks'] if check['code'] == 'unique_display_tags')
         self.assertEqual(report['status'], 'failed')
         self.assertEqual(duplicate_check['status'], 'failed')
+
+    def test_validate_project_sld_payload_accepts_applied_topology_edit_layer(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        edited_payload = deepcopy(build_project_sld_payload('p1'))
+        removed_component_id = edited_payload['nodes'][0]['component_id']
+        edited_payload['nodes'] = [
+            node for node in edited_payload['nodes'] if node['component_id'] != removed_component_id
+        ]
+        edited_payload['edges'] = [
+            edge for edge in edited_payload['edges']
+            if edge['from_component_id'] != removed_component_id and edge['to_component_id'] != removed_component_id
+        ]
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='split_circuits',
+            status='applied',
+            baseline_fingerprint='baseline-b',
+            edit_payload={'sld_payload': edited_payload},
+            validation_summary={'status': 'passed'},
+        )
+
+        report = validate_project_sld_payload('p1')
+
+        self.assertEqual(report['status'], 'passed')
+        self.assertTrue(any(check['code'] == 'topology_edit_applied' for check in report['checks']))
+        self.assertTrue(all(check['status'] == 'passed' for check in report['branch_checks']))
 
 
 class SldLayoutTests(TestCase):
@@ -1401,6 +1462,48 @@ class SldLayoutTests(TestCase):
         self.assertEqual(layout_payload['meta']['node_count'], len(line_two_component_ids))
         self.assertEqual(set(layout_payload['positions']), line_two_component_ids)
         self.assertTrue(layout_payload['meta']['has_saved_layout'])
+
+    def test_sld_layout_view_saves_focused_line_without_pruning_other_lines(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        payload = build_project_sld_payload('p1')
+        all_positions = {
+            node['component_id']: {'x': 100 + index * 10, 'y': 200 + index * 5}
+            for index, node in enumerate(payload['nodes'], start=1)
+        }
+        line_one_component_id = next(
+            node['component_id'] for node in payload['nodes'] if node['line_id'] == 'LINE-001'
+        )
+        line_two_component_id = next(
+            node['component_id'] for node in payload['nodes'] if node['line_id'] == 'LINE-002'
+        )
+        self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({'project_id': 'p1', 'positions': all_positions}),
+            content_type='application/json',
+        )
+
+        response = self.client.post(
+            reverse('sld_layout_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'line_id': 'line-002',
+                'positions': {line_two_component_id: {'x': 555, 'y': 666}},
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        full_layout = self.client.get(reverse('sld_layout_view'), {'project_id': 'p1'}).json()
+        self.assertEqual(full_layout['positions'][line_two_component_id]['x'], 555)
+        self.assertEqual(full_layout['positions'][line_two_component_id]['y'], 666)
+        self.assertEqual(
+            full_layout['positions'][line_one_component_id]['x'],
+            all_positions[line_one_component_id]['x'],
+        )
+        self.assertEqual(
+            full_layout['positions'][line_one_component_id]['y'],
+            all_positions[line_one_component_id]['y'],
+        )
 
     def test_sld_layout_save_keeps_generated_topology_unchanged(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -1531,6 +1634,14 @@ class ProjectDataFormTests(TestCase):
         self.assertNotIn('tracer_family', form.fields)
         self.assertNotIn('req_local_isolator', form.fields)
         self.assertEqual(form.fields['proj_id'].help_text, 'Projects are managed in Django admin.')
+
+    def test_form_accepts_small_standard_breaker_ratings(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        self.assertEqual([rating for rating, _label in MAX_CB_SIZE[:2]], [4, 6])
+
+        for rating in ['4', '6']:
+            form = ProjectDataForm(data=make_project_form_payload(max_cb_size=rating))
+            self.assertTrue(form.is_valid(), form.errors)
 
     def test_form_rejects_unregistered_project_id(self):
         make_managed_project(proj_id='PLANT_B_001', description='Plant B')
@@ -1678,6 +1789,36 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'V-ALT-001')
         self.assertContains(response, 'MCB_001')
 
+    def test_result_view_uses_applied_topology_summary_override(self):
+        make_calculated_project_snapshot()
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint='baseline-result',
+            edit_payload={
+                'downstream_summaries': {'result': {'branch_count': 99}},
+                'cable_schedule_rows': [{
+                    'distribution': {'line': {'line_id': 'EDITED-LINE'}},
+                    'branch_index': 1,
+                    'branch_type': 'edited',
+                    'connected_to': 'manual',
+                    'circuit_count': 2,
+                    'cable_length_db_to_jb': 12.5,
+                    'cable_length_jb_to_jb': None,
+                    'tagged_components': {'MCB': 'MCB_001-M', 'JB3PH': 'JB3PH_001-M', 'Downstream': [1, 2]},
+                }],
+            },
+            validation_summary={'status': 'passed'},
+        )
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '99 branch rows')
+        self.assertContains(response, 'EDITED-LINE')
+        self.assertContains(response, 'MCB_001-M')
+
     def test_result_export_returns_line_branch_and_alternate_sheets(self):
         line = make_calculated_project_snapshot()
 
@@ -1713,6 +1854,22 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'MCB')
         self.assertContains(response, line.line_id)
         self.assertContains(response, 'Miniature Circuit Breaker')
+
+    def test_boq_view_uses_applied_topology_summary_override(self):
+        make_calculated_project_snapshot()
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint='baseline-boq',
+            edit_payload={'downstream_summaries': {'boq': {'mcb_total': 7, 'junction_box_total': 11}}},
+            validation_summary={'status': 'passed'},
+        )
+
+        response = self.client.get(reverse('boq_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '7 / 11')
 
     def test_boq_view_filters_selected_line_for_verification(self):
         line = make_calculated_project_snapshot()

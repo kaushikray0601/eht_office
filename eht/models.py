@@ -8,7 +8,7 @@ from django.utils import timezone
 
 
 # Choices should be an iterable of (value, label) tuples
-MAX_CB_SIZE = [(10, 10), (16, 16), (20, 20), (25, 25),(32, 32), (40, 40)]
+MAX_CB_SIZE = [(4, 4), (6, 6), (10, 10), (16, 16), (20, 20), (25, 25), (32, 32), (40, 40)]
 SELECT_VENDOR = [('THR', 'Thermon'), ('CHR', 'Chromalox'), ('nVN', 'nVent'), ('SST', 'SST'), ('KRZ', 'KRUS-Zapad')]
 ALLOW_SPIRAL_WRAP = [(True, 'Allowed'), (False, 'Not Allowed')]
 SELECT_RTD_THERMOSTAT = [('RI', 'RTD-Inline'), ('RO', 'RTD-Offline'), ('TI', 'Thermostat-Inline'), ('TO', 'Thermostat-Offline')]
@@ -357,6 +357,63 @@ class SLDNodeLayout(models.Model):
             models.Index(fields=['project', 'branch_index']),
             models.Index(fields=['component_uid']),
         ]
+
+
+class SLDTopologyEdit(models.Model):
+    EDIT_TYPES = [
+        ('combine_feeders', 'Combine Feeders'),
+        ('split_circuits', 'Split Circuits'),
+    ]
+    STATUSES = [
+        ('draft', 'Draft'),
+        ('applied', 'Applied'),
+        ('superseded', 'Superseded'),
+        ('reset', 'Reset'),
+        ('needs_review', 'Needs Review'),
+    ]
+
+    project = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='project_id',
+        on_delete=models.CASCADE,
+        related_name='sld_topology_edits',
+    )
+    edit_type = models.CharField(max_length=30, choices=EDIT_TYPES)
+    status = models.CharField(max_length=20, choices=STATUSES, default='draft')
+    created_by = models.ForeignKey(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='sld_topology_edits',
+    )
+    remarks = models.TextField(blank=True, default='')
+    baseline_fingerprint = models.CharField(max_length=64, blank=True, default='')
+    generated_snapshot = models.JSONField(default=dict, blank=True)
+    edit_payload = models.JSONField(default=dict, blank=True)
+    validation_summary = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+        indexes = [
+            models.Index(fields=['project', 'status']),
+            models.Index(fields=['project', 'edit_type']),
+            models.Index(fields=['baseline_fingerprint']),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project'],
+                condition=models.Q(status='applied'),
+                name='unique_active_sld_topology_edit_per_project',
+            ),
+        ]
+
+    def __str__(self):
+        return f"{self.project_id} {self.edit_type} {self.status}"
+
 
 class BOQ(models.Model):
     uid = models.CharField(max_length=100, blank=True, default='')

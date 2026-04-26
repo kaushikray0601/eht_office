@@ -36,6 +36,7 @@ from .pipeline import run_project_calculations
 from .sanatize_input import sanitize_file
 from .sld_layout import get_project_sld_layout, reset_project_sld_layout, save_project_sld_layout
 from .sld_payload import build_project_sld_payload
+from .sld_topology import apply_active_cable_schedule_rows, apply_active_summary_overrides
 from .sld_validation import validate_project_sld_payload
 
 COOLDOWN_PERIOD_MINUTES = 30
@@ -319,6 +320,7 @@ def _build_result_workspace_data(project_id):
         .select_related('distribution__line')
         .order_by('distribution__line__line_id', 'branch_index')
     )
+    branch_rows = apply_active_cable_schedule_rows(project_id, branch_rows)
 
     line_results = []
     for calculation in calculations:
@@ -338,11 +340,25 @@ def _build_result_workspace_data(project_id):
         'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
         'branch_count': len(branch_rows),
     }
+    summary = apply_active_summary_overrides(project_id, 'result', summary)
     return {
         'line_results': line_results,
         'branch_rows': branch_rows,
         'summary': summary,
     }
+
+
+def _branch_value(branch, path, default=''):
+    missing = object()
+    value = branch
+    for key in path:
+        if isinstance(value, dict):
+            value = value.get(key, missing)
+        else:
+            value = getattr(value, key, missing)
+        if value is missing:
+            return default
+    return value
 
 
 def result_view(request):
@@ -489,6 +505,7 @@ def _build_boq_workspace_data(project_id):
         'mcb_total': consolidated_lookup.get('MCB', 0),
         'junction_box_total': consolidated_lookup.get('JB3PH', 0) + consolidated_lookup.get('JB1PH', 0),
     }
+    summary = apply_active_summary_overrides(project_id, 'boq', summary)
     return {
         'consolidated_items': consolidated_items,
         'line_groups': line_groups,
@@ -496,10 +513,13 @@ def _build_boq_workspace_data(project_id):
     }
 
 
-def _build_sld_workspace_data(project_id):
-    payload = build_project_sld_payload(project_id)
+def _build_sld_workspace_data(project_id, line_id=None):
+    payload = build_project_sld_payload(project_id, line_id=line_id)
     layout = get_project_sld_layout(project_id, payload=payload)
-    validation = validate_project_sld_payload(project_id, payload=payload)
+    validation = validate_project_sld_payload(project_id, payload=payload, line_id=line_id)
+    selected_line_id = ''
+    if line_id and payload.get('line_groups'):
+        selected_line_id = payload['line_groups'][0]['line_id']
 
     return {
         'payload': payload,
@@ -508,6 +528,7 @@ def _build_sld_workspace_data(project_id):
         'component_summary': _build_sld_component_summary(payload['nodes']),
         'line_summary': _build_sld_line_summary(payload),
         'summary': _build_sld_summary(payload),
+        'selected_line_id': selected_line_id,
     }
 
 
@@ -564,81 +585,6 @@ def _build_sld_line_summary(payload):
             'edge_count': edge_count,
         })
     return line_summary
-
-
-def _filter_sld_payload_by_line(payload, selected_line_id):
-    selected_line_id = (selected_line_id or '').strip()
-    if not selected_line_id:
-        return payload, ''
-
-    target_groups = [
-        group
-        for group in payload['line_groups']
-        if group['line_id'].casefold() == selected_line_id.casefold()
-    ]
-    if not target_groups:
-        return None, ''
-
-    normalized_line_id = target_groups[0]['line_id']
-    target_line_uids = {
-        str(group.get('line_uid'))
-        for group in target_groups
-        if group.get('line_uid')
-    }
-    filtered_nodes = [
-        node for node in payload['nodes']
-        if (
-            str(node.get('line_uid') or '') in target_line_uids
-            or (not target_line_uids and normalized_line_id in node.get('line_ids', []))
-        )
-    ]
-    component_ids = {node['component_id'] for node in filtered_nodes}
-    filtered_edges = [
-        edge for edge in payload['edges']
-        if edge['from_component_id'] in component_ids
-        and edge['to_component_id'] in component_ids
-        and (
-            str(edge.get('line_uid') or '') in target_line_uids
-            or (not edge.get('line_uid') and normalized_line_id in edge.get('line_ids', []))
-            or (not target_line_uids and normalized_line_id in edge.get('line_ids', []))
-        )
-    ]
-
-    return {
-        **payload,
-        'nodes': filtered_nodes,
-        'edges': filtered_edges,
-        'line_groups': target_groups,
-        'meta': {
-            **payload.get('meta', {}),
-            'branch_count': sum(len(group['branch_indices']) for group in target_groups),
-            'node_count': len(filtered_nodes),
-            'edge_count': len(filtered_edges),
-        },
-    }, normalized_line_id
-
-
-def _filter_sld_workspace_data_by_line(project_id, sld_data, selected_line_id):
-    filtered_payload, normalized_line_id = _filter_sld_payload_by_line(sld_data['payload'], selected_line_id)
-    if filtered_payload is None or not normalized_line_id:
-        return sld_data
-
-    filtered_layout = get_project_sld_layout(project_id, payload=filtered_payload)
-
-    return {
-        **sld_data,
-        'payload': filtered_payload,
-        'layout': filtered_layout,
-        'component_summary': _build_sld_component_summary(filtered_payload['nodes']),
-        'line_summary': _build_sld_line_summary(filtered_payload),
-        'summary': {
-            'line_group_count': len(filtered_payload['line_groups']),
-            'branch_count': filtered_payload['meta']['branch_count'],
-            'node_count': filtered_payload['meta']['node_count'],
-            'edge_count': filtered_payload['meta']['edge_count'],
-        },
-        'selected_line_id': normalized_line_id,
-    }
 
 
 def boq_view(request):
@@ -764,13 +710,13 @@ def sld_workspace_view(request):
     selected_line_error = ''
 
     if project_id and context['project_setup']:
-        sld_data = _build_sld_workspace_data(project_id)
         if selected_line_id:
-            known_line_ids = {row['line_id'].casefold() for row in sld_data['line_summary']}
-            if selected_line_id.casefold() in known_line_ids:
-                sld_data = _filter_sld_workspace_data_by_line(project_id, sld_data, selected_line_id)
-            else:
+            sld_data = _build_sld_workspace_data(project_id, line_id=selected_line_id)
+            if not sld_data['summary']['node_count']:
                 selected_line_error = f"No SLD line group was found for line ID '{selected_line_id}'."
+                sld_data = _build_sld_workspace_data(project_id)
+        else:
+            sld_data = _build_sld_workspace_data(project_id)
 
     context.update({
         'sld_summary': sld_data['summary'],
@@ -800,20 +746,21 @@ def sld_payload_view(request):
     if not context['project_setup']:
         return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
 
-    payload = build_project_sld_payload(project_id)
-    if not payload['meta']['node_count']:
-        return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
-
     if selected_line_id:
-        payload, _normalized_line_id = _filter_sld_payload_by_line(payload, selected_line_id)
-        if payload is None:
+        payload = build_project_sld_payload(project_id, line_id=selected_line_id)
+        if not payload['meta']['node_count']:
             return JsonResponse({'error': f"No SLD line group was found for line ID '{selected_line_id}'."}, status=404)
+    else:
+        payload = build_project_sld_payload(project_id)
+        if not payload['meta']['node_count']:
+            return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
 
     return JsonResponse(payload)
 
 
 def sld_validation_view(request):
     project_id = request.GET.get('project_id')
+    selected_line_id = (request.GET.get('line_id') or '').strip()
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to validate the SLD.'}, status=400)
 
@@ -821,11 +768,13 @@ def sld_validation_view(request):
     if not context['project_setup']:
         return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
 
-    payload = build_project_sld_payload(project_id)
+    payload = build_project_sld_payload(project_id, line_id=selected_line_id)
     if not payload['meta']['node_count']:
+        if selected_line_id:
+            return JsonResponse({'error': f"No SLD line group was found for line ID '{selected_line_id}'."}, status=404)
         return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
 
-    return JsonResponse(validate_project_sld_payload(project_id, payload=payload))
+    return JsonResponse(validate_project_sld_payload(project_id, payload=payload, line_id=selected_line_id))
 
 
 def sld_layout_view(request):
@@ -850,16 +799,13 @@ def sld_layout_view(request):
     if not context['project_setup']:
         return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
 
-    payload = build_project_sld_payload(project_id)
+    payload = build_project_sld_payload(project_id, line_id=selected_line_id)
     if not payload['meta']['node_count']:
+        if selected_line_id:
+            return JsonResponse({'error': f"No SLD line group was found for line ID '{selected_line_id}'."}, status=404)
         return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
 
     response_payload = payload
-    if selected_line_id:
-        response_payload, _normalized_line_id = _filter_sld_payload_by_line(payload, selected_line_id)
-        if response_payload is None:
-            return JsonResponse({'error': f"No SLD line group was found for line ID '{selected_line_id}'."}, status=404)
-
     if request.method == 'GET':
         return JsonResponse(get_project_sld_layout(project_id, payload=response_payload))
 
@@ -867,6 +813,7 @@ def sld_layout_view(request):
         project_id,
         positions=body.get('positions', {}),
         payload=payload,
+        prune_stale=not selected_line_id,
     )
     refreshed_layout = get_project_sld_layout(project_id, payload=response_payload)
     return JsonResponse({
@@ -955,14 +902,14 @@ def result_export_view(request):
     branch_rows = [
         {
             'Project ID': project_id,
-            'Line ID': branch.distribution.line.line_id,
-            'Branch Index': branch.branch_index,
-            'Branch Type': branch.branch_type,
-            'Connected To': branch.connected_to,
-            'Circuit Count': branch.circuit_count,
-            'Cable Length DB to JB': branch.cable_length_db_to_jb,
-            'Cable Length JB to JB': branch.cable_length_jb_to_jb,
-            'Tagged Components': str(branch.tagged_components),
+            'Line ID': _branch_value(branch, ['distribution', 'line', 'line_id']),
+            'Branch Index': _branch_value(branch, ['branch_index']),
+            'Branch Type': _branch_value(branch, ['branch_type']),
+            'Connected To': _branch_value(branch, ['connected_to']),
+            'Circuit Count': _branch_value(branch, ['circuit_count']),
+            'Cable Length DB to JB': _branch_value(branch, ['cable_length_db_to_jb']),
+            'Cable Length JB to JB': _branch_value(branch, ['cable_length_jb_to_jb']),
+            'Tagged Components': str(_branch_value(branch, ['tagged_components'], {})),
         }
         for branch in result_data['branch_rows']
     ]

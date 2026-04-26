@@ -614,6 +614,9 @@
         if (root.__sldState) {
             root.__sldState.isDirty = isDirty;
             root.__sldState.hasSavedLayout = hasSavedLayout;
+            if (!isDirty && root.__sldState.dirtyComponentIds) {
+                root.__sldState.dirtyComponentIds.clear();
+            }
         }
     }
 
@@ -674,10 +677,13 @@
         }).join('');
     }
 
-    function collectComponentPositions(state) {
+    function collectComponentPositions(state, componentIds) {
         const positions = {};
-        Object.keys(state.elementByComponentId).forEach(function (componentId) {
+        (componentIds || Object.keys(state.elementByComponentId)).forEach(function (componentId) {
             const element = state.elementByComponentId[componentId];
+            if (!element) {
+                return;
+            }
             const position = element.position();
             const size = element.size();
             positions[componentId] = {
@@ -686,6 +692,17 @@
             };
         });
         return positions;
+    }
+
+    function markDirtyComponents(state, componentIds) {
+        if (!state || !state.dirtyComponentIds) {
+            return;
+        }
+        (componentIds || []).forEach(function (componentId) {
+            if (state.elementByComponentId[componentId]) {
+                state.dirtyComponentIds.add(componentId);
+            }
+        });
     }
 
     function updateLinkGeometry(root) {
@@ -1198,6 +1215,7 @@
             incomingCountByComponent: graphNavigation.incomingCountByComponent,
             isDirty: false,
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
+            dirtyComponentIds: new Set(),
             selectedComponentId: null,
             isApplyingGroupMove: false,
             isSyncingDerivedGeometry: false,
@@ -1223,6 +1241,7 @@
                     position.x - previous.x,
                     position.y - previous.y
                 );
+                markDirtyComponents(state, meta.moveComponentIds || []);
                 setDirtyState(root, true, true);
                 return;
             }
@@ -1232,6 +1251,7 @@
             if (!meta.componentId) {
                 return;
             }
+            markDirtyComponents(state, [meta.componentId]);
             scheduleDerivedGeometryRefresh(root);
             setDirtyState(root, true, true);
         });
@@ -1321,7 +1341,10 @@
         saveButton.disabled = true;
         const layoutUrl = saveButton.dataset.sldLayoutUrl;
         const projectId = saveButton.dataset.projectId;
-        const positions = collectComponentPositions(state);
+        const dirtyComponentIds = state.dirtyComponentIds && state.dirtyComponentIds.size
+            ? Array.from(state.dirtyComponentIds)
+            : Object.keys(state.elementByComponentId);
+        const positions = collectComponentPositions(state, dirtyComponentIds);
         const selectedLineId = root.dataset.selectedLineId;
         const requestPayload = {
             project_id: projectId,

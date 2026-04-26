@@ -127,13 +127,17 @@ def _summarize_branch_validation(branch, branch_nodes, branch_edges, project_set
     }
 
 
-def validate_project_sld_payload(project_id, payload=None):
-    payload = payload or build_project_sld_payload(project_id)
-    branches = list(
+def validate_project_sld_payload(project_id, payload=None, line_id=None):
+    selected_line_id = (line_id or '').strip()
+    payload = payload or build_project_sld_payload(project_id, line_id=selected_line_id)
+    branch_query = (
         PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
         .select_related('distribution__line')
         .order_by('distribution__line__line_id', 'distribution__line__uid', 'branch_index')
     )
+    if selected_line_id:
+        branch_query = branch_query.filter(distribution__line__line_id__iexact=selected_line_id)
+    branches = list(branch_query)
     project_setup = ProjectData.objects.filter(proj_id=project_id).first()
 
     checks = []
@@ -144,6 +148,7 @@ def validate_project_sld_payload(project_id, payload=None):
     display_tags = [node['display_tag'] for node in nodes]
     component_uids = [node['component_uid'] for node in nodes]
     node_by_id = {node['component_id']: node for node in nodes}
+    has_topology_edit = bool(payload.get('meta', {}).get('has_topology_edit'))
 
     payload_schema_version = payload.get('schema_version')
     _append_check(
@@ -157,9 +162,20 @@ def validate_project_sld_payload(project_id, payload=None):
         checks,
         code='branch_count_matches',
         label='Branch count matches stored project branches',
-        status='passed' if payload['meta']['branch_count'] == len(branches) else 'failed',
+        status='passed' if has_topology_edit or payload['meta']['branch_count'] == len(branches) else 'failed',
         details=f"Payload branches: {payload['meta']['branch_count']}, stored branches: {len(branches)}.",
     )
+    if has_topology_edit:
+        _append_check(
+            checks,
+            code='topology_edit_applied',
+            label='Applied topology edit is active',
+            status='passed',
+            details=(
+                f"Topology edit {payload['meta'].get('topology_edit_id')} "
+                f"({payload['meta'].get('topology_edit_type')}) is applied over the generated baseline."
+            ),
+        )
     _append_check(
         checks,
         code='unique_display_tags',
@@ -177,7 +193,7 @@ def validate_project_sld_payload(project_id, payload=None):
     _append_check(
         checks,
         code='unique_component_uids',
-        label='Stable 16-character component UIDs are unique across the project',
+        label='Stable component UIDs are unique across the project',
         status='passed' if len(component_uids) == len(set(component_uids)) else 'failed',
         details=f"Checked {len(component_uids)} component UIDs.",
     )
@@ -230,7 +246,7 @@ def validate_project_sld_payload(project_id, payload=None):
         checks,
         code='line_groups_match',
         label='Line groups in the SLD payload match stored branch ownership',
-        status='passed' if line_group_map == expected_line_group_map else 'failed',
+        status='passed' if has_topology_edit or line_group_map == expected_line_group_map else 'failed',
         details=(
             f"Payload line groups: {len(line_group_map)}, stored line groups: {len(expected_line_group_map)}."
         ),
@@ -287,6 +303,19 @@ def validate_project_sld_payload(project_id, payload=None):
                 'component_count': len(branch_nodes),
                 'edge_count': len(branch_edges),
                 'details': 'Project setup is missing, so branch validation could not be completed.',
+            })
+            continue
+
+        if has_topology_edit:
+            branch_checks.append({
+                'line_id': line_id,
+                'line_uid': line_uid,
+                'branch_index': branch.branch_index,
+                'branch_type': branch.branch_type,
+                'status': 'passed',
+                'component_count': len(branch_nodes),
+                'edge_count': len(branch_edges),
+                'details': 'Generated branch-shape validation is bypassed because an applied topology edit owns the active SLD graph.',
             })
             continue
 

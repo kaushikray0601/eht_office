@@ -89,7 +89,7 @@ Rules:
   display `line_id` remains payload metadata and may also appear in the readable
   component ID string, but must not be the only uniqueness scope
 
-`component_uid` is a stable short derived identifier.
+`component_uid` is a stable 32-hex-character derived identifier.
 
 Rules:
 - must be unique within one project payload

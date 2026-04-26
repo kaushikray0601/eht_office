@@ -1,6 +1,7 @@
 import hashlib
 
 from .models import PowerDistributionBranch
+from .sld_topology import apply_active_topology_edit
 
 
 COMPONENT_DISPLAY_NAMES = {
@@ -26,7 +27,7 @@ COMPONENT_SORT_ORDER = {
 
 
 def _stable_uid(value):
-    return hashlib.sha1(value.encode('utf-8')).hexdigest()[:16]
+    return hashlib.sha256(value.encode('utf-8')).hexdigest()[:32]
 
 
 def _fallback_component_id(branch, component_type, circuit_index):
@@ -202,12 +203,83 @@ def _edge_sort_key(edge):
     )
 
 
-def build_project_sld_payload(project_id):
-    branches = list(
+def _empty_payload(project_id):
+    return {
+        'schema_version': SLD_GRAPH_SCHEMA_VERSION,
+        'project_id': project_id,
+        'nodes': [],
+        'edges': [],
+        'line_groups': [],
+        'meta': {
+            'branch_count': 0,
+            'node_count': 0,
+            'edge_count': 0,
+        },
+    }
+
+
+def filter_sld_payload_by_line(payload, selected_line_id):
+    selected_line_id = (selected_line_id or '').strip()
+    if not selected_line_id:
+        return payload, ''
+
+    target_groups = [
+        group
+        for group in payload.get('line_groups', [])
+        if group.get('line_id', '').casefold() == selected_line_id.casefold()
+    ]
+    if not target_groups:
+        return None, ''
+
+    normalized_line_id = target_groups[0]['line_id']
+    target_line_uids = {
+        str(group.get('line_uid'))
+        for group in target_groups
+        if group.get('line_uid')
+    }
+    filtered_nodes = [
+        node for node in payload.get('nodes', [])
+        if (
+            str(node.get('line_uid') or '') in target_line_uids
+            or (not target_line_uids and normalized_line_id in node.get('line_ids', []))
+        )
+    ]
+    component_ids = {node['component_id'] for node in filtered_nodes}
+    filtered_edges = [
+        edge for edge in payload.get('edges', [])
+        if edge['from_component_id'] in component_ids
+        and edge['to_component_id'] in component_ids
+        and (
+            str(edge.get('line_uid') or '') in target_line_uids
+            or (not edge.get('line_uid') and normalized_line_id in edge.get('line_ids', []))
+            or (not target_line_uids and normalized_line_id in edge.get('line_ids', []))
+        )
+    ]
+
+    return {
+        **payload,
+        'nodes': filtered_nodes,
+        'edges': filtered_edges,
+        'line_groups': target_groups,
+        'meta': {
+            **payload.get('meta', {}),
+            'branch_count': sum(len(group['branch_indices']) for group in target_groups),
+            'node_count': len(filtered_nodes),
+            'edge_count': len(filtered_edges),
+        },
+    }, normalized_line_id
+
+
+def build_project_sld_payload(project_id, line_id=None):
+    selected_line_id = (line_id or '').strip()
+    branch_query = (
         PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
         .select_related('distribution__line', 'distribution__line__process_line_calculation')
         .order_by('distribution__line__line_id', 'distribution__line__uid', 'branch_index')
     )
+    if selected_line_id:
+        branch_query = branch_query.filter(distribution__line__line_id__iexact=selected_line_id)
+    branches = list(branch_query)
 
     node_by_component_id = {}
     edges = []
@@ -243,7 +315,7 @@ def build_project_sld_payload(project_id):
         else:
             edges.extend(_fallback_connections(branch, component_lookup))
 
-    return {
+    generated_payload = {
         'schema_version': SLD_GRAPH_SCHEMA_VERSION,
         'project_id': project_id,
         'nodes': sorted(node_by_component_id.values(), key=_node_sort_key),
@@ -262,3 +334,8 @@ def build_project_sld_payload(project_id):
             'edge_count': len(edges),
         },
     }
+    payload = apply_active_topology_edit(project_id, generated_payload)
+    if selected_line_id:
+        filtered_payload, _normalized_line_id = filter_sld_payload_by_line(payload, selected_line_id)
+        return filtered_payload or _empty_payload(project_id)
+    return payload
