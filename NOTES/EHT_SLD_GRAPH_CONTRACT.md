@@ -60,6 +60,10 @@ Schema versioning:
 - rich branch JSON also uses `schema_version` inside `tagged_components`; that
   internal source-data version is separate from the public graph payload version.
 - validation fails payloads with missing or unsupported public `schema_version`.
+- validation warns when stored branch `tagged_components` still require legacy
+  fallback reconstruction. Fallback removal should happen only after the schema
+  audit reports explicit component details and graph connections for all active
+  branches.
 
 ## 4. Node Contract
 

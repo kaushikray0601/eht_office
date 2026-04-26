@@ -1,6 +1,47 @@
 from copy import deepcopy
+import hashlib
+import json
 
 from .models import SLDTopologyEdit
+
+
+def payload_fingerprint(payload):
+    stable_payload = {
+        'schema_version': payload.get('schema_version'),
+        'nodes': sorted(
+            (
+                node.get('component_id'),
+                node.get('component_type'),
+                node.get('line_uid'),
+                node.get('branch_index'),
+                node.get('circuit_index'),
+                node.get('display_tag'),
+                node.get('metadata') or {},
+            )
+            for node in payload.get('nodes', [])
+        ),
+        'edges': sorted(
+            (
+                edge.get('from_component_id'),
+                edge.get('to_component_id'),
+                edge.get('line_uid'),
+                edge.get('branch_index'),
+                edge.get('circuit_index'),
+            )
+            for edge in payload.get('edges', [])
+        ),
+        'line_groups': sorted(
+            (
+                group.get('line_uid'),
+                group.get('line_id'),
+                tuple(group.get('branch_indices') or []),
+            )
+            for group in payload.get('line_groups', [])
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(stable_payload, sort_keys=True, default=str).encode('utf-8')
+    ).hexdigest()
 
 
 def get_active_topology_edit(project_id):
@@ -45,7 +86,7 @@ def _sort_line_group(group):
     )
 
 
-def _normalize_payload(payload, project_id, edit):
+def _normalize_payload(payload, project_id, edit, generated_payload=None):
     normalized = deepcopy(payload)
     normalized['project_id'] = project_id
     normalized['nodes'] = sorted(normalized.get('nodes', []), key=_sort_node)
@@ -64,6 +105,10 @@ def _normalize_payload(payload, project_id, edit):
         'topology_edit_id': edit.id,
         'topology_edit_type': edit.edit_type,
         'topology_edit_status': edit.status,
+        'topology_baseline_changed': bool(
+            edit.baseline_fingerprint
+            and edit.baseline_fingerprint != payload_fingerprint(generated_payload or payload)
+        ),
     })
     normalized['meta'] = meta
     return normalized
@@ -76,9 +121,9 @@ def apply_active_topology_edit(project_id, generated_payload):
 
     edited_payload = (edit.edit_payload or {}).get('sld_payload')
     if isinstance(edited_payload, dict):
-        return _normalize_payload(edited_payload, project_id, edit)
+        return _normalize_payload(edited_payload, project_id, edit, generated_payload=generated_payload)
 
-    return _normalize_payload(generated_payload, project_id, edit)
+    return _normalize_payload(generated_payload, project_id, edit, generated_payload=generated_payload)
 
 
 def apply_active_summary_overrides(project_id, summary_name, summary):

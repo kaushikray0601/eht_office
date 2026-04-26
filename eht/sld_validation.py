@@ -1,5 +1,6 @@
 from .models import PowerDistributionBranch, ProjectData
 from .sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
+from .sld_schema import audit_tagged_component_schema
 
 
 UPSTREAM_COMPONENT_ORDER = ['MCB', 'Cable4C', 'Isolator3PH', 'JB3PH']
@@ -149,6 +150,7 @@ def validate_project_sld_payload(project_id, payload=None, line_id=None):
     component_uids = [node['component_uid'] for node in nodes]
     node_by_id = {node['component_id']: node for node in nodes}
     has_topology_edit = bool(payload.get('meta', {}).get('has_topology_edit'))
+    schema_audit = audit_tagged_component_schema(project_id, line_id=selected_line_id)
 
     payload_schema_version = payload.get('schema_version')
     _append_check(
@@ -249,6 +251,20 @@ def validate_project_sld_payload(project_id, payload=None, line_id=None):
         status='passed' if has_topology_edit or line_group_map == expected_line_group_map else 'failed',
         details=(
             f"Payload line groups: {len(line_group_map)}, stored line groups: {len(expected_line_group_map)}."
+        ),
+    )
+    _append_check(
+        checks,
+        code='tagged_component_schema_coverage',
+        label='Stored tagged component data uses explicit SLD schema',
+        status='passed' if schema_audit['ready_for_strict_schema'] else 'warning',
+        details=(
+            f"Checked {schema_audit['branch_count']} branch(es); all include explicit schema data."
+            if schema_audit['ready_for_strict_schema']
+            else (
+                f"{schema_audit['affected_branch_count']} branch(es) need schema repair "
+                f"before fallback reconstruction can be removed."
+            )
         ),
     )
 

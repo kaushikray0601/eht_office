@@ -90,6 +90,7 @@ Tasks:
 - [x] Define how future manual edits will be represented without corrupting generated topology
 - [x] Add tests for graph determinism across repeated graph builds
 - [x] Add tests for backward compatibility with legacy branch JSON fallback
+- [x] Add explicit schema coverage audit before removing fallback graph reconstruction
 
 Recommended file focus:
 - [eht/sld_payload.py](/home/kr/mydev/eht_office/eht/sld_payload.py:162)
@@ -169,7 +170,7 @@ Tasks:
 - [x] Design a review/reset model for returning to generated baseline
 - [ ] Define where cold-cable-length edits belong and how they propagate
 - [ ] Define alternate-tracer reselection workflow and how diagram refresh is communicated
-- [ ] Add tests for reset-to-generated behavior after allowed edits
+- [x] Add tests for reset-to-generated behavior after allowed edits
 
 Important note:
 - topology editing should not be enabled before the provenance model is clear
@@ -261,6 +262,9 @@ Current next sprint:
 - [x] remove the unused old standalone SLD stylesheet and keep current SLD presentation in the active workspace stylesheet/renderer
 - [x] add fit-all and fit-selected-line canvas navigation
 - [x] add presentation-only line and branch regrouping through layout handles without changing generated topology
+- [x] add first controlled combine-feeders topology workflow with MCB selection, preview, breaker recommendation, audit remarks, and applied topology override
+- [x] add first controlled split-circuits topology workflow with downstream circuit selection, new manual MCB preview, breaker recommendation, audit remarks, and applied topology override
+- [x] add generated-vs-edited/recalculated topology UI state and reset-to-generated behavior
 
 ## 6. Delivery Risks
 

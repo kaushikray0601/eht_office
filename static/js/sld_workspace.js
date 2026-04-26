@@ -638,6 +638,52 @@
         return panel ? panel.querySelector('#sld-inspector-details') : null;
     }
 
+    function getCombineSummaryContainer(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-combine-summary') : null;
+    }
+
+    function updateCombineControls(root) {
+        const state = root.__sldState;
+        const panel = root.closest('.sld-panel');
+        const combineButton = panel ? panel.querySelector('#sld-combine-mode') : null;
+        const splitButton = panel ? panel.querySelector('#sld-split-mode') : null;
+        const previewButton = panel ? panel.querySelector('#sld-combine-preview') : null;
+        const applyButton = panel ? panel.querySelector('#sld-combine-apply') : null;
+        const summary = getCombineSummaryContainer(root);
+        const isSplit = !!(state && state.splitMode);
+        const selectedSet = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
+        const selectedCount = selectedSet ? selectedSet.size : 0;
+        const preview = isSplit ? state.splitPreview : state.combinePreview;
+        const minimumSelection = isSplit ? 1 : 2;
+
+        if (combineButton) {
+            combineButton.classList.toggle('active', !!(state && state.combineMode));
+        }
+        if (splitButton) {
+            splitButton.classList.toggle('active', isSplit);
+        }
+        if (previewButton) {
+            previewButton.disabled = selectedCount < minimumSelection || !(state && (state.combineMode || state.splitMode));
+        }
+        if (applyButton) {
+            applyButton.disabled = !(preview && preview.ok);
+        }
+        if (summary && state) {
+            if (preview && preview.ok && isSplit) {
+                summary.innerHTML = `Selected ${selectedCount} circuit path(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+            } else if (preview && preview.ok) {
+                summary.innerHTML = `Selected ${selectedCount} feeder(s). Remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+            } else {
+                summary.textContent = state.splitMode
+                    ? `Selected ${selectedCount} downstream circuit component(s).`
+                    : state.combineMode
+                        ? `Selected ${selectedCount} MCB feeder source(s).`
+                        : 'Select MCB feeder sources in combine mode, or downstream circuit components in split mode.';
+            }
+        }
+    }
+
     function buildInspectorRows(node, pathNodeCount, pathLinkCount) {
         const metadata = node.metadata || {};
         const rows = [
@@ -675,6 +721,54 @@
         details.innerHTML = buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
+    }
+
+    function applyCombineSelectionStyle(state) {
+        Object.keys(state.elementByComponentId).forEach(function (componentId) {
+            const element = state.elementByComponentId[componentId];
+            const node = state.nodeByComponentId[componentId];
+            if (!element || !node) {
+                return;
+            }
+            if (state.combineSelectionIds.has(componentId) || state.splitSelectionIds.has(componentId)) {
+                element.attr('body/stroke', '#0d6efd');
+                element.attr('body/strokeWidth', 3.2);
+            } else if (!state.selectedComponentId) {
+                applyDefaultElementStyle(element);
+            }
+        });
+    }
+
+    function toggleCombineSelection(root, componentId) {
+        const state = root.__sldState;
+        const node = state && state.nodeByComponentId[componentId];
+        if (!state || !node || node.component_type !== 'MCB') {
+            return;
+        }
+        if (state.combineSelectionIds.has(componentId)) {
+            state.combineSelectionIds.delete(componentId);
+        } else {
+            state.combineSelectionIds.add(componentId);
+        }
+        state.combinePreview = null;
+        applyCombineSelectionStyle(state);
+        updateCombineControls(root);
+    }
+
+    function toggleSplitSelection(root, componentId) {
+        const state = root.__sldState;
+        const node = state && state.nodeByComponentId[componentId];
+        if (!state || !node || node.component_type === 'MCB' || node.circuit_index === null || node.circuit_index === undefined) {
+            return;
+        }
+        if (state.splitSelectionIds.has(componentId)) {
+            state.splitSelectionIds.delete(componentId);
+        } else {
+            state.splitSelectionIds.add(componentId);
+        }
+        state.splitPreview = null;
+        applyCombineSelectionStyle(state);
+        updateCombineControls(root);
     }
 
     function collectComponentPositions(state, componentIds) {
@@ -1217,6 +1311,12 @@
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
             dirtyComponentIds: new Set(),
             selectedComponentId: null,
+            combineMode: false,
+            combineSelectionIds: new Set(),
+            combinePreview: null,
+            splitMode: false,
+            splitSelectionIds: new Set(),
+            splitPreview: null,
             isApplyingGroupMove: false,
             isSyncingDerivedGeometry: false,
         };
@@ -1261,6 +1361,14 @@
             if (!meta.componentId) {
                 return;
             }
+            if (root.__sldState && root.__sldState.combineMode) {
+                toggleCombineSelection(root, meta.componentId);
+                return;
+            }
+            if (root.__sldState && root.__sldState.splitMode) {
+                toggleSplitSelection(root, meta.componentId);
+                return;
+            }
             highlightSelection(root, meta.componentId);
         });
 
@@ -1275,6 +1383,7 @@
         refreshDerivedGeometry(root);
         updateSavedCountBadge(root, (savedLayout && savedLayout.meta && savedLayout.meta.saved_count) || 0);
         setDirtyState(root, false, !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout));
+        updateCombineControls(root);
         highlightSelection(root, null);
         fitPaperToContent(root);
     }
@@ -1416,6 +1525,164 @@
         });
     }
 
+    function postTopologyRequest(root, url, selectedIds, includeRemarks) {
+        const state = root.__sldState;
+        if (!state || !url || !selectedIds || !selectedIds.size) {
+            return null;
+        }
+        const panel = root.closest('.sld-panel');
+        const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
+        const payload = {
+            project_id: root.dataset.projectId,
+            component_ids: Array.from(selectedIds),
+        };
+        if (includeRemarks && remarks) {
+            payload.remarks = remarks.value;
+        }
+        return $.ajax({
+            url: url,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+        });
+    }
+
+    function previewCombineFeeders(root) {
+        const state = root.__sldState;
+        const isSplit = !!(state && state.splitMode);
+        const url = isSplit ? root.dataset.sldTopologySplitPreviewUrl : root.dataset.sldTopologyCombinePreviewUrl;
+        const selectedIds = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
+        const request = postTopologyRequest(root, url, selectedIds, false);
+        if (!request) {
+            return;
+        }
+        request.done(function (preview) {
+            if (isSplit) {
+                root.__sldState.splitPreview = preview;
+            } else {
+                root.__sldState.combinePreview = preview;
+            }
+            updateCombineControls(root);
+        }).fail(function (xhr) {
+            if (isSplit) {
+                root.__sldState.splitPreview = null;
+            } else {
+                root.__sldState.combinePreview = null;
+            }
+            updateCombineControls(root);
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to preview topology edit.', 'error');
+            }
+        });
+    }
+
+    function applyCombineFeeders(root) {
+        const state = root.__sldState;
+        const isSplit = !!(state && state.splitMode);
+        const url = isSplit ? root.dataset.sldTopologySplitApplyUrl : root.dataset.sldTopologyCombineApplyUrl;
+        const selectedIds = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
+        const request = postTopologyRequest(root, url, selectedIds, true);
+        if (!request) {
+            return;
+        }
+        request.done(function (response) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Topology edit applied.', 'success');
+            }
+            const warnings = response.validation_summary && response.validation_summary.warnings;
+            updateTopologyStateUi(root, {
+                hasEdit: true,
+                editType: response.preview ? response.preview.edit_type : 'manual',
+                warning: warnings && warnings.length ? warnings[0] : '',
+            });
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to apply topology edit.', 'error');
+            }
+        });
+    }
+
+    function updateTopologyStateUi(root, topologyState) {
+        const panel = root.closest('.sld-panel');
+        if (!panel) {
+            return;
+        }
+        const hasEdit = !!(topologyState && topologyState.hasEdit);
+        const badge = panel.querySelector('.sld-topology-state-badge');
+        const resetButton = panel.querySelector('#sld-topology-reset');
+        let alert = panel.querySelector('.sld-topology-edit-alert');
+
+        if (badge) {
+            if (topologyState && topologyState.baselineChanged) {
+                badge.textContent = 'Baseline Recalculated';
+                badge.className = 'badge text-bg-danger sld-topology-state-badge';
+            } else {
+                badge.textContent = hasEdit ? 'Topology Edited' : 'Generated Topology';
+                badge.className = hasEdit
+                    ? 'badge text-bg-warning text-dark sld-topology-state-badge'
+                    : 'badge text-bg-light border sld-topology-state-badge';
+            }
+        }
+        if (resetButton) {
+            resetButton.disabled = !hasEdit;
+        }
+        if (!hasEdit) {
+            if (alert) {
+                alert.remove();
+            }
+            return;
+        }
+        if (!alert) {
+            const form = panel.querySelector('#sld-line-filter-form');
+            alert = document.createElement('div');
+            alert.className = 'alert alert-warning py-2 mb-3 sld-topology-edit-alert';
+            if (form && form.parentNode) {
+                form.parentNode.insertBefore(alert, form);
+            }
+        }
+        if (alert) {
+            const editType = topologyState.editType || 'manual';
+            const warning = topologyState.warning || 'Review downstream BOQ and cable schedule outputs before issue.';
+            alert.innerHTML = `Active topology edit: <strong>${escapeHtml(editType)}</strong>. ${escapeHtml(warning)}`;
+        }
+    }
+
+    function resetTopologyEdit(root) {
+        const url = root.dataset.sldTopologyResetUrl;
+        const projectId = root.dataset.projectId;
+        if (!url || !projectId) {
+            return;
+        }
+        $.ajax({
+            url: url,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify({ project_id: projectId }),
+        }).done(function (response) {
+            if (root.__sldState) {
+                root.__sldState.combineMode = false;
+                root.__sldState.splitMode = false;
+                root.__sldState.combineSelectionIds.clear();
+                root.__sldState.splitSelectionIds.clear();
+                root.__sldState.combinePreview = null;
+                root.__sldState.splitPreview = null;
+            }
+            updateTopologyStateUi(root, { hasEdit: false });
+            updateCombineControls(root);
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Topology edit reset.', 'info');
+            }
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to reset topology edit.', 'error');
+            }
+        });
+    }
+
     $(document).on('click', '#sld-save-layout', function () {
         const root = document.getElementById('sld-diagram-shell');
         if (!root) {
@@ -1430,6 +1697,51 @@
             return;
         }
         resetCurrentLayout(root);
+    });
+
+    $(document).on('click', '#sld-combine-mode', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldState) {
+            return;
+        }
+        root.__sldState.combineMode = !root.__sldState.combineMode;
+        root.__sldState.splitMode = false;
+        root.__sldState.combinePreview = null;
+        root.__sldState.splitPreview = null;
+        updateCombineControls(root);
+    });
+
+    $(document).on('click', '#sld-split-mode', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldState) {
+            return;
+        }
+        root.__sldState.splitMode = !root.__sldState.splitMode;
+        root.__sldState.combineMode = false;
+        root.__sldState.combinePreview = null;
+        root.__sldState.splitPreview = null;
+        updateCombineControls(root);
+    });
+
+    $(document).on('click', '#sld-combine-preview', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            previewCombineFeeders(root);
+        }
+    });
+
+    $(document).on('click', '#sld-combine-apply', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            applyCombineFeeders(root);
+        }
+    });
+
+    $(document).on('click', '#sld-topology-reset', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            resetTopologyEdit(root);
+        }
     });
 
     $(document).on('click', '#sld-fit-view', function () {

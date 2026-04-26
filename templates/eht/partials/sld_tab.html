@@ -58,13 +58,29 @@
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                     <div>
                         <h6 class="mb-1">Diagram Canvas</h6>
-                        <p class="text-muted small mb-0">This canvas renders the project-backed SLD payload directly from persisted branch data. Node, branch, and line positions can be adjusted and saved without changing the calculated topology.</p>
+                        <p class="text-muted small mb-0">This canvas renders the active project-backed SLD payload. Layout moves save without changing the calculated topology; Combine/Split creates audited topology edits.</p>
                     </div>
                     <div class="d-flex flex-wrap gap-2">
                         <span class="badge text-bg-light border sld-saved-count-badge">Saved Nodes: {{ sld_layout.meta.saved_count }}</span>
+                        {% if sld_topology_state.topology_baseline_changed %}
+                            <span class="badge text-bg-danger sld-topology-state-badge">Baseline Recalculated</span>
+                        {% elif sld_topology_state.has_topology_edit %}
+                            <span class="badge text-bg-warning text-dark sld-topology-state-badge">Topology Edited</span>
+                        {% else %}
+                            <span class="badge text-bg-light border sld-topology-state-badge">Generated Topology</span>
+                        {% endif %}
                         <span class="badge text-bg-light border">JSON Endpoint Ready</span>
                     </div>
                 </div>
+                {% if sld_topology_state.has_topology_edit %}
+                    <div class="alert alert-warning py-2 mb-3 sld-topology-edit-alert">
+                        Active topology edit: <strong>{{ sld_topology_state.topology_edit_type }}</strong>.
+                        {% if sld_topology_state.topology_baseline_changed %}
+                            Generated topology has changed since this edit was applied; validate or reset before issue.
+                        {% endif %}
+                        {{ sld_topology_state.manual_topology_warning|default:"Review downstream BOQ and cable schedule outputs before issue." }}
+                    </div>
+                {% endif %}
                 <form
                     id="sld-line-filter-form"
                     method="get"
@@ -173,6 +189,11 @@
                             data-sld-payload-url="{{ sld_payload_url }}"
                             data-sld-layout-url="{{ sld_layout_url }}"
                             data-sld-layout-reset-url="{{ sld_layout_reset_url }}"
+                            data-sld-topology-combine-preview-url="{{ sld_topology_combine_preview_url }}"
+                            data-sld-topology-combine-apply-url="{{ sld_topology_combine_apply_url }}"
+                            data-sld-topology-split-preview-url="{{ sld_topology_split_preview_url }}"
+                            data-sld-topology-split-apply-url="{{ sld_topology_split_apply_url }}"
+                            data-sld-topology-reset-url="{{ sld_topology_reset_url }}"
                             data-selected-line-id="{{ sld_selected_line_id }}"
                         >
                             <div class="sld-diagram-shell__inner">
@@ -191,6 +212,32 @@
                                 Select a component in the diagram to inspect its details and highlight the source path.
                             </div>
                             <dl id="sld-inspector-details" class="sld-inspector-details mb-0"></dl>
+                            <div class="border-top mt-3 pt-3">
+                                <div class="d-flex flex-wrap gap-2 mb-2">
+                                    <button type="button" id="sld-combine-mode" class="btn btn-outline-primary btn-sm">
+                                        <i class="bi bi-intersect me-1"></i>Combine
+                                    </button>
+                                    <button type="button" id="sld-split-mode" class="btn btn-outline-primary btn-sm">
+                                        <i class="bi bi-diagram-2 me-1"></i>Split
+                                    </button>
+                                    <button type="button" id="sld-combine-preview" class="btn btn-outline-dark btn-sm" disabled>
+                                        Preview
+                                    </button>
+                                    <button type="button" id="sld-combine-apply" class="btn btn-primary btn-sm" disabled>
+                                        Apply
+                                    </button>
+                                    <button
+                                        type="button"
+                                        id="sld-topology-reset"
+                                        class="btn btn-outline-danger btn-sm"
+                                        {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
+                                    >
+                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Topology
+                                    </button>
+                                </div>
+                                <textarea id="sld-combine-remarks" class="form-control form-control-sm mb-2" rows="2" placeholder="Optional audit remarks"></textarea>
+                                <div id="sld-combine-summary" class="small text-muted">Select MCB feeder sources in combine mode.</div>
+                            </div>
                         </div>
                     </div>
                 </div>

@@ -29,6 +29,7 @@ from .models import (
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
+    SLDTopologyEdit,
     UserAttempt,
     is_default_project_id,
 )
@@ -37,6 +38,12 @@ from .sanatize_input import sanitize_file
 from .sld_layout import get_project_sld_layout, reset_project_sld_layout, save_project_sld_layout
 from .sld_payload import build_project_sld_payload
 from .sld_topology import apply_active_cable_schedule_rows, apply_active_summary_overrides
+from .sld_topology_workflows import (
+    apply_combine_feeders,
+    apply_split_circuits,
+    preview_combine_feeders,
+    preview_split_circuits,
+)
 from .sld_validation import validate_project_sld_payload
 
 COOLDOWN_PERIOD_MINUTES = 30
@@ -528,7 +535,20 @@ def _build_sld_workspace_data(project_id, line_id=None):
         'component_summary': _build_sld_component_summary(payload['nodes']),
         'line_summary': _build_sld_line_summary(payload),
         'summary': _build_sld_summary(payload),
+        'topology_state': _build_sld_topology_state(payload),
         'selected_line_id': selected_line_id,
+    }
+
+
+def _build_sld_topology_state(payload):
+    meta = payload.get('meta', {})
+    return {
+        'has_topology_edit': bool(meta.get('has_topology_edit')),
+        'topology_edit_id': meta.get('topology_edit_id'),
+        'topology_edit_type': meta.get('topology_edit_type') or '',
+        'topology_edit_status': meta.get('topology_edit_status') or '',
+        'topology_baseline_changed': bool(meta.get('topology_baseline_changed')),
+        'manual_topology_warning': meta.get('manual_topology_warning') or '',
     }
 
 
@@ -705,6 +725,14 @@ def sld_workspace_view(request):
         },
         'component_summary': [],
         'line_summary': [],
+        'topology_state': {
+            'has_topology_edit': False,
+            'topology_edit_id': None,
+            'topology_edit_type': '',
+            'topology_edit_status': '',
+            'topology_baseline_changed': False,
+            'manual_topology_warning': '',
+        },
         'selected_line_id': '',
     }
     selected_line_error = ''
@@ -728,6 +756,12 @@ def sld_workspace_view(request):
         'sld_payload_url': reverse('sld_payload_view'),
         'sld_layout_url': reverse('sld_layout_view'),
         'sld_layout_reset_url': reverse('sld_layout_reset_view'),
+        'sld_topology_combine_preview_url': reverse('sld_topology_combine_preview_view'),
+        'sld_topology_combine_apply_url': reverse('sld_topology_combine_apply_view'),
+        'sld_topology_split_preview_url': reverse('sld_topology_split_preview_view'),
+        'sld_topology_split_apply_url': reverse('sld_topology_split_apply_view'),
+        'sld_topology_reset_url': reverse('sld_topology_reset_view'),
+        'sld_topology_state': sld_data['topology_state'],
         'sld_validation_url': reverse('sld_validation_view'),
         'sld_selected_line_id': sld_data.get('selected_line_id', ''),
         'sld_selected_line_query': selected_line_id,
@@ -845,6 +879,129 @@ def sld_layout_reset_view(request):
     return JsonResponse({
         'success': 'Stored SLD layout reset successfully.',
         **reset_summary,
+    })
+
+
+def _parse_json_request(request):
+    try:
+        return json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return None
+
+
+def sld_topology_combine_preview_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_ids = body.get('component_ids') or []
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    preview = preview_combine_feeders(project_id, component_ids)
+    if not preview['ok']:
+        return JsonResponse({'error': preview['error'], **preview}, status=400)
+    return JsonResponse(preview)
+
+
+def sld_topology_combine_apply_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_ids = body.get('component_ids') or []
+    remarks = body.get('remarks') or ''
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    result = apply_combine_feeders(
+        project_id,
+        component_ids,
+        user=getattr(request, 'user', None),
+        remarks=remarks,
+    )
+    if not result['ok']:
+        return JsonResponse({'error': result['error'], **result}, status=400)
+    return JsonResponse({'success': 'Feeder combine topology edit applied.', **result})
+
+
+def sld_topology_split_preview_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_ids = body.get('component_ids') or []
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    preview = preview_split_circuits(project_id, component_ids)
+    if not preview['ok']:
+        return JsonResponse({'error': preview['error'], **preview}, status=400)
+    return JsonResponse(preview)
+
+
+def sld_topology_split_apply_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_ids = body.get('component_ids') or []
+    remarks = body.get('remarks') or ''
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    result = apply_split_circuits(
+        project_id,
+        component_ids,
+        user=getattr(request, 'user', None),
+        remarks=remarks,
+    )
+    if not result['ok']:
+        return JsonResponse({'error': result['error'], **result}, status=400)
+    return JsonResponse({'success': 'Circuit split topology edit applied.', **result})
+
+
+def sld_topology_reset_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology reset payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to reset topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    reset_count = SLDTopologyEdit.objects.filter(
+        project_id=project_id,
+        status='applied',
+    ).update(status='reset')
+    return JsonResponse({
+        'success': 'Manual topology edit reset. Generated topology is active.',
+        'project_id': project_id,
+        'reset_count': reset_count,
     })
 
 
