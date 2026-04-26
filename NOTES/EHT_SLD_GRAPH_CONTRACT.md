@@ -1,7 +1,7 @@
 # EHT SLD Graph Contract
 
 Date: 2026-04-23
-Last updated: 2026-04-25
+Last updated: 2026-04-26
 
 Status: Canonical contract for the current EHT SLD implementation
 
@@ -29,9 +29,9 @@ This document covers:
 - line-group invariants
 - layout persistence invariants
 - presentation-only regrouping behavior
+- controlled topology-edit invariants
 
 This document does not yet define:
-- user-authored topology overrides
 - annotations/comments schema
 - cross-module reusable graph document standard
 
@@ -189,7 +189,69 @@ Current behavior:
 This behavior is intentional. Future changes must keep partial saves safe unless
 the API contract is explicitly redesigned and tested.
 
-## 10. Backward Compatibility
+## 10. Controlled Topology Edit Contract
+
+Topology editing is an engineering override layer over the generated SLD.
+
+Baseline rules:
+- `PowerDistributionBranch.tagged_components` remains the generated baseline.
+- topology edits must be stored separately from generated branch/source data.
+- applying an edit must not rewrite or destroy the generated baseline.
+- reset-to-generated means deactivating the applied edit layer, not rebuilding
+  source calculation rows by hand.
+
+First allowed edit types:
+- `combine_feeders`: selected MCB feeder paths are combined into one edited
+  feeder path.
+- `split_circuits`: selected branches/circuits are moved onto a new edited
+  feeder path.
+
+Workflow rules:
+- selection and preview are transient UI/server state.
+- the user must run validation before applying an edit.
+- only applied topology edits become the active basis for SLD, BOQ, cable
+  schedule, and connected-load summaries.
+- failed or abandoned previews must not affect downstream outputs.
+- the generated baseline must remain available for comparison and reset.
+
+Recommended persistence shape:
+- use a first-class topology-edit table, not JSON embedded in existing result
+  rows.
+- JSON is acceptable inside that table for generated snapshots and edit payloads,
+  but audit/provenance fields must be queryable.
+
+Required audit/provenance fields:
+- project
+- edit type
+- status, such as `applied`, `superseded`, or `reset`
+- created by
+- created at
+- optional user remarks
+- generated baseline fingerprint
+- generated snapshot for the affected feeder paths
+- edit payload
+- validation summary
+
+Tagging rules:
+- edited display tags should carry a clear manual marker, for example `-M`.
+- technical identity must remain separate from display tag text.
+- inspector and reports must show that a component/path is manually edited.
+
+MCB sizing rules for combine edits:
+- sum the selected feeder ratings/load basis.
+- choose the next available standard MCB rating.
+- highlight the proposed rating as user-review-required.
+- allow user override, then validate against available ratings and loading
+  limits before apply.
+
+Recalculation rules:
+- recalculation always regenerates the baseline.
+- applied topology edits may survive recalculation only when their referenced
+  generated components/feeder paths can still be matched.
+- if the baseline fingerprint or referenced components no longer match, the edit
+  must be marked for review instead of being silently reapplied.
+
+## 11. Backward Compatibility
 
 The payload builder currently supports:
 - rich branch JSON with explicit `component_details` and `connections`
@@ -198,15 +260,14 @@ The payload builder currently supports:
 Reference:
 - [eht/sld_payload.py](/home/kr/mydev/eht_office/eht/sld_payload.py:105)
 
-## 11. Near-Term Contract Decisions
+## 12. Near-Term Contract Decisions
 
 Before advanced editing begins, we must decide:
-- whether user-authored topology deltas are stored separately from generated topology
 - whether a normalized graph table is needed beyond branch JSON
 - how concurrent layout saves will be detected or reconciled
 - how viewport preferences should be persisted separately from node coordinates
 
-## 12. Current Canonical Endpoints
+## 13. Current Canonical Endpoints
 
 The canonical EHT SLD endpoints are:
 - workspace view: `/sld/workspace/`

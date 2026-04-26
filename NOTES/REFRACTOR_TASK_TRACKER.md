@@ -51,6 +51,16 @@ Active ordered task queue as of 2026-04-25:
 - [x] Task 9.10: Continue SLD presentation work: conventional symbol sizing, cable/spec label placement, and clearer per-line grouping.
 - [x] Task 9.11: Add lightweight fit-all and fit-selected-line canvas navigation without introducing a separate navigation model.
 
+Next ordered task queue: SLD engineering topology editing:
+- [ ] Task 10.1: Define the topology-edit contract: generated baseline vs user override, audit/provenance fields, reset-to-generated behavior, and recalculation survival rules.
+- [ ] Task 10.2: Add 4A and 6A breaker ratings to the standard MCB rating choices and confirm all affected forms/tests accept them.
+- [ ] Task 10.3: Model a minimal persisted topology override layer that can represent feeder combine/split edits without rewriting calculation-owned branch source data.
+- [ ] Task 10.4: Build deterministic topology-override application so SLD payload, validation, BOQ, cable schedule, and connected-load summaries consume the edited topology when present.
+- [ ] Task 10.5: Implement the first controlled combine-feeders workflow: select eligible feeder paths, preview removed/added components, calculate next available MCB rating, require user confirmation, and store audit remarks.
+- [ ] Task 10.6: Implement the first controlled split-feeder workflow: select branches/circuits to move to a new feeder path, preview generated MCB/cable/JB changes, require user confirmation, and store audit remarks.
+- [ ] Task 10.7: Add clear UI states for generated, edited, recalculated, warning, and resettable topology so users can understand and trust manual engineering changes.
+- [ ] Task 10.8: Add regression tests for edited topology persistence, recalculation validation, reset-to-generated, BOQ/cable-schedule impact, and audit trail integrity.
+
 Current self-check note:
 - The SLD refactor path remains layered: generated payload, validation, saved layout, and browser rendering stay separate. Duplicate display `line_id` handling is fixed by using `line_uid` for physical line ownership. Display tags are intentionally presentation labels: stable for the same sorted line set, allowed to renumber when the line set or sort identity changes.
 - Simplification pass: removed duplicate browser-side line filtering because `/sld/payload/` is now the canonical server-side line filter. The browser now trusts the endpoint response and only renders it. This keeps filtering rules in one place and avoids maintaining two copies of the same duplicate-`line_id` logic.
