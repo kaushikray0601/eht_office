@@ -96,11 +96,62 @@ def _boq_mcb_total(project_id):
     return item.quantity if item else 0
 
 
+def _boq_junction_box_total(project_id):
+    items = BOQ.objects.filter(
+        project_id=project_id,
+        scope='consolidated',
+        item_code__in=['JB3PH', 'JB1PH'],
+    )
+    return sum(item.quantity for item in items)
+
+
+def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes, recommended_rating):
+    component_id = f"{source_mcb['component_id']}:manual_combine:{component_type}"
+    line_ids = sorted({
+        line_id
+        for node in selected_nodes
+        for line_id in (node.get('line_ids') or ([node.get('line_id')] if node.get('line_id') else []))
+        if line_id
+    })
+    metadata = {
+        'manual_topology_edit': 'combine_feeders',
+        'combined_feeder_count': len(selected_nodes),
+    }
+    if component_type == 'Cable4C':
+        metadata.update({
+            'cable_role': 'MCB_TO_JB3PH',
+            'note': 'Manual feeder-combine trunk cable. Cable sizing is pending detailed cable design.',
+        })
+    if component_type == 'JB3PH':
+        metadata.update({
+            'circuit_count': len(selected_nodes),
+            'source_mcb': source_mcb.get('display_tag'),
+            'recommended_breaker_rating': recommended_rating,
+        })
+
+    return {
+        'component_id': component_id,
+        'component_uid': _component_uid(component_id),
+        'display_tag': display_tag,
+        'component_type': component_type,
+        'display_name': '4C Cable' if component_type == 'Cable4C' else '3PH JB',
+        'label': display_tag,
+        'line_id': source_mcb.get('line_id'),
+        'line_ids': line_ids,
+        'line_uid': source_mcb.get('line_uid'),
+        'branch_index': source_mcb.get('branch_index'),
+        'circuit_index': None,
+        'metadata': metadata,
+    }
+
+
 def _build_edited_payload(payload, selected_nodes, recommended_rating):
     primary = selected_nodes[0]
     secondary_ids = {node['component_id'] for node in selected_nodes[1:]}
+    selected_ids = {node['component_id'] for node in selected_nodes}
     primary_id = primary['component_id']
     edited = deepcopy(payload)
+    _, outgoing_by_id = _edge_lookup(edited)
 
     for node in edited['nodes']:
         if node['component_id'] != primary_id:
@@ -115,19 +166,76 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
         node['display_tag'] = f"{node.get('display_tag', 'MCB')}-M"
         node['label'] = node['display_tag']
 
+    feeder_entry_ids = []
+    for selected_node in selected_nodes:
+        for edge in outgoing_by_id.get(selected_node['component_id'], []):
+            entry_id = edge.get('to_component_id')
+            if entry_id and entry_id not in selected_ids:
+                feeder_entry_ids.append(entry_id)
+    feeder_entry_ids = sorted(set(feeder_entry_ids))
+
+    primary_tag = primary.get('display_tag', 'MCB')
+    tag_suffix = primary_tag.split('_', 1)[1] if '_' in primary_tag else primary_tag
+    cable4c = _manual_combine_node(
+        primary,
+        'Cable4C',
+        f"CCAB4C_{tag_suffix}-M",
+        selected_nodes,
+        recommended_rating,
+    )
+    jb3ph = _manual_combine_node(
+        primary,
+        'JB3PH',
+        f"JB3PH_{tag_suffix}-M",
+        selected_nodes,
+        recommended_rating,
+    )
+
     edited['nodes'] = [
         node for node in edited['nodes']
         if node['component_id'] not in secondary_ids
     ]
+    edited['nodes'].extend([cable4c, jb3ph])
 
     rewired_edges = []
     for edge in edited['edges']:
-        adjusted = dict(edge)
-        if adjusted.get('to_component_id') in secondary_ids:
+        if edge.get('to_component_id') in secondary_ids:
             continue
-        if adjusted.get('from_component_id') in secondary_ids:
-            adjusted['from_component_id'] = primary_id
-        rewired_edges.append(adjusted)
+        if edge.get('from_component_id') in selected_ids:
+            continue
+        rewired_edges.append(dict(edge))
+
+    rewired_edges.extend([
+        {
+            'from_component_id': primary_id,
+            'to_component_id': cable4c['component_id'],
+            'line_ids': cable4c['line_ids'],
+            'line_uid': cable4c.get('line_uid'),
+            'branch_index': cable4c.get('branch_index'),
+            'circuit_index': None,
+        },
+        {
+            'from_component_id': cable4c['component_id'],
+            'to_component_id': jb3ph['component_id'],
+            'line_ids': cable4c['line_ids'],
+            'line_uid': cable4c.get('line_uid'),
+            'branch_index': cable4c.get('branch_index'),
+            'circuit_index': None,
+        },
+    ])
+    node_by_id = _node_lookup(edited)
+    for entry_id in feeder_entry_ids:
+        entry_node = node_by_id.get(entry_id)
+        if not entry_node:
+            continue
+        rewired_edges.append({
+            'from_component_id': jb3ph['component_id'],
+            'to_component_id': entry_id,
+            'line_ids': entry_node.get('line_ids', []),
+            'line_uid': entry_node.get('line_uid'),
+            'branch_index': entry_node.get('branch_index'),
+            'circuit_index': entry_node.get('circuit_index'),
+        })
     edited['edges'] = _dedupe_edges(rewired_edges)
 
     meta = dict(edited.get('meta') or {})
@@ -136,7 +244,7 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
         'edge_count': len(edited['edges']),
         'combine_feeder_count': len(selected_nodes),
         'manual_topology_warning': (
-            'Graph-level feeder combine applied. Detailed cable/JB materialization remains subject to later cable sizing and split/combine domain rules.'
+            'Manual feeder combine applied with a 4C trunk cable and 3PH junction box before the original outgoing feeder cables. Detailed cable sizing remains subject to later cable design rules.'
         ),
     })
     edited['meta'] = meta
@@ -300,6 +408,22 @@ def preview_combine_feeders(project_id, component_ids):
             'ok': False,
             'error': 'Select at least two valid MCB feeder sources to combine.',
         }
+    _, outgoing_by_id = _edge_lookup(payload)
+    selected_ids = {node['component_id'] for node in selected_nodes}
+    missing_outgoing = [
+        node['display_tag']
+        for node in selected_nodes
+        if not any(
+            edge.get('to_component_id') not in selected_ids
+            for edge in outgoing_by_id.get(node['component_id'], [])
+        )
+    ]
+    if missing_outgoing:
+        return {
+            'ok': False,
+            'error': 'Selected MCB feeder sources must have outgoing feeder paths to combine.',
+            'missing_outgoing_feeders': missing_outgoing,
+        }
 
     ratings = [
         float((node.get('metadata') or {}).get('breaker_size') or 0)
@@ -315,6 +439,8 @@ def preview_combine_feeders(project_id, component_ids):
 
     primary = selected_nodes[0]
     removed_nodes = selected_nodes[1:]
+    primary_tag = primary.get('display_tag', 'MCB')
+    tag_suffix = primary_tag.split('_', 1)[1] if '_' in primary_tag else primary_tag
     return {
         'ok': True,
         'project_id': project_id,
@@ -325,6 +451,8 @@ def preview_combine_feeders(project_id, component_ids):
         'updated_display_tags': [f"{primary['display_tag']}-M"],
         'removed_component_ids': [node['component_id'] for node in removed_nodes],
         'removed_display_tags': [node['display_tag'] for node in removed_nodes],
+        'added_component_types': ['Cable4C', 'JB3PH'],
+        'added_display_tags': [f"CCAB4C_{tag_suffix}-M", f"JB3PH_{tag_suffix}-M"],
         'input_breaker_ratings': ratings,
         'combined_breaker_rating': total_rating,
         'recommended_breaker_rating': recommended_rating,
@@ -334,7 +462,7 @@ def preview_combine_feeders(project_id, component_ids):
             for node in selected_nodes
         }),
         'warning': (
-            'This first workflow applies a controlled graph-level feeder combine and marks the resulting MCB for review.'
+            'This workflow combines feeders through a manual 4C trunk cable and 3PH junction box. Review cable sizing before issue.'
         ),
     }
 
@@ -429,9 +557,11 @@ def apply_combine_feeders(project_id, component_ids, user=None, remarks=''):
     )
 
     current_mcb_total = _boq_mcb_total(project_id)
+    current_junction_box_total = _boq_junction_box_total(project_id)
     removed_count = len(preview['removed_component_ids'])
     boq_overrides = {
         'mcb_total': max(current_mcb_total - removed_count, 0),
+        'junction_box_total': current_junction_box_total + 1,
     }
 
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')

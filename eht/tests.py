@@ -1669,6 +1669,8 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(preview['edit_type'], 'combine_feeders')
         self.assertEqual(preview['recommended_breaker_rating'], 20)
         self.assertEqual(len(preview['removed_component_ids']), 1)
+        self.assertEqual(preview['added_component_types'], ['Cable4C', 'JB3PH'])
+        self.assertEqual(len(preview['added_display_tags']), 2)
 
     def test_combine_feeders_apply_persists_active_topology_edit(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -1694,14 +1696,49 @@ class SldTopologyWorkflowTests(TestCase):
         edited_payload = build_project_sld_payload('p1')
         self.assertTrue(edited_payload['meta']['has_topology_edit'])
         self.assertFalse(edited_payload['meta']['topology_baseline_changed'])
-        self.assertEqual(
-            sum(1 for node in edited_payload['nodes'] if node['component_type'] == 'MCB'),
-            1,
-        )
+        nodes_by_type = {}
+        for node in edited_payload['nodes']:
+            nodes_by_type.setdefault(node['component_type'], []).append(node)
+        self.assertEqual(len(nodes_by_type['MCB']), 1)
         self.assertTrue(any(
             node['component_type'] == 'MCB' and node['display_tag'].endswith('-M')
             for node in edited_payload['nodes']
         ))
+        combined_mcb = nodes_by_type['MCB'][0]
+        manual_trunk_cables = [
+            node for node in nodes_by_type['Cable4C']
+            if (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        ]
+        manual_distribution_jbs = [
+            node for node in nodes_by_type['JB3PH']
+            if (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        ]
+        self.assertEqual(len(manual_trunk_cables), 1)
+        self.assertEqual(len(manual_distribution_jbs), 1)
+        trunk_cable = manual_trunk_cables[0]
+        distribution_jb = manual_distribution_jbs[0]
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in edited_payload['edges']
+        }
+        self.assertIn((combined_mcb['component_id'], trunk_cable['component_id']), edge_pairs)
+        self.assertIn((trunk_cable['component_id'], distribution_jb['component_id']), edge_pairs)
+        self.assertEqual(
+            sum(
+                1
+                for node in edited_payload['nodes']
+                if (distribution_jb['component_id'], node['component_id']) in edge_pairs
+            ),
+            2,
+        )
+        self.assertEqual(
+            [
+                edge['to_component_id']
+                for edge in edited_payload['edges']
+                if edge['from_component_id'] == combined_mcb['component_id']
+            ],
+            [trunk_cable['component_id']],
+        )
 
     def test_combine_feeders_preview_requires_two_mcbs(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])

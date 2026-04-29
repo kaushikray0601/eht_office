@@ -210,6 +210,15 @@ First allowed edit types:
 - `split_circuits`: selected branches/circuits are moved onto a new edited
   feeder path.
 
+Combine-feeder topology rule:
+- a combined MCB must not directly feed multiple outgoing 3C power cables.
+- the edited graph must insert a manual 4C trunk cable and 3PH junction box
+  between the combined MCB and the existing outgoing feeder paths.
+- required flow:
+  `MCB -> Cable4C -> JB3PH -> existing outgoing Cable3C/JB1PH/tracer paths`.
+- the MCB, 4C cable, and 3PH JB must carry manual edit metadata and display-tag
+  markers; cable sizing remains a review-required downstream design step.
+
 Workflow rules:
 - selection and preview are transient UI/server state.
 - the user must run validation before applying an edit.

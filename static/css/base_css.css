@@ -404,6 +404,11 @@ footer {
     overflow: auto;
 }
 
+.sld-diagram-shell--canvas {
+    align-items: flex-start;
+    justify-content: flex-start;
+}
+
 .sld-diagram-shell__inner {
     width: min(560px, 100%);
     padding: 1rem 1.1rem;

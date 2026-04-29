@@ -262,7 +262,7 @@ Current next sprint:
 - [x] remove the unused old standalone SLD stylesheet and keep current SLD presentation in the active workspace stylesheet/renderer
 - [x] add fit-all and fit-selected-line canvas navigation
 - [x] add presentation-only line and branch regrouping through layout handles without changing generated topology
-- [x] add first controlled combine-feeders topology workflow with MCB selection, preview, breaker recommendation, audit remarks, and applied topology override
+- [x] add first controlled combine-feeders topology workflow with MCB selection, preview, breaker recommendation, audit remarks, and applied topology override through `MCB -> Cable4C -> JB3PH -> existing outgoing feeder paths`
 - [x] add first controlled split-circuits topology workflow with downstream circuit selection, new manual MCB preview, breaker recommendation, audit remarks, and applied topology override
 - [x] add generated-vs-edited/recalculated topology UI state and reset-to-generated behavior
 

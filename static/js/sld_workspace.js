@@ -1,6 +1,7 @@
 (function () {
     const UPSTREAM_COMPONENT_ORDER = ['MCB', 'Cable4C', 'Isolator3PH', 'JB3PH'];
     const DOWNSTREAM_COMPONENT_ORDER = ['Isolator1PH', 'Cable3C', 'JB1PH', 'Tracer', 'EndTermination'];
+    const COMPONENT_SORT_ORDER = {};
     const EXTERNAL_DETAIL_COMPONENTS = new Set(['Cable4C', 'Cable3C', 'Tracer']);
     const NODE_STYLE = {
         MCB: { width: 108, height: 54, fill: '#f3f7fb', stroke: '#1f3447' },
@@ -13,6 +14,9 @@
         Tracer: { width: 120, height: 20, fill: '#eefaf1', stroke: '#2f6c43' },
         EndTermination: { width: 28, height: 28, fill: '#243b53', stroke: '#1a2735' },
     };
+    UPSTREAM_COMPONENT_ORDER.concat(DOWNSTREAM_COMPONENT_ORDER).forEach(function (componentType, index) {
+        COMPONENT_SORT_ORDER[componentType] = index;
+    });
 
     function getNodeStyle(componentType) {
         return NODE_STYLE[componentType] || { width: 100, height: 40, fill: '#f8fafc', stroke: '#1f3447' };
@@ -42,6 +46,7 @@
     }
 
     function setSldMessage(root, title, message, showSpinner) {
+        root.classList.remove('sld-diagram-shell--canvas');
         root.innerHTML = `
             <div class="sld-diagram-shell__inner">
                 ${showSpinner ? '<div class="spinner-border spinner-border-sm text-secondary mb-2" role="status" aria-hidden="true"></div>' : ''}
@@ -343,10 +348,156 @@
         return positions;
     }
 
-    function mergeSavedPositions(autoPositions, savedPositions) {
+    function getNodeByComponentId(payload) {
+        const nodeById = {};
+        (payload.nodes || []).forEach(function (node) {
+            nodeById[node.component_id] = node;
+        });
+        return nodeById;
+    }
+
+    function compareNodesForLayout(left, right) {
+        const leftCircuit = left.circuit_index === null || left.circuit_index === undefined ? -1 : Number(left.circuit_index);
+        const rightCircuit = right.circuit_index === null || right.circuit_index === undefined ? -1 : Number(right.circuit_index);
+        const leftOrder = Object.prototype.hasOwnProperty.call(COMPONENT_SORT_ORDER, left.component_type) ? COMPONENT_SORT_ORDER[left.component_type] : 99;
+        const rightOrder = Object.prototype.hasOwnProperty.call(COMPONENT_SORT_ORDER, right.component_type) ? COMPONENT_SORT_ORDER[right.component_type] : 99;
+        return [
+            String(left.line_id || '').localeCompare(String(right.line_id || '')),
+            Number(left.branch_index || 0) - Number(right.branch_index || 0),
+            leftCircuit - rightCircuit,
+            leftOrder - rightOrder,
+            String(left.display_tag || '').localeCompare(String(right.display_tag || '')),
+        ].find(function (result) { return result !== 0; }) || 0;
+    }
+
+    function buildOutgoingEdgesBySource(payload) {
+        const outgoing = {};
+        (payload.edges || []).forEach(function (edge) {
+            outgoing[edge.from_component_id] = outgoing[edge.from_component_id] || [];
+            outgoing[edge.from_component_id].push(edge);
+        });
+        return outgoing;
+    }
+
+    function sortOutgoingEdges(edges, nodeById) {
+        return (edges || []).slice().sort(function (left, right) {
+            return compareNodesForLayout(nodeById[left.to_component_id] || {}, nodeById[right.to_component_id] || {});
+        });
+    }
+
+    function layoutManualCombineSubtree(componentId, depth, context, stack) {
+        const node = context.nodeById[componentId];
+        if (!node || stack.has(componentId)) {
+            return null;
+        }
+        const nextStack = new Set(stack);
+        nextStack.add(componentId);
+        const childRanges = sortOutgoingEdges(context.outgoingBySource[componentId], context.nodeById)
+            .map(function (edge) {
+                return layoutManualCombineSubtree(edge.to_component_id, depth + 1, context, nextStack);
+            })
+            .filter(Boolean);
+
+        let minY;
+        let maxY;
+        if (!childRanges.length) {
+            minY = context.startY + (context.rowIndex * context.rowGap);
+            maxY = minY;
+            context.rowIndex += 1;
+        } else {
+            minY = Math.min.apply(null, childRanges.map(function (range) { return range.minY; }));
+            maxY = Math.max.apply(null, childRanges.map(function (range) { return range.maxY; }));
+        }
+
+        context.positions[componentId] = {
+            x: context.startX + (depth * context.levelGap),
+            y: minY + ((maxY - minY) / 2),
+        };
+        context.lockedComponentIds.add(componentId);
+        return { minY: minY, maxY: maxY };
+    }
+
+    function placeManualCombineTopology(payload, positions) {
+        if (!payload.meta || payload.meta.topology_edit_type !== 'combine_feeders') {
+            return { positions: positions, lockedComponentIds: new Set() };
+        }
+        const nodeById = getNodeByComponentId(payload);
+        const roots = (payload.nodes || []).filter(function (node) {
+            const metadata = node.metadata || {};
+            return node.component_type === 'MCB' && metadata.manual_topology_edit === 'combine_feeders';
+        }).sort(compareNodesForLayout);
+        const context = {
+            positions: positions,
+            nodeById: nodeById,
+            outgoingBySource: buildOutgoingEdgesBySource(payload),
+            lockedComponentIds: new Set(),
+            startX: 190,
+            startY: 116,
+            rowGap: 112,
+            levelGap: 156,
+            rowIndex: 0,
+        };
+        roots.forEach(function (rootNode, index) {
+            if (index > 0) {
+                context.rowIndex += 1;
+            }
+            layoutManualCombineSubtree(rootNode.component_id, 0, context, new Set());
+        });
+        return {
+            positions: context.positions,
+            lockedComponentIds: context.lockedComponentIds,
+        };
+    }
+
+    function normalizeLayoutPositions(payload, positions) {
+        let minLeft = Infinity;
+        let minTop = Infinity;
+        (payload.nodes || []).forEach(function (node) {
+            const position = positions[node.component_id];
+            if (!position) {
+                return;
+            }
+            const style = getNodeStyle(node.component_type);
+            minLeft = Math.min(minLeft, position.x);
+            minTop = Math.min(minTop, position.y - (style.height / 2));
+        });
+        if (!Number.isFinite(minLeft) || !Number.isFinite(minTop)) {
+            return positions;
+        }
+        const shiftX = minLeft < 40 ? 40 - minLeft : 0;
+        const shiftY = minTop < 42 ? 42 - minTop : 0;
+        if (!shiftX && !shiftY) {
+            return positions;
+        }
+        Object.keys(positions).forEach(function (componentId) {
+            positions[componentId] = {
+                x: positions[componentId].x + shiftX,
+                y: positions[componentId].y + shiftY,
+            };
+        });
+        return positions;
+    }
+
+    function savedLayoutMatchesActiveTopology(payload, savedPositions) {
+        if (!payload.meta || !payload.meta.has_topology_edit) {
+            return true;
+        }
+        const manualNodeIds = (payload.nodes || [])
+            .filter(function (node) { return !!((node.metadata || {}).manual_topology_edit); })
+            .map(function (node) { return node.component_id; });
+        const positions = savedPositions || {};
+        return manualNodeIds.length > 0 && manualNodeIds.every(function (componentId) {
+            return Boolean(positions[componentId]);
+        });
+    }
+
+    function mergeSavedPositions(autoPositions, savedPositions, lockedComponentIds) {
         const merged = Object.assign({}, autoPositions);
         Object.keys(savedPositions || {}).forEach(function (componentId) {
             if (!merged[componentId]) {
+                return;
+            }
+            if (lockedComponentIds && lockedComponentIds.has(componentId)) {
                 return;
             }
             const coords = savedPositions[componentId];
@@ -400,8 +551,8 @@
                     branchKey: getBranchGroupKey(lineGroup, branchIndex),
                     branchIndex: branchIndex,
                     componentIds: getBranchComponentIds(payload, lineGroup, branchIndex),
-                    x: 108,
-                    y: minY + ((maxY - minY) / 2) - 14,
+                    x: 84,
+                    y: minY + ((maxY - minY) / 2) + 22,
                 });
             });
         });
@@ -673,7 +824,7 @@
             if (preview && preview.ok && isSplit) {
                 summary.innerHTML = `Selected ${selectedCount} circuit path(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else if (preview && preview.ok) {
-                summary.innerHTML = `Selected ${selectedCount} feeder(s). Remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+                summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else {
                 summary.textContent = state.splitMode
                     ? `Selected ${selectedCount} downstream circuit component(s).`
@@ -1179,12 +1330,23 @@
         }
 
         root.innerHTML = '';
+        root.classList.add('sld-diagram-shell--canvas');
         const canvas = document.createElement('div');
         canvas.className = 'sld-canvas';
         root.appendChild(canvas);
 
-        const autoPositions = buildAutoLayout(payload);
-        const layoutPositions = mergeSavedPositions(autoPositions, (savedLayout && savedLayout.positions) || {});
+        let manualLayout = { positions: buildAutoLayout(payload), lockedComponentIds: new Set() };
+        try {
+            manualLayout = placeManualCombineTopology(payload, manualLayout.positions);
+        } catch (error) {
+            // Experimental edited-topology layout must never prevent SLD rendering.
+            console.error('SLD edited-topology layout failed; falling back to generated layout.', error);
+        }
+        const savedPositions = (savedLayout && savedLayout.positions) || {};
+        const mergedPositions = savedLayoutMatchesActiveTopology(payload, savedPositions)
+            ? mergeSavedPositions(manualLayout.positions, savedPositions, manualLayout.lockedComponentIds)
+            : manualLayout.positions;
+        const layoutPositions = normalizeLayoutPositions(payload, mergedPositions);
         const lineLabels = computeLineLabelPositions(payload, layoutPositions);
         const branchLabels = computeBranchLabelPositions(payload, layoutPositions);
         const canvasSize = computeCanvasSize(payload, layoutPositions);
