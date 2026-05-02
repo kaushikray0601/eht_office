@@ -89,6 +89,58 @@ def _graph_component_count(payload, component_types):
     return sum(1 for node in payload.get('nodes', []) if node.get('component_type') in component_types)
 
 
+def _edited_cable_schedule_rows(payload):
+    node_by_id = _node_lookup(payload)
+    _incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    rows = []
+    for branch_index, mcb in enumerate(
+        sorted(
+            (node for node in payload.get('nodes', []) if node.get('component_type') == 'MCB'),
+            key=_mcb_selection_sort_key,
+        ),
+        start=1,
+    ):
+        visited = set()
+        stack = [mcb['component_id']]
+        downstream_nodes = []
+        while stack:
+            component_id = stack.pop()
+            for edge in outgoing_by_id.get(component_id, []):
+                target_id = edge.get('to_component_id')
+                if not target_id or target_id in visited:
+                    continue
+                visited.add(target_id)
+                target = node_by_id.get(target_id)
+                if not target:
+                    continue
+                downstream_nodes.append(target)
+                stack.append(target_id)
+
+        line_ids = sorted({
+            line_id
+            for node in [mcb, *downstream_nodes]
+            for line_id in (node.get('line_ids') or ([node.get('line_id')] if node.get('line_id') else []))
+            if line_id
+        })
+        cable_nodes = [node for node in downstream_nodes if node.get('component_type') in {'Cable4C', 'Cable3C'}]
+        tracer_nodes = [node for node in downstream_nodes if node.get('component_type') == 'Tracer']
+        rows.append({
+            'distribution': {'line': {'line_id': ', '.join(line_ids) or mcb.get('line_id') or ''}},
+            'branch_index': branch_index,
+            'branch_type': 'manual_topology_edit',
+            'connected_to': ', '.join(node.get('display_tag', '') for node in tracer_nodes) or 'Manual topology path',
+            'circuit_count': max(1, len(tracer_nodes)),
+            'cable_length_db_to_jb': sum(float((node.get('metadata') or {}).get('length_m') or 0) for node in cable_nodes),
+            'cable_length_jb_to_jb': None,
+            'tagged_components': {
+                'MCB': mcb.get('display_tag'),
+                'Cables': [node.get('display_tag') for node in cable_nodes],
+                'Downstream': [{'Tracer': node.get('display_tag')} for node in tracer_nodes],
+            },
+        })
+    return rows
+
+
 def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes, recommended_rating):
     component_id = f"{source_mcb['component_id']}:manual_combine:{component_type}"
     line_ids = sorted({
@@ -678,7 +730,9 @@ def apply_combine_feeders(project_id, component_ids, user=None, remarks=''):
             'combine_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
+                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
             },
+            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
         },
         validation_summary={
             'status': 'needs_review',
@@ -739,7 +793,9 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
             'split_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
+                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
             },
+            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
         },
         validation_summary={
             'status': 'needs_review',

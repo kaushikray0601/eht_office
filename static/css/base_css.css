@@ -389,7 +389,7 @@ footer {
 }
 
 .sld-diagram-shell {
-    min-height: clamp(420px, calc(100vh - 360px), 720px);
+    min-height: clamp(300px, calc(100vh - 340px), 600px);
     border-radius: 0.95rem;
     border: 1px dashed rgba(95, 117, 138, 0.45);
     background:
@@ -400,7 +400,7 @@ footer {
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1.25rem;
+    padding: 0.65rem;
     overflow: auto;
 }
 
@@ -422,25 +422,60 @@ footer {
 .sld-canvas {
     width: 100%;
     min-width: min(1280px, 100%);
-    min-height: 320px;
+    min-height: 220px;
+}
+
+.sld-panel > .card-body {
+    padding-bottom: 1rem !important;
 }
 
 .sld-panel .workspace-section .badge {
     min-width: 82px;
 }
 
-.sld-layout-toolbar {
-    padding: 0.7rem 0.85rem;
+.sld-layout-toolbar,
+.sld-browse-toolbar {
+    padding: 0.55rem 0.75rem;
     border-radius: 0.8rem;
     background: rgba(255, 255, 255, 0.52);
     border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
-.sld-pagination-toolbar {
-    padding: 0.55rem 0.75rem;
-    border-radius: 0.75rem;
+.sld-summary-strip {
+    padding: 0.45rem 0.65rem;
+    border-radius: 0.65rem;
     background: rgba(248, 250, 252, 0.68);
     border: 1px solid rgba(148, 163, 184, 0.16);
+    color: #486581;
+    font-size: 0.86rem;
+}
+
+.sld-summary-strip > span:not(.badge) {
+    padding-right: 0.6rem;
+    border-right: 1px solid rgba(148, 163, 184, 0.32);
+}
+
+.sld-summary-strip > span:last-child {
+    border-right: 0;
+}
+
+.sld-line-filter-input {
+    width: min(280px, 52vw);
+}
+
+.sld-topology-edit-alert {
+    font-size: 0.88rem;
+}
+
+.sld-topology-edit-alert .btn-close {
+    padding: 0.75rem;
+}
+
+.sld-topology-control-panel {
+    padding: 0.75rem;
+    border-radius: 0.75rem;
+    background: rgba(248, 250, 252, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.18);
 }
 
 .sld-context-menu {
@@ -476,12 +511,12 @@ footer {
 @media (min-width: 1200px) {
     .sld-panel .sld-canvas-column {
         flex: 0 0 auto;
-        width: 82%;
+        width: 80%;
     }
 
     .sld-panel .sld-inspector-column {
         flex: 0 0 auto;
-        width: 18%;
+        width: 20%;
     }
 }
 

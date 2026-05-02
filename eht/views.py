@@ -37,6 +37,7 @@ from .pipeline import run_project_calculations
 from .sanatize_input import sanitize_file
 from .sld_layout import get_project_sld_layout, reset_project_sld_layout, save_project_sld_layout
 from .sld_payload import build_project_sld_payload
+from .sld_pdf import build_sld_pdf
 from .sld_topology import apply_active_cable_schedule_rows, apply_active_summary_overrides
 from .sld_topology_workflows import (
     apply_combine_feeders,
@@ -526,7 +527,7 @@ def _build_sld_workspace_data(project_id, line_id=None):
     validation = validate_project_sld_payload(project_id, payload=payload, line_id=line_id)
     selected_line_id = ''
     if line_id and payload.get('line_groups'):
-        selected_line_id = payload['line_groups'][0]['line_id']
+        selected_line_id = payload['line_groups'][0]['line_id'] if len(payload['line_groups']) == 1 else line_id
 
     return {
         'payload': payload,
@@ -754,6 +755,7 @@ def sld_workspace_view(request):
         'sld_line_summary': sld_data['line_summary'],
         'has_sld_payload': bool(sld_data['summary']['node_count']),
         'sld_payload_url': reverse('sld_payload_view'),
+        'sld_pdf_export_url': reverse('sld_pdf_export_view'),
         'sld_layout_url': reverse('sld_layout_view'),
         'sld_layout_reset_url': reverse('sld_layout_reset_view'),
         'sld_topology_combine_preview_url': reverse('sld_topology_combine_preview_view'),
@@ -790,6 +792,27 @@ def sld_payload_view(request):
             return JsonResponse({'error': 'No stored power-distribution data is available for this project yet.'}, status=400)
 
     return JsonResponse(payload)
+
+
+def sld_pdf_export_view(request):
+    project_id = request.GET.get('project_id')
+    selected_line_id = (request.GET.get('line_id') or '').strip()
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to export SLD PDF.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    payload = build_project_sld_payload(project_id, line_id=selected_line_id)
+    if not payload['meta']['node_count']:
+        return JsonResponse({'error': 'No stored SLD graph data is available for PDF export.'}, status=404)
+
+    pdf_bytes = build_sld_pdf(project_id, payload)
+    filename = f'{project_id}_sld.pdf'
+    response = HttpResponse(pdf_bytes, content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="{filename}"'
+    return response
 
 
 def sld_validation_view(request):

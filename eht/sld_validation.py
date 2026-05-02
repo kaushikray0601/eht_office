@@ -137,7 +137,7 @@ def validate_project_sld_payload(project_id, payload=None, line_id=None):
         .order_by('distribution__line__line_id', 'distribution__line__uid', 'branch_index')
     )
     if selected_line_id:
-        branch_query = branch_query.filter(distribution__line__line_id__iexact=selected_line_id)
+        branch_query = branch_query.filter(distribution__line__line_id__icontains=selected_line_id)
     branches = list(branch_query)
     project_setup = ProjectData.objects.filter(proj_id=project_id).first()
 

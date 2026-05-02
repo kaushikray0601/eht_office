@@ -43,6 +43,7 @@ from eht.models import (
 )
 from eht.sld_layout import get_project_sld_layout
 from eht.sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
+from eht.sld_pdf import build_sld_pdf
 from eht.sld_schema import audit_tagged_component_schema
 from eht.sld_validation import validate_project_sld_payload
 
@@ -1207,6 +1208,16 @@ class SldPayloadTests(TestCase):
         self.assertTrue(all(node['line_id'] == 'LINE-002' for node in payload['nodes']))
         self.assertTrue(all(edge['line_ids'] == ['LINE-002'] for edge in payload['edges']))
 
+    def test_build_project_sld_payload_supports_partial_line_filtering(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'UNIT-003'])
+
+        payload = build_project_sld_payload('p1', line_id='002')
+
+        self.assertEqual(payload['meta']['branch_count'], 1)
+        self.assertEqual([group['line_id'] for group in payload['line_groups']], ['LINE-002'])
+        self.assertTrue(payload['nodes'])
+        self.assertTrue(all(node['line_id'] == 'LINE-002' for node in payload['nodes']))
+
     def test_build_project_sld_payload_is_deterministic_for_repeated_builds(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
 
@@ -1692,6 +1703,12 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(edit.edit_type, 'combine_feeders')
         self.assertIn('engineering review', edit.remarks)
         self.assertEqual(len(edit.baseline_fingerprint), 64)
+        self.assertEqual(edit.validation_summary['status'], 'needs_review')
+        self.assertTrue(edit.generated_snapshot['nodes'])
+        self.assertEqual(edit.edit_payload['downstream_summaries']['boq']['mcb_total'], 1)
+        self.assertEqual(edit.edit_payload['downstream_summaries']['result']['branch_count'], 1)
+        self.assertEqual(len(edit.edit_payload['cable_schedule_rows']), 1)
+        self.assertEqual(edit.edit_payload['cable_schedule_rows'][0]['tagged_components']['MCB'], 'MCB_001-M')
 
         edited_payload = build_project_sld_payload('p1')
         self.assertTrue(edited_payload['meta']['has_topology_edit'])
@@ -1834,6 +1851,14 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(edit.edit_type, 'split_circuits')
         self.assertIn('circuit review', edit.remarks)
         self.assertEqual(len(edit.baseline_fingerprint), 64)
+        self.assertEqual(edit.validation_summary['status'], 'needs_review')
+        self.assertEqual(edit.edit_payload['downstream_summaries']['boq']['mcb_total'], 2)
+        self.assertEqual(edit.edit_payload['downstream_summaries']['boq']['junction_box_total'], 2)
+        self.assertEqual(edit.edit_payload['downstream_summaries']['result']['branch_count'], 2)
+        self.assertEqual(
+            [row['distribution']['line']['line_id'] for row in edit.edit_payload['cable_schedule_rows']],
+            ['LINE-001-part1', 'LINE-001-part2'],
+        )
 
         edited_payload = build_project_sld_payload('p1')
         self.assertTrue(edited_payload['meta']['has_topology_edit'])
@@ -1891,6 +1916,46 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn('MCB feeder source', response.json()['error'])
 
+    def test_topology_edit_audit_trail_records_authenticated_user(self):
+        user = User.objects.create_user(username='reviewer', password='password123')
+        self.client.force_login(user)
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        ManagedProject.objects.get(proj_id='p1').assigned_users.add(user)
+
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_ids': self._mcb_component_ids(),
+                'remarks': 'Approved by electrical lead.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        self.assertEqual(edit.created_by, user)
+        self.assertIn('electrical lead', edit.remarks)
+        self.assertEqual(edit.generated_snapshot['schema_version'], SLD_GRAPH_SCHEMA_VERSION)
+        self.assertIn('sld_payload', edit.edit_payload)
+        self.assertIn('warnings', edit.validation_summary)
+
+    def test_applied_topology_edit_feeds_result_cable_schedule_rows(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+
+        result_response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(result_response.status_code, 200)
+        self.assertContains(result_response, '1 branch row')
+        self.assertContains(result_response, 'MCB_001-M')
+        self.assertContains(result_response, 'LINE-001, LINE-002')
+
     def test_applied_topology_edit_reports_recalculated_baseline(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
         response = self.client.post(
@@ -1926,6 +1991,7 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()['reset_count'], 1)
         self.assertFalse(SLDTopologyEdit.objects.filter(project_id='p1', status='applied').exists())
+        self.assertTrue(SLDTopologyEdit.objects.filter(project_id='p1', status='reset').exists())
         payload = build_project_sld_payload('p1')
         self.assertFalse(payload['meta'].get('has_topology_edit', False))
         self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 2)
@@ -2291,7 +2357,9 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'data-scroll-to=".sld-panel"')
         self.assertContains(response, 'id="sld-fit-view"')
         self.assertContains(response, 'id="sld-fit-selected-line"')
-        self.assertContains(response, 'id="sld-export-svg"')
+        self.assertContains(response, 'id="sld-export-pdf"')
+        self.assertContains(response, 'Export PDF')
+        self.assertContains(response, reverse('sld_pdf_export_view'))
         self.assertContains(response, 'id="sld-line-filter-reset"')
         self.assertNotContains(response, 'href="?project_id=p1"')
 
@@ -2322,7 +2390,29 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'id="sld-zoom-out"')
         self.assertContains(response, 'id="sld-fit-view"')
         self.assertContains(response, 'id="sld-fit-selected-line"')
-        self.assertContains(response, 'id="sld-export-svg"')
+        self.assertContains(response, 'id="sld-export-pdf"')
+        self.assertNotContains(response, 'Export SVG')
+
+    def test_sld_pdf_export_view_returns_full_project_pdf(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003'])
+
+        response = self.client.get(reverse('sld_pdf_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response['Content-Type'], 'application/pdf')
+        self.assertIn('p1_sld.pdf', response['Content-Disposition'])
+        self.assertTrue(response.content.startswith(b'%PDF'))
+        self.assertGreater(len(response.content), 1000)
+
+    def test_sld_pdf_renderer_draws_multicircuit_branch_links(self):
+        make_calculated_project_snapshot()
+        payload = build_project_sld_payload('p1')
+
+        with patch('eht.sld_pdf._draw_branch_link') as branch_link:
+            pdf_bytes = build_sld_pdf('p1', payload)
+
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+        self.assertGreaterEqual(branch_link.call_count, 1)
 
     def test_sld_payload_view_returns_json_graph_payload(self):
         make_calculated_project_snapshot()
@@ -2363,6 +2453,19 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(set(node['component_id'] for node in payload['nodes']), line_two_component_ids)
         self.assertTrue(all('LINE-002' in node.get('line_ids', []) for node in payload['nodes']))
         self.assertTrue(all('LINE-002' in edge.get('line_ids', []) for edge in payload['edges']))
+
+    def test_sld_payload_view_supports_partial_line_filtering(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+
+        response = self.client.get(
+            reverse('sld_payload_view'),
+            {'project_id': 'p1', 'line_id': '002'},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual([group['line_id'] for group in payload['line_groups']], ['LINE-002'])
+        self.assertTrue(payload['nodes'])
 
     def test_sld_payload_view_line_filter_keeps_duplicate_line_ids_distinct(self):
         lines = make_rich_sld_project_snapshot('p1', ['LINE-DUP', 'LINE-DUP'])

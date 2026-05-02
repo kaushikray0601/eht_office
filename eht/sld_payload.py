@@ -222,13 +222,14 @@ def filter_sld_payload_by_line(payload, selected_line_id):
     selected_line_id = (selected_line_id or '').strip()
     if not selected_line_id:
         return payload, ''
+    selected_line_id_key = selected_line_id.casefold()
 
     target_groups = [
         group
         for group in payload.get('line_groups', [])
         if (
-            group.get('line_id', '').casefold() == selected_line_id.casefold()
-            or group.get('original_line_id', '').casefold() == selected_line_id.casefold()
+            selected_line_id_key in group.get('line_id', '').casefold()
+            or selected_line_id_key in group.get('original_line_id', '').casefold()
         )
     ]
     if not target_groups:
@@ -281,7 +282,7 @@ def build_project_sld_payload(project_id, line_id=None, apply_topology=True):
         .order_by('distribution__line__line_id', 'distribution__line__uid', 'branch_index')
     )
     if selected_line_id:
-        branch_query = branch_query.filter(distribution__line__line_id__iexact=selected_line_id)
+        branch_query = branch_query.filter(distribution__line__line_id__icontains=selected_line_id)
     branches = list(branch_query)
 
     node_by_component_id = {}

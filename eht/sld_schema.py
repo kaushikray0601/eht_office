@@ -85,7 +85,7 @@ def audit_tagged_component_schema(project_id=None, line_id=None):
     if project_id:
         branch_query = branch_query.filter(distribution__line__proj_id=project_id)
     if line_id:
-        branch_query = branch_query.filter(distribution__line__line_id__iexact=line_id)
+        branch_query = branch_query.filter(distribution__line__line_id__icontains=line_id)
 
     branches = list(branch_query)
     issues = []

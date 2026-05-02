@@ -297,7 +297,7 @@
     function buildAutoLayout(payload) {
         const lineGroups = groupNodesByLine(payload);
         const positions = {};
-        const startX = 200;
+        const startX = 240;
         const componentGap = 48;
         const branchGap = 102;
         const circuitGap = 108;
@@ -433,7 +433,7 @@
             nodeById: nodeById,
             outgoingBySource: buildOutgoingEdgesBySource(payload),
             lockedComponentIds: new Set(),
-            startX: 190,
+            startX: 240,
             startY: 98,
             rowGap: 124,
             levelGap: 156,
@@ -563,7 +563,7 @@
 
     function computeCanvasSize(payload, positions) {
         let maxX = 860;
-        let maxY = 320;
+        let maxY = 220;
         payload.nodes.forEach(function (node) {
             const position = positions[node.component_id];
             if (!position) {
@@ -571,11 +571,11 @@
             }
             const style = getNodeStyle(node.component_type);
             maxX = Math.max(maxX, position.x + style.width + 180);
-            maxY = Math.max(maxY, position.y + style.height + 120);
+            maxY = Math.max(maxY, position.y + style.height + 44);
         });
         return {
             width: Math.max(1400, maxX),
-            height: Math.max(360, maxY),
+            height: Math.max(240, maxY),
         };
     }
 
@@ -817,6 +817,9 @@
         }
         if (applyButton) {
             applyButton.disabled = !(preview && preview.ok);
+            applyButton.textContent = state && state.splitMode
+                ? 'Apply Split'
+                : (state && state.combineMode ? 'Apply Combine' : 'Apply Edit');
         }
         if (summary && state) {
             if (!(state.combineMode || state.splitMode)) {
@@ -1213,6 +1216,28 @@
         const nextScale = Math.max(0.35, Math.min(1.8, Number((state.scale * scaleFactor).toFixed(3))));
         state.scale = nextScale;
         state.paper.scale(nextScale, nextScale);
+        resizePaperToScaledContent(root);
+    }
+
+    function resizePaperToScaledContent(root) {
+        const state = root.__sldState;
+        if (!state || !state.paper || !state.graph) {
+            return;
+        }
+        const elements = state.graph.getElements();
+        if (!elements.length) {
+            return;
+        }
+        const area = state.graph.getBBox(elements);
+        if (!area || !area.width || !area.height) {
+            return;
+        }
+        const scale = state.scale || 1;
+        const width = Math.max(root.clientWidth || 1200, Math.ceil((area.x + area.width) * scale + 96));
+        const height = Math.max(220, Math.ceil((area.y + area.height) * scale + 34));
+        if (typeof state.paper.setDimensions === 'function') {
+            state.paper.setDimensions(width, height);
+        }
     }
 
     function fitPaperToElements(root, elements) {
@@ -1229,6 +1254,7 @@
         const scale = Math.max(0.4, Math.min(1.25, Math.min((hostWidth - 40) / area.width, (hostHeight - 40) / area.height)));
         state.scale = Number(scale.toFixed(3));
         state.paper.scale(state.scale, state.scale);
+        resizePaperToScaledContent(root);
         const shell = root;
         const centeredLeft = Math.max(0, (area.x * state.scale) - ((hostWidth - area.width * state.scale) / 2));
         const centeredTop = Math.max(0, (area.y * state.scale) - ((hostHeight - area.height * state.scale) / 2));
@@ -1299,26 +1325,6 @@
         }
     }
 
-    function exportPaperAsSvg(root) {
-        const state = root.__sldState;
-        if (!state || !state.paper || !state.paper.svg) {
-            return;
-        }
-        const svgMarkup = state.paper.svg.outerHTML;
-        const blob = new Blob([svgMarkup], { type: 'image/svg+xml;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        const projectId = root.dataset.projectId || 'project';
-        link.href = url;
-        link.download = `${projectId}_sld.svg`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(function () {
-            URL.revokeObjectURL(url);
-        }, 0);
-    }
-
     function hideSldContextMenu() {
         const existing = document.querySelector('.sld-context-menu');
         if (existing) {
@@ -1335,14 +1341,20 @@
         const node = componentId ? state.nodeByComponentId[componentId] : null;
         const menu = document.createElement('div');
         menu.className = 'sld-context-menu';
+        const activePreview = state.splitMode ? state.splitPreview : state.combinePreview;
+        const applyAction = activePreview && activePreview.ok
+            ? `<button type="button" data-sld-context-action="apply-edit">${state.splitMode ? 'Apply Split' : 'Apply Combine'}</button>`
+            : '';
         menu.innerHTML = node ? `
             <button type="button" data-sld-context-action="inspect">Inspect ${escapeHtml(node.display_tag || 'Component')}</button>
             <button type="button" data-sld-context-action="fit-line">Fit Line</button>
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select for Combine</button>' : ''}
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select for Split</button>' : ''}
+            ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
         ` : `
             <button type="button" data-sld-context-action="fit-all">Fit All</button>
+            ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
         `;
         menu.dataset.componentId = componentId || '';
@@ -1376,6 +1388,8 @@
             }
         } else if (action === 'fit-all') {
             fitPaperToContent(root);
+        } else if (action === 'apply-edit') {
+            applyCombineFeeders(root);
         } else if (action === 'clear') {
             highlightSelection(root, null);
         }
@@ -2029,17 +2043,20 @@
             return;
         }
         if (!alert) {
-            const form = panel.querySelector('#sld-line-filter-form');
+            const anchor = panel.querySelector('.sld-header-alert-anchor');
             alert = document.createElement('div');
-            alert.className = 'alert alert-warning py-2 mb-3 sld-topology-edit-alert';
-            if (form && form.parentNode) {
-                form.parentNode.insertBefore(alert, form);
+            alert.className = 'alert alert-warning alert-dismissible fade show py-2 mb-2 sld-topology-edit-alert';
+            if (anchor) {
+                anchor.appendChild(alert);
             }
         }
         if (alert) {
             const editType = topologyState.editType || 'manual';
             const warning = topologyState.warning || 'Review downstream BOQ and cable schedule outputs before issue.';
-            alert.innerHTML = `Active topology edit: <strong>${escapeHtml(editType)}</strong>. ${escapeHtml(warning)}`;
+            alert.innerHTML = `
+                <span>Active topology edit: <strong>${escapeHtml(editType)}</strong>. ${escapeHtml(warning)}</span>
+                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            `;
         }
     }
 
@@ -2175,14 +2192,6 @@
             return;
         }
         zoomPaper(root, 0.9);
-    });
-
-    $(document).on('click', '#sld-export-svg', function () {
-        const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
-            return;
-        }
-        exportPaperAsSvg(root);
     });
 
     $(document).on('change', '#sld-lines-page-size', function () {

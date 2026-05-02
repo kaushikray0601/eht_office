@@ -1,6 +1,6 @@
 <div class="card border-0 shadow-sm mt-3 workspace-panel glass-panel sld-panel">
     <div class="card-body p-4">
-        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-4 workspace-header">
+        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2 workspace-header">
             <div>
                 <span class="workspace-eyebrow">Stored Graph Data</span>
                 <h4 class="workspace-title mb-1">Single Line Diagram</h4>
@@ -27,100 +27,63 @@
         {% elif not has_sld_payload %}
             <div class="alert alert-warning mb-0">No stored power-distribution data is available for this project yet. Run calculations first so the SLD graph can be generated from persisted branch data.</div>
         {% else %}
-            <div class="row g-3 mb-4">
-                <div class="col-sm-6 col-xl-3">
-                    <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Line Groups</div>
-                        <div class="fs-4 fw-semibold">{{ sld_summary.line_group_count }}</div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-3">
-                    <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Branches</div>
-                        <div class="fs-4 fw-semibold">{{ sld_summary.branch_count }}</div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-3">
-                    <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Nodes</div>
-                        <div class="fs-4 fw-semibold">{{ sld_summary.node_count }}</div>
-                    </div>
-                </div>
-                <div class="col-sm-6 col-xl-3">
-                    <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Edges</div>
-                        <div class="fs-4 fw-semibold">{{ sld_summary.edge_count }}</div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="workspace-section mb-4">
-                <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
-                    <div>
-                        <h6 class="mb-1">Diagram Canvas</h6>
-                        <p class="text-muted small mb-0">This canvas renders the active project-backed SLD payload. Layout moves save without changing the calculated topology; Combine/Split creates audited topology edits.</p>
-                    </div>
-                    <div class="d-flex flex-wrap gap-2">
-                        <span class="badge text-bg-light border sld-saved-count-badge">Saved Nodes: {{ sld_layout.meta.saved_count }}</span>
-                        {% if sld_topology_state.topology_baseline_changed %}
-                            <span class="badge text-bg-danger sld-topology-state-badge">Baseline Recalculated</span>
-                        {% elif sld_topology_state.has_topology_edit %}
-                            <span class="badge text-bg-warning text-dark sld-topology-state-badge">Topology Edited</span>
-                        {% else %}
-                            <span class="badge text-bg-light border sld-topology-state-badge">Generated Topology</span>
-                        {% endif %}
-                        <span class="badge text-bg-light border">JSON Endpoint Ready</span>
-                    </div>
-                </div>
+            <div class="sld-header-alert-anchor">
                 {% if sld_topology_state.has_topology_edit %}
-                    <div class="alert alert-warning py-2 mb-3 sld-topology-edit-alert">
-                        Active topology edit: <strong>{{ sld_topology_state.topology_edit_type }}</strong>.
-                        {% if sld_topology_state.topology_baseline_changed %}
-                            Generated topology has changed since this edit was applied; validate or reset before issue.
-                        {% endif %}
-                        {{ sld_topology_state.manual_topology_warning|default:"Review downstream BOQ and cable schedule outputs before issue." }}
+                    <div class="alert alert-warning alert-dismissible fade show py-2 mb-2 sld-topology-edit-alert">
+                        <span>
+                            Active topology edit: <strong>{{ sld_topology_state.topology_edit_type }}</strong>.
+                            {% if sld_topology_state.topology_baseline_changed %}
+                                Generated topology has changed since this edit was applied; validate or reset before issue.
+                            {% endif %}
+                            {{ sld_topology_state.manual_topology_warning|default:"Review downstream BOQ and cable schedule outputs before issue." }}
+                        </span>
+                        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 {% endif %}
-                <form
-                    id="sld-line-filter-form"
-                    method="get"
-                    action="{% url 'base' %}#sld-tab-pane"
-                    data-url="{% url 'sld_workspace_view' %}"
-                    data-scroll-to=".sld-panel"
-                    class="row g-2 align-items-end mb-3"
-                >
-                    <input type="hidden" name="project_id" value="{{ project_id }}">
-                    <div class="col-md-5 col-lg-4">
-                        <label for="sld-line-id" class="form-label small text-muted mb-1">Focus Line ID</label>
-                        <input
-                            type="text"
-                            id="sld-line-id"
-                            name="line_id"
-                            class="form-control form-control-sm"
-                            value="{{ sld_selected_line_query }}"
-                            placeholder="Leave blank to show all lines"
-                        >
-                    </div>
-                    <div class="col-auto">
+            </div>
+            <div class="sld-summary-strip d-flex flex-wrap align-items-center gap-2 mb-3">
+                <span><strong>{{ sld_summary.line_group_count }}</strong> line groups</span>
+                <span><strong>{{ sld_summary.branch_count }}</strong> branches</span>
+                <span><strong>{{ sld_summary.node_count }}</strong> nodes</span>
+                <span><strong>{{ sld_summary.edge_count }}</strong> edges</span>
+                <span class="sld-saved-count-badge">Saved Nodes: {{ sld_layout.meta.saved_count }}</span>
+                {% if sld_topology_state.topology_baseline_changed %}
+                    <span class="badge text-bg-danger sld-topology-state-badge">Baseline Recalculated</span>
+                {% elif sld_topology_state.has_topology_edit %}
+                    <span class="badge text-bg-warning text-dark sld-topology-state-badge">Topology Edited</span>
+                {% else %}
+                    <span class="badge text-bg-light border sld-topology-state-badge">Generated Topology</span>
+                {% endif %}
+            </div>
+
+            <div class="workspace-section mb-3">
+                <div class="sld-browse-toolbar d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
+                    <form
+                        id="sld-line-filter-form"
+                        method="get"
+                        action="{% url 'base' %}#sld-tab-pane"
+                        data-url="{% url 'sld_workspace_view' %}"
+                        data-scroll-to=".sld-panel"
+                        class="d-flex align-items-end flex-wrap gap-2 mb-0"
+                    >
+                        <input type="hidden" name="project_id" value="{{ project_id }}">
+                        <div>
+                            <label for="sld-line-id" class="form-label small text-muted mb-1">Focus Line ID</label>
+                            <input
+                                type="text"
+                                id="sld-line-id"
+                                name="line_id"
+                                class="form-control form-control-sm sld-line-filter-input"
+                                value="{{ sld_selected_line_query }}"
+                                placeholder="Leave blank to show all lines"
+                            >
+                        </div>
                         <button type="submit" class="btn btn-outline-primary btn-sm">Show Line</button>
-                    </div>
-                    {% if sld_selected_line_id %}
-                        <div class="col-auto">
+                        {% if sld_selected_line_id %}
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-line-filter-reset">Show All</button>
-                        </div>
-                    {% endif %}
-                    {% if sld_selected_line_error %}
-                        <div class="col-12">
-                            <div class="alert alert-warning py-2 mb-0">{{ sld_selected_line_error }}</div>
-                        </div>
-                    {% elif sld_selected_line_id %}
-                        <div class="col-12">
-                            <div class="alert alert-info py-2 mb-0">Focused view for line <strong>{{ sld_selected_line_id }}</strong>. Saved layout positions outside this line are preserved.</div>
-                        </div>
-                    {% endif %}
-                </form>
-                <div class="sld-pagination-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-                    <div class="d-flex align-items-center gap-2">
+                        {% endif %}
+                    </form>
+                    <div class="d-flex align-items-center flex-wrap gap-2">
                         <label for="sld-lines-page-size" class="form-label small text-muted mb-0">Lines per page</label>
                         <select id="sld-lines-page-size" class="form-select form-select-sm w-auto">
                             <option value="5">5</option>
@@ -129,8 +92,6 @@
                             <option value="25">25</option>
                             <option value="all">All</option>
                         </select>
-                    </div>
-                    <div class="d-flex align-items-center gap-2">
                         <button type="button" id="sld-page-prev" class="btn btn-outline-secondary btn-sm" disabled>
                             <i class="bi bi-chevron-left"></i>
                         </button>
@@ -140,51 +101,42 @@
                         </button>
                     </div>
                 </div>
-                <div class="sld-layout-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-3">
-                    <div class="small text-muted">Adjust component nodes or presentation groups, then save to persist coordinates for this project.</div>
+                {% if sld_selected_line_error %}
+                    <div class="alert alert-warning py-2 mb-2">{{ sld_selected_line_error }}</div>
+                {% elif sld_selected_line_id %}
+                    <div class="alert alert-info py-2 mb-2">Focused view for line <strong>{{ sld_selected_line_id }}</strong>. Saved layout positions outside this line are preserved.</div>
+                {% endif %}
+                <div class="sld-layout-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <div class="small text-muted">Canvas tools</div>
                     <div class="d-flex flex-wrap gap-2">
-                        <button
-                            type="button"
-                            id="sld-fit-view"
-                            class="btn btn-outline-dark btn-sm"
-                        >
+                        <button type="button" id="sld-fit-view" class="btn btn-outline-dark btn-sm">
                             <i class="bi bi-arrows-fullscreen me-1"></i>Fit All
                         </button>
-                        <button
-                            type="button"
-                            id="sld-fit-selected-line"
-                            class="btn btn-outline-dark btn-sm"
-                            disabled
-                        >
+                        <button type="button" id="sld-fit-selected-line" class="btn btn-outline-dark btn-sm" disabled>
                             <i class="bi bi-crosshair me-1"></i>Fit Line
                         </button>
-                        <button
-                            type="button"
-                            id="sld-zoom-out"
-                            class="btn btn-outline-dark btn-sm"
-                        >
+                        <button type="button" id="sld-zoom-out" class="btn btn-outline-dark btn-sm">
                             <i class="bi bi-zoom-out me-1"></i>Zoom Out
                         </button>
-                        <button
-                            type="button"
-                            id="sld-zoom-in"
-                            class="btn btn-outline-dark btn-sm"
-                        >
+                        <button type="button" id="sld-zoom-in" class="btn btn-outline-dark btn-sm">
                             <i class="bi bi-zoom-in me-1"></i>Zoom In
                         </button>
-                        <button
-                            type="button"
-                            id="sld-export-svg"
+                        <a
+                            id="sld-export-pdf"
                             class="btn btn-outline-dark btn-sm"
+                            href="{{ sld_pdf_export_url }}?project_id={{ project_id }}{% if sld_selected_line_query %}&line_id={{ sld_selected_line_query|urlencode }}{% endif %}"
+                            target="_blank"
+                            rel="noopener"
                         >
-                            <i class="bi bi-download me-1"></i>Export SVG
-                        </button>
+                            <i class="bi bi-file-earmark-pdf me-1"></i>Export PDF
+                        </a>
                         <button
                             type="button"
                             id="sld-save-layout"
                             class="btn btn-outline-primary btn-sm"
                             data-project-id="{{ project_id }}"
                             data-sld-layout-url="{{ sld_layout_url }}"
+                            title="Save coordinates without changing the calculated topology"
                             disabled
                         >
                             <i class="bi bi-floppy me-1"></i>Save Layout
@@ -225,6 +177,33 @@
                     </div>
                     <div class="col-xl-3 sld-inspector-column">
                         <div class="workspace-section h-100 sld-inspector-panel">
+                            <div class="sld-topology-control-panel mb-3">
+                                <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                                    <h6 class="mb-0">Topology Edit</h6>
+                                    <span class="badge text-bg-light border">Workflow</span>
+                                </div>
+                                <div class="btn-group w-100 mb-2" role="group" aria-label="Topology edit mode">
+                                    <button type="button" id="sld-combine-mode" class="btn btn-outline-primary btn-sm">
+                                        <i class="bi bi-intersect me-1"></i>Combine
+                                    </button>
+                                    <button type="button" id="sld-split-mode" class="btn btn-outline-primary btn-sm">
+                                        <i class="bi bi-diagram-2 me-1"></i>Split
+                                    </button>
+                                </div>
+                                <div id="sld-combine-summary" class="small text-muted mb-2">Select a topology edit mode.</div>
+                                <textarea id="sld-combine-remarks" class="form-control form-control-sm mb-2" rows="2" placeholder="Optional audit remarks"></textarea>
+                                <button type="button" id="sld-combine-apply" class="btn btn-primary btn-sm w-100 mb-2" disabled>
+                                    Apply Edit
+                                </button>
+                                <button
+                                    type="button"
+                                    id="sld-topology-reset"
+                                    class="btn btn-outline-danger btn-sm w-100"
+                                    {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
+                                >
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Generated
+                                </button>
+                            </div>
                             <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
                                 <h6 class="mb-0">Property Inspector</h6>
                                 <span class="badge text-bg-light border">Selection</span>
@@ -233,35 +212,12 @@
                                 Select a component in the diagram to inspect its details and highlight the source path.
                             </div>
                             <dl id="sld-inspector-details" class="sld-inspector-details mb-0"></dl>
-                            <div class="border-top mt-3 pt-3">
-                                <div class="d-flex flex-wrap gap-2 mb-2">
-                                    <button type="button" id="sld-combine-mode" class="btn btn-outline-primary btn-sm">
-                                        <i class="bi bi-intersect me-1"></i>Combine Feeders
-                                    </button>
-                                    <button type="button" id="sld-split-mode" class="btn btn-outline-primary btn-sm">
-                                        <i class="bi bi-diagram-2 me-1"></i>Split Circuits
-                                    </button>
-                                    <button type="button" id="sld-combine-apply" class="btn btn-primary btn-sm" disabled>
-                                        Apply Edit
-                                    </button>
-                                    <button
-                                        type="button"
-                                        id="sld-topology-reset"
-                                        class="btn btn-outline-danger btn-sm"
-                                        {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
-                                    >
-                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reset Topology
-                                    </button>
-                                </div>
-                                <textarea id="sld-combine-remarks" class="form-control form-control-sm mb-2" rows="2" placeholder="Optional audit remarks"></textarea>
-                                <div id="sld-combine-summary" class="small text-muted">Select MCB feeder sources in combine mode.</div>
-                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="workspace-section mb-4">
+            <div class="workspace-section mb-3">
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                     <div>
                         <h6 class="mb-1">SLD Validation</h6>
@@ -283,7 +239,7 @@
                         <span class="fw-semibold">Validation Details</span>
                         <span class="small text-muted">Overall: {{ sld_validation.status }} | Passed: {{ sld_validation.summary.passed_count }} | Warnings: {{ sld_validation.summary.warning_count }} | Failures: {{ sld_validation.summary.failed_count }}</span>
                     </summary>
-                    <div class="row g-3 mb-4 mt-2">
+                    <div class="row g-3 mb-3 mt-2">
                         <div class="col-sm-6 col-xl-3">
                             <div class="workspace-metric-card h-100">
                                 <div class="workspace-metric-label">Overall Status</div>
@@ -310,15 +266,25 @@
                         </div>
                     </div>
 
-                    <div class="row g-4">
+                    <div class="row g-3">
                         <div class="col-lg-6">
                             <div class="table-responsive">
-                                <table class="table table-sm compact-data-table align-middle mb-0">
+                                <table
+                                    class="table table-striped table-hover align-middle"
+                                    data-toggle="table"
+                                    data-classes="table table-striped table-hover align-middle"
+                                    data-search="true"
+                                    data-pagination="true"
+                                    data-page-size="5"
+                                    data-page-list="[5, 10, 20, 25, all]"
+                                    data-show-columns="true"
+                                    data-sort-name="project_check"
+                                >
                                     <thead>
                                         <tr>
-                                            <th scope="col">Project Check</th>
-                                            <th scope="col">Status</th>
-                                            <th scope="col">Details</th>
+                                            <th scope="col" data-field="project_check" data-sortable="true">Project Check</th>
+                                            <th scope="col" data-field="status" data-sortable="true">Status</th>
+                                            <th scope="col" data-field="details" data-sortable="true">Details</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -343,13 +309,23 @@
                         </div>
                         <div class="col-lg-6">
                             <div class="table-responsive">
-                                <table class="table table-sm compact-data-table align-middle mb-0">
+                                <table
+                                    class="table table-striped table-hover align-middle"
+                                    data-toggle="table"
+                                    data-classes="table table-striped table-hover align-middle"
+                                    data-search="true"
+                                    data-pagination="true"
+                                    data-page-size="5"
+                                    data-page-list="[5, 10, 20, 25, all]"
+                                    data-show-columns="true"
+                                    data-sort-name="line_branch"
+                                >
                                     <thead>
                                         <tr>
-                                            <th scope="col">Line / Branch</th>
-                                            <th scope="col">Status</th>
-                                            <th scope="col">Counts</th>
-                                            <th scope="col">Details</th>
+                                            <th scope="col" data-field="line_branch" data-sortable="true">Line / Branch</th>
+                                            <th scope="col" data-field="status" data-sortable="true">Status</th>
+                                            <th scope="col" data-field="counts" data-sortable="true">Counts</th>
+                                            <th scope="col" data-field="details" data-sortable="true">Details</th>
                                         </tr>
                                     </thead>
                                     <tbody>
@@ -377,16 +353,26 @@
                 </details>
             </div>
 
-            <div class="row g-4">
+            <div class="row g-3">
                 <div class="col-lg-5">
                     <div class="workspace-section h-100">
                         <h6 class="mb-3">Component Summary</h6>
                         <div class="table-responsive">
-                            <table class="table table-sm compact-data-table align-middle mb-0">
+                            <table
+                                class="table table-striped table-hover align-middle"
+                                data-toggle="table"
+                                data-classes="table table-striped table-hover align-middle"
+                                data-search="true"
+                                data-pagination="true"
+                                data-page-size="5"
+                                data-page-list="[5, 10, 20, 25, all]"
+                                data-show-columns="true"
+                                data-sort-name="component"
+                            >
                                 <thead>
                                     <tr>
-                                        <th scope="col">Component</th>
-                                        <th scope="col" class="text-end">Count</th>
+                                        <th scope="col" data-field="component" data-sortable="true">Component</th>
+                                        <th scope="col" data-field="count" data-sortable="true" class="text-end">Count</th>
                                     </tr>
                                 </thead>
                                 <tbody>
@@ -405,13 +391,23 @@
                     <div class="workspace-section h-100">
                         <h6 class="mb-3">Line Groups</h6>
                         <div class="table-responsive">
-                            <table class="table table-sm compact-data-table align-middle mb-0">
+                            <table
+                                class="table table-striped table-hover align-middle"
+                                data-toggle="table"
+                                data-classes="table table-striped table-hover align-middle"
+                                data-search="true"
+                                data-pagination="true"
+                                data-page-size="5"
+                                data-page-list="[5, 10, 20, 25, all]"
+                                data-show-columns="true"
+                                data-sort-name="line"
+                            >
                                 <thead>
                                     <tr>
-                                        <th scope="col">Line ID</th>
-                                        <th scope="col">Branches</th>
-                                        <th scope="col" class="text-end">Components</th>
-                                        <th scope="col" class="text-end">Edges</th>
+                                        <th scope="col" data-field="line" data-sortable="true">Line ID</th>
+                                        <th scope="col" data-field="branches" data-sortable="true">Branches</th>
+                                        <th scope="col" data-field="components" data-sortable="true" class="text-end">Components</th>
+                                        <th scope="col" data-field="edges" data-sortable="true" class="text-end">Edges</th>
                                     </tr>
                                 </thead>
                                 <tbody>

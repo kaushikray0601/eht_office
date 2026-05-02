@@ -1,5 +1,6 @@
 asgiref==3.11.1
 beautifulsoup4==4.14.3
+charset-normalizer==3.4.7
 crispy-bootstrap4==2026.2
 Django==5.2.13
 django-crispy-forms==2.6
@@ -19,6 +20,7 @@ psycopg-binary==3.3.3
 psycopg2-binary==2.9.11
 python-dateutil==2.9.0.post0
 pytz==2026.1.post1
+reportlab==4.5.0
 setuptools==82.0.1
 shapely==2.1.2
 six==1.17.0

@@ -17,6 +17,7 @@ urlpatterns = [
     path('boq/export/', views.boq_export_view, name='boq_export_view'),
     path('sld/workspace/', views.sld_workspace_view, name='sld_workspace_view'),
     path('sld/payload/', views.sld_payload_view, name='sld_payload_view'),
+    path('sld/pdf/', views.sld_pdf_export_view, name='sld_pdf_export_view'),
     path('sld/layout/', views.sld_layout_view, name='sld_layout_view'),
     path('sld/layout/reset/', views.sld_layout_reset_view, name='sld_layout_reset_view'),
     path('sld/validation/', views.sld_validation_view, name='sld_validation_view'),
