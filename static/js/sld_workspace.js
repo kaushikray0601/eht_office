@@ -799,7 +799,6 @@
         const panel = root.closest('.sld-panel');
         const combineButton = panel ? panel.querySelector('#sld-combine-mode') : null;
         const splitButton = panel ? panel.querySelector('#sld-split-mode') : null;
-        const previewButton = panel ? panel.querySelector('#sld-combine-preview') : null;
         const applyButton = panel ? panel.querySelector('#sld-combine-apply') : null;
         const summary = getCombineSummaryContainer(root);
         const isSplit = !!(state && state.splitMode);
@@ -814,23 +813,26 @@
         if (splitButton) {
             splitButton.classList.toggle('active', isSplit);
         }
-        if (previewButton) {
-            previewButton.disabled = selectedCount < minimumSelection || !(state && (state.combineMode || state.splitMode));
-        }
         if (applyButton) {
             applyButton.disabled = !(preview && preview.ok);
         }
         if (summary && state) {
-            if (preview && preview.ok && isSplit) {
+            if (!(state.combineMode || state.splitMode)) {
+                summary.textContent = 'Select Combine Feeders or Split Circuits to start a topology edit.';
+            } else if (selectedCount < minimumSelection) {
+                summary.textContent = isSplit
+                    ? `Select at least ${minimumSelection} downstream circuit component.`
+                    : `Select at least ${minimumSelection} MCB feeder sources.`;
+            } else if (state.topologyPreviewStatus === 'checking') {
+                summary.textContent = 'Checking selected topology edit...';
+            } else if (state.topologyPreviewError) {
+                summary.innerHTML = `<span class="text-danger fw-semibold">Cannot apply:</span> ${escapeHtml(state.topologyPreviewError)}`;
+            } else if (preview && preview.ok && isSplit) {
                 summary.innerHTML = `Selected ${selectedCount} circuit path(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else if (preview && preview.ok) {
                 summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else {
-                summary.textContent = state.splitMode
-                    ? `Selected ${selectedCount} downstream circuit component(s).`
-                    : state.combineMode
-                        ? `Selected ${selectedCount} MCB feeder source(s).`
-                        : 'Select MCB feeder sources in combine mode, or downstream circuit components in split mode.';
+                summary.textContent = 'Waiting for automatic topology check.';
             }
         }
     }
@@ -902,8 +904,12 @@
             state.combineSelectionIds.add(componentId);
         }
         state.combinePreview = null;
+        state.topologyPreviewError = '';
+        state.topologyPreviewStatus = 'idle';
+        state.topologyPreviewKey = '';
         applyCombineSelectionStyle(state);
         updateCombineControls(root);
+        scheduleTopologyPreview(root);
     }
 
     function toggleSplitSelection(root, componentId) {
@@ -918,8 +924,12 @@
             state.splitSelectionIds.add(componentId);
         }
         state.splitPreview = null;
+        state.topologyPreviewError = '';
+        state.topologyPreviewStatus = 'idle';
+        state.topologyPreviewKey = '';
         applyCombineSelectionStyle(state);
         updateCombineControls(root);
+        scheduleTopologyPreview(root);
     }
 
     function collectComponentPositions(state, componentIds) {
@@ -1479,6 +1489,10 @@
             splitMode: false,
             splitSelectionIds: new Set(),
             splitPreview: null,
+            topologyPreviewStatus: 'idle',
+            topologyPreviewError: '',
+            topologyPreviewKey: '',
+            topologyPreviewTimer: null,
             isApplyingGroupMove: false,
             isSyncingDerivedGeometry: false,
         };
@@ -1710,33 +1724,72 @@
         });
     }
 
-    function previewCombineFeeders(root) {
+    function runTopologyPreview(root) {
         const state = root.__sldState;
+        if (!state) {
+            return;
+        }
         const isSplit = !!(state && state.splitMode);
         const url = isSplit ? root.dataset.sldTopologySplitPreviewUrl : root.dataset.sldTopologyCombinePreviewUrl;
         const selectedIds = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
+        const minimumSelection = isSplit ? 1 : 2;
+        if (!(state.combineMode || state.splitMode) || selectedIds.size < minimumSelection) {
+            state.topologyPreviewStatus = 'idle';
+            state.topologyPreviewError = '';
+            state.topologyPreviewKey = '';
+            updateCombineControls(root);
+            return;
+        }
+        const requestKey = `${isSplit ? 'split' : 'combine'}:${Array.from(selectedIds).sort().join('|')}`;
+        state.topologyPreviewKey = requestKey;
+        state.topologyPreviewStatus = 'checking';
+        state.topologyPreviewError = '';
+        updateCombineControls(root);
         const request = postTopologyRequest(root, url, selectedIds, false);
         if (!request) {
+            state.topologyPreviewStatus = 'idle';
+            updateCombineControls(root);
             return;
         }
         request.done(function (preview) {
+            if (!root.__sldState || root.__sldState.topologyPreviewKey !== requestKey) {
+                return;
+            }
             if (isSplit) {
                 root.__sldState.splitPreview = preview;
             } else {
                 root.__sldState.combinePreview = preview;
             }
+            root.__sldState.topologyPreviewStatus = 'ready';
+            root.__sldState.topologyPreviewError = '';
             updateCombineControls(root);
         }).fail(function (xhr) {
+            if (!root.__sldState || root.__sldState.topologyPreviewKey !== requestKey) {
+                return;
+            }
             if (isSplit) {
                 root.__sldState.splitPreview = null;
             } else {
                 root.__sldState.combinePreview = null;
             }
+            root.__sldState.topologyPreviewStatus = 'error';
+            root.__sldState.topologyPreviewError = (xhr.responseJSON && xhr.responseJSON.error) || 'Selected topology edit is not allowed.';
             updateCombineControls(root);
-            if (typeof window.showToast === 'function') {
-                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to preview topology edit.', 'error');
-            }
         });
+    }
+
+    function scheduleTopologyPreview(root) {
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+        if (state.topologyPreviewTimer) {
+            clearTimeout(state.topologyPreviewTimer);
+        }
+        state.topologyPreviewTimer = setTimeout(function () {
+            state.topologyPreviewTimer = null;
+            runTopologyPreview(root);
+        }, 250);
     }
 
     function applyCombineFeeders(root) {
@@ -1825,12 +1878,18 @@
             data: JSON.stringify({ project_id: projectId }),
         }).done(function (response) {
             if (root.__sldState) {
+                if (root.__sldState.topologyPreviewTimer) {
+                    clearTimeout(root.__sldState.topologyPreviewTimer);
+                }
                 root.__sldState.combineMode = false;
                 root.__sldState.splitMode = false;
                 root.__sldState.combineSelectionIds.clear();
                 root.__sldState.splitSelectionIds.clear();
                 root.__sldState.combinePreview = null;
                 root.__sldState.splitPreview = null;
+                root.__sldState.topologyPreviewStatus = 'idle';
+                root.__sldState.topologyPreviewError = '';
+                root.__sldState.topologyPreviewKey = '';
             }
             updateTopologyStateUi(root, { hasEdit: false });
             updateCombineControls(root);
@@ -1870,7 +1929,11 @@
         root.__sldState.splitMode = false;
         root.__sldState.combinePreview = null;
         root.__sldState.splitPreview = null;
+        root.__sldState.topologyPreviewStatus = 'idle';
+        root.__sldState.topologyPreviewError = '';
+        root.__sldState.topologyPreviewKey = '';
         updateCombineControls(root);
+        scheduleTopologyPreview(root);
     });
 
     $(document).on('click', '#sld-split-mode', function () {
@@ -1882,14 +1945,11 @@
         root.__sldState.combineMode = false;
         root.__sldState.combinePreview = null;
         root.__sldState.splitPreview = null;
+        root.__sldState.topologyPreviewStatus = 'idle';
+        root.__sldState.topologyPreviewError = '';
+        root.__sldState.topologyPreviewKey = '';
         updateCombineControls(root);
-    });
-
-    $(document).on('click', '#sld-combine-preview', function () {
-        const root = document.getElementById('sld-diagram-shell');
-        if (root) {
-            previewCombineFeeders(root);
-        }
+        scheduleTopologyPreview(root);
     });
 
     $(document).on('click', '#sld-combine-apply', function () {

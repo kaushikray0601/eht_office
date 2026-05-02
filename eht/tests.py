@@ -1740,6 +1740,48 @@ class SldTopologyWorkflowTests(TestCase):
             [trunk_cable['component_id']],
         )
 
+    def test_combine_feeders_can_extend_active_combine_edit(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003'])
+
+        first_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()[:2]}),
+            content_type='application/json',
+        )
+        self.assertEqual(first_response.status_code, 200)
+
+        active_mcb_ids = self._mcb_component_ids()
+        preview_response = self.client.post(
+            reverse('sld_topology_combine_preview_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': active_mcb_ids}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertTrue(preview['extends_existing_combine'])
+        self.assertEqual(preview['added_component_types'], [])
+        self.assertEqual(preview['recommended_breaker_rating'], 32)
+
+        second_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': active_mcb_ids}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='applied').count(), 1)
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='superseded').count(), 1)
+        edited_payload = build_project_sld_payload('p1')
+        manual_trunks = [
+            node for node in edited_payload['nodes']
+            if node['component_type'] == 'Cable4C'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        ]
+        self.assertEqual(sum(1 for node in edited_payload['nodes'] if node['component_type'] == 'MCB'), 1)
+        self.assertEqual(len(manual_trunks), 1)
+
     def test_combine_feeders_preview_requires_two_mcbs(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         component_ids = self._mcb_component_ids()
@@ -2193,6 +2235,8 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Generated Topology')
         self.assertContains(response, 'Save Layout')
         self.assertContains(response, 'Reset Layout')
+        self.assertContains(response, 'Apply Edit')
+        self.assertNotContains(response, 'Preview Edit')
 
     def test_sld_workspace_view_supports_line_focused_rendering(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])

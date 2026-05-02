@@ -218,6 +218,9 @@ Combine-feeder topology rule:
   `MCB -> Cable4C -> JB3PH -> existing outgoing Cable3C/JB1PH/tracer paths`.
 - the MCB, 4C cable, and 3PH JB must carry manual edit metadata and display-tag
   markers; cable sizing remains a review-required downstream design step.
+- repeated combine operations may extend the active combine topology. In that
+  case the new edit revision supersedes the previous applied revision and reuses
+  the existing manual trunk/JB instead of creating another trunk layer.
 
 Workflow rules:
 - selection and preview are transient UI/server state.

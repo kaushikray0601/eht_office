@@ -47,13 +47,19 @@ def _selected_mcb_nodes(payload, component_ids):
             invalid_ids.append(component_id)
         else:
             selected.append(node)
-    selected.sort(key=lambda node: (
+    selected.sort(key=_mcb_selection_sort_key)
+    return selected, invalid_ids
+
+
+def _mcb_selection_sort_key(node):
+    metadata = node.get('metadata') or {}
+    return (
+        0 if metadata.get('manual_topology_edit') == 'combine_feeders' else 1,
         str(node.get('line_id') or ''),
         str(node.get('line_uid') or ''),
         node.get('branch_index') or 0,
         str(node.get('display_tag') or ''),
-    ))
-    return selected, invalid_ids
+    )
 
 
 def _component_uid(component_id):
@@ -96,13 +102,9 @@ def _boq_mcb_total(project_id):
     return item.quantity if item else 0
 
 
-def _boq_junction_box_total(project_id):
-    items = BOQ.objects.filter(
-        project_id=project_id,
-        scope='consolidated',
-        item_code__in=['JB3PH', 'JB1PH'],
-    )
-    return sum(item.quantity for item in items)
+def _graph_component_count(payload, component_types):
+    component_types = set(component_types)
+    return sum(1 for node in payload.get('nodes', []) if node.get('component_type') in component_types)
 
 
 def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes, recommended_rating):
@@ -145,6 +147,30 @@ def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes
     }
 
 
+def _manual_display_tag(display_tag):
+    return display_tag if str(display_tag).endswith('-M') else f"{display_tag}-M"
+
+
+def _manual_combine_distribution(payload, source_mcb):
+    node_by_id = _node_lookup(payload)
+    _incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    for edge in outgoing_by_id.get(source_mcb['component_id'], []):
+        cable = node_by_id.get(edge.get('to_component_id'))
+        if not cable or cable.get('component_type') != 'Cable4C':
+            continue
+        if (cable.get('metadata') or {}).get('manual_topology_edit') != 'combine_feeders':
+            continue
+        for cable_edge in outgoing_by_id.get(cable['component_id'], []):
+            jb = node_by_id.get(cable_edge.get('to_component_id'))
+            if (
+                jb
+                and jb.get('component_type') == 'JB3PH'
+                and (jb.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+            ):
+                return cable, jb
+    return None, None
+
+
 def _build_edited_payload(payload, selected_nodes, recommended_rating):
     primary = selected_nodes[0]
     secondary_ids = {node['component_id'] for node in selected_nodes[1:]}
@@ -152,6 +178,7 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
     primary_id = primary['component_id']
     edited = deepcopy(payload)
     _, outgoing_by_id = _edge_lookup(edited)
+    existing_cable4c, existing_jb3ph = _manual_combine_distribution(edited, primary)
 
     for node in edited['nodes']:
         if node['component_id'] != primary_id:
@@ -163,66 +190,68 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
             'combined_feeder_count': len(selected_nodes),
         })
         node['metadata'] = metadata
-        node['display_tag'] = f"{node.get('display_tag', 'MCB')}-M"
+        node['display_tag'] = _manual_display_tag(node.get('display_tag', 'MCB'))
         node['label'] = node['display_tag']
 
     feeder_entry_ids = []
     for selected_node in selected_nodes:
+        if existing_jb3ph and selected_node['component_id'] == primary_id:
+            continue
         for edge in outgoing_by_id.get(selected_node['component_id'], []):
             entry_id = edge.get('to_component_id')
             if entry_id and entry_id not in selected_ids:
                 feeder_entry_ids.append(entry_id)
     feeder_entry_ids = sorted(set(feeder_entry_ids))
 
-    primary_tag = primary.get('display_tag', 'MCB')
+    primary_tag = _manual_display_tag(primary.get('display_tag', 'MCB'))
     tag_suffix = primary_tag.split('_', 1)[1] if '_' in primary_tag else primary_tag
-    cable4c = _manual_combine_node(
-        primary,
-        'Cable4C',
-        f"CCAB4C_{tag_suffix}-M",
-        selected_nodes,
-        recommended_rating,
+    cable4c = existing_cable4c or _manual_combine_node(
+        primary, 'Cable4C', f"CCAB4C_{tag_suffix}-M", selected_nodes, recommended_rating
     )
-    jb3ph = _manual_combine_node(
-        primary,
-        'JB3PH',
-        f"JB3PH_{tag_suffix}-M",
-        selected_nodes,
-        recommended_rating,
+    jb3ph = existing_jb3ph or _manual_combine_node(
+        primary, 'JB3PH', f"JB3PH_{tag_suffix}-M", selected_nodes, recommended_rating
     )
 
     edited['nodes'] = [
         node for node in edited['nodes']
         if node['component_id'] not in secondary_ids
     ]
-    edited['nodes'].extend([cable4c, jb3ph])
+    existing_manual_ids = {node['component_id'] for node in edited['nodes']}
+    if cable4c['component_id'] not in existing_manual_ids:
+        edited['nodes'].append(cable4c)
+        existing_manual_ids.add(cable4c['component_id'])
+    if jb3ph['component_id'] not in existing_manual_ids:
+        edited['nodes'].append(jb3ph)
 
     rewired_edges = []
     for edge in edited['edges']:
         if edge.get('to_component_id') in secondary_ids:
             continue
-        if edge.get('from_component_id') in selected_ids:
+        if edge.get('from_component_id') in selected_ids and not (
+            existing_jb3ph and edge.get('from_component_id') == primary_id
+        ):
             continue
         rewired_edges.append(dict(edge))
 
-    rewired_edges.extend([
-        {
-            'from_component_id': primary_id,
-            'to_component_id': cable4c['component_id'],
-            'line_ids': cable4c['line_ids'],
-            'line_uid': cable4c.get('line_uid'),
-            'branch_index': cable4c.get('branch_index'),
-            'circuit_index': None,
-        },
-        {
-            'from_component_id': cable4c['component_id'],
-            'to_component_id': jb3ph['component_id'],
-            'line_ids': cable4c['line_ids'],
-            'line_uid': cable4c.get('line_uid'),
-            'branch_index': cable4c.get('branch_index'),
-            'circuit_index': None,
-        },
-    ])
+    if not existing_jb3ph:
+        rewired_edges.extend([
+            {
+                'from_component_id': primary_id,
+                'to_component_id': cable4c['component_id'],
+                'line_ids': cable4c['line_ids'],
+                'line_uid': cable4c.get('line_uid'),
+                'branch_index': cable4c.get('branch_index'),
+                'circuit_index': None,
+            },
+            {
+                'from_component_id': cable4c['component_id'],
+                'to_component_id': jb3ph['component_id'],
+                'line_ids': cable4c['line_ids'],
+                'line_uid': cable4c.get('line_uid'),
+                'branch_index': cable4c.get('branch_index'),
+                'circuit_index': None,
+            },
+        ])
     node_by_id = _node_lookup(edited)
     for entry_id in feeder_entry_ids:
         entry_node = node_by_id.get(entry_id)
@@ -389,12 +418,6 @@ def preview_combine_feeders(project_id, component_ids):
             'ok': False,
             'error': 'Select at least two MCB feeder sources to combine.',
         }
-    if get_active_topology_edit(project_id):
-        return {
-            'ok': False,
-            'error': 'Reset or supersede the active topology edit before applying another combine operation.',
-        }
-
     payload = build_project_sld_payload(project_id)
     selected_nodes, invalid_ids = _selected_mcb_nodes(payload, component_ids)
     if invalid_ids:
@@ -439,8 +462,11 @@ def preview_combine_feeders(project_id, component_ids):
 
     primary = selected_nodes[0]
     removed_nodes = selected_nodes[1:]
-    primary_tag = primary.get('display_tag', 'MCB')
+    existing_cable4c, existing_jb3ph = _manual_combine_distribution(payload, primary)
+    primary_tag = _manual_display_tag(primary.get('display_tag', 'MCB'))
     tag_suffix = primary_tag.split('_', 1)[1] if '_' in primary_tag else primary_tag
+    added_component_types = [] if existing_jb3ph else ['Cable4C', 'JB3PH']
+    added_display_tags = [] if existing_jb3ph else [f"CCAB4C_{tag_suffix}-M", f"JB3PH_{tag_suffix}-M"]
     return {
         'ok': True,
         'project_id': project_id,
@@ -448,11 +474,12 @@ def preview_combine_feeders(project_id, component_ids):
         'selected_component_ids': [node['component_id'] for node in selected_nodes],
         'primary_component_id': primary['component_id'],
         'primary_display_tag': primary['display_tag'],
-        'updated_display_tags': [f"{primary['display_tag']}-M"],
+        'updated_display_tags': [primary_tag],
         'removed_component_ids': [node['component_id'] for node in removed_nodes],
         'removed_display_tags': [node['display_tag'] for node in removed_nodes],
-        'added_component_types': ['Cable4C', 'JB3PH'],
-        'added_display_tags': [f"CCAB4C_{tag_suffix}-M", f"JB3PH_{tag_suffix}-M"],
+        'added_component_types': added_component_types,
+        'added_display_tags': added_display_tags,
+        'extends_existing_combine': bool(existing_jb3ph),
         'input_breaker_ratings': ratings,
         'combined_breaker_rating': total_rating,
         'recommended_breaker_rating': recommended_rating,
@@ -548,20 +575,18 @@ def apply_combine_feeders(project_id, component_ids, user=None, remarks=''):
     if not preview['ok']:
         return preview
 
-    generated_payload = build_project_sld_payload(project_id)
-    selected_nodes, _invalid_ids = _selected_mcb_nodes(generated_payload, preview['selected_component_ids'])
+    baseline_payload = build_project_sld_payload(project_id, apply_topology=False)
+    active_payload = build_project_sld_payload(project_id)
+    selected_nodes, _invalid_ids = _selected_mcb_nodes(active_payload, preview['selected_component_ids'])
     edited_payload = _build_edited_payload(
-        generated_payload,
+        active_payload,
         selected_nodes,
         preview['recommended_breaker_rating'],
     )
 
-    current_mcb_total = _boq_mcb_total(project_id)
-    current_junction_box_total = _boq_junction_box_total(project_id)
-    removed_count = len(preview['removed_component_ids'])
     boq_overrides = {
-        'mcb_total': max(current_mcb_total - removed_count, 0),
-        'junction_box_total': current_junction_box_total + 1,
+        'mcb_total': _graph_component_count(edited_payload, ['MCB']),
+        'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
@@ -571,8 +596,8 @@ def apply_combine_feeders(project_id, component_ids, user=None, remarks=''):
         status='applied',
         created_by=user if getattr(user, 'is_authenticated', False) else None,
         remarks=remarks or '',
-        baseline_fingerprint=payload_fingerprint(generated_payload),
-        generated_snapshot=generated_payload,
+        baseline_fingerprint=payload_fingerprint(baseline_payload),
+        generated_snapshot=baseline_payload,
         edit_payload={
             'sld_payload': edited_payload,
             'combine_preview': preview,
