@@ -207,8 +207,8 @@ Baseline rules:
 First allowed edit types:
 - `combine_feeders`: selected MCB feeder paths are combined into one edited
   feeder path.
-- `split_circuits`: selected branches/circuits are moved onto a new edited
-  feeder path.
+- `split_circuits`: one selected multi-circuit MCB feeder is split into
+  independent MCB-fed circuit paths.
 
 Combine-feeder topology rule:
 - a combined MCB must not directly feed multiple outgoing 3C power cables.
@@ -221,6 +221,22 @@ Combine-feeder topology rule:
 - repeated combine operations may extend the active combine topology. In that
   case the new edit revision supersedes the previous applied revision and reuses
   the existing manual trunk/JB instead of creating another trunk layer.
+
+Split-circuit topology rule:
+- the user selects the MCB that currently feeds multiple outgoing circuits, not
+  an individual downstream branch component.
+- the edited graph removes the shared multi-circuit distribution path between
+  the MCB and the fan-out point, then reconnects each outgoing circuit entry to
+  its own MCB.
+- the original MCB remains assigned to the first outgoing circuit and receives a
+  split marker; additional circuits receive new manual MCB nodes.
+- each split circuit is displayed as a complete source-to-load electrical
+  circuit. The display line ID uses the original line ID with `-partN` suffixes
+  while preserving the original line ID/UID in metadata for traceability and
+  focused filtering.
+- the recommended MCB rating is the source MCB rating divided across the split
+  circuits, rounded up to the next configured breaker size. The recommendation
+  remains review-required engineering data, not an automatic final issue value.
 
 Workflow rules:
 - selection and preview are transient UI/server state.

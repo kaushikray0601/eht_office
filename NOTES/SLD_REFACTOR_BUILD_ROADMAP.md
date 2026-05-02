@@ -263,7 +263,7 @@ Current next sprint:
 - [x] add fit-all and fit-selected-line canvas navigation
 - [x] add presentation-only line and branch regrouping through layout handles without changing generated topology
 - [x] add first controlled combine-feeders topology workflow with MCB selection, preview, breaker recommendation, audit remarks, and applied topology override through `MCB -> Cable4C -> JB3PH -> existing outgoing feeder paths`
-- [x] add first controlled split-circuits topology workflow with downstream circuit selection, new manual MCB preview, breaker recommendation, audit remarks, and applied topology override
+- [x] add controlled split-circuits topology workflow with multi-circuit MCB selection, shared distribution removal, independent MCB-fed outgoing circuits, breaker recommendation, audit remarks, and applied topology override
 - [x] add generated-vs-edited/recalculated topology UI state and reset-to-generated behavior
 
 ## 6. Delivery Risks

@@ -226,7 +226,10 @@ def filter_sld_payload_by_line(payload, selected_line_id):
     target_groups = [
         group
         for group in payload.get('line_groups', [])
-        if group.get('line_id', '').casefold() == selected_line_id.casefold()
+        if (
+            group.get('line_id', '').casefold() == selected_line_id.casefold()
+            or group.get('original_line_id', '').casefold() == selected_line_id.casefold()
+        )
     ]
     if not target_groups:
         return None, ''

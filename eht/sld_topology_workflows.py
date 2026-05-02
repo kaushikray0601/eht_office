@@ -3,7 +3,7 @@ import hashlib
 
 from django.db import transaction
 
-from .models import BOQ, MAX_CB_SIZE, ProjectData, SLDTopologyEdit
+from .models import MAX_CB_SIZE, ProjectData, SLDTopologyEdit
 from .sld_payload import build_project_sld_payload
 from .sld_topology import get_active_topology_edit, payload_fingerprint
 
@@ -82,24 +82,6 @@ def _dedupe_edges(edges):
         seen.add(key)
         deduped.append(edge)
     return deduped
-
-
-def _find_upstream_mcb(node_id, node_by_id, incoming_by_id):
-    visited = set()
-    cursor = node_id
-    while cursor and cursor not in visited:
-        visited.add(cursor)
-        node = node_by_id.get(cursor)
-        if node and node.get('component_type') == 'MCB':
-            return node
-        incoming_edges = incoming_by_id.get(cursor) or []
-        cursor = incoming_edges[0].get('from_component_id') if incoming_edges else None
-    return None
-
-
-def _boq_mcb_total(project_id):
-    item = BOQ.objects.filter(project_id=project_id, scope='consolidated', item_code='MCB').first()
-    return item.quantity if item else 0
 
 
 def _graph_component_count(payload, component_types):
@@ -280,55 +262,67 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
     return edited
 
 
-def _selected_circuit_groups(payload, component_ids):
-    node_by_id = _node_lookup(payload)
-    selected_nodes = []
-    invalid_ids = []
-    for component_id in component_ids:
-        node = node_by_id.get(component_id)
-        if node is None or node.get('component_type') == 'MCB' or node.get('circuit_index') is None:
-            invalid_ids.append(component_id)
-        else:
-            selected_nodes.append(node)
-
-    groups = {}
-    for node in selected_nodes:
-        key = (node.get('line_uid'), node.get('branch_index'), node.get('circuit_index'))
-        groups.setdefault(key, node)
-    circuits = list(groups.values())
-    circuits.sort(key=lambda node: (
+def _node_workflow_sort_key(node):
+    return (
         str(node.get('line_id') or ''),
         str(node.get('line_uid') or ''),
         node.get('branch_index') or 0,
         node.get('circuit_index') or 0,
         str(node.get('component_id') or ''),
-    ))
-    return circuits, invalid_ids
+    )
 
 
-def _branch_circuit_count(payload, circuit_node):
-    line_uid = circuit_node.get('line_uid')
-    branch_index = circuit_node.get('branch_index')
-    circuit_indices = {
-        node.get('circuit_index')
-        for node in payload.get('nodes', [])
-        if (
-            node.get('line_uid') == line_uid
-            and node.get('branch_index') == branch_index
-            and node.get('circuit_index') is not None
-        )
-    }
-    return len(circuit_indices) or 1
+def _selected_split_mcb(payload, component_ids):
+    selected, invalid_ids = _selected_mcb_nodes(payload, component_ids)
+    return selected[0] if len(selected) == 1 and not invalid_ids else None, invalid_ids
 
 
-def _new_split_mcb_node(source_mcb, selected_circuits, recommended_rating):
-    first = selected_circuits[0]
-    circuit_scope = '-'.join(str(node.get('circuit_index')) for node in selected_circuits)
+def _split_source_details(payload, source_mcb):
+    # Split acts at the selected MCB. Walk the single shared feeder chain until
+    # it fans out; those shared nodes are removed and the fan-out entries become
+    # independent MCB-fed circuit starts.
+    node_by_id = _node_lookup(payload)
+    _incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    cursor = source_mcb['component_id']
+    shared_component_ids = []
+    visited = {cursor}
+
+    while True:
+        outgoing_edges = [
+            edge for edge in outgoing_by_id.get(cursor, [])
+            if edge.get('to_component_id') in node_by_id
+        ]
+        if len(outgoing_edges) >= 2:
+            entry_nodes = sorted(
+                [node_by_id[edge['to_component_id']] for edge in outgoing_edges],
+                key=_node_workflow_sort_key,
+            )
+            return {
+                'shared_component_ids': shared_component_ids,
+                'entry_nodes': entry_nodes,
+            }
+        if len(outgoing_edges) != 1:
+            return None
+
+        next_id = outgoing_edges[0].get('to_component_id')
+        next_node = node_by_id.get(next_id)
+        if not next_node or next_id in visited or next_node.get('component_type') == 'MCB':
+            return None
+        visited.add(next_id)
+        shared_component_ids.append(next_id)
+        cursor = next_id
+
+
+def _split_mcb_display_tag(source_mcb, index):
+    return f"{source_mcb.get('display_tag', 'MCB')}-S{index}"
+
+
+def _new_split_mcb_node(source_mcb, entry_node, index, recommended_rating, circuit_count):
     component_id = (
         f"{source_mcb['component_id']}:manual_split:"
-        f"{first.get('line_uid')}:{first.get('branch_index')}:{circuit_scope}"
+        f"{entry_node.get('line_uid')}:{entry_node.get('branch_index')}:{entry_node.get('circuit_index')}"
     )
-    display_tag = f"{source_mcb.get('display_tag', 'MCB')}-S"
+    display_tag = _split_mcb_display_tag(source_mcb, index)
     return {
         'component_id': component_id,
         'component_uid': _component_uid(component_id),
@@ -336,75 +330,159 @@ def _new_split_mcb_node(source_mcb, selected_circuits, recommended_rating):
         'component_type': 'MCB',
         'display_name': 'MCB',
         'label': display_tag,
-        'line_id': first.get('line_id'),
-        'line_ids': first.get('line_ids') or ([first.get('line_id')] if first.get('line_id') else []),
-        'line_uid': first.get('line_uid'),
-        'branch_index': first.get('branch_index'),
+        'line_id': entry_node.get('line_id'),
+        'line_ids': entry_node.get('line_ids') or ([entry_node.get('line_id')] if entry_node.get('line_id') else []),
+        'line_uid': entry_node.get('line_uid'),
+        'branch_index': entry_node.get('branch_index'),
         'circuit_index': None,
         'metadata': {
             'breaker_size': recommended_rating,
             'manual_topology_edit': 'split_circuits',
             'source_mcb': source_mcb.get('display_tag'),
-            'split_circuit_count': len(selected_circuits),
+            'split_circuit_count': circuit_count,
+            'split_circuit_index': entry_node.get('circuit_index'),
         },
     }
 
 
-def _build_split_payload(payload, selected_circuits, source_mcb, recommended_rating):
-    edited = deepcopy(payload)
-    incoming_by_id, _outgoing_by_id = _edge_lookup(edited)
-    circuit_keys = {
-        (node.get('line_uid'), node.get('branch_index'), node.get('circuit_index'))
-        for node in selected_circuits
+def _split_part_identity(entry_node, index):
+    original_line_id = entry_node.get('line_id') or 'LINE'
+    original_line_uid = entry_node.get('line_uid') or original_line_id
+    return {
+        'line_id': f"{original_line_id}-part{index}",
+        'line_uid': f"{original_line_uid}:manual_split:part{index}",
+        'original_line_id': original_line_id,
+        'original_line_uid': original_line_uid,
     }
-    circuit_component_ids = {key: set() for key in circuit_keys}
-    for node in edited['nodes']:
-        key = (node.get('line_uid'), node.get('branch_index'), node.get('circuit_index'))
-        if key in circuit_component_ids:
-            circuit_component_ids[key].add(node['component_id'])
 
-    selected_entry_ids = set()
+
+def _split_circuit_key(node):
+    return (
+        node.get('line_uid'),
+        node.get('branch_index'),
+        node.get('circuit_index'),
+    )
+
+
+def _apply_split_part_identity(item, part_identity):
+    item['line_id'] = part_identity['line_id']
+    item['line_ids'] = [part_identity['line_id']]
+    item['line_uid'] = part_identity['line_uid']
+    metadata = dict(item.get('metadata') or {})
+    metadata.update({
+        'original_line_id': part_identity['original_line_id'],
+        'original_line_uid': part_identity['original_line_uid'],
+    })
+    item['metadata'] = metadata
+
+
+def _build_split_payload(payload, source_mcb, split_details, recommended_rating):
+    edited = deepcopy(payload)
+    source_id = source_mcb['component_id']
+    removed_ids = set(split_details['shared_component_ids'])
+    entry_nodes = split_details['entry_nodes']
+    entry_ids = {node['component_id'] for node in entry_nodes}
+    part_identity_by_key = {
+        _split_circuit_key(entry): _split_part_identity(entry, index)
+        for index, entry in enumerate(entry_nodes, start=1)
+    }
+    split_mcb_by_entry = {
+        entry['component_id']: _new_split_mcb_node(
+            source_mcb,
+            entry,
+            index,
+            recommended_rating,
+            len(entry_nodes),
+        )
+        for index, entry in enumerate(entry_nodes[1:], start=2)
+    }
+    for entry in entry_nodes[1:]:
+        _apply_split_part_identity(
+            split_mcb_by_entry[entry['component_id']],
+            part_identity_by_key[_split_circuit_key(entry)],
+        )
+
+    nodes = []
     for node in edited['nodes']:
-        key = (node.get('line_uid'), node.get('branch_index'), node.get('circuit_index'))
-        if key not in circuit_component_ids:
+        if node['component_id'] in removed_ids:
             continue
-        upstream_ids = {
-            edge.get('from_component_id')
-            for edge in incoming_by_id.get(node['component_id'], [])
-        }
-        if any(upstream_id not in circuit_component_ids[key] for upstream_id in upstream_ids):
-            selected_entry_ids.add(node['component_id'])
-
-    if not selected_entry_ids:
-        selected_entry_ids = {node['component_id'] for node in selected_circuits}
-
-    split_mcb = _new_split_mcb_node(source_mcb, selected_circuits, recommended_rating)
-    edited['nodes'].append(split_mcb)
+        node = dict(node)
+        if node['component_id'] == source_id:
+            metadata = dict(node.get('metadata') or {})
+            metadata.update({
+                'breaker_size': recommended_rating,
+                'manual_topology_edit': 'split_circuits',
+                'split_circuit_count': len(entry_nodes),
+                'split_circuit_index': entry_nodes[0].get('circuit_index'),
+            })
+            node['metadata'] = metadata
+            node['display_tag'] = _split_mcb_display_tag(source_mcb, 1)
+            node['label'] = node['display_tag']
+            _apply_split_part_identity(node, part_identity_by_key[_split_circuit_key(entry_nodes[0])])
+        elif _split_circuit_key(node) in part_identity_by_key:
+            _apply_split_part_identity(node, part_identity_by_key[_split_circuit_key(node)])
+        nodes.append(node)
+    nodes.extend(split_mcb_by_entry.values())
+    edited['nodes'] = nodes
 
     rewired_edges = []
     for edge in edited['edges']:
-        if edge.get('to_component_id') in selected_entry_ids:
+        if edge.get('from_component_id') == source_id:
             continue
+        if edge.get('from_component_id') in removed_ids or edge.get('to_component_id') in removed_ids:
+            continue
+        if edge.get('to_component_id') in entry_ids:
+            continue
+        edge = dict(edge)
+        edge_key = (
+            edge.get('line_uid'),
+            edge.get('branch_index'),
+            edge.get('circuit_index'),
+        )
+        if edge_key in part_identity_by_key:
+            part_identity = part_identity_by_key[edge_key]
+            edge['line_ids'] = [part_identity['line_id']]
+            edge['line_uid'] = part_identity['line_uid']
         rewired_edges.append(edge)
-    for entry_id in sorted(selected_entry_ids):
-        entry_node = next(node for node in edited['nodes'] if node['component_id'] == entry_id)
+
+    for index, entry_node in enumerate(entry_nodes, start=1):
+        part_identity = part_identity_by_key[_split_circuit_key(entry_node)]
+        source_component_id = source_id if index == 1 else split_mcb_by_entry[entry_node['component_id']]['component_id']
         rewired_edges.append({
-            'from_component_id': split_mcb['component_id'],
-            'to_component_id': entry_id,
-            'line_ids': entry_node.get('line_ids', []),
-            'line_uid': entry_node.get('line_uid'),
+            'from_component_id': source_component_id,
+            'to_component_id': entry_node['component_id'],
+            'line_ids': [part_identity['line_id']],
+            'line_uid': part_identity['line_uid'],
             'branch_index': entry_node.get('branch_index'),
             'circuit_index': entry_node.get('circuit_index'),
         })
     edited['edges'] = _dedupe_edges(rewired_edges)
+    split_group_uids = {
+        identity['original_line_uid']
+        for identity in part_identity_by_key.values()
+    }
+    edited['line_groups'] = [
+        group for group in edited.get('line_groups', [])
+        if str(group.get('line_uid')) not in split_group_uids
+    ]
+    for entry in entry_nodes:
+        identity = part_identity_by_key[_split_circuit_key(entry)]
+        edited['line_groups'].append({
+            'line_id': identity['line_id'],
+            'line_uid': identity['line_uid'],
+            'original_line_id': identity['original_line_id'],
+            'original_line_uid': identity['original_line_uid'],
+            'branch_indices': [entry.get('branch_index')],
+        })
 
     meta = dict(edited.get('meta') or {})
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
-        'split_circuit_count': len(selected_circuits),
+        'branch_count': sum(len(group.get('branch_indices') or []) for group in edited['line_groups']),
+        'split_circuit_count': len(entry_nodes),
         'manual_topology_warning': (
-            'Graph-level circuit split applied. Detailed cable/JB materialization remains subject to later cable sizing and split/combine domain rules.'
+            'Manual circuit split applied: the shared multi-circuit feeder distribution was removed and each outgoing circuit now starts from its own MCB. Breaker ratings are recommended for engineering review.'
         ),
     })
     edited['meta'] = meta
@@ -499,7 +577,7 @@ def preview_split_circuits(project_id, component_ids):
     if not component_ids:
         return {
             'ok': False,
-            'error': 'Select at least one downstream circuit component to split.',
+            'error': 'Select one MCB feeder source with multiple downstream circuits to split.',
         }
     if get_active_topology_edit(project_id):
         return {
@@ -508,37 +586,23 @@ def preview_split_circuits(project_id, component_ids):
         }
 
     payload = build_project_sld_payload(project_id)
-    node_by_id = _node_lookup(payload)
-    incoming_by_id, _outgoing_by_id = _edge_lookup(payload)
-    selected_circuits, invalid_ids = _selected_circuit_groups(payload, component_ids)
-    if invalid_ids:
+    source_mcb, invalid_ids = _selected_split_mcb(payload, component_ids)
+    if invalid_ids or source_mcb is None:
         return {
             'ok': False,
-            'error': 'One or more selected components are not downstream circuit components.',
+            'error': 'Select exactly one MCB feeder source to split.',
             'invalid_component_ids': invalid_ids,
         }
-    if not selected_circuits:
+    split_details = _split_source_details(payload, source_mcb)
+    if not split_details or len(split_details['entry_nodes']) < 2:
         return {
             'ok': False,
-            'error': 'Select at least one downstream circuit component to split.',
+            'error': 'Selected MCB must feed multiple downstream circuits through one distribution path.',
         }
 
-    source_mcbs = {
-        _find_upstream_mcb(node['component_id'], node_by_id, incoming_by_id)['component_id']:
-        _find_upstream_mcb(node['component_id'], node_by_id, incoming_by_id)
-        for node in selected_circuits
-        if _find_upstream_mcb(node['component_id'], node_by_id, incoming_by_id)
-    }
-    if len(source_mcbs) != 1:
-        return {
-            'ok': False,
-            'error': 'Selected circuits must share one upstream MCB for this first split workflow.',
-        }
-
-    source_mcb = next(iter(source_mcbs.values()))
     source_rating = float((source_mcb.get('metadata') or {}).get('breaker_size') or 0)
-    branch_circuit_count = _branch_circuit_count(payload, selected_circuits[0])
-    proportional_rating = source_rating * len(selected_circuits) / max(branch_circuit_count, 1)
+    split_circuit_count = len(split_details['entry_nodes'])
+    proportional_rating = source_rating / split_circuit_count if split_circuit_count else source_rating
     recommended_rating = _next_breaker_size(proportional_rating)
     if recommended_rating is None:
         return {
@@ -550,20 +614,31 @@ def preview_split_circuits(project_id, component_ids):
         'ok': True,
         'project_id': project_id,
         'edit_type': 'split_circuits',
-        'selected_component_ids': [node['component_id'] for node in selected_circuits],
+        'selected_component_ids': [source_mcb['component_id']],
         'source_mcb_component_id': source_mcb['component_id'],
         'source_mcb_display_tag': source_mcb['display_tag'],
-        'added_display_tags': [f"{source_mcb.get('display_tag', 'MCB')}-S"],
-        'selected_circuit_count': len(selected_circuits),
+        'updated_display_tags': [_split_mcb_display_tag(source_mcb, 1)],
+        'added_display_tags': [
+            _split_mcb_display_tag(source_mcb, index)
+            for index in range(2, split_circuit_count + 1)
+        ],
+        'removed_display_tags': [
+            node['display_tag']
+            for node in payload.get('nodes', [])
+            if node['component_id'] in set(split_details['shared_component_ids'])
+        ],
+        'selected_circuit_count': split_circuit_count,
+        'source_circuit_count': split_circuit_count,
+        'new_mcb_count': split_circuit_count - 1,
         'source_breaker_rating': source_rating,
         'recommended_breaker_rating': recommended_rating,
-        'affected_lines': sorted({node.get('line_id') for node in selected_circuits if node.get('line_id')}),
+        'affected_lines': sorted({node.get('line_id') for node in split_details['entry_nodes'] if node.get('line_id')}),
         'affected_branch_count': len({
             (node.get('line_uid'), node.get('branch_index'))
-            for node in selected_circuits
+            for node in split_details['entry_nodes']
         }),
         'warning': (
-            'This first workflow applies a controlled graph-level circuit split and marks the new MCB for review.'
+            'This workflow splits one multi-circuit MCB feeder into independent MCB-fed circuits. Review the reduced breaker rating before issue.'
         ),
     }
 
@@ -625,24 +700,29 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
     if not preview['ok']:
         return preview
 
-    generated_payload = build_project_sld_payload(project_id)
-    node_by_id = _node_lookup(generated_payload)
-    incoming_by_id, _outgoing_by_id = _edge_lookup(generated_payload)
-    selected_circuits, _invalid_ids = _selected_circuit_groups(
-        generated_payload,
-        preview['selected_component_ids'],
-    )
-    source_mcb = _find_upstream_mcb(selected_circuits[0]['component_id'], node_by_id, incoming_by_id)
+    generated_payload = build_project_sld_payload(project_id, apply_topology=False)
+    source_mcb, _invalid_ids = _selected_split_mcb(generated_payload, preview['selected_component_ids'])
+    if source_mcb is None:
+        return {
+            'ok': False,
+            'error': 'Selected MCB split topology could not be rebuilt safely.',
+        }
+    split_details = _split_source_details(generated_payload, source_mcb)
+    if not split_details:
+        return {
+            'ok': False,
+            'error': 'Selected MCB split topology could not be rebuilt safely.',
+        }
     edited_payload = _build_split_payload(
         generated_payload,
-        selected_circuits,
         source_mcb,
+        split_details,
         preview['recommended_breaker_rating'],
     )
 
-    current_mcb_total = _boq_mcb_total(project_id)
     boq_overrides = {
-        'mcb_total': current_mcb_total + 1,
+        'mcb_total': _graph_component_count(edited_payload, ['MCB']),
+        'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')

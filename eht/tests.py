@@ -1797,7 +1797,7 @@ class SldTopologyWorkflowTests(TestCase):
 
     def test_split_circuits_preview_returns_recommended_breaker(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
-        component_ids = self._downstream_component_ids()[:1]
+        component_ids = self._mcb_component_ids()[:1]
 
         response = self.client.post(
             reverse('sld_topology_split_preview_view'),
@@ -1810,11 +1810,13 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertTrue(preview['ok'])
         self.assertEqual(preview['edit_type'], 'split_circuits')
         self.assertEqual(preview['recommended_breaker_rating'], 6)
-        self.assertEqual(preview['selected_circuit_count'], 1)
+        self.assertEqual(preview['selected_circuit_count'], 2)
+        self.assertEqual(preview['new_mcb_count'], 1)
+        self.assertIn('JB3PH_001', preview['removed_display_tags'])
 
     def test_split_circuits_apply_persists_active_topology_edit(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
-        component_ids = self._downstream_component_ids()[:1]
+        component_ids = self._mcb_component_ids()[:1]
 
         response = self.client.post(
             reverse('sld_topology_split_apply_view'),
@@ -1840,13 +1842,45 @@ class SldTopologyWorkflowTests(TestCase):
             2,
         )
         self.assertTrue(any(
-            node['component_type'] == 'MCB' and node['display_tag'].endswith('-S')
+            node['component_type'] == 'MCB' and node['display_tag'].endswith('-S1')
             for node in edited_payload['nodes']
         ))
+        self.assertTrue(any(
+            node['component_type'] == 'MCB' and node['display_tag'].endswith('-S2')
+            for node in edited_payload['nodes']
+        ))
+        self.assertEqual(
+            [group['line_id'] for group in edited_payload['line_groups']],
+            ['LINE-001-part1', 'LINE-001-part2'],
+        )
+        self.assertFalse(any(node['component_type'] == 'JB3PH' for node in edited_payload['nodes']))
+        self.assertFalse(any(node['component_type'] == 'Cable4C' for node in edited_payload['nodes']))
 
-    def test_split_circuits_preview_rejects_mcb_selection(self):
+        incoming_sources_by_target = {
+            edge['to_component_id']: edge['from_component_id']
+            for edge in edited_payload['edges']
+        }
+        mcb_by_line = {
+            node['line_id']: node['component_id']
+            for node in edited_payload['nodes']
+            if node['component_type'] == 'MCB'
+        }
+        for line_id, mcb_id in mcb_by_line.items():
+            first_load = next(
+                node for node in edited_payload['nodes']
+                if node['line_id'] == line_id and node['component_type'] == 'Isolator1PH'
+            )
+            self.assertEqual(incoming_sources_by_target[first_load['component_id']], mcb_id)
+
+        filtered_payload = build_project_sld_payload('p1', line_id='LINE-001')
+        self.assertEqual(
+            [group['line_id'] for group in filtered_payload['line_groups']],
+            ['LINE-001-part1', 'LINE-001-part2'],
+        )
+
+    def test_split_circuits_preview_rejects_downstream_selection(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
-        component_ids = self._mcb_component_ids()[:1]
+        component_ids = self._downstream_component_ids()[:1]
 
         response = self.client.post(
             reverse('sld_topology_split_preview_view'),
@@ -1855,7 +1889,7 @@ class SldTopologyWorkflowTests(TestCase):
         )
 
         self.assertEqual(response.status_code, 400)
-        self.assertIn('downstream circuit', response.json()['error'])
+        self.assertIn('MCB feeder source', response.json()['error'])
 
     def test_applied_topology_edit_reports_recalculated_baseline(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])

@@ -417,23 +417,25 @@
         return { minY: minY, maxY: maxY };
     }
 
-    function placeManualCombineTopology(payload, positions) {
-        if (!payload.meta || payload.meta.topology_edit_type !== 'combine_feeders') {
+    function placeEditedTopology(payload, positions) {
+        if (!payload.meta || !payload.meta.has_topology_edit) {
             return { positions: positions, lockedComponentIds: new Set() };
         }
         const nodeById = getNodeByComponentId(payload);
         const roots = (payload.nodes || []).filter(function (node) {
-            const metadata = node.metadata || {};
-            return node.component_type === 'MCB' && metadata.manual_topology_edit === 'combine_feeders';
+            return node.component_type === 'MCB';
         }).sort(compareNodesForLayout);
+        if (!roots.length) {
+            return { positions: positions, lockedComponentIds: new Set() };
+        }
         const context = {
             positions: positions,
             nodeById: nodeById,
             outgoingBySource: buildOutgoingEdgesBySource(payload),
             lockedComponentIds: new Set(),
             startX: 190,
-            startY: 116,
-            rowGap: 112,
+            startY: 98,
+            rowGap: 124,
             levelGap: 156,
             rowIndex: 0,
         };
@@ -821,14 +823,14 @@
                 summary.textContent = 'Select Combine Feeders or Split Circuits to start a topology edit.';
             } else if (selectedCount < minimumSelection) {
                 summary.textContent = isSplit
-                    ? `Select at least ${minimumSelection} downstream circuit component.`
+                    ? 'Select one MCB feeder source with multiple downstream circuits.'
                     : `Select at least ${minimumSelection} MCB feeder sources.`;
             } else if (state.topologyPreviewStatus === 'checking') {
                 summary.textContent = 'Checking selected topology edit...';
             } else if (state.topologyPreviewError) {
                 summary.innerHTML = `<span class="text-danger fw-semibold">Cannot apply:</span> ${escapeHtml(state.topologyPreviewError)}`;
             } else if (preview && preview.ok && isSplit) {
-                summary.innerHTML = `Selected ${selectedCount} circuit path(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+                summary.innerHTML = `Selected ${escapeHtml(preview.source_mcb_display_tag || 'MCB')}. Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else if (preview && preview.ok) {
                 summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else {
@@ -915,12 +917,13 @@
     function toggleSplitSelection(root, componentId) {
         const state = root.__sldState;
         const node = state && state.nodeByComponentId[componentId];
-        if (!state || !node || node.component_type === 'MCB' || node.circuit_index === null || node.circuit_index === undefined) {
+        if (!state || !node || node.component_type !== 'MCB') {
             return;
         }
         if (state.splitSelectionIds.has(componentId)) {
             state.splitSelectionIds.delete(componentId);
         } else {
+            state.splitSelectionIds.clear();
             state.splitSelectionIds.add(componentId);
         }
         state.splitPreview = null;
@@ -1316,6 +1319,69 @@
         }, 0);
     }
 
+    function hideSldContextMenu() {
+        const existing = document.querySelector('.sld-context-menu');
+        if (existing) {
+            existing.remove();
+        }
+    }
+
+    function showSldContextMenu(root, event, componentId) {
+        hideSldContextMenu();
+        const state = root.__sldState;
+        if (!state) {
+            return;
+        }
+        const node = componentId ? state.nodeByComponentId[componentId] : null;
+        const menu = document.createElement('div');
+        menu.className = 'sld-context-menu';
+        menu.innerHTML = node ? `
+            <button type="button" data-sld-context-action="inspect">Inspect ${escapeHtml(node.display_tag || 'Component')}</button>
+            <button type="button" data-sld-context-action="fit-line">Fit Line</button>
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select for Combine</button>' : ''}
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select for Split</button>' : ''}
+            <button type="button" data-sld-context-action="clear">Clear Selection</button>
+        ` : `
+            <button type="button" data-sld-context-action="fit-all">Fit All</button>
+            <button type="button" data-sld-context-action="clear">Clear Selection</button>
+        `;
+        menu.dataset.componentId = componentId || '';
+        document.body.appendChild(menu);
+        const maxLeft = window.innerWidth - menu.offsetWidth - 8;
+        const maxTop = window.innerHeight - menu.offsetHeight - 8;
+        menu.style.left = `${Math.max(8, Math.min(event.clientX, maxLeft))}px`;
+        menu.style.top = `${Math.max(8, Math.min(event.clientY, maxTop))}px`;
+    }
+
+    function handleSldContextAction(root, action, componentId) {
+        if (!root || !root.__sldState) {
+            return;
+        }
+        if (action === 'inspect' && componentId) {
+            highlightSelection(root, componentId);
+        } else if (action === 'fit-line' && componentId) {
+            highlightSelection(root, componentId);
+            fitSelectedLine(root);
+        } else if (action === 'combine' && componentId) {
+            root.__sldState.combineMode = true;
+            root.__sldState.splitMode = false;
+            if (!root.__sldState.combineSelectionIds.has(componentId)) {
+                toggleCombineSelection(root, componentId);
+            }
+        } else if (action === 'split' && componentId) {
+            root.__sldState.splitMode = true;
+            root.__sldState.combineMode = false;
+            if (!root.__sldState.splitSelectionIds.has(componentId)) {
+                toggleSplitSelection(root, componentId);
+            }
+        } else if (action === 'fit-all') {
+            fitPaperToContent(root);
+        } else if (action === 'clear') {
+            highlightSelection(root, null);
+        }
+        updateCombineControls(root);
+    }
+
     function scheduleDerivedGeometryRefresh(root) {
         if (!root) {
             return;
@@ -1327,6 +1393,95 @@
             root.__sldRefreshFrame = null;
             refreshDerivedGeometry(root);
         });
+    }
+
+    function pageSizeValue(rawValue) {
+        return rawValue === 'all' ? 'all' : Math.max(1, parseInt(rawValue || '10', 10) || 10);
+    }
+
+    function slicePayloadByLinePage(payload, page, pageSize) {
+        const lineGroups = payload.line_groups || [];
+        if (pageSize === 'all' || lineGroups.length <= pageSize) {
+            return {
+                payload: payload,
+                page: 1,
+                pageCount: 1,
+                start: lineGroups.length ? 1 : 0,
+                end: lineGroups.length,
+                total: lineGroups.length,
+            };
+        }
+        const pageCount = Math.max(1, Math.ceil(lineGroups.length / pageSize));
+        const currentPage = Math.min(Math.max(1, page || 1), pageCount);
+        const startIndex = (currentPage - 1) * pageSize;
+        const selectedGroups = lineGroups.slice(startIndex, startIndex + pageSize);
+        const selectedNodes = (payload.nodes || []).filter(function (node) {
+            return selectedGroups.some(function (lineGroup) {
+                return nodeBelongsToLineGroup(node, lineGroup);
+            });
+        });
+        const componentIds = new Set(selectedNodes.map(function (node) { return node.component_id; }));
+        const selectedEdges = (payload.edges || []).filter(function (edge) {
+            return componentIds.has(edge.from_component_id) && componentIds.has(edge.to_component_id);
+        });
+        return {
+            payload: {
+                ...payload,
+                nodes: selectedNodes,
+                edges: selectedEdges,
+                line_groups: selectedGroups,
+                meta: {
+                    ...(payload.meta || {}),
+                    branch_count: selectedGroups.reduce(function (total, group) {
+                        return total + (group.branch_indices || []).length;
+                    }, 0),
+                    node_count: selectedNodes.length,
+                    edge_count: selectedEdges.length,
+                    paginated: true,
+                },
+            },
+            page: currentPage,
+            pageCount: pageCount,
+            start: selectedGroups.length ? startIndex + 1 : 0,
+            end: startIndex + selectedGroups.length,
+            total: lineGroups.length,
+        };
+    }
+
+    function getSldPagerControls(root) {
+        const panel = root.closest('.sld-panel');
+        return {
+            pageSize: panel ? panel.querySelector('#sld-lines-page-size') : null,
+            previous: panel ? panel.querySelector('#sld-page-prev') : null,
+            next: panel ? panel.querySelector('#sld-page-next') : null,
+            status: panel ? panel.querySelector('#sld-page-status') : null,
+        };
+    }
+
+    function updateSldPagerControls(root, pageInfo) {
+        const controls = getSldPagerControls(root);
+        if (controls.previous) {
+            controls.previous.disabled = !pageInfo || pageInfo.page <= 1;
+        }
+        if (controls.next) {
+            controls.next.disabled = !pageInfo || pageInfo.page >= pageInfo.pageCount;
+        }
+        if (controls.status) {
+            controls.status.textContent = pageInfo
+                ? `Lines ${pageInfo.start}-${pageInfo.end} of ${pageInfo.total}`
+                : 'Lines 0-0 of 0';
+        }
+    }
+
+    function renderCurrentSldPage(root) {
+        const pager = root.__sldPager;
+        if (!pager || !pager.payload) {
+            return;
+        }
+        const pageInfo = slicePayloadByLinePage(pager.payload, pager.page, pager.pageSize);
+        pager.page = pageInfo.page;
+        renderSldGraph(root, pageInfo.payload, pager.savedLayout);
+        updateSldPagerControls(root, pageInfo);
     }
 
     function renderSldGraph(root, payload, savedLayout) {
@@ -1347,14 +1502,15 @@
 
         let manualLayout = { positions: buildAutoLayout(payload), lockedComponentIds: new Set() };
         try {
-            manualLayout = placeManualCombineTopology(payload, manualLayout.positions);
+            manualLayout = placeEditedTopology(payload, manualLayout.positions);
         } catch (error) {
             // Experimental edited-topology layout must never prevent SLD rendering.
             console.error('SLD edited-topology layout failed; falling back to generated layout.', error);
         }
         const savedPositions = (savedLayout && savedLayout.positions) || {};
-        const mergedPositions = savedLayoutMatchesActiveTopology(payload, savedPositions)
-            ? mergeSavedPositions(manualLayout.positions, savedPositions, manualLayout.lockedComponentIds)
+        const canUseSavedLayout = savedLayoutMatchesActiveTopology(payload, savedPositions);
+        const mergedPositions = canUseSavedLayout
+            ? mergeSavedPositions(manualLayout.positions, savedPositions, new Set())
             : manualLayout.positions;
         const layoutPositions = normalizeLayoutPositions(payload, mergedPositions);
         const lineLabels = computeLineLabelPositions(payload, layoutPositions);
@@ -1537,6 +1693,7 @@
             if (!meta.componentId) {
                 return;
             }
+            hideSldContextMenu();
             if (root.__sldState && root.__sldState.combineMode) {
                 toggleCombineSelection(root, meta.componentId);
                 return;
@@ -1549,11 +1706,19 @@
         });
 
         paper.on('blank:pointerdown', function () {
+            hideSldContextMenu();
             highlightSelection(root, null);
         });
 
         paper.on('cell:pointerup', function () {
             refreshDerivedGeometry(root);
+        });
+
+        paper.el.addEventListener('contextmenu', function (event) {
+            event.preventDefault();
+            const view = paper.findView(event.target);
+            const meta = view && view.model ? (view.model.prop('sldMeta') || {}) : {};
+            showSldContextMenu(root, event, meta.componentId || '');
         });
 
         refreshDerivedGeometry(root);
@@ -1599,10 +1764,24 @@
             success: function (payload) {
                 fetchSavedLayout(projectId, layoutUrl, selectedLineId)
                     .done(function (savedLayout) {
-                        renderSldGraph(root, payload, savedLayout);
+                        const controls = getSldPagerControls(root);
+                        root.__sldPager = {
+                            payload: payload,
+                            savedLayout: savedLayout,
+                            pageSize: pageSizeValue(controls.pageSize ? controls.pageSize.value : '10'),
+                            page: 1,
+                        };
+                        renderCurrentSldPage(root);
                     })
                     .fail(function () {
-                        renderSldGraph(root, payload, { positions: {}, meta: { saved_count: 0, has_saved_layout: false, save_mode: 'merge' } });
+                        const controls = getSldPagerControls(root);
+                        root.__sldPager = {
+                            payload: payload,
+                            savedLayout: { positions: {}, meta: { saved_count: 0, has_saved_layout: false, save_mode: 'merge' } },
+                            pageSize: pageSizeValue(controls.pageSize ? controls.pageSize.value : '10'),
+                            page: 1,
+                        };
+                        renderCurrentSldPage(root);
                     });
             },
             error: function (xhr) {
@@ -2004,6 +2183,49 @@
             return;
         }
         exportPaperAsSvg(root);
+    });
+
+    $(document).on('change', '#sld-lines-page-size', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldPager) {
+            return;
+        }
+        root.__sldPager.pageSize = pageSizeValue(this.value);
+        root.__sldPager.page = 1;
+        renderCurrentSldPage(root);
+    });
+
+    $(document).on('click', '#sld-page-prev', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldPager) {
+            return;
+        }
+        root.__sldPager.page = Math.max(1, root.__sldPager.page - 1);
+        renderCurrentSldPage(root);
+    });
+
+    $(document).on('click', '#sld-page-next', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldPager) {
+            return;
+        }
+        root.__sldPager.page += 1;
+        renderCurrentSldPage(root);
+    });
+
+    $(document).on('click', '.sld-context-menu button', function () {
+        const menu = this.closest('.sld-context-menu');
+        const root = document.getElementById('sld-diagram-shell');
+        const action = this.dataset.sldContextAction;
+        const componentId = menu ? menu.dataset.componentId : '';
+        hideSldContextMenu();
+        handleSldContextAction(root, action, componentId);
+    });
+
+    $(document).on('click', function (event) {
+        if (!event.target.closest('.sld-context-menu')) {
+            hideSldContextMenu();
+        }
     });
 
     window.initializeSldWorkspace = function (container) {

@@ -436,6 +436,39 @@ footer {
     border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.sld-pagination-toolbar {
+    padding: 0.55rem 0.75rem;
+    border-radius: 0.75rem;
+    background: rgba(248, 250, 252, 0.68);
+    border: 1px solid rgba(148, 163, 184, 0.16);
+}
+
+.sld-context-menu {
+    position: fixed;
+    z-index: 1080;
+    min-width: 190px;
+    padding: 0.35rem;
+    border-radius: 0.55rem;
+    border: 1px solid rgba(148, 163, 184, 0.32);
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 16px 34px rgba(15, 35, 56, 0.16);
+}
+
+.sld-context-menu button {
+    width: 100%;
+    border: 0;
+    border-radius: 0.35rem;
+    background: transparent;
+    color: #17324d;
+    font-size: 0.88rem;
+    text-align: left;
+    padding: 0.42rem 0.55rem;
+}
+
+.sld-context-menu button:hover {
+    background: #eef4f8;
+}
+
 .sld-inspector-panel {
     min-height: 340px;
 }
