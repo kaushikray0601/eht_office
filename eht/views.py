@@ -18,6 +18,12 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.timezone import now, timedelta
 
+from .cable_management import (
+    attach_cable_override_summaries,
+    find_cable_node,
+    reset_cable_override,
+    save_cable_override,
+)
 from .forms import ProjectDataForm
 from .data_service import clear_project_workspace_data
 from .models import (
@@ -40,9 +46,13 @@ from .sld_payload import build_project_sld_payload
 from .sld_pdf import build_sld_pdf
 from .sld_topology import apply_active_cable_schedule_rows, apply_active_summary_overrides
 from .sld_topology_workflows import (
+    apply_attach_to_jb,
     apply_combine_feeders,
+    apply_downstream_jb,
     apply_split_circuits,
+    preview_attach_to_jb,
     preview_combine_feeders,
+    preview_downstream_jb,
     preview_split_circuits,
 )
 from .sld_validation import validate_project_sld_payload
@@ -329,6 +339,8 @@ def _build_result_workspace_data(project_id):
         .order_by('distribution__line__line_id', 'branch_index')
     )
     branch_rows = apply_active_cable_schedule_rows(project_id, branch_rows)
+    sld_payload = build_project_sld_payload(project_id)
+    branch_rows = attach_cable_override_summaries(branch_rows, sld_payload)
 
     line_results = []
     for calculation in calculations:
@@ -762,7 +774,13 @@ def sld_workspace_view(request):
         'sld_topology_combine_apply_url': reverse('sld_topology_combine_apply_view'),
         'sld_topology_split_preview_url': reverse('sld_topology_split_preview_view'),
         'sld_topology_split_apply_url': reverse('sld_topology_split_apply_view'),
+        'sld_topology_downstream_jb_preview_url': reverse('sld_topology_downstream_jb_preview_view'),
+        'sld_topology_downstream_jb_apply_url': reverse('sld_topology_downstream_jb_apply_view'),
+        'sld_topology_attach_jb_preview_url': reverse('sld_topology_attach_jb_preview_view'),
+        'sld_topology_attach_jb_apply_url': reverse('sld_topology_attach_jb_apply_view'),
         'sld_topology_reset_url': reverse('sld_topology_reset_view'),
+        'sld_cable_override_save_url': reverse('sld_cable_override_save_view'),
+        'sld_cable_override_reset_url': reverse('sld_cable_override_reset_view'),
         'sld_topology_state': sld_data['topology_state'],
         'sld_validation_url': reverse('sld_validation_view'),
         'sld_selected_line_id': sld_data.get('selected_line_id', ''),
@@ -813,6 +831,76 @@ def sld_pdf_export_view(request):
     response = HttpResponse(pdf_bytes, content_type='application/pdf')
     response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
+
+
+def _json_validation_error(message, status=400):
+    if isinstance(message, ValidationError):
+        message = '; '.join(message.messages)
+    return JsonResponse({'error': str(message)}, status=status)
+
+
+def sld_cable_override_save_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+    try:
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid cable override payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_id = body.get('component_id')
+    if not project_id or not component_id:
+        return JsonResponse({'error': 'Project ID and cable component ID are required.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    payload = build_project_sld_payload(project_id)
+    node = find_cable_node(payload, component_id)
+    if node is None:
+        return JsonResponse({'error': 'Selected component is not a cable in the active SLD payload.'}, status=404)
+
+    try:
+        override = save_cable_override(
+            project_id,
+            node,
+            manual_length_m=body.get('manual_length_m'),
+            manual_cable_size=body.get('manual_cable_size', ''),
+            remarks=body.get('remarks', ''),
+            user=getattr(request, 'user', None),
+        )
+    except ValidationError as exc:
+        return _json_validation_error(exc)
+
+    return JsonResponse({
+        'success': f'Cable override saved for {override.display_tag}.',
+        'component_id': override.component_id,
+        'display_tag': override.display_tag,
+        'manual_length_m': override.manual_length_m,
+        'manual_cable_size': override.manual_cable_size,
+    })
+
+
+def sld_cable_override_reset_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+    try:
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid cable override reset payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_id = body.get('component_id')
+    if not project_id or not component_id:
+        return JsonResponse({'error': 'Project ID and cable component ID are required.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    reset_count = reset_cable_override(project_id, component_id)
+    return JsonResponse({
+        'success': 'Cable override reset to generated value.',
+        'reset_count': reset_count,
+    })
 
 
 def sld_validation_view(request):
@@ -1004,6 +1092,107 @@ def sld_topology_split_apply_view(request):
     return JsonResponse({'success': 'Circuit split topology edit applied.', **result})
 
 
+def sld_topology_downstream_jb_preview_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    parent_component_id = body.get('parent_component_id') or ''
+    branch_component_ids = body.get('branch_component_ids') or []
+    trunk_length_m = body.get('trunk_length_m')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    preview = preview_downstream_jb(project_id, parent_component_id, branch_component_ids, trunk_length_m)
+    if not preview['ok']:
+        return JsonResponse({'error': preview['error'], **preview}, status=400)
+    return JsonResponse(preview)
+
+
+def sld_topology_downstream_jb_apply_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    parent_component_id = body.get('parent_component_id') or ''
+    branch_component_ids = body.get('branch_component_ids') or []
+    trunk_length_m = body.get('trunk_length_m')
+    remarks = body.get('remarks') or ''
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    result = apply_downstream_jb(
+        project_id,
+        parent_component_id,
+        branch_component_ids,
+        trunk_length_m=trunk_length_m,
+        user=getattr(request, 'user', None),
+        remarks=remarks,
+    )
+    if not result['ok']:
+        return JsonResponse({'error': result['error'], **result}, status=400)
+    return JsonResponse({'success': 'Downstream 3PH JB topology edit applied.', **result})
+
+
+def sld_topology_attach_jb_preview_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    source_component_id = body.get('source_component_id') or ''
+    target_jb_component_id = body.get('target_jb_component_id') or ''
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    preview = preview_attach_to_jb(project_id, source_component_id, target_jb_component_id)
+    if not preview['ok']:
+        return JsonResponse({'error': preview['error'], **preview}, status=400)
+    return JsonResponse(preview)
+
+
+def sld_topology_attach_jb_apply_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    source_component_id = body.get('source_component_id') or ''
+    target_jb_component_id = body.get('target_jb_component_id') or ''
+    remarks = body.get('remarks') or ''
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    result = apply_attach_to_jb(
+        project_id,
+        source_component_id,
+        target_jb_component_id,
+        user=getattr(request, 'user', None),
+        remarks=remarks,
+    )
+    if not result['ok']:
+        return JsonResponse({'error': result['error'], **result}, status=400)
+    return JsonResponse({'success': 'Feeder attached to 3PH JB.', **result})
+
+
 def sld_topology_reset_view(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Invalid request method.'}, status=405)
@@ -1089,6 +1278,7 @@ def result_export_view(request):
             'Circuit Count': _branch_value(branch, ['circuit_count']),
             'Cable Length DB to JB': _branch_value(branch, ['cable_length_db_to_jb']),
             'Cable Length JB to JB': _branch_value(branch, ['cable_length_jb_to_jb']),
+            'Cable Overrides': json.dumps(_branch_value(branch, ['cable_override_summary'], []), default=str),
             'Tagged Components': str(_branch_value(branch, ['tagged_components'], {})),
         }
         for branch in result_data['branch_rows']

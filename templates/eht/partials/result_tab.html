@@ -161,6 +161,7 @@
                             <th data-field="circuits" data-sortable="true">Circuits</th>
                             <th data-field="db-to-jb" data-sortable="true">DB to JB</th>
                             <th data-field="jb-to-jb" data-sortable="true">JB to JB</th>
+                            <th data-field="cable-overrides">Cable Overrides</th>
                             <th data-field="tags">Tags</th>
                         </tr>
                     </thead>
@@ -178,6 +179,19 @@
                                         {{ branch.cable_length_jb_to_jb|floatformat:2 }} m
                                     {% else %}
                                         <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="small">
+                                    {% if branch.cable_override_count %}
+                                        {% for override in branch.cable_override_summary %}
+                                            <div>
+                                                <span class="badge text-bg-warning text-dark">{{ override.tag }}</span>
+                                                {% if override.length_m %}{{ override.length_m|floatformat:2 }} m{% endif %}
+                                                {% if override.cable_size %} / {{ override.cable_size }}{% endif %}
+                                            </div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">Generated</span>
                                     {% endif %}
                                 </td>
                                 <td class="small">

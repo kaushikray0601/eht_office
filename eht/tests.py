@@ -24,6 +24,7 @@ from eht.forms import ProjectDataForm
 from eht.models import (
     AlternateTracer,
     BOQ,
+    CableScheduleOverride,
     DEFAULT_PROJECT_ID,
     ElecEHT_ASMEB36,
     ElecEHT_ThermalConductivity,
@@ -1218,6 +1219,35 @@ class SldPayloadTests(TestCase):
         self.assertTrue(payload['nodes'])
         self.assertTrue(all(node['line_id'] == 'LINE-002' for node in payload['nodes']))
 
+    def test_build_project_sld_payload_applies_cable_length_override_metadata(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            generated_length_m=(cable_node['metadata'] or {}).get('length_m'),
+            manual_length_m=123.45,
+            manual_cable_size='4C x 2.5',
+            remarks='Routed via field JB rack.',
+        )
+
+        payload = build_project_sld_payload('p1')
+        adjusted = next(node for node in payload['nodes'] if node['component_id'] == cable_node['component_id'])
+
+        self.assertEqual(adjusted['metadata']['length_m'], 123.45)
+        self.assertEqual(adjusted['metadata']['manual_length_m'], 123.45)
+        self.assertEqual(adjusted['metadata']['cable_size'], '4C x 2.5')
+        self.assertTrue(adjusted['metadata']['cable_override_active'])
+
     def test_build_project_sld_payload_is_deterministic_for_repeated_builds(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
 
@@ -1799,6 +1829,232 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(sum(1 for node in edited_payload['nodes'] if node['component_type'] == 'MCB'), 1)
         self.assertEqual(len(manual_trunks), 1)
 
+    def test_downstream_jb_apply_moves_selected_outgoing_branches(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003', 'LINE-004'])
+        combine_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(combine_response.status_code, 200)
+
+        combined_payload = build_project_sld_payload('p1')
+        parent_jb = next(
+            node for node in combined_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        )
+        direct_children = [
+            edge['to_component_id']
+            for edge in combined_payload['edges']
+            if edge['from_component_id'] == parent_jb['component_id']
+        ]
+        self.assertEqual(len(direct_children), 4)
+
+        preview_response = self.client.post(
+            reverse('sld_topology_downstream_jb_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'parent_component_id': parent_jb['component_id'],
+                'branch_component_ids': direct_children[:3],
+                'trunk_length_m': 18.5,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['parent_outgoing_before'], 4)
+        self.assertEqual(preview['parent_outgoing_after'], 2)
+        self.assertEqual(preview['downstream_outgoing_count'], 3)
+
+        apply_response = self.client.post(
+            reverse('sld_topology_downstream_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'parent_component_id': parent_jb['component_id'],
+                'branch_component_ids': direct_children[:3],
+                'trunk_length_m': 18.5,
+                'remarks': 'Add downstream JB to limit outgoing feeders.',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(apply_response.status_code, 200)
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        self.assertEqual(edit.edit_type, 'downstream_jb')
+        self.assertIn('limit outgoing', edit.remarks)
+
+        edited_payload = build_project_sld_payload('p1')
+        node_by_id = {node['component_id']: node for node in edited_payload['nodes']}
+        downstream_jb = next(
+            node for node in edited_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'downstream_jb'
+        )
+        downstream_trunk = next(
+            node for node in edited_payload['nodes']
+            if node['component_type'] == 'Cable4C'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'downstream_jb'
+        )
+        self.assertEqual(downstream_trunk['metadata']['length_m'], 18.5)
+        self.assertEqual(
+            len([edge for edge in edited_payload['edges'] if edge['from_component_id'] == parent_jb['component_id']]),
+            2,
+        )
+        self.assertEqual(
+            len([edge for edge in edited_payload['edges'] if edge['from_component_id'] == downstream_jb['component_id']]),
+            3,
+        )
+        self.assertTrue(all(component_id in node_by_id for component_id in direct_children[:3]))
+
+    def test_attach_to_jb_moves_standalone_mcb_feeder_to_target_jb(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003'])
+        first_two_mcb_ids = self._mcb_component_ids()[:2]
+        combine_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': first_two_mcb_ids}),
+            content_type='application/json',
+        )
+        self.assertEqual(combine_response.status_code, 200)
+
+        active_payload = build_project_sld_payload('p1')
+        target_jb = next(
+            node for node in active_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        )
+        source_mcb = next(
+            node for node in active_payload['nodes']
+            if node['component_type'] == 'MCB' and node.get('line_id') == 'LINE-003'
+        )
+
+        preview_response = self.client.post(
+            reverse('sld_topology_attach_jb_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': source_mcb['component_id'],
+                'target_jb_component_id': target_jb['component_id'],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['edit_type'], 'attach_to_jb')
+        self.assertEqual(preview['target_outgoing_before'], 2)
+        self.assertEqual(preview['target_outgoing_after'], 3)
+        self.assertEqual(preview['recommended_breaker_rating'], 32)
+
+        apply_response = self.client.post(
+            reverse('sld_topology_attach_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': source_mcb['component_id'],
+                'target_jb_component_id': target_jb['component_id'],
+                'remarks': 'Attach line 3 to spare outgoing on combined JB.',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(apply_response.status_code, 200)
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        self.assertEqual(edit.edit_type, 'attach_to_jb')
+        self.assertIn('spare outgoing', edit.remarks)
+
+        edited_payload = build_project_sld_payload('p1')
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in edited_payload['edges']
+        }
+        self.assertFalse(any(node['component_id'] == source_mcb['component_id'] for node in edited_payload['nodes']))
+        self.assertEqual(sum(1 for node in edited_payload['nodes'] if node['component_type'] == 'MCB'), 1)
+        moved_entry_id = preview['moved_component_ids'][0]
+        self.assertIn((target_jb['component_id'], moved_entry_id), edge_pairs)
+        combined_mcb = next(node for node in edited_payload['nodes'] if node['component_type'] == 'MCB')
+        self.assertEqual((combined_mcb.get('metadata') or {}).get('breaker_size'), 32)
+
+    def test_attach_to_jb_moves_downstream_branch_between_jbs(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003', 'LINE-004'])
+        combine_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(combine_response.status_code, 200)
+
+        combined_payload = build_project_sld_payload('p1')
+        upstream_jb = next(
+            node for node in combined_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        )
+        direct_children = [
+            edge['to_component_id']
+            for edge in combined_payload['edges']
+            if edge['from_component_id'] == upstream_jb['component_id']
+        ]
+        downstream_response = self.client.post(
+            reverse('sld_topology_downstream_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'parent_component_id': upstream_jb['component_id'],
+                'branch_component_ids': direct_children[:3],
+                'trunk_length_m': 12,
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(downstream_response.status_code, 200)
+
+        moved_payload = build_project_sld_payload('p1')
+        downstream_jb = next(
+            node for node in moved_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'downstream_jb'
+        )
+        branch_root_id = next(
+            edge['to_component_id']
+            for edge in moved_payload['edges']
+            if edge['from_component_id'] == downstream_jb['component_id']
+        )
+
+        preview_response = self.client.post(
+            reverse('sld_topology_attach_jb_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': branch_root_id,
+                'target_jb_component_id': upstream_jb['component_id'],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['edit_type'], 'move_branch_to_jb')
+        self.assertEqual(preview['source_outgoing_before'], 3)
+        self.assertEqual(preview['source_outgoing_after'], 2)
+        self.assertEqual(preview['target_outgoing_before'], 2)
+        self.assertEqual(preview['target_outgoing_after'], 3)
+
+        apply_response = self.client.post(
+            reverse('sld_topology_attach_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': branch_root_id,
+                'target_jb_component_id': upstream_jb['component_id'],
+                'remarks': 'Move branch to spare outgoing on upstream JB.',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(apply_response.status_code, 200)
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        self.assertEqual(edit.edit_type, 'move_branch_to_jb')
+        edited_payload = build_project_sld_payload('p1')
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in edited_payload['edges']
+        }
+        self.assertIn((upstream_jb['component_id'], branch_root_id), edge_pairs)
+        self.assertNotIn((downstream_jb['component_id'], branch_root_id), edge_pairs)
+
     def test_combine_feeders_preview_requires_two_mcbs(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         component_ids = self._mcb_component_ids()
@@ -2183,6 +2439,31 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'V-ALT-001')
         self.assertContains(response, 'MCB_001')
 
+    def test_result_view_shows_cable_override_summary(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            generated_length_m=(cable_node['metadata'] or {}).get('length_m'),
+            manual_length_m=88.5,
+        )
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cable Overrides')
+        self.assertContains(response, cable_node['display_tag'])
+        self.assertContains(response, '88.50 m')
+
     def test_result_view_uses_applied_topology_summary_override(self):
         make_calculated_project_snapshot()
         SLDTopologyEdit.objects.create(
@@ -2336,6 +2617,8 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Save Layout')
         self.assertContains(response, 'Reset Layout')
         self.assertContains(response, 'Apply Edit')
+        self.assertContains(response, reverse('sld_cable_override_save_view'))
+        self.assertContains(response, 'id="sld-cable-editor"')
         self.assertNotContains(response, 'Preview Edit')
 
     def test_sld_workspace_view_supports_line_focused_rendering(self):
@@ -2413,6 +2696,39 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertTrue(pdf_bytes.startswith(b'%PDF'))
         self.assertGreaterEqual(branch_link.call_count, 1)
+
+    def test_sld_cable_override_save_and_reset_views_update_payload(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in payload['nodes'] if node['component_type'] == 'Cable3C')
+
+        save_response = self.client.post(
+            reverse('sld_cable_override_save_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_id': cable_node['component_id'],
+                'manual_length_m': 77.25,
+                'manual_cable_size': '3C x 4',
+                'remarks': 'Field measured route.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertTrue(CableScheduleOverride.objects.filter(project_id='p1', component_id=cable_node['component_id'], is_active=True).exists())
+        adjusted_payload = build_project_sld_payload('p1')
+        adjusted_node = next(node for node in adjusted_payload['nodes'] if node['component_id'] == cable_node['component_id'])
+        self.assertEqual(adjusted_node['metadata']['length_m'], 77.25)
+        self.assertEqual(adjusted_node['metadata']['cable_size'], '3C x 4')
+
+        reset_response = self.client.post(
+            reverse('sld_cable_override_reset_view'),
+            data=json.dumps({'project_id': 'p1', 'component_id': cable_node['component_id']}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+        self.assertFalse(CableScheduleOverride.objects.get(project_id='p1', component_id=cable_node['component_id']).is_active)
 
     def test_sld_payload_view_returns_json_graph_payload(self):
         make_calculated_project_snapshot()

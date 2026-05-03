@@ -478,6 +478,16 @@ footer {
     border: 1px solid rgba(148, 163, 184, 0.18);
 }
 
+.sld-cable-manual-label,
+.sld-cable-manual-note {
+    color: #8a5b12;
+    font-weight: 400;
+}
+
+.sld-cable-manual-note {
+    line-height: 1.35;
+}
+
 .sld-context-menu {
     position: fixed;
     z-index: 1080;

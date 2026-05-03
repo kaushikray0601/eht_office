@@ -326,6 +326,46 @@ class PowerDistributionBranch(models.Model):
         ]
 
 
+class CableScheduleOverride(models.Model):
+    project = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='project_id',
+        on_delete=models.CASCADE,
+        related_name='cable_schedule_overrides',
+    )
+    component_id = models.CharField(max_length=255)
+    component_uid = models.CharField(max_length=32, blank=True, default='')
+    display_tag = models.CharField(max_length=100)
+    component_type = models.CharField(max_length=50)
+    line_id = models.CharField(max_length=100, blank=True, default='')
+    line_uid = models.CharField(max_length=100, blank=True, default='')
+    branch_index = models.PositiveIntegerField(default=0)
+    circuit_index = models.PositiveIntegerField(null=True, blank=True)
+    generated_length_m = models.FloatField(null=True, blank=True)
+    manual_length_m = models.FloatField(null=True, blank=True)
+    generated_cable_size = models.CharField(max_length=50, blank=True, default='')
+    manual_cable_size = models.CharField(max_length=50, blank=True, default='')
+    remarks = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_cable_overrides')
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='updated_cable_overrides')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['project', 'line_id', 'branch_index', 'display_tag']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'component_id'], name='unique_cable_override_component_per_project'),
+        ]
+        indexes = [
+            models.Index(fields=['project', 'line_id']),
+            models.Index(fields=['component_uid']),
+            models.Index(fields=['display_tag']),
+            models.Index(fields=['is_active']),
+        ]
+
+
 class SLDNodeLayout(models.Model):
     project = models.ForeignKey(
         ProjectData,
@@ -363,6 +403,9 @@ class SLDTopologyEdit(models.Model):
     EDIT_TYPES = [
         ('combine_feeders', 'Combine Feeders'),
         ('split_circuits', 'Split Circuits'),
+        ('downstream_jb', 'Downstream 3PH JB'),
+        ('attach_to_jb', 'Attach Feeder to 3PH JB'),
+        ('move_branch_to_jb', 'Move Branch to 3PH JB'),
     ]
     STATUSES = [
         ('draft', 'Draft'),

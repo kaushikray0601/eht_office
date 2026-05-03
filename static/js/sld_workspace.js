@@ -3,23 +3,52 @@
     const DOWNSTREAM_COMPONENT_ORDER = ['Isolator1PH', 'Cable3C', 'JB1PH', 'Tracer', 'EndTermination'];
     const COMPONENT_SORT_ORDER = {};
     const EXTERNAL_DETAIL_COMPONENTS = new Set(['Cable4C', 'Cable3C', 'Tracer']);
+    const CABLE_COMPONENTS = new Set(['Cable4C', 'Cable3C']);
+    const SLD_LABEL_FONT_SIZE = 9.5;
+    const SLD_LABEL_FONT_WEIGHT = 500;
+    const POWER_LINK_OVERLAP = 4;
     const NODE_STYLE = {
-        MCB: { width: 108, height: 54, fill: '#f3f7fb', stroke: '#1f3447' },
-        Cable4C: { width: 132, height: 20, fill: '#fff8e8', stroke: '#7a5b2b' },
-        Cable3C: { width: 120, height: 20, fill: '#fff8e8', stroke: '#7a5b2b' },
-        Isolator3PH: { width: 82, height: 32, fill: '#edf6ff', stroke: '#31597f' },
-        Isolator1PH: { width: 82, height: 32, fill: '#edf6ff', stroke: '#31597f' },
+        MCB: { width: 116, height: 60, fill: '#f3f7fb', stroke: '#1f3447' },
+        Cable4C: { width: 74, height: 12, fill: '#fff8e8', stroke: '#7a5b2b' },
+        Cable3C: { width: 70, height: 12, fill: '#fff8e8', stroke: '#7a5b2b' },
+        Isolator3PH: { width: 88, height: 54, fill: '#edf6ff', stroke: '#31597f' },
+        Isolator1PH: { width: 88, height: 54, fill: '#edf6ff', stroke: '#31597f' },
         JB3PH: { width: 96, height: 54, fill: '#f5f8fc', stroke: '#20394f' },
         JB1PH: { width: 78, height: 44, fill: '#f5f8fc', stroke: '#20394f' },
-        Tracer: { width: 120, height: 20, fill: '#eefaf1', stroke: '#2f6c43' },
-        EndTermination: { width: 28, height: 28, fill: '#243b53', stroke: '#1a2735' },
+        Tracer: { width: 120, height: 28, fill: 'transparent', stroke: '#c2410c' },
+        EndTermination: { width: 14, height: 14, fill: '#243b53', stroke: '#1a2735' },
     };
+    const SCHEMATIC_SYMBOL_COMPONENTS = new Set(['MCB', 'Isolator3PH', 'Isolator1PH', 'JB3PH', 'JB1PH', 'Tracer']);
+    let SchematicSymbolElement = null;
     UPSTREAM_COMPONENT_ORDER.concat(DOWNSTREAM_COMPONENT_ORDER).forEach(function (componentType, index) {
         COMPONENT_SORT_ORDER[componentType] = index;
     });
 
     function getNodeStyle(componentType) {
         return NODE_STYLE[componentType] || { width: 100, height: 40, fill: '#f8fafc', stroke: '#1f3447' };
+    }
+
+    function isSchematicSymbolComponent(componentType) {
+        return SCHEMATIC_SYMBOL_COMPONENTS.has(componentType);
+    }
+
+    function getSchematicSymbolElementClass() {
+        if (!SchematicSymbolElement) {
+            SchematicSymbolElement = joint.dia.Element.define('sld.SchematicSymbolElement', {}, {
+                markup: [
+                    { tagName: 'rect', selector: 'body' },
+                    { tagName: 'path', selector: 'terminalPath' },
+                    { tagName: 'path', selector: 'symbolPath' },
+                    { tagName: 'circle', selector: 'symbolRing' },
+                    { tagName: 'circle', selector: 'dot1' },
+                    { tagName: 'circle', selector: 'dot2' },
+                    { tagName: 'circle', selector: 'dot3' },
+                    { tagName: 'text', selector: 'tagLabel' },
+                    { tagName: 'text', selector: 'bodyLabel' },
+                ],
+            });
+        }
+        return SchematicSymbolElement;
     }
 
     function escapeHtml(value) {
@@ -71,7 +100,9 @@
     function formatExternalDetail(node) {
         const metadata = node.metadata || {};
         if (node.component_type === 'Cable4C' || node.component_type === 'Cable3C') {
-            return metadata.length_m ? `${node.display_name} | ${metadata.length_m} m` : node.display_name;
+            const cableLabel = metadata.manual_cable_size || metadata.cable_size || node.display_name;
+            const engineeringLabel = metadata.length_m ? `${cableLabel} ${metadata.length_m} m` : cableLabel;
+            return `${node.display_tag}\n${engineeringLabel}`;
         }
         if (node.component_type === 'Tracer') {
             return node.display_name || 'Heat Trace';
@@ -135,25 +166,270 @@
         return label;
     }
 
-    function createComponentElement(node, position) {
+    function mapInlineSvgSymbolPoint(rawX, rawY, centerX, centerY, lengthScale, widthScale) {
+        return {
+            x: centerX + ((rawY - 25) * lengthScale),
+            y: centerY + ((rawX - 10) * widthScale),
+        };
+    }
+
+    function getJbOutgoingSlotOffsets(node, context) {
+        if (!context || !context.outgoingBySource || node.component_type !== 'JB3PH') {
+            return [];
+        }
+        const outgoing = sortOutgoingEdges(context.outgoingBySource[node.component_id] || [], context.nodeById);
+        const downstream = outgoing.filter(function (edge) {
+            const targetNode = context.nodeById[edge.to_component_id];
+            return targetNode && CABLE_COMPONENTS.has(targetNode.component_type);
+        });
+        if (downstream.length === 1) {
+            return [0];
+        }
+        if (downstream.length === 2) {
+            return [-12, 0];
+        }
+        if (downstream.length === 3) {
+            return [-12, 0, 12];
+        }
+        const count = Math.max(3, downstream.length);
+        const spacing = 36 / Math.max(1, count - 1);
+        return Array.from({ length: count }, function (_, index) {
+            return -18 + (index * spacing);
+        });
+    }
+
+    function getJbOutgoingSlotOffset(edge, sourceNode, context) {
+        if (!sourceNode || sourceNode.component_type !== 'JB3PH' || !context || !context.outgoingBySource) {
+            return 0;
+        }
+        const outgoing = sortOutgoingEdges(context.outgoingBySource[sourceNode.component_id] || [], context.nodeById)
+            .filter(function (candidate) {
+                const targetNode = context.nodeById[candidate.to_component_id];
+                return targetNode && CABLE_COMPONENTS.has(targetNode.component_type);
+            });
+        const index = outgoing.findIndex(function (candidate) {
+            return getEdgeKey(candidate) === getEdgeKey(edge);
+        });
+        const slots = getJbOutgoingSlotOffsets(sourceNode, context);
+        return index >= 0 && slots[index] !== undefined ? slots[index] : 0;
+    }
+
+    function getSchematicSymbolAttrs(node, style, context) {
+        const width = style.width;
+        const height = style.height;
+        const centerY = height / 2;
+        const stroke = style.stroke;
+        const common = {
+            body: {
+                width: width,
+                height: height,
+                fill: 'transparent',
+                stroke: 'transparent',
+                cursor: 'pointer',
+            },
+            terminalPath: {
+                d: '',
+                fill: 'none',
+                stroke: stroke,
+                strokeWidth: 2,
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round',
+                pointerEvents: 'none',
+            },
+            symbolPath: {
+                d: '',
+                fill: 'none',
+                stroke: stroke,
+                strokeWidth: 2.2,
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round',
+                pointerEvents: 'none',
+            },
+            symbolRing: {
+                cx: width / 2,
+                cy: centerY,
+                r: 0,
+                fill: '#ffffff',
+                stroke: stroke,
+                strokeWidth: 2,
+                pointerEvents: 'none',
+            },
+            dot1: { r: 0, fill: stroke, pointerEvents: 'none' },
+            dot2: { r: 0, fill: stroke, pointerEvents: 'none' },
+            dot3: { r: 0, fill: stroke, pointerEvents: 'none' },
+            tagLabel: {
+                text: node.display_tag || node.component_type,
+                x: width / 2,
+                y: 8,
+                fill: '#17324d',
+                fontSize: SLD_LABEL_FONT_SIZE,
+                fontWeight: SLD_LABEL_FONT_WEIGHT,
+                textAnchor: 'middle',
+                textVerticalAnchor: 'middle',
+                pointerEvents: 'none',
+            },
+            bodyLabel: {
+                text: formatNodeBody(node),
+                x: width / 2,
+                y: height - 6,
+                fill: '#17324d',
+                fontSize: SLD_LABEL_FONT_SIZE,
+                fontWeight: SLD_LABEL_FONT_WEIGHT,
+                textAnchor: 'middle',
+                textVerticalAnchor: 'middle',
+                pointerEvents: 'none',
+            },
+        };
+
+        if (node.component_type === 'MCB') {
+            const symbolX = width / 2;
+            const point = function (rawX, rawY) { return mapInlineSvgSymbolPoint(rawX, rawY, symbolX, centerY, 0.86, 2.2); };
+            common.tagLabel.text = formatNodeBody(node);
+            common.bodyLabel.text = node.display_tag || 'MCB';
+            const p = {
+                top1: point(10, 0),
+                top2: point(10, 15),
+                crossA1: point(12, 13),
+                crossA2: point(8, 17),
+                crossB1: point(8, 13),
+                crossB2: point(12, 17),
+                bottom1: point(10, 50),
+                bottom2: point(10, 35),
+                blade1: point(10, 35),
+                blade2: point(5, 15),
+            };
+            common.terminalPath.d = `M -2 ${centerY} L ${p.top1.x} ${p.top1.y} M ${p.bottom1.x} ${p.bottom1.y} L ${width + 2} ${centerY}`;
+            common.symbolPath.d = [
+                `M ${p.top1.x} ${p.top1.y} L ${p.top2.x} ${p.top2.y}`,
+                `M ${p.crossA1.x} ${p.crossA1.y} L ${p.crossA2.x} ${p.crossA2.y}`,
+                `M ${p.crossB1.x} ${p.crossB1.y} L ${p.crossB2.x} ${p.crossB2.y}`,
+                `M ${p.bottom1.x} ${p.bottom1.y} L ${p.bottom2.x} ${p.bottom2.y}`,
+                `M ${p.blade1.x} ${p.blade1.y} L ${p.blade2.x} ${p.blade2.y}`,
+            ].join(' ');
+            return common;
+        }
+
+        if (node.component_type === 'Isolator3PH' || node.component_type === 'Isolator1PH') {
+            const symbolX = width / 2;
+            const point = function (rawX, rawY) { return mapInlineSvgSymbolPoint(rawX, rawY, symbolX, centerY, 0.86, 2.2); };
+            common.tagLabel.text = '';
+            const p = {
+                top1: point(10, 0),
+                top2: point(10, 15),
+                bottom1: point(10, 50),
+                bottom2: point(10, 35),
+                blade: point(5, 15),
+                contact1: point(8, 15),
+                contact2: point(12, 15),
+            };
+            common.terminalPath.d = `M -2 ${centerY} L ${p.top1.x} ${p.top1.y} M ${p.bottom1.x} ${p.bottom1.y} L ${width + 2} ${centerY}`;
+            common.symbolPath.d = [
+                `M ${p.top1.x} ${p.top1.y} L ${p.top2.x} ${p.top2.y}`,
+                `M ${p.bottom1.x} ${p.bottom1.y} L ${p.bottom2.x} ${p.bottom2.y} L ${p.blade.x} ${p.blade.y}`,
+                `M ${p.contact1.x} ${p.contact1.y} L ${p.contact2.x} ${p.contact2.y}`,
+            ].join(' ');
+            common.bodyLabel.text = node.component_type === 'Isolator3PH' ? '3PH Isolator' : '1PH Isolator';
+            return common;
+        }
+
+        if (node.component_type === 'Tracer') {
+            const leftLeadEnd = 28;
+            const rightLeadStart = width - 28;
+            const toothWidth = (rightLeadStart - leftLeadEnd) / 6;
+            const topY = centerY - 9;
+            const bottomY = centerY + 9;
+            common.terminalPath.stroke = style.stroke;
+            common.terminalPath.strokeWidth = 2.4;
+            common.terminalPath.d = `M 0 ${centerY} L ${leftLeadEnd} ${centerY} M ${rightLeadStart} ${centerY} L ${width} ${centerY}`;
+            common.symbolPath.stroke = style.stroke;
+            common.symbolPath.strokeWidth = 3;
+            common.symbolPath.d = [
+                `M ${leftLeadEnd} ${centerY}`,
+                `L ${leftLeadEnd + toothWidth} ${topY}`,
+                `L ${leftLeadEnd + (toothWidth * 2)} ${bottomY}`,
+                `L ${leftLeadEnd + (toothWidth * 3)} ${topY}`,
+                `L ${leftLeadEnd + (toothWidth * 4)} ${bottomY}`,
+                `L ${leftLeadEnd + (toothWidth * 5)} ${topY}`,
+                `L ${rightLeadStart} ${centerY}`,
+            ].join(' ');
+            common.tagLabel.text = '';
+            common.bodyLabel.text = '';
+            return common;
+        }
+
+        if (node.component_type === 'JB3PH' || node.component_type === 'JB1PH') {
+            const busX = Math.round(width * 0.36);
+            common.terminalPath.d = `M -2 ${centerY} L ${busX} ${centerY}`;
+            common.symbolPath.strokeWidth = 5;
+            common.tagLabel.x = busX - 8;
+            common.tagLabel.y = centerY - 17;
+            common.tagLabel.fontSize = SLD_LABEL_FONT_SIZE;
+            common.tagLabel.textAnchor = 'end';
+            common.bodyLabel.x = busX + 8;
+            common.bodyLabel.y = centerY + 22;
+            common.bodyLabel.fontSize = SLD_LABEL_FONT_SIZE;
+            common.bodyLabel.textAnchor = 'start';
+            common.bodyLabel.text = node.component_type === 'JB3PH' ? '3PH JB' : '1PH JB';
+            if (node.component_type === 'JB3PH') {
+                const slots = getJbOutgoingSlotOffsets(node, context);
+                const fullSlots = new Set(slots.map(function (offset) { return Math.round(offset); }));
+                common.symbolPath.d = `M ${busX} ${centerY - 18} L ${busX} ${centerY + 18}`;
+                [-12, 0, 12].forEach(function (offset) {
+                    const y = centerY + offset;
+                    const endX = fullSlots.has(offset) ? width + 2 : busX + Math.round((width - busX) * 0.5);
+                    common.terminalPath.d += ` M ${busX} ${y} L ${endX} ${y}`;
+                });
+                slots.forEach(function (offset) {
+                    if ([-12, 0, 12].includes(offset)) {
+                        return;
+                    }
+                    const y = centerY + offset;
+                    common.terminalPath.d += ` M ${busX} ${y} L ${width + 2} ${y}`;
+                });
+            } else {
+                common.symbolPath.d = `M ${busX} ${centerY - 10} L ${busX} ${centerY + 10}`;
+                common.terminalPath.d += ` M ${busX} ${centerY} L ${width + 2} ${centerY}`;
+            }
+        }
+
+        return common;
+    }
+
+    function createSchematicSymbolElement(node, position, style, context) {
+        const ElementClass = getSchematicSymbolElementClass();
+        const element = new ElementClass();
+        element.position(position.x, position.y - style.height / 2);
+        element.resize(style.width, style.height);
+        element.attr(getSchematicSymbolAttrs(node, style, context));
+        element.prop('sldMeta', { componentId: node.component_id, node: node });
+        return element;
+    }
+
+    function createComponentElement(node, position, context) {
         const style = getNodeStyle(node.component_type);
 
         if (node.component_type === 'EndTermination') {
-            const circle = new joint.shapes.standard.Circle();
-            circle.position(position.x, position.y - style.height / 2);
-            circle.resize(style.width, style.height);
-            circle.attr({
+            const square = new joint.shapes.standard.Rectangle();
+            square.position(position.x, position.y - style.height / 2);
+            square.resize(style.width, style.height);
+            square.attr({
                 body: {
                     fill: style.fill,
                     stroke: style.stroke,
                     strokeWidth: 2,
+                    rx: 0,
+                    ry: 0,
                 },
                 label: {
                     text: '',
                 },
             });
-            circle.prop('sldMeta', { componentId: node.component_id, node: node });
-            return circle;
+            square.prop('sldMeta', { componentId: node.component_id, node: node });
+            return square;
+        }
+
+        if (isSchematicSymbolComponent(node.component_type)) {
+            return createSchematicSymbolElement(node, position, style, context);
         }
 
         const rectangle = new joint.shapes.standard.Rectangle();
@@ -169,10 +445,10 @@
                 ry: isExternalDetailNode ? 2 : 4,
             },
             label: {
-                text: isExternalDetailNode ? node.display_tag : `${node.display_tag}\n${formatNodeBody(node)}`,
+                text: CABLE_COMPONENTS.has(node.component_type) ? '' : (isExternalDetailNode ? node.display_tag : `${node.display_tag}\n${formatNodeBody(node)}`),
                 fill: '#17324d',
-                fontSize: isExternalDetailNode ? 10 : 12,
-                fontWeight: 600,
+                fontSize: SLD_LABEL_FONT_SIZE,
+                fontWeight: SLD_LABEL_FONT_WEIGHT,
                 textVerticalAnchor: 'middle',
                 textAnchor: 'middle',
             },
@@ -180,15 +456,27 @@
         if (node.component_type === 'Tracer') {
             rectangle.attr('body/strokeDasharray', '6 4');
         }
+        if (
+            (node.component_type === 'Cable4C' || node.component_type === 'Cable3C')
+            && ((node.metadata || {}).cable_override_active || (node.metadata || {}).manual_length_m || (node.metadata || {}).manual_cable_size)
+        ) {
+            rectangle.attr('body/stroke', '#d97706');
+            rectangle.attr('body/strokeWidth', 2.6);
+        }
         rectangle.prop('sldMeta', { componentId: node.component_id, node: node });
         return rectangle;
     }
 
     function createExternalDetailLabel(node, position) {
         const style = getNodeStyle(node.component_type);
+        const metadata = node.metadata || {};
+        const isCableOverride = (node.component_type === 'Cable4C' || node.component_type === 'Cable3C')
+            && !!(metadata.cable_override_active || metadata.manual_length_m || metadata.manual_cable_size);
+        const isCable = CABLE_COMPONENTS.has(node.component_type);
+        const labelWidth = isCable ? 132 : style.width + 48;
         const label = new joint.shapes.standard.TextBlock();
-        label.position(position.x - 16, position.y + (style.height / 2) + 7);
-        label.resize(style.width + 32, 26);
+        label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 7);
+        label.resize(labelWidth, isCable ? 36 : 24);
         label.attr({
             body: {
                 fill: 'transparent',
@@ -196,12 +484,12 @@
             },
             label: {
                 text: formatExternalDetail(node),
-                fill: '#486581',
-                fontSize: 10.5,
-                fontWeight: 600,
+                fill: isCableOverride ? '#8a5b12' : '#486581',
+                fontSize: SLD_LABEL_FONT_SIZE,
+                fontWeight: SLD_LABEL_FONT_WEIGHT,
                 textAnchor: 'middle',
                 textVerticalAnchor: 'top',
-                x: '50%',
+                x: labelWidth / 2,
                 y: 0,
             },
         });
@@ -211,7 +499,7 @@
 
     function createEndTerminationLabel(node, position) {
         const label = new joint.shapes.standard.TextBlock();
-        label.position(position.x + 42, position.y - 16);
+        label.position(position.x + 28, position.y - 16);
         label.resize(120, 32);
         label.attr({
             body: {
@@ -221,8 +509,8 @@
             label: {
                 text: `${node.display_tag}\nEnd Termination`,
                 fill: '#17324d',
-                fontSize: 11,
-                fontWeight: 600,
+                fontSize: SLD_LABEL_FONT_SIZE,
+                fontWeight: SLD_LABEL_FONT_WEIGHT,
                 textAnchor: 'start',
                 textVerticalAnchor: 'middle',
                 x: 0,
@@ -588,39 +876,63 @@
         ].join('__');
     }
 
-    function buildLinkVertices(sourceCell, targetCell) {
-        const sourceCenterY = sourceCell.position().y + sourceCell.size().height / 2;
-        const targetCenterY = targetCell.position().y + targetCell.size().height / 2;
-        const sourceRightX = sourceCell.position().x + sourceCell.size().width;
-        const targetLeftX = targetCell.position().x;
+    function getAnchorYOffset(edge, sourceNode, role, context) {
+        if (role === 'source') {
+            return getJbOutgoingSlotOffset(edge, sourceNode, context);
+        }
+        return 0;
+    }
+
+    function getLinkPortPoint(cell, edge, node, role, context) {
+        const position = cell.position();
+        const size = cell.size();
+        const overlap = node && (isSchematicSymbolComponent(node.component_type) && node.component_type !== 'Tracer')
+            ? POWER_LINK_OVERLAP
+            : 0;
+        return {
+            x: role === 'source' ? position.x + size.width - overlap : position.x + overlap,
+            y: position.y + (size.height / 2) + getAnchorYOffset(edge, node, role, context),
+        };
+    }
+
+    function getCellAnchorY(cell, edge, node, role, context) {
+        return getLinkPortPoint(cell, edge, node, role, context).y;
+    }
+
+    function buildLinkVertices(sourceCell, targetCell, edge, sourceNode, targetNode, context) {
+        const sourcePoint = getLinkPortPoint(sourceCell, edge, sourceNode, 'source', context);
+        const targetPoint = getLinkPortPoint(targetCell, edge, targetNode, 'target', context);
+        const sourceCenterY = sourcePoint.y;
+        const targetCenterY = targetPoint.y;
 
         if (Math.abs(sourceCenterY - targetCenterY) <= 8) {
             return [];
         }
 
-        const branchX = Math.round((sourceRightX + targetLeftX) / 2);
+        const branchX = Math.round((sourcePoint.x + targetPoint.x) / 2);
         return [
             { x: branchX, y: sourceCenterY },
             { x: branchX, y: targetCenterY },
         ];
     }
 
-    function createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode) {
+    function createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode, context) {
         const link = new joint.shapes.standard.Link();
 
-        link.source({ id: sourceCell.id, anchor: { name: 'right' } });
-        link.target({ id: targetCell.id, anchor: { name: 'left' } });
+        link.source(getLinkPortPoint(sourceCell, edge, sourceNode, 'source', context));
+        link.target(getLinkPortPoint(targetCell, edge, targetNode, 'target', context));
         link.attr({
             line: {
                 stroke: '#1f3447',
                 strokeWidth: 2,
                 targetMarker: null,
                 sourceMarker: null,
-                pointerEvents: 'none',
+                pointerEvents: 'stroke',
+                cursor: 'pointer',
             },
         });
         link.connector('rounded', { radius: 8 });
-        link.vertices(buildLinkVertices(sourceCell, targetCell));
+        link.vertices(buildLinkVertices(sourceCell, targetCell, edge, sourceNode, targetNode, context));
 
         link.prop('sldMeta', {
             edge: edge,
@@ -630,6 +942,69 @@
         return link;
     }
 
+    function applySchematicElementStyle(element, node, options) {
+        const style = getNodeStyle(node.component_type);
+        const isMuted = !!options.isMuted;
+        const isPath = !!options.isPath;
+        const isSelected = !!options.isSelected;
+        const stroke = isSelected ? '#c05621' : (isPath ? '#2f6c43' : style.stroke);
+        const opacity = isMuted ? 0.22 : 1;
+        const strokeWidth = isSelected ? 3 : (isPath ? 2.6 : 2.1);
+        let symbolStrokeWidth = strokeWidth;
+        if (node.component_type === 'JB3PH' || node.component_type === 'JB1PH') {
+            symbolStrokeWidth = 5;
+        } else if (node.component_type === 'Tracer') {
+            symbolStrokeWidth = isSelected ? 3.4 : 3;
+        }
+        const terminalStrokeWidth = node.component_type === 'Tracer' ? 2.4 : strokeWidth;
+        const ringFill = isSelected ? '#fff1e6' : '#ffffff';
+        const textFill = isMuted ? '#829ab1' : '#17324d';
+
+        element.attr({
+            body: {
+                fill: 'transparent',
+                stroke: 'transparent',
+                opacity: 1,
+            },
+            terminalPath: {
+                stroke: stroke,
+                strokeWidth: terminalStrokeWidth,
+                opacity: opacity,
+            },
+            symbolPath: {
+                stroke: stroke,
+                strokeWidth: symbolStrokeWidth,
+                opacity: opacity,
+            },
+            symbolRing: {
+                fill: ringFill,
+                stroke: stroke,
+                strokeWidth: strokeWidth,
+                opacity: opacity,
+            },
+            dot1: {
+                fill: stroke,
+                opacity: opacity,
+            },
+            dot2: {
+                fill: stroke,
+                opacity: opacity,
+            },
+            dot3: {
+                fill: stroke,
+                opacity: opacity,
+            },
+            tagLabel: {
+                fill: textFill,
+                opacity: opacity,
+            },
+            bodyLabel: {
+                fill: textFill,
+                opacity: opacity,
+            },
+        });
+    }
+
     function applyDefaultElementStyle(element) {
         const meta = element.prop('sldMeta') || {};
         const node = meta.node;
@@ -637,6 +1012,10 @@
             return;
         }
         const style = getNodeStyle(node.component_type);
+        if (isSchematicSymbolComponent(node.component_type)) {
+            applySchematicElementStyle(element, node, {});
+            return;
+        }
         if (node.component_type === 'EndTermination') {
             element.attr({
                 body: {
@@ -667,6 +1046,10 @@
         if (!node) {
             return;
         }
+        if (isSchematicSymbolComponent(node.component_type)) {
+            applySchematicElementStyle(element, node, { isMuted: true });
+            return;
+        }
         if (node.component_type === 'EndTermination') {
             element.attr({
                 body: {
@@ -694,6 +1077,10 @@
         const style = getNodeStyle(node.component_type);
         const stroke = isSelected ? '#c05621' : '#2f6c43';
         const fill = isSelected ? '#fff1e6' : style.fill;
+        if (isSchematicSymbolComponent(node.component_type)) {
+            applySchematicElementStyle(element, node, { isPath: true, isSelected: isSelected });
+            return;
+        }
         if (node.component_type === 'EndTermination') {
             element.attr({
                 body: {
@@ -724,6 +1111,7 @@
                 stroke: '#1f3447',
                 strokeWidth: 2,
                 opacity: 1,
+                cursor: 'pointer',
             },
         });
     }
@@ -742,6 +1130,18 @@
                 stroke: isSelectedLink ? '#c05621' : '#2f6c43',
                 strokeWidth: isSelectedLink ? 3.4 : 2.8,
                 opacity: 1,
+                cursor: 'pointer',
+            },
+        });
+    }
+
+    function applySelectedLinkStyle(link) {
+        link.attr({
+            line: {
+                stroke: '#0d6efd',
+                strokeWidth: 3.8,
+                opacity: 1,
+                cursor: 'pointer',
             },
         });
     }
@@ -791,9 +1191,67 @@
         return panel ? panel.querySelector('#sld-inspector-details') : null;
     }
 
+    function getCableEditorContainer(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-cable-editor') : null;
+    }
+
     function getCombineSummaryContainer(root) {
         const panel = root.closest('.sld-panel');
         return panel ? panel.querySelector('#sld-combine-summary') : null;
+    }
+
+    function getTopologyMode(state) {
+        if (!state) {
+            return '';
+        }
+        if (state.downstreamJbMode) {
+            return 'downstream_jb';
+        }
+        if (state.attachJbMode) {
+            return 'attach_to_jb';
+        }
+        if (state.splitMode) {
+            return 'split';
+        }
+        if (state.combineMode) {
+            return 'combine';
+        }
+        return '';
+    }
+
+    function getDownstreamLengthInput(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-downstream-jb-length') : null;
+    }
+
+    function selectedDownstreamBranchCount(state) {
+        return state && state.downstreamJbSelectionIds ? state.downstreamJbSelectionIds.size : 0;
+    }
+
+    function clearTopologyPreviewState(state) {
+        if (!state) {
+            return;
+        }
+        state.combinePreview = null;
+        state.splitPreview = null;
+        state.downstreamJbPreview = null;
+        state.attachJbPreview = null;
+        state.topologyPreviewStatus = 'idle';
+        state.topologyPreviewError = '';
+        state.topologyPreviewKey = '';
+    }
+
+    function directDownstreamJbChildIds(state) {
+        if (!state || !state.downstreamJbParentId) {
+            return new Set();
+        }
+        const edges = state.outgoingBySource[state.downstreamJbParentId] || [];
+        return new Set(edges.map(function (edge) { return edge.to_component_id; }));
+    }
+
+    function selectedAttachCount(state) {
+        return state && state.attachSourceId && state.attachTargetJbId ? 2 : 0;
     }
 
     function updateCombineControls(root) {
@@ -801,12 +1259,18 @@
         const panel = root.closest('.sld-panel');
         const combineButton = panel ? panel.querySelector('#sld-combine-mode') : null;
         const splitButton = panel ? panel.querySelector('#sld-split-mode') : null;
+        const downstreamButton = panel ? panel.querySelector('#sld-downstream-jb-mode') : null;
+        const attachButton = panel ? panel.querySelector('#sld-attach-jb-mode') : null;
+        const downstreamLengthGroup = panel ? panel.querySelector('#sld-downstream-jb-length-group') : null;
         const applyButton = panel ? panel.querySelector('#sld-combine-apply') : null;
         const summary = getCombineSummaryContainer(root);
-        const isSplit = !!(state && state.splitMode);
-        const selectedSet = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
-        const selectedCount = selectedSet ? selectedSet.size : 0;
-        const preview = isSplit ? state.splitPreview : state.combinePreview;
+        const mode = getTopologyMode(state);
+        const isSplit = mode === 'split';
+        const isDownstreamJb = mode === 'downstream_jb';
+        const isAttachJb = mode === 'attach_to_jb';
+        const selectedSet = isDownstreamJb ? state.downstreamJbSelectionIds : (isSplit ? state.splitSelectionIds : state.combineSelectionIds);
+        const selectedCount = isAttachJb ? selectedAttachCount(state) : (selectedSet ? selectedSet.size : 0);
+        const preview = isAttachJb ? state.attachJbPreview : (isDownstreamJb ? state.downstreamJbPreview : (isSplit ? state.splitPreview : state.combinePreview));
         const minimumSelection = isSplit ? 1 : 2;
 
         if (combineButton) {
@@ -815,25 +1279,52 @@
         if (splitButton) {
             splitButton.classList.toggle('active', isSplit);
         }
+        if (downstreamButton) {
+            downstreamButton.classList.toggle('active', isDownstreamJb);
+        }
+        if (attachButton) {
+            attachButton.classList.toggle('active', isAttachJb);
+        }
+        if (downstreamLengthGroup) {
+            downstreamLengthGroup.classList.toggle('d-none', !isDownstreamJb);
+        }
         if (applyButton) {
             applyButton.disabled = !(preview && preview.ok);
-            applyButton.textContent = state && state.splitMode
-                ? 'Apply Split'
-                : (state && state.combineMode ? 'Apply Combine' : 'Apply Edit');
+            applyButton.textContent = isAttachJb
+                ? 'Apply Attach'
+                : (isDownstreamJb
+                ? 'Apply Downstream JB'
+                : (isSplit ? 'Apply Split' : (mode === 'combine' ? 'Apply Combine' : 'Apply Edit')));
         }
         if (summary && state) {
-            if (!(state.combineMode || state.splitMode)) {
-                summary.textContent = 'Select Combine Feeders or Split Circuits to start a topology edit.';
+            if (!mode) {
+                summary.textContent = 'Select Combine, Split, Add JB, or Attach to start a topology edit.';
+            } else if (isDownstreamJb && !state.downstreamJbParentId) {
+                summary.textContent = 'Select the upstream 3PH JB, then select outgoing branches to move under a new downstream 3PH JB.';
+            } else if (isAttachJb && !state.attachSourceId) {
+                summary.textContent = 'Select an MCB-fed circuit or downstream branch to feed from another 3PH JB.';
+            } else if (isAttachJb && !state.attachTargetJbId) {
+                summary.textContent = `Selected ${(state.nodeByComponentId[state.attachSourceId] || {}).display_tag || 'source'}. Select a target 3PH JB with spare outgoing capacity.`;
             } else if (selectedCount < minimumSelection) {
-                summary.textContent = isSplit
+                summary.textContent = isDownstreamJb
+                    ? `Selected parent ${(state.nodeByComponentId[state.downstreamJbParentId] || {}).display_tag || '3PH JB'}. Select at least two direct outgoing branches.`
+                    : (isSplit
                     ? 'Select one MCB feeder source with multiple downstream circuits.'
-                    : `Select at least ${minimumSelection} MCB feeder sources.`;
+                    : `Select at least ${minimumSelection} MCB feeder sources.`);
             } else if (state.topologyPreviewStatus === 'checking') {
                 summary.textContent = 'Checking selected topology edit...';
             } else if (state.topologyPreviewError) {
                 summary.innerHTML = `<span class="text-danger fw-semibold">Cannot apply:</span> ${escapeHtml(state.topologyPreviewError)}`;
             } else if (preview && preview.ok && isSplit) {
                 summary.innerHTML = `Selected ${escapeHtml(preview.source_mcb_display_tag || 'MCB')}. Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+            } else if (preview && preview.ok && isDownstreamJb) {
+                summary.innerHTML = `Parent ${escapeHtml(preview.parent_display_tag || '3PH JB')}: ${escapeHtml(preview.parent_outgoing_before)} outgoing now, ${escapeHtml(preview.parent_outgoing_after)} after edit. Move ${escapeHtml(preview.downstream_outgoing_count)} branch(es) under ${escapeHtml((preview.added_display_tags || [])[1] || 'new JB')} with ${escapeHtml(preview.trunk_length_m)} m 4C trunk.`;
+            } else if (preview && preview.ok && isAttachJb) {
+                if (preview.edit_type === 'move_branch_to_jb') {
+                    summary.innerHTML = `Move ${escapeHtml(preview.branch_root_display_tag || preview.source_display_tag || 'branch')} from ${escapeHtml(preview.source_jb_display_tag || 'source JB')} to ${escapeHtml(preview.target_jb_display_tag || 'target JB')}. Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}.`;
+                } else {
+                    summary.innerHTML = `Feed ${escapeHtml(preview.source_display_tag || 'source')} from ${escapeHtml(preview.target_jb_display_tag || '3PH JB')}. Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}. Recommended source MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+                }
             } else if (preview && preview.ok) {
                 summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else {
@@ -864,6 +1355,48 @@
         return rows;
     }
 
+    function renderCableEditor(root, node) {
+        const editor = getCableEditorContainer(root);
+        if (!editor) {
+            return;
+        }
+        if (!node || !(node.component_type === 'Cable4C' || node.component_type === 'Cable3C')) {
+            editor.innerHTML = '';
+            return;
+        }
+        const metadata = node.metadata || {};
+        const generatedLength = metadata.generated_length_m || metadata.length_m || '';
+        const manualLength = metadata.manual_length_m || '';
+        const generatedSize = metadata.generated_cable_size || metadata.cable_size || '';
+        const manualSize = metadata.manual_cable_size || '';
+        const remarks = metadata.cable_override_remarks || '';
+        const isCableOverride = !!(metadata.cable_override_active || metadata.manual_length_m || metadata.manual_cable_size);
+        const statusText = isCableOverride
+            ? 'Using user-entered cable values for this cable.'
+            : 'Using generated project setup values for this cable.';
+        const labelClass = isCableOverride ? 'form-label small mb-1 sld-cable-manual-label' : 'form-label small text-muted mb-1';
+        editor.innerHTML = `
+            <div class="border-top pt-3">
+                <h6 class="mb-2">Cable Management</h6>
+                <div class="small text-muted mb-2">Generated length: ${escapeHtml(generatedLength || '-')} m${generatedSize ? ` | Generated size: ${escapeHtml(generatedSize)}` : ''}</div>
+                <div class="mb-2">
+                    <label class="${labelClass}" for="sld-cable-length-input">Manual length (m)</label>
+                    <input type="number" step="0.01" min="0" class="form-control form-control-sm" id="sld-cable-length-input" value="${escapeHtml(manualLength)}" placeholder="${escapeHtml(generatedLength || '')}">
+                </div>
+                <div class="mb-2">
+                    <label class="${labelClass}" for="sld-cable-size-input">Manual cable size</label>
+                    <input type="text" class="form-control form-control-sm" id="sld-cable-size-input" value="${escapeHtml(manualSize)}" placeholder="${escapeHtml(generatedSize || 'Pending cable sizing')}">
+                </div>
+                <textarea class="form-control form-control-sm mb-2" id="sld-cable-remarks-input" rows="2" placeholder="Optional reason / location note">${escapeHtml(remarks)}</textarea>
+                <div class="d-flex gap-2">
+                    <button type="button" class="btn btn-primary btn-sm" id="sld-cable-save">Save Cable</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-cable-reset" ${metadata.cable_override_active ? '' : 'disabled'}>Reset</button>
+                </div>
+                <div class="small mt-2 ${isCableOverride ? 'sld-cable-manual-note' : 'text-muted'}">${statusText}</div>
+            </div>
+        `;
+    }
+
     function renderInspector(root, node, pathNodeCount, pathLinkCount) {
         const summary = getSelectionSummaryContainer(root);
         const details = getInspectorDetailsContainer(root);
@@ -873,12 +1406,33 @@
         if (!node) {
             summary.textContent = 'Select a component in the diagram to inspect its details and highlight the source path.';
             details.innerHTML = '';
+            renderCableEditor(root, null);
             return;
         }
         summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. Highlighted path follows the directed source-to-component route in the current rendered graph.`;
         details.innerHTML = buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
+        renderCableEditor(root, node);
+    }
+
+    function renderLinkInspector(root, edge, sourceNode, targetNode) {
+        const summary = getSelectionSummaryContainer(root);
+        const details = getInspectorDetailsContainer(root);
+        if (!summary || !details) {
+            return;
+        }
+        summary.innerHTML = `Selected link from <strong>${escapeHtml((sourceNode || {}).display_tag || 'source')}</strong> to <strong>${escapeHtml((targetNode || {}).display_tag || 'target')}</strong>.`;
+        details.innerHTML = [
+            ['From', (sourceNode || {}).display_tag || edge.from_component_id || '-'],
+            ['To', (targetNode || {}).display_tag || edge.to_component_id || '-'],
+            ['Line IDs', (edge.line_ids || []).join(', ') || '-'],
+            ['Branch', edge.branch_index !== null && edge.branch_index !== undefined ? edge.branch_index : '-'],
+            ['Circuit', edge.circuit_index !== null && edge.circuit_index !== undefined ? edge.circuit_index : '-'],
+        ].map(function (row) {
+            return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
+        }).join('');
+        renderCableEditor(root, null);
     }
 
     function applyCombineSelectionStyle(state) {
@@ -888,7 +1442,14 @@
             if (!element || !node) {
                 return;
             }
-            if (state.combineSelectionIds.has(componentId) || state.splitSelectionIds.has(componentId)) {
+            if (
+                state.combineSelectionIds.has(componentId)
+                || state.splitSelectionIds.has(componentId)
+                || state.downstreamJbParentId === componentId
+                || state.downstreamJbSelectionIds.has(componentId)
+                || state.attachSourceId === componentId
+                || state.attachTargetJbId === componentId
+            ) {
                 element.attr('body/stroke', '#0d6efd');
                 element.attr('body/strokeWidth', 3.2);
             } else if (!state.selectedComponentId) {
@@ -938,6 +1499,65 @@
         scheduleTopologyPreview(root);
     }
 
+    function toggleDownstreamJbSelection(root, componentId) {
+        const state = root.__sldState;
+        const node = state && state.nodeByComponentId[componentId];
+        if (!state || !node) {
+            return;
+        }
+        if (node.component_type === 'JB3PH') {
+            if (state.downstreamJbParentId !== componentId) {
+                state.downstreamJbParentId = componentId;
+                state.downstreamJbSelectionIds.clear();
+            }
+        } else {
+            const validChildIds = directDownstreamJbChildIds(state);
+            if (!state.downstreamJbParentId) {
+                state.topologyPreviewError = 'Select the upstream 3PH JB before selecting branches.';
+                updateCombineControls(root);
+                return;
+            }
+            if (!validChildIds.has(componentId)) {
+                state.topologyPreviewError = 'Select direct outgoing branch components from the selected 3PH JB.';
+                updateCombineControls(root);
+                return;
+            }
+            if (state.downstreamJbSelectionIds.has(componentId)) {
+                state.downstreamJbSelectionIds.delete(componentId);
+            } else {
+                state.downstreamJbSelectionIds.add(componentId);
+            }
+        }
+        clearTopologyPreviewState(state);
+        applyCombineSelectionStyle(state);
+        updateCombineControls(root);
+        scheduleTopologyPreview(root);
+    }
+
+    function toggleAttachJbSelection(root, componentId) {
+        const state = root.__sldState;
+        const node = state && state.nodeByComponentId[componentId];
+        if (!state || !node) {
+            return;
+        }
+        if (node.component_type === 'MCB') {
+            state.attachSourceId = componentId;
+        } else if (node.component_type === 'JB3PH') {
+            if (!state.attachSourceId) {
+                state.topologyPreviewError = 'Select the circuit or branch before selecting a target 3PH JB.';
+                updateCombineControls(root);
+                return;
+            }
+            state.attachTargetJbId = componentId;
+        } else {
+            state.attachSourceId = componentId;
+        }
+        clearTopologyPreviewState(state);
+        applyCombineSelectionStyle(state);
+        updateCombineControls(root);
+        scheduleTopologyPreview(root);
+    }
+
     function collectComponentPositions(state, componentIds) {
         const positions = {};
         (componentIds || Object.keys(state.elementByComponentId)).forEach(function (componentId) {
@@ -979,10 +1599,16 @@
             if (!sourceCell || !targetCell) {
                 return;
             }
+            const sourceNode = state.nodeByComponentId[linkEntry.edge.from_component_id];
+            const targetNode = state.nodeByComponentId[linkEntry.edge.to_component_id];
+            const renderContext = {
+                outgoingBySource: state.outgoingBySource || {},
+                nodeById: state.nodeByComponentId || {},
+            };
 
-            linkEntry.link.source({ id: sourceCell.id, anchor: { name: 'right' } });
-            linkEntry.link.target({ id: targetCell.id, anchor: { name: 'left' } });
-            linkEntry.link.vertices(buildLinkVertices(sourceCell, targetCell));
+            linkEntry.link.source(getLinkPortPoint(sourceCell, linkEntry.edge, sourceNode, 'source', renderContext));
+            linkEntry.link.target(getLinkPortPoint(targetCell, linkEntry.edge, targetNode, 'target', renderContext));
+            linkEntry.link.vertices(buildLinkVertices(sourceCell, targetCell, linkEntry.edge, sourceNode, targetNode, renderContext));
         });
     }
 
@@ -1169,6 +1795,7 @@
             return;
         }
         state.selectedComponentId = componentId || null;
+        state.selectedEdgeKey = null;
 
         if (!componentId || !state.nodeByComponentId[componentId]) {
             Object.keys(state.elementByComponentId).forEach(function (id) {
@@ -1206,6 +1833,39 @@
 
         setFitSelectedLineState(root, true);
         renderInspector(root, state.nodeByComponentId[componentId], path.nodeIds.size, path.edgeKeys.size);
+    }
+
+    function highlightLinkSelection(root, edgeKey) {
+        const state = root.__sldState;
+        const entry = state && state.linkByEdgeKey[edgeKey];
+        if (!state || !entry) {
+            return;
+        }
+        state.selectedComponentId = null;
+        state.selectedEdgeKey = edgeKey;
+        Object.keys(state.elementByComponentId).forEach(function (id) {
+            applyMutedElementStyle(state.elementByComponentId[id]);
+        });
+        [entry.edge.from_component_id, entry.edge.to_component_id].forEach(function (componentId) {
+            const element = state.elementByComponentId[componentId];
+            if (element) {
+                applyPathElementStyle(element, false);
+            }
+        });
+        Object.keys(state.linkByEdgeKey).forEach(function (key) {
+            if (key === edgeKey) {
+                applySelectedLinkStyle(state.linkByEdgeKey[key].link);
+            } else {
+                applyMutedLinkStyle(state.linkByEdgeKey[key].link);
+            }
+        });
+        setFitSelectedLineState(root, false);
+        renderLinkInspector(
+            root,
+            entry.edge,
+            state.nodeByComponentId[entry.edge.from_component_id],
+            state.nodeByComponentId[entry.edge.to_component_id]
+        );
     }
 
     function zoomPaper(root, scaleFactor) {
@@ -1332,32 +1992,49 @@
         }
     }
 
-    function showSldContextMenu(root, event, componentId) {
+    function showSldContextMenu(root, event, componentId, edgeKey) {
         hideSldContextMenu();
         const state = root.__sldState;
         if (!state) {
             return;
         }
         const node = componentId ? state.nodeByComponentId[componentId] : null;
+        const edgeEntry = edgeKey ? state.linkByEdgeKey[edgeKey] : null;
         const menu = document.createElement('div');
         menu.className = 'sld-context-menu';
-        const activePreview = state.splitMode ? state.splitPreview : state.combinePreview;
+        const mode = getTopologyMode(state);
+        const activePreview = mode === 'downstream_jb'
+            ? state.downstreamJbPreview
+            : (mode === 'attach_to_jb'
+                ? state.attachJbPreview
+                : (state.splitMode ? state.splitPreview : state.combinePreview));
         const applyAction = activePreview && activePreview.ok
-            ? `<button type="button" data-sld-context-action="apply-edit">${state.splitMode ? 'Apply Split' : 'Apply Combine'}</button>`
+            ? `<button type="button" data-sld-context-action="apply-edit">${mode === 'attach_to_jb' ? 'Apply Attach' : (mode === 'downstream_jb' ? 'Apply Downstream JB' : (state.splitMode ? 'Apply Split' : 'Apply Combine'))}</button>`
             : '';
-        menu.innerHTML = node ? `
+        const isDirectDownstreamBranch = componentId && directDownstreamJbChildIds(state).has(componentId);
+        menu.innerHTML = edgeEntry ? `
+            <button type="button" data-sld-context-action="inspect-link">Inspect Link</button>
+            <button type="button" data-sld-context-action="attach-link-source">Feed Downstream From JB</button>
+            ${applyAction}
+            <button type="button" data-sld-context-action="clear">Clear Selection</button>
+        ` : (node ? `
             <button type="button" data-sld-context-action="inspect">Inspect ${escapeHtml(node.display_tag || 'Component')}</button>
             <button type="button" data-sld-context-action="fit-line">Fit Line</button>
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select for Combine</button>' : ''}
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select for Split</button>' : ''}
+            ${node.component_type !== 'JB3PH' ? '<button type="button" data-sld-context-action="attach-source">Feed This From JB</button>' : ''}
+            ${node.component_type === 'JB3PH' ? '<button type="button" data-sld-context-action="downstream-parent">Use as Upstream 3PH JB</button>' : ''}
+            ${node.component_type === 'JB3PH' ? '<button type="button" data-sld-context-action="attach-target">Use as Target JB</button>' : ''}
+            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch">Move Branch Under New JB</button>' : ''}
             ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
         ` : `
             <button type="button" data-sld-context-action="fit-all">Fit All</button>
             ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
-        `;
+        `);
         menu.dataset.componentId = componentId || '';
+        menu.dataset.edgeKey = edgeKey || '';
         document.body.appendChild(menu);
         const maxLeft = window.innerWidth - menu.offsetWidth - 8;
         const maxTop = window.innerHeight - menu.offsetHeight - 8;
@@ -1365,27 +2042,68 @@
         menu.style.top = `${Math.max(8, Math.min(event.clientY, maxTop))}px`;
     }
 
-    function handleSldContextAction(root, action, componentId) {
+    function handleSldContextAction(root, action, componentId, edgeKey) {
         if (!root || !root.__sldState) {
             return;
         }
+        const edgeEntry = edgeKey ? root.__sldState.linkByEdgeKey[edgeKey] : null;
         if (action === 'inspect' && componentId) {
             highlightSelection(root, componentId);
+        } else if (action === 'inspect-link' && edgeEntry) {
+            highlightLinkSelection(root, edgeKey);
         } else if (action === 'fit-line' && componentId) {
             highlightSelection(root, componentId);
             fitSelectedLine(root);
         } else if (action === 'combine' && componentId) {
             root.__sldState.combineMode = true;
             root.__sldState.splitMode = false;
+            root.__sldState.downstreamJbMode = false;
+            root.__sldState.attachJbMode = false;
             if (!root.__sldState.combineSelectionIds.has(componentId)) {
                 toggleCombineSelection(root, componentId);
             }
         } else if (action === 'split' && componentId) {
             root.__sldState.splitMode = true;
             root.__sldState.combineMode = false;
+            root.__sldState.downstreamJbMode = false;
+            root.__sldState.attachJbMode = false;
             if (!root.__sldState.splitSelectionIds.has(componentId)) {
                 toggleSplitSelection(root, componentId);
             }
+        } else if (action === 'downstream-parent' && componentId) {
+            root.__sldState.downstreamJbMode = true;
+            root.__sldState.combineMode = false;
+            root.__sldState.splitMode = false;
+            root.__sldState.attachJbMode = false;
+            toggleDownstreamJbSelection(root, componentId);
+        } else if (action === 'downstream-branch' && componentId) {
+            root.__sldState.downstreamJbMode = true;
+            root.__sldState.combineMode = false;
+            root.__sldState.splitMode = false;
+            root.__sldState.attachJbMode = false;
+            toggleDownstreamJbSelection(root, componentId);
+        } else if (action === 'attach-source' && componentId) {
+            root.__sldState.attachJbMode = true;
+            root.__sldState.combineMode = false;
+            root.__sldState.splitMode = false;
+            root.__sldState.downstreamJbMode = false;
+            toggleAttachJbSelection(root, componentId);
+        } else if (action === 'attach-target' && componentId) {
+            root.__sldState.attachJbMode = true;
+            root.__sldState.combineMode = false;
+            root.__sldState.splitMode = false;
+            root.__sldState.downstreamJbMode = false;
+            toggleAttachJbSelection(root, componentId);
+        } else if (action === 'attach-link-source' && edgeEntry) {
+            root.__sldState.attachJbMode = true;
+            root.__sldState.combineMode = false;
+            root.__sldState.splitMode = false;
+            root.__sldState.downstreamJbMode = false;
+            root.__sldState.attachSourceId = edgeEntry.edge.to_component_id;
+            clearTopologyPreviewState(root.__sldState);
+            highlightLinkSelection(root, edgeKey);
+            updateCombineControls(root);
+            scheduleTopologyPreview(root);
         } else if (action === 'fit-all') {
             fitPaperToContent(root);
         } else if (action === 'apply-edit') {
@@ -1552,7 +2270,7 @@
             },
             interactive: function (cellView) {
                 const meta = cellView.model.prop('sldMeta') || {};
-                return !!meta.componentId || !!meta.draggableGroup;
+                return !!meta.componentId || !!meta.draggableGroup || !!meta.edge;
             },
         });
 
@@ -1564,7 +2282,11 @@
         const branchLabelByBranchKey = {};
         const groupHandlePositionById = {};
         const linkByEdgeKey = {};
-        const nodeByComponentId = {};
+        const nodeByComponentId = getNodeByComponentId(payload);
+        const renderContext = {
+            outgoingBySource: buildOutgoingEdgesBySource(payload),
+            nodeById: nodeByComponentId,
+        };
 
         lineLabels.forEach(function (lineLabel) {
             const label = createLineLabel(lineLabel.lineId, lineLabel.x, lineLabel.y);
@@ -1597,8 +2319,7 @@
             if (!position) {
                 return;
             }
-            nodeByComponentId[node.component_id] = node;
-            const element = createComponentElement(node, position);
+            const element = createComponentElement(node, position, renderContext);
             elementByComponentId[node.component_id] = element;
             cells.push(element);
 
@@ -1623,7 +2344,7 @@
             if (!sourceCell || !targetCell || !sourceNode || !targetNode) {
                 return;
             }
-            const link = createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode);
+            const link = createDiagramLink(edge, sourceCell, targetCell, sourceNode, targetNode, renderContext);
             linkByEdgeKey[getEdgeKey(edge)] = {
                 edge: edge,
                 link: link,
@@ -1647,18 +2368,28 @@
             groupHandlePositionById: groupHandlePositionById,
             linkByEdgeKey: linkByEdgeKey,
             nodeByComponentId: nodeByComponentId,
+            outgoingBySource: renderContext.outgoingBySource,
             outgoingByComponent: graphNavigation.outgoingByComponent,
             incomingCountByComponent: graphNavigation.incomingCountByComponent,
             isDirty: false,
             hasSavedLayout: !!(savedLayout && savedLayout.meta && savedLayout.meta.has_saved_layout),
             dirtyComponentIds: new Set(),
             selectedComponentId: null,
+            selectedEdgeKey: null,
             combineMode: false,
             combineSelectionIds: new Set(),
             combinePreview: null,
             splitMode: false,
             splitSelectionIds: new Set(),
             splitPreview: null,
+            downstreamJbMode: false,
+            downstreamJbParentId: '',
+            downstreamJbSelectionIds: new Set(),
+            downstreamJbPreview: null,
+            attachJbMode: false,
+            attachSourceId: '',
+            attachTargetJbId: '',
+            attachJbPreview: null,
             topologyPreviewStatus: 'idle',
             topologyPreviewError: '',
             topologyPreviewKey: '',
@@ -1716,7 +2447,33 @@
                 toggleSplitSelection(root, meta.componentId);
                 return;
             }
+            if (root.__sldState && root.__sldState.downstreamJbMode) {
+                toggleDownstreamJbSelection(root, meta.componentId);
+                return;
+            }
+            if (root.__sldState && root.__sldState.attachJbMode) {
+                toggleAttachJbSelection(root, meta.componentId);
+                return;
+            }
             highlightSelection(root, meta.componentId);
+        });
+
+        paper.on('link:pointerclick', function (linkView) {
+            const meta = linkView.model.prop('sldMeta') || {};
+            if (!meta.edge) {
+                return;
+            }
+            hideSldContextMenu();
+            const edgeKey = getEdgeKey(meta.edge);
+            if (root.__sldState && root.__sldState.attachJbMode) {
+                root.__sldState.attachSourceId = meta.edge.to_component_id;
+                clearTopologyPreviewState(root.__sldState);
+                highlightLinkSelection(root, edgeKey);
+                updateCombineControls(root);
+                scheduleTopologyPreview(root);
+                return;
+            }
+            highlightLinkSelection(root, edgeKey);
         });
 
         paper.on('blank:pointerdown', function () {
@@ -1732,7 +2489,7 @@
             event.preventDefault();
             const view = paper.findView(event.target);
             const meta = view && view.model ? (view.model.prop('sldMeta') || {}) : {};
-            showSldContextMenu(root, event, meta.componentId || '');
+            showSldContextMenu(root, event, meta.componentId || '', meta.edge ? getEdgeKey(meta.edge) : '');
         });
 
         refreshDerivedGeometry(root);
@@ -1917,28 +2674,100 @@
         });
     }
 
+    function postDownstreamJbRequest(root, url, includeRemarks) {
+        const state = root.__sldState;
+        if (!state || !url || !state.downstreamJbParentId || selectedDownstreamBranchCount(state) < 2) {
+            return null;
+        }
+        const panel = root.closest('.sld-panel');
+        const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
+        const lengthInput = getDownstreamLengthInput(root);
+        const payload = {
+            project_id: root.dataset.projectId,
+            parent_component_id: state.downstreamJbParentId,
+            branch_component_ids: Array.from(state.downstreamJbSelectionIds),
+            trunk_length_m: lengthInput ? lengthInput.value : root.dataset.defaultJbLoopLength,
+        };
+        if (includeRemarks && remarks) {
+            payload.remarks = remarks.value;
+        }
+        return $.ajax({
+            url: url,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+        });
+    }
+
+    function postAttachJbRequest(root, url, includeRemarks) {
+        const state = root.__sldState;
+        if (!state || !url || !state.attachSourceId || !state.attachTargetJbId) {
+            return null;
+        }
+        const panel = root.closest('.sld-panel');
+        const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
+        const payload = {
+            project_id: root.dataset.projectId,
+            source_component_id: state.attachSourceId,
+            target_jb_component_id: state.attachTargetJbId,
+        };
+        if (includeRemarks && remarks) {
+            payload.remarks = remarks.value;
+        }
+        return $.ajax({
+            url: url,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify(payload),
+        });
+    }
+
     function runTopologyPreview(root) {
         const state = root.__sldState;
         if (!state) {
             return;
         }
-        const isSplit = !!(state && state.splitMode);
-        const url = isSplit ? root.dataset.sldTopologySplitPreviewUrl : root.dataset.sldTopologyCombinePreviewUrl;
-        const selectedIds = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
+        const mode = getTopologyMode(state);
+        const isSplit = mode === 'split';
+        const isDownstreamJb = mode === 'downstream_jb';
+        const isAttachJb = mode === 'attach_to_jb';
+        const url = isDownstreamJb
+            ? root.dataset.sldTopologyDownstreamJbPreviewUrl
+            : (isAttachJb
+                ? root.dataset.sldTopologyAttachJbPreviewUrl
+                : (isSplit ? root.dataset.sldTopologySplitPreviewUrl : root.dataset.sldTopologyCombinePreviewUrl));
+        const selectedIds = isDownstreamJb ? state.downstreamJbSelectionIds : (isSplit ? state.splitSelectionIds : state.combineSelectionIds);
         const minimumSelection = isSplit ? 1 : 2;
-        if (!(state.combineMode || state.splitMode) || selectedIds.size < minimumSelection) {
+        if (
+            !mode
+            || (!isAttachJb && selectedIds.size < minimumSelection)
+            || (isDownstreamJb && !state.downstreamJbParentId)
+            || (isAttachJb && (!state.attachSourceId || !state.attachTargetJbId))
+        ) {
             state.topologyPreviewStatus = 'idle';
             state.topologyPreviewError = '';
             state.topologyPreviewKey = '';
             updateCombineControls(root);
             return;
         }
-        const requestKey = `${isSplit ? 'split' : 'combine'}:${Array.from(selectedIds).sort().join('|')}`;
+        const lengthInput = getDownstreamLengthInput(root);
+        const lengthValue = isDownstreamJb && lengthInput ? lengthInput.value : '';
+        const requestKey = isDownstreamJb
+            ? `${mode}:${state.downstreamJbParentId}:${Array.from(selectedIds).sort().join('|')}:${lengthValue}`
+            : (isAttachJb
+                ? `${mode}:${state.attachSourceId}:${state.attachTargetJbId}`
+                : `${mode}:${Array.from(selectedIds).sort().join('|')}`);
         state.topologyPreviewKey = requestKey;
         state.topologyPreviewStatus = 'checking';
         state.topologyPreviewError = '';
         updateCombineControls(root);
-        const request = postTopologyRequest(root, url, selectedIds, false);
+        const request = isDownstreamJb
+            ? postDownstreamJbRequest(root, url, false)
+            : (isAttachJb
+                ? postAttachJbRequest(root, url, false)
+                : postTopologyRequest(root, url, selectedIds, false));
         if (!request) {
             state.topologyPreviewStatus = 'idle';
             updateCombineControls(root);
@@ -1950,6 +2779,10 @@
             }
             if (isSplit) {
                 root.__sldState.splitPreview = preview;
+            } else if (isDownstreamJb) {
+                root.__sldState.downstreamJbPreview = preview;
+            } else if (isAttachJb) {
+                root.__sldState.attachJbPreview = preview;
             } else {
                 root.__sldState.combinePreview = preview;
             }
@@ -1962,6 +2795,10 @@
             }
             if (isSplit) {
                 root.__sldState.splitPreview = null;
+            } else if (isDownstreamJb) {
+                root.__sldState.downstreamJbPreview = null;
+            } else if (isAttachJb) {
+                root.__sldState.attachJbPreview = null;
             } else {
                 root.__sldState.combinePreview = null;
             }
@@ -1987,10 +2824,21 @@
 
     function applyCombineFeeders(root) {
         const state = root.__sldState;
-        const isSplit = !!(state && state.splitMode);
-        const url = isSplit ? root.dataset.sldTopologySplitApplyUrl : root.dataset.sldTopologyCombineApplyUrl;
+        const mode = getTopologyMode(state);
+        const isSplit = mode === 'split';
+        const isDownstreamJb = mode === 'downstream_jb';
+        const isAttachJb = mode === 'attach_to_jb';
+        const url = isDownstreamJb
+            ? root.dataset.sldTopologyDownstreamJbApplyUrl
+            : (isAttachJb
+                ? root.dataset.sldTopologyAttachJbApplyUrl
+                : (isSplit ? root.dataset.sldTopologySplitApplyUrl : root.dataset.sldTopologyCombineApplyUrl));
         const selectedIds = isSplit ? state.splitSelectionIds : state.combineSelectionIds;
-        const request = postTopologyRequest(root, url, selectedIds, true);
+        const request = isDownstreamJb
+            ? postDownstreamJbRequest(root, url, true)
+            : (isAttachJb
+                ? postAttachJbRequest(root, url, true)
+                : postTopologyRequest(root, url, selectedIds, true));
         if (!request) {
             return;
         }
@@ -2079,10 +2927,18 @@
                 }
                 root.__sldState.combineMode = false;
                 root.__sldState.splitMode = false;
+                root.__sldState.downstreamJbMode = false;
+                root.__sldState.attachJbMode = false;
                 root.__sldState.combineSelectionIds.clear();
                 root.__sldState.splitSelectionIds.clear();
+                root.__sldState.downstreamJbParentId = '';
+                root.__sldState.downstreamJbSelectionIds.clear();
+                root.__sldState.attachSourceId = '';
+                root.__sldState.attachTargetJbId = '';
                 root.__sldState.combinePreview = null;
                 root.__sldState.splitPreview = null;
+                root.__sldState.downstreamJbPreview = null;
+                root.__sldState.attachJbPreview = null;
                 root.__sldState.topologyPreviewStatus = 'idle';
                 root.__sldState.topologyPreviewError = '';
                 root.__sldState.topologyPreviewKey = '';
@@ -2096,6 +2952,69 @@
         }).fail(function (xhr) {
             if (typeof window.showToast === 'function') {
                 window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to reset topology edit.', 'error');
+            }
+        });
+    }
+
+    function saveCableOverride(root) {
+        const state = root.__sldState;
+        const componentId = state && state.selectedComponentId;
+        const node = componentId ? state.nodeByComponentId[componentId] : null;
+        const saveUrl = root.dataset.sldCableOverrideSaveUrl;
+        if (!node || !(node.component_type === 'Cable4C' || node.component_type === 'Cable3C') || !saveUrl) {
+            return;
+        }
+        const lengthInput = document.getElementById('sld-cable-length-input');
+        const sizeInput = document.getElementById('sld-cable-size-input');
+        const remarksInput = document.getElementById('sld-cable-remarks-input');
+        $.ajax({
+            url: saveUrl,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify({
+                project_id: root.dataset.projectId,
+                component_id: componentId,
+                manual_length_m: lengthInput ? lengthInput.value : '',
+                manual_cable_size: sizeInput ? sizeInput.value : '',
+                remarks: remarksInput ? remarksInput.value : '',
+            }),
+        }).done(function (response) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Cable override saved.', 'success');
+            }
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to save cable override.', 'error');
+            }
+        });
+    }
+
+    function resetCableOverride(root) {
+        const state = root.__sldState;
+        const componentId = state && state.selectedComponentId;
+        const resetUrl = root.dataset.sldCableOverrideResetUrl;
+        if (!componentId || !resetUrl) {
+            return;
+        }
+        $.ajax({
+            url: resetUrl,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify({
+                project_id: root.dataset.projectId,
+                component_id: componentId,
+            }),
+        }).done(function (response) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Cable override reset.', 'info');
+            }
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to reset cable override.', 'error');
             }
         });
     }
@@ -2123,11 +3042,9 @@
         }
         root.__sldState.combineMode = !root.__sldState.combineMode;
         root.__sldState.splitMode = false;
-        root.__sldState.combinePreview = null;
-        root.__sldState.splitPreview = null;
-        root.__sldState.topologyPreviewStatus = 'idle';
-        root.__sldState.topologyPreviewError = '';
-        root.__sldState.topologyPreviewKey = '';
+        root.__sldState.downstreamJbMode = false;
+        root.__sldState.attachJbMode = false;
+        clearTopologyPreviewState(root.__sldState);
         updateCombineControls(root);
         scheduleTopologyPreview(root);
     });
@@ -2139,11 +3056,47 @@
         }
         root.__sldState.splitMode = !root.__sldState.splitMode;
         root.__sldState.combineMode = false;
-        root.__sldState.combinePreview = null;
-        root.__sldState.splitPreview = null;
-        root.__sldState.topologyPreviewStatus = 'idle';
-        root.__sldState.topologyPreviewError = '';
-        root.__sldState.topologyPreviewKey = '';
+        root.__sldState.downstreamJbMode = false;
+        root.__sldState.attachJbMode = false;
+        clearTopologyPreviewState(root.__sldState);
+        updateCombineControls(root);
+        scheduleTopologyPreview(root);
+    });
+
+    $(document).on('click', '#sld-downstream-jb-mode', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldState) {
+            return;
+        }
+        root.__sldState.downstreamJbMode = !root.__sldState.downstreamJbMode;
+        root.__sldState.combineMode = false;
+        root.__sldState.splitMode = false;
+        root.__sldState.attachJbMode = false;
+        clearTopologyPreviewState(root.__sldState);
+        updateCombineControls(root);
+        scheduleTopologyPreview(root);
+    });
+
+    $(document).on('click', '#sld-attach-jb-mode', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldState) {
+            return;
+        }
+        root.__sldState.attachJbMode = !root.__sldState.attachJbMode;
+        root.__sldState.combineMode = false;
+        root.__sldState.splitMode = false;
+        root.__sldState.downstreamJbMode = false;
+        clearTopologyPreviewState(root.__sldState);
+        updateCombineControls(root);
+        scheduleTopologyPreview(root);
+    });
+
+    $(document).on('input change', '#sld-downstream-jb-length', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (!root || !root.__sldState) {
+            return;
+        }
+        clearTopologyPreviewState(root.__sldState);
         updateCombineControls(root);
         scheduleTopologyPreview(root);
     });
@@ -2159,6 +3112,20 @@
         const root = document.getElementById('sld-diagram-shell');
         if (root) {
             resetTopologyEdit(root);
+        }
+    });
+
+    $(document).on('click', '#sld-cable-save', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            saveCableOverride(root);
+        }
+    });
+
+    $(document).on('click', '#sld-cable-reset', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            resetCableOverride(root);
         }
     });
 
@@ -2227,8 +3194,9 @@
         const root = document.getElementById('sld-diagram-shell');
         const action = this.dataset.sldContextAction;
         const componentId = menu ? menu.dataset.componentId : '';
+        const edgeKey = menu ? menu.dataset.edgeKey : '';
         hideSldContextMenu();
-        handleSldContextAction(root, action, componentId);
+        handleSldContextAction(root, action, componentId, edgeKey);
     });
 
     $(document).on('click', function (event) {

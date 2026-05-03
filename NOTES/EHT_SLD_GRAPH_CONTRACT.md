@@ -209,6 +209,12 @@ First allowed edit types:
   feeder path.
 - `split_circuits`: one selected multi-circuit MCB feeder is split into
   independent MCB-fed circuit paths.
+- `downstream_jb`: selected outgoing branches of an upstream 3PH JB are moved
+  under a new downstream 3PH JB through a new manual 4C trunk cable.
+- `attach_to_jb`: one existing MCB-fed feeder path is reattached to an eligible
+  3PH JB with spare outgoing capacity.
+- `move_branch_to_jb`: one downstream branch root currently fed from a 3PH JB is
+  moved to another eligible 3PH JB in the same upstream MCB feeder tree.
 
 Combine-feeder topology rule:
 - a combined MCB must not directly feed multiple outgoing 3C power cables.
@@ -221,6 +227,57 @@ Combine-feeder topology rule:
 - repeated combine operations may extend the active combine topology. In that
   case the new edit revision supersedes the previous applied revision and reuses
   the existing manual trunk/JB instead of creating another trunk layer.
+
+Downstream-3PH-JB topology rule:
+- the user selects one upstream `JB3PH` and then selects direct outgoing branch
+  root components fed by that JB.
+- the edit inserts `JB3PH -> Cable4C -> JB3PH` between the selected upstream
+  JB and the moved branch roots.
+- the new 4C trunk length is entered during the edit flow, with the project
+  `loop_ln` value as the default.
+- in this pass, each 3PH JB may feed at most three direct outgoing feeders. The
+  upstream JB must remain within that limit after selected branches are moved,
+  and the new downstream JB may receive at most three moved branches.
+- the new cable and downstream JB must carry manual topology metadata and remain
+  review-required engineering data for later cable sizing and validation passes.
+
+Attach-to-JB topology rule:
+- the user selects an existing MCB-fed feeder/circuit and an eligible target
+  `JB3PH`.
+- the selected source MCB must have a single outgoing feeder entry in this first
+  pass. More complex multi-outgoing source moves should be handled by split or
+  by a later branch-level reassignment workflow.
+- the target `JB3PH` must remain within the configured outgoing-feeder limit
+  after the feeder is attached.
+- the selected source MCB is removed from the edited graph and its outgoing
+  feeder entry is reconnected to the selected target `JB3PH`.
+- the upstream MCB feeding the target JB receives a review-required breaker
+  recommendation based on the previous target-source rating plus the removed
+  source MCB rating.
+- this is the first guided graph operation: user intent is "feed this circuit
+  from that JB"; detach/attach edge rewiring, capacity validation, downstream
+  summary updates, and audit persistence are system responsibilities.
+
+Move-branch-to-JB topology rule:
+- the user may select any component in a downstream branch, such as `Cable3C`,
+  `JB1PH`, tracer, or end termination.
+- the system resolves that selection back to the direct branch root fed by the
+  current source `JB3PH`.
+- the target must be a different `JB3PH`, must have spare outgoing capacity, and
+  must be within the same upstream MCB feeder tree in this pass.
+- the edit removes only the source-JB-to-branch-root edge and adds the
+  target-JB-to-branch-root edge. Downstream branch components remain intact.
+- this operation exists so users do not have to split and recombine a manually
+  engineered SLD just to move one outgoing branch after plant layout review.
+
+Selectable-link editing rule:
+- rendered SLD links may be selected as a UI convenience, but raw link
+  delete/create is not a valid topology operation by itself.
+- a selected link represents the downstream component fed by that connection and
+  may seed a guided graph operation such as attach/move.
+- any persisted topology change must still pass through a named graph operation
+  with electrical validation, audit trail, reset-to-generated behavior, and
+  downstream BOQ/cable-schedule consistency.
 
 Split-circuit topology rule:
 - the user selects the MCB that currently feeds multiple outgoing circuits, not
