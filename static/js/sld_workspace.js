@@ -214,6 +214,23 @@
         return index >= 0 && slots[index] !== undefined ? slots[index] : 0;
     }
 
+    function getJbOutgoingCableIndex(edge, sourceNode, context) {
+        if (!sourceNode || sourceNode.component_type !== 'JB3PH' || !context || !context.outgoingBySource) {
+            return { index: -1, count: 0 };
+        }
+        const outgoing = sortOutgoingEdges(context.outgoingBySource[sourceNode.component_id] || [], context.nodeById)
+            .filter(function (candidate) {
+                const targetNode = context.nodeById[candidate.to_component_id];
+                return targetNode && CABLE_COMPONENTS.has(targetNode.component_type);
+            });
+        return {
+            index: outgoing.findIndex(function (candidate) {
+                return getEdgeKey(candidate) === getEdgeKey(edge);
+            }),
+            count: outgoing.length,
+        };
+    }
+
     function getSchematicSymbolAttrs(node, style, context) {
         const width = style.width;
         const height = style.height;
@@ -909,7 +926,19 @@
             return [];
         }
 
-        const branchX = Math.round((sourcePoint.x + targetPoint.x) / 2);
+        const outgoing = getJbOutgoingCableIndex(edge, sourceNode, context);
+        const isJbFanout = sourceNode
+            && sourceNode.component_type === 'JB3PH'
+            && targetNode
+            && CABLE_COMPONENTS.has(targetNode.component_type)
+            && outgoing.index >= 0
+            && outgoing.count > 1;
+        const branchX = isJbFanout
+            ? Math.min(
+                targetPoint.x - 26,
+                sourcePoint.x + 34 + (outgoing.index * 44)
+            )
+            : Math.round((sourcePoint.x + targetPoint.x) / 2);
         return [
             { x: branchX, y: sourceCenterY },
             { x: branchX, y: targetCenterY },
