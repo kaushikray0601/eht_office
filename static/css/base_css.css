@@ -561,3 +561,24 @@ footer {
     font-size: 0.92rem;
     word-break: break-word;
 }
+
+.sld-breaker-review {
+    grid-column: 1 / -1;
+    border-left: 3px solid #d97706;
+    background: #fff8e8;
+    color: #5f3b08;
+    padding: 0.55rem 0.7rem;
+    border-radius: 0.35rem;
+    font-size: 0.84rem;
+}
+
+.sld-breaker-review-grid {
+    display: grid;
+    grid-template-columns: minmax(72px, 1fr) repeat(3, minmax(54px, auto));
+    gap: 0.25rem 0.6rem;
+    align-items: baseline;
+}
+
+.sld-breaker-review-grid--compact {
+    grid-template-columns: minmax(90px, 1fr) auto;
+}

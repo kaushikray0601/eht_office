@@ -214,7 +214,9 @@ First allowed edit types:
 - `attach_to_jb`: one existing MCB-fed feeder path is reattached to an eligible
   3PH JB with spare outgoing capacity.
 - `move_branch_to_jb`: one downstream branch root currently fed from a 3PH JB is
-  moved to another eligible 3PH JB in the same upstream MCB feeder tree.
+  moved to another eligible 3PH JB. Same-MCB moves keep breaker sizing
+  unchanged; cross-MCB moves require a target breaker recommendation before
+  apply.
 
 Combine-feeder topology rule:
 - a combined MCB must not directly feed multiple outgoing 3C power cables.
@@ -263,10 +265,21 @@ Move-branch-to-JB topology rule:
   `JB1PH`, tracer, or end termination.
 - the system resolves that selection back to the direct branch root fed by the
   current source `JB3PH`.
-- the target must be a different `JB3PH`, must have spare outgoing capacity, and
-  must be within the same upstream MCB feeder tree in this pass.
+- the target may be a different `JB3PH` with spare outgoing capacity, or a
+  standalone one-outgoing `MCB` that can be promoted into a proper 3PH
+  distribution point.
 - the edit removes only the source-JB-to-branch-root edge and adds the
   target-JB-to-branch-root edge. Downstream branch components remain intact.
+- when the target `JB3PH` is under a different upstream MCB, the system
+  estimates the moved branch rating from the source MCB and source-JB outgoing
+  count, reduces the source MCB to the next configured breaker size for the
+  remaining outgoing branches, and uprates the target MCB to the next configured
+  breaker size. These recommendations remain review-required engineering data
+  until detailed load/cable sizing is added.
+- when the user targets a standalone one-outgoing MCB instead of an existing
+  `JB3PH`, the system inserts a manual `Cable4C -> JB3PH` distribution point
+  under that MCB, reconnects the original outgoing feeder and moved branch under
+  the new JB, and applies the same target-MCB breaker recommendation.
 - this operation exists so users do not have to split and recombine a manually
   engineered SLD just to move one outgoing branch after plant layout review.
 
@@ -278,6 +291,11 @@ Selectable-link editing rule:
 - any persisted topology change must still pass through a named graph operation
   with electrical validation, audit trail, reset-to-generated behavior, and
   downstream BOQ/cable-schedule consistency.
+- drag/drop topology editing is deferred for now. The accepted interaction
+  pattern is guided intent selection, such as "move this branch" and "feed
+  selected branch here", backed by preview/apply validation. This keeps the SLD
+  tool adaptable without turning the browser canvas into an unsafe freeform CAD
+  editor before the domain rules are complete.
 
 Split-circuit topology rule:
 - the user selects the MCB that currently feeds multiple outgoing circuits, not

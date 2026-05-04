@@ -13,6 +13,13 @@ def _next_breaker_size(total_rating):
     return next((rating for rating in ratings if rating >= total_rating), None)
 
 
+def _breaker_rating(node):
+    try:
+        return float((node.get('metadata') or {}).get('breaker_size') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _mcb_nodes_by_id(payload):
     return {
         node['component_id']: node
@@ -123,6 +130,15 @@ def _dedupe_edges(edges):
 def _graph_component_count(payload, component_types):
     component_types = set(component_types)
     return sum(1 for node in payload.get('nodes', []) if node.get('component_type') in component_types)
+
+
+def _node_line_ids(nodes):
+    return sorted({
+        line_id
+        for node in nodes
+        for line_id in (node.get('line_ids') or ([node.get('line_id')] if node.get('line_id') else []))
+        if line_id
+    })
 
 
 def _to_positive_float(value, default=None):
@@ -700,6 +716,14 @@ def _downstream_jb_preview_tags(payload, parent_jb):
     return cable_tag, jb_tag
 
 
+def _target_mcb_distribution_preview_tags(payload, target_mcb):
+    existing_tags = {node.get('display_tag') for node in payload.get('nodes', [])}
+    base_suffix = _display_tag_suffix(target_mcb.get('display_tag', 'MCB'))
+    cable_tag = _unique_manual_tag(existing_tags, 'CCAB4C', base_suffix)
+    jb_tag = _unique_manual_tag(existing_tags | {cable_tag}, 'JB3PH', base_suffix)
+    return cable_tag, jb_tag
+
+
 def _build_downstream_jb_payload(payload, details, trunk_length_m):
     edited = deepcopy(payload)
     parent = details['parent']
@@ -813,17 +837,17 @@ def _selected_attach_to_jb_details(payload, source_component_id, target_jb_compo
     }, ''
 
 
-def _selected_branch_move_details(payload, source_component_id, target_jb_component_id):
+def _selected_branch_move_details(payload, source_component_id, target_component_id):
     node_by_id = _node_lookup(payload)
     incoming_by_id, outgoing_by_id = _edge_lookup(payload)
     selected_node = node_by_id.get(source_component_id)
-    target_jb = node_by_id.get(target_jb_component_id)
+    target_node = node_by_id.get(target_component_id)
     if not selected_node:
         return None, 'Select the branch or circuit component to move.'
     if selected_node.get('component_type') in {'MCB', 'JB3PH'}:
         return None, 'Select a downstream branch component such as a cable, 1PH JB, tracer, or end termination.'
-    if not target_jb or target_jb.get('component_type') != 'JB3PH':
-        return None, 'Select the target 3PH JB that should feed the selected branch.'
+    if not target_node or target_node.get('component_type') not in {'JB3PH', 'MCB'}:
+        return None, 'Select the target 3PH JB or standalone MCB that should feed the selected branch.'
 
     cursor_id = selected_node['component_id']
     visited = set()
@@ -848,39 +872,98 @@ def _selected_branch_move_details(payload, source_component_id, target_jb_compon
 
     if not source_parent_jb or not branch_root:
         return None, 'Selected component is not downstream of a 3PH JB.'
-    if source_parent_jb['component_id'] == target_jb['component_id']:
+    if source_parent_jb['component_id'] == target_node['component_id']:
         return None, 'Selected branch is already fed from the target 3PH JB.'
-    if target_jb['component_id'] in _descendant_component_ids(payload, branch_root['component_id']):
-        return None, 'Target 3PH JB cannot be downstream of the selected branch.'
+    if target_node['component_id'] in _descendant_component_ids(payload, branch_root['component_id']):
+        return None, 'Target component cannot be downstream of the selected branch.'
 
     source_mcb = _upstream_mcb_node(payload, source_parent_jb['component_id'])
-    target_mcb = _upstream_mcb_node(payload, target_jb['component_id'])
+    target_mcb = target_node if target_node.get('component_type') == 'MCB' else _upstream_mcb_node(payload, target_node['component_id'])
     if not source_mcb or not target_mcb:
-        return None, 'Both source and target 3PH JBs must have upstream MCB sources.'
-    if source_mcb['component_id'] != target_mcb['component_id']:
-        return None, 'Moving branches between different upstream MCBs needs a breaker rebalancing pass and is not enabled yet.'
+        return None, 'Both source and target paths must have upstream MCB sources.'
+    if target_mcb['component_id'] == source_mcb['component_id'] and target_node.get('component_type') == 'MCB':
+        return None, 'Selected branch is already in the target MCB feeder tree. Select a target 3PH JB instead.'
 
     source_outgoing_edges = [
         edge for edge in outgoing_by_id.get(source_parent_jb['component_id'], [])
         if edge.get('to_component_id') in node_by_id
     ]
     target_outgoing_edges = [
-        edge for edge in outgoing_by_id.get(target_jb['component_id'], [])
+        edge for edge in outgoing_by_id.get(target_node['component_id'], [])
         if edge.get('to_component_id') in node_by_id
     ]
-    target_after_count = len(target_outgoing_edges) + 1
+    target_mcb_existing_edge = None
+    target_mcb_existing_child = None
+    target_insert_cable_tag = ''
+    target_insert_jb_tag = ''
+    target_insert_trunk_length = None
+    if target_node.get('component_type') == 'MCB':
+        if len(target_outgoing_edges) != 1:
+            return None, 'Target MCB must be a standalone one-outgoing feeder. Select an existing 3PH JB for multi-outgoing targets.'
+        target_mcb_existing_edge = target_outgoing_edges[0]
+        target_mcb_existing_child = node_by_id.get(target_mcb_existing_edge.get('to_component_id'))
+        if not target_mcb_existing_child:
+            return None, 'Target MCB outgoing feeder path could not be resolved.'
+        target_child_descendants = _descendant_component_ids(payload, target_mcb_existing_child['component_id'])
+        if target_mcb_existing_child.get('component_type') in {'Cable4C', 'Isolator3PH', 'JB3PH'} or any(
+            (node_by_id.get(component_id) or {}).get('component_type') == 'JB3PH'
+            for component_id in target_child_descendants
+        ):
+            return None, 'Target MCB already has a 3PH distribution path. Select its existing 3PH JB as the target.'
+        target_outgoing_before = 1
+        target_after_count = 2
+        target_insert_cable_tag, target_insert_jb_tag = _target_mcb_distribution_preview_tags(payload, target_mcb)
+        target_insert_trunk_length = _to_positive_float((target_mcb_existing_child.get('metadata') or {}).get('length_m'))
+    else:
+        target_outgoing_before = len(target_outgoing_edges)
+        target_after_count = target_outgoing_before + 1
     if target_after_count > 3:
-        return None, f"Target 3PH JB would have {target_after_count} outgoing feeders. Limit is 3 in this pass."
+        return None, f"Target would have {target_after_count} outgoing feeders. Limit is 3 in this pass."
+
+    is_cross_mcb_move = source_mcb['component_id'] != target_mcb['component_id']
+    estimated_branch_rating = 0
+    recommended_source_rating = None
+    recommended_target_rating = None
+    source_rating = _breaker_rating(source_mcb)
+    target_rating = _breaker_rating(target_mcb)
+    if is_cross_mcb_move:
+        estimated_branch_rating = source_rating / len(source_outgoing_edges) if source_outgoing_edges else source_rating
+        remaining_source_rating = max(0, source_rating - estimated_branch_rating)
+        if remaining_source_rating:
+            recommended_source_rating = _next_breaker_size(remaining_source_rating)
+        recommended_target_rating = _next_breaker_size(target_rating + estimated_branch_rating)
+        if recommended_source_rating is None and remaining_source_rating:
+            return None, (
+                f"Remaining source feeder rating {remaining_source_rating:g}A cannot be matched to a configured breaker size."
+            )
+        if recommended_target_rating is None:
+            return None, (
+                f"Moved branch estimated rating {estimated_branch_rating:g}A would exceed the largest "
+                "configured breaker size on the target MCB."
+            )
 
     return {
         'selected_node': selected_node,
         'source_parent_jb': source_parent_jb,
-        'target_jb': target_jb,
+        'target_jb': target_node if target_node.get('component_type') == 'JB3PH' else None,
+        'target_component': target_node,
         'branch_root': branch_root,
         'upstream_mcb': source_mcb,
+        'target_mcb': target_mcb,
+        'target_mcb_existing_edge': target_mcb_existing_edge,
+        'target_mcb_existing_child': target_mcb_existing_child,
+        'target_insert_cable_tag': target_insert_cable_tag,
+        'target_insert_jb_tag': target_insert_jb_tag,
+        'target_insert_trunk_length': target_insert_trunk_length,
+        'cross_mcb_move': is_cross_mcb_move,
+        'estimated_branch_rating': estimated_branch_rating,
+        'source_breaker_rating': source_rating,
+        'target_breaker_rating': target_rating,
+        'recommended_source_breaker_rating': recommended_source_rating,
+        'recommended_target_breaker_rating': recommended_target_rating,
         'source_outgoing_before': len(source_outgoing_edges),
         'source_outgoing_after': max(0, len(source_outgoing_edges) - 1),
-        'target_outgoing_before': len(target_outgoing_edges),
+        'target_outgoing_before': target_outgoing_before,
         'target_outgoing_after': target_after_count,
         'node_by_id': node_by_id,
     }, ''
@@ -914,7 +997,7 @@ def _build_attach_to_jb_payload(payload, details, recommended_rating):
             node['metadata'] = metadata
             node['display_tag'] = _manual_display_tag(node.get('display_tag', 'MCB'))
             node['label'] = node['display_tag']
-        elif node.get('component_id') == target_id:
+        elif node.get('component_id') == target_id and details['target_jb']:
             metadata = dict(node.get('metadata') or {})
             metadata.update({
                 'attach_to_jb_review_required': True,
@@ -957,13 +1040,71 @@ def _build_attach_to_jb_payload(payload, details, recommended_rating):
     return edited
 
 
+def _target_mcb_distribution_node(target_mcb, component_type, display_tag, selected_nodes, trunk_length_m):
+    component_id = f"{target_mcb['component_id']}:manual_target_mcb_distribution:{component_type}:{display_tag}"
+    metadata = {
+        'manual_topology_edit': 'move_branch_to_jb',
+        'target_mcb_distribution': True,
+        'source_mcb': target_mcb.get('display_tag'),
+    }
+    if component_type == 'Cable4C':
+        metadata.update({
+            'cable_role': 'MCB_TO_JB3PH',
+            'length_m': trunk_length_m,
+            'generated_length_m': trunk_length_m,
+            'cable_size': '4C',
+            'generated_cable_size': '4C',
+            'note': 'Manual target-MCB 3PH distribution trunk cable.',
+        })
+    if component_type == 'JB3PH':
+        metadata.update({
+            'circuit_count': len(selected_nodes),
+        })
+    return {
+        'component_id': component_id,
+        'component_uid': _component_uid(component_id),
+        'display_tag': display_tag,
+        'component_type': component_type,
+        'display_name': '4C Cable' if component_type == 'Cable4C' else '3PH JB',
+        'label': display_tag,
+        'line_id': target_mcb.get('line_id'),
+        'line_ids': _node_line_ids([target_mcb, *selected_nodes]),
+        'line_uid': target_mcb.get('line_uid'),
+        'branch_index': target_mcb.get('branch_index'),
+        'circuit_index': None,
+        'metadata': metadata,
+    }
+
+
 def _build_branch_move_payload(payload, details):
     edited = deepcopy(payload)
     source_parent_id = details['source_parent_jb']['component_id']
-    target_jb = details['target_jb']
-    target_id = target_jb['component_id']
+    source_mcb_id = details['upstream_mcb']['component_id']
+    target_component = details['target_component']
+    target_id = target_component['component_id']
+    target_mcb_id = details['target_mcb']['component_id']
     branch_root = details['branch_root']
     branch_root_id = branch_root['component_id']
+    target_distribution_jb_id = target_id
+
+    if details['target_mcb_existing_child']:
+        selected_nodes = [details['target_mcb_existing_child'], branch_root]
+        cable4c = _target_mcb_distribution_node(
+            details['target_mcb'],
+            'Cable4C',
+            details['target_insert_cable_tag'],
+            selected_nodes,
+            details['target_insert_trunk_length'],
+        )
+        jb3ph = _target_mcb_distribution_node(
+            details['target_mcb'],
+            'JB3PH',
+            details['target_insert_jb_tag'],
+            selected_nodes,
+            details['target_insert_trunk_length'],
+        )
+        target_distribution_jb_id = jb3ph['component_id']
+        edited['nodes'].extend([cable4c, jb3ph])
 
     nodes = []
     for node in edited.get('nodes', []):
@@ -975,19 +1116,50 @@ def _build_branch_move_payload(payload, details):
                 'moved_branch_out': branch_root.get('display_tag'),
             })
             node['metadata'] = metadata
-        elif node.get('component_id') == target_id:
+        elif node.get('component_id') == source_mcb_id and details['cross_mcb_move']:
+            metadata = dict(node.get('metadata') or {})
+            metadata.update({
+                'manual_topology_edit': metadata.get('manual_topology_edit') or 'move_branch_to_jb',
+                'move_branch_to_jb_review_required': True,
+                'moved_branch_out': branch_root.get('display_tag'),
+                'estimated_moved_branch_rating': details['estimated_branch_rating'],
+                'previous_breaker_size': details['source_breaker_rating'],
+                'recommended_breaker_size': details['recommended_source_breaker_rating'],
+            })
+            if details['recommended_source_breaker_rating']:
+                metadata['breaker_size'] = details['recommended_source_breaker_rating']
+            node['metadata'] = metadata
+            node['display_tag'] = _manual_display_tag(node.get('display_tag', 'MCB'))
+            node['label'] = node['display_tag']
+        elif node.get('component_id') == target_id and details['target_jb']:
             metadata = dict(node.get('metadata') or {})
             metadata.update({
                 'move_branch_to_jb_review_required': True,
                 'moved_branch_in': branch_root.get('display_tag'),
             })
             node['metadata'] = metadata
+        elif node.get('component_id') == target_mcb_id and (details['cross_mcb_move'] or details['target_mcb_existing_child']):
+            metadata = dict(node.get('metadata') or {})
+            metadata.update({
+                'manual_topology_edit': metadata.get('manual_topology_edit') or 'move_branch_to_jb',
+                'move_branch_to_jb_review_required': True,
+                'moved_branch_in': branch_root.get('display_tag'),
+                'estimated_moved_branch_rating': details['estimated_branch_rating'],
+                'previous_breaker_size': details['target_breaker_rating'],
+                'recommended_breaker_size': details['recommended_target_breaker_rating'],
+            })
+            if details['recommended_target_breaker_rating']:
+                metadata['breaker_size'] = details['recommended_target_breaker_rating']
+            node['metadata'] = metadata
+            node['display_tag'] = _manual_display_tag(node.get('display_tag', 'MCB'))
+            node['label'] = node['display_tag']
         elif node.get('component_id') == branch_root_id:
             metadata = dict(node.get('metadata') or {})
             metadata.update({
                 'manual_topology_edit': metadata.get('manual_topology_edit') or 'move_branch_to_jb',
                 'moved_from_jb': details['source_parent_jb'].get('display_tag'),
-                'moved_to_jb': target_jb.get('display_tag'),
+                'moved_to_jb': (details['target_jb'] or {}).get('display_tag') or details['target_insert_jb_tag'],
+                'cross_mcb_move': details['cross_mcb_move'],
             })
             node['metadata'] = metadata
         nodes.append(node)
@@ -1000,10 +1172,46 @@ def _build_branch_move_payload(payload, details):
             and edge.get('to_component_id') == branch_root_id
         ):
             continue
+        if (
+            details['target_mcb_existing_edge']
+            and edge.get('from_component_id') == details['target_mcb_existing_edge'].get('from_component_id')
+            and edge.get('to_component_id') == details['target_mcb_existing_edge'].get('to_component_id')
+        ):
+            continue
         rewired_edges.append(dict(edge))
 
+    if details['target_mcb_existing_child']:
+        cable_id = cable4c['component_id']
+        jb_id = target_distribution_jb_id
+        rewired_edges.extend([
+            {
+                'from_component_id': target_mcb_id,
+                'to_component_id': cable_id,
+                'line_ids': cable4c.get('line_ids', []),
+                'line_uid': cable4c.get('line_uid'),
+                'branch_index': cable4c.get('branch_index'),
+                'circuit_index': None,
+            },
+            {
+                'from_component_id': cable_id,
+                'to_component_id': jb_id,
+                'line_ids': cable4c.get('line_ids', []),
+                'line_uid': cable4c.get('line_uid'),
+                'branch_index': cable4c.get('branch_index'),
+                'circuit_index': None,
+            },
+            {
+                'from_component_id': jb_id,
+                'to_component_id': details['target_mcb_existing_child']['component_id'],
+                'line_ids': details['target_mcb_existing_child'].get('line_ids', []),
+                'line_uid': details['target_mcb_existing_child'].get('line_uid'),
+                'branch_index': details['target_mcb_existing_child'].get('branch_index'),
+                'circuit_index': details['target_mcb_existing_child'].get('circuit_index'),
+            },
+        ])
+
     rewired_edges.append({
-        'from_component_id': target_id,
+        'from_component_id': target_distribution_jb_id,
         'to_component_id': branch_root_id,
         'line_ids': branch_root.get('line_ids', []),
         'line_uid': branch_root.get('line_uid'),
@@ -1017,7 +1225,7 @@ def _build_branch_move_payload(payload, details):
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
         'manual_topology_warning': (
-            'Manual branch move applied: the selected downstream branch is now fed from a different 3PH JB within the same upstream MCB feeder tree. Review cable routing and schedule before issue.'
+            'Manual branch move applied: the selected downstream branch is now fed from a different 3PH distribution point. Review cable routing, breaker rating, and schedule before issue.'
         ),
     })
     edited['meta'] = meta
@@ -1285,10 +1493,25 @@ def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id
             'branch_root_display_tag': branch_root['display_tag'],
             'source_jb_component_id': details['source_parent_jb']['component_id'],
             'source_jb_display_tag': details['source_parent_jb']['display_tag'],
-            'target_jb_component_id': details['target_jb']['component_id'],
-            'target_jb_display_tag': details['target_jb']['display_tag'],
+            'target_component_id': details['target_component']['component_id'],
+            'target_display_tag': details['target_component']['display_tag'],
+            'target_component_type': details['target_component']['component_type'],
+            'target_jb_component_id': (details['target_jb'] or {}).get('component_id'),
+            'target_jb_display_tag': (details['target_jb'] or {}).get('display_tag'),
             'upstream_mcb_component_id': details['upstream_mcb']['component_id'],
             'upstream_mcb_display_tag': details['upstream_mcb']['display_tag'],
+            'target_mcb_component_id': details['target_mcb']['component_id'],
+            'target_mcb_display_tag': details['target_mcb']['display_tag'],
+            'insert_target_distribution_jb': bool(details['target_mcb_existing_child']),
+            'added_display_tags': [
+                tag for tag in [details['target_insert_cable_tag'], details['target_insert_jb_tag']] if tag
+            ],
+            'cross_mcb_move': details['cross_mcb_move'],
+            'estimated_branch_rating': details['estimated_branch_rating'],
+            'source_breaker_rating': details['source_breaker_rating'],
+            'target_breaker_rating': details['target_breaker_rating'],
+            'recommended_source_breaker_rating': details['recommended_source_breaker_rating'],
+            'recommended_target_breaker_rating': details['recommended_target_breaker_rating'],
             'moved_component_ids': [branch_root['component_id']],
             'moved_display_tags': [branch_root['display_tag']],
             'source_outgoing_before': details['source_outgoing_before'],
@@ -1297,7 +1520,9 @@ def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id
             'target_outgoing_after': details['target_outgoing_after'],
             'affected_lines': affected_lines,
             'warning': (
-                'This workflow moves one downstream branch between 3PH JBs under the same upstream MCB. Review cable routing before issue.'
+                'This workflow promotes the target MCB with a manual 4C trunk and 3PH JB before moving the selected branch. Review cable routing and breaker rating before issue.'
+                if details['target_mcb_existing_child']
+                else 'This workflow moves one downstream branch between 3PH JBs. Review cable routing and breaker rating before issue.'
             ),
         }
 
@@ -1424,7 +1649,7 @@ def apply_attach_to_jb(project_id, source_component_id, target_jb_component_id, 
         details, error = _selected_branch_move_details(
             active_payload,
             preview['source_component_id'],
-            preview['target_jb_component_id'],
+            preview.get('target_component_id') or preview.get('target_jb_component_id'),
         )
         if not details:
             return {

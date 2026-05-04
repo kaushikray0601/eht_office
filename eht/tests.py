@@ -2055,6 +2055,199 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertIn((upstream_jb['component_id'], branch_root_id), edge_pairs)
         self.assertNotIn((downstream_jb['component_id'], branch_root_id), edge_pairs)
 
+    def test_attach_to_jb_moves_downstream_branch_between_different_mcb_trees(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        payload = build_project_sld_payload('p1')
+        source_jb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'JB3PH' and node.get('line_id') == 'LINE-001'
+        )
+        target_jb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'JB3PH' and node.get('line_id') == 'LINE-002'
+        )
+        branch_root_id = next(
+            edge['to_component_id']
+            for edge in payload['edges']
+            if edge['from_component_id'] == source_jb['component_id']
+        )
+
+        preview_response = self.client.post(
+            reverse('sld_topology_attach_jb_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': branch_root_id,
+                'target_jb_component_id': target_jb['component_id'],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['edit_type'], 'move_branch_to_jb')
+        self.assertTrue(preview['cross_mcb_move'])
+        self.assertEqual(preview['target_outgoing_before'], 2)
+        self.assertEqual(preview['target_outgoing_after'], 3)
+        self.assertEqual(preview['source_breaker_rating'], 10)
+        self.assertEqual(preview['target_breaker_rating'], 10)
+        self.assertEqual(preview['recommended_source_breaker_rating'], 6)
+        self.assertEqual(preview['recommended_target_breaker_rating'], 16)
+
+        apply_response = self.client.post(
+            reverse('sld_topology_attach_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': branch_root_id,
+                'target_jb_component_id': target_jb['component_id'],
+                'remarks': 'Move one branch to another feeder tree.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(apply_response.status_code, 200)
+        edited_payload = build_project_sld_payload('p1')
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in edited_payload['edges']
+        }
+        self.assertIn((target_jb['component_id'], branch_root_id), edge_pairs)
+        self.assertNotIn((source_jb['component_id'], branch_root_id), edge_pairs)
+        source_mcb = next(
+            node for node in edited_payload['nodes']
+            if node['component_id'] == preview['upstream_mcb_component_id']
+        )
+        target_mcb = next(
+            node for node in edited_payload['nodes']
+            if node['component_id'] == preview['target_mcb_component_id']
+        )
+        self.assertEqual((source_mcb.get('metadata') or {}).get('breaker_size'), 6)
+        self.assertEqual((target_mcb.get('metadata') or {}).get('breaker_size'), 16)
+        self.assertEqual((source_mcb.get('metadata') or {}).get('previous_breaker_size'), 10)
+        self.assertEqual((target_mcb.get('metadata') or {}).get('previous_breaker_size'), 10)
+        self.assertEqual((source_mcb.get('metadata') or {}).get('recommended_breaker_size'), 6)
+        self.assertEqual((target_mcb.get('metadata') or {}).get('recommended_breaker_size'), 16)
+
+    def test_attach_to_jb_can_promote_standalone_mcb_target_to_3ph_distribution(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        payload = build_project_sld_payload('p1')
+        edges_by_source = {}
+        for edge in payload['edges']:
+            edges_by_source.setdefault(edge['from_component_id'], []).append(edge)
+
+        source_jb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'JB3PH' and node.get('line_id') == 'LINE-001'
+        )
+        source_branch_root_id = edges_by_source[source_jb['component_id']][0]['to_component_id']
+        target_mcb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'MCB' and node.get('line_id') == 'LINE-002'
+        )
+        target_jb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'JB3PH' and node.get('line_id') == 'LINE-002'
+        )
+        target_existing_child_id = edges_by_source[target_jb['component_id']][0]['to_component_id']
+        disconnected_child_id = edges_by_source[target_jb['component_id']][1]['to_component_id']
+
+        remove_ids = {
+            node['component_id']
+            for node in payload['nodes']
+            if node.get('line_id') == 'LINE-002'
+            and node['component_type'] in {'Cable4C', 'Isolator3PH', 'JB3PH'}
+        }
+        stack = [disconnected_child_id]
+        while stack:
+            component_id = stack.pop()
+            if component_id in remove_ids:
+                continue
+            remove_ids.add(component_id)
+            stack.extend(edge['to_component_id'] for edge in edges_by_source.get(component_id, []))
+
+        edited_payload = deepcopy(payload)
+        edited_payload['nodes'] = [
+            node for node in edited_payload['nodes']
+            if node['component_id'] not in remove_ids
+        ]
+        edited_payload['edges'] = [
+            edge for edge in edited_payload['edges']
+            if edge['from_component_id'] not in remove_ids
+            and edge['to_component_id'] not in remove_ids
+        ]
+        edited_payload['edges'].append({
+            'from_component_id': target_mcb['component_id'],
+            'to_component_id': target_existing_child_id,
+            'line_ids': ['LINE-002'],
+            'line_uid': target_mcb['line_uid'],
+            'branch_index': target_mcb['branch_index'],
+            'circuit_index': 1,
+        })
+        edited_payload['meta']['node_count'] = len(edited_payload['nodes'])
+        edited_payload['meta']['edge_count'] = len(edited_payload['edges'])
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='move_branch_to_jb',
+            status='applied',
+            generated_snapshot=payload,
+            baseline_fingerprint='standalone-target-fixture',
+            edit_payload={'sld_payload': edited_payload},
+        )
+
+        preview_response = self.client.post(
+            reverse('sld_topology_attach_jb_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': source_branch_root_id,
+                'target_jb_component_id': target_mcb['component_id'],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertTrue(preview['insert_target_distribution_jb'])
+        self.assertEqual(preview['target_component_type'], 'MCB')
+        self.assertEqual(preview['target_outgoing_before'], 1)
+        self.assertEqual(preview['target_outgoing_after'], 2)
+        self.assertEqual(preview['source_breaker_rating'], 10)
+        self.assertEqual(preview['target_breaker_rating'], 10)
+        self.assertEqual(preview['recommended_source_breaker_rating'], 6)
+        self.assertEqual(preview['recommended_target_breaker_rating'], 16)
+
+        apply_response = self.client.post(
+            reverse('sld_topology_attach_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': source_branch_root_id,
+                'target_jb_component_id': target_mcb['component_id'],
+                'remarks': 'Promote target MCB to 3PH distribution.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(apply_response.status_code, 200)
+        final_payload = build_project_sld_payload('p1')
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in final_payload['edges']
+        }
+        manual_jb = next(
+            node for node in final_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('target_mcb_distribution')
+        )
+        manual_cable = next(
+            node for node in final_payload['nodes']
+            if node['component_type'] == 'Cable4C'
+            and (node.get('metadata') or {}).get('target_mcb_distribution')
+        )
+        self.assertIn((target_mcb['component_id'], manual_cable['component_id']), edge_pairs)
+        self.assertIn((manual_cable['component_id'], manual_jb['component_id']), edge_pairs)
+        self.assertIn((manual_jb['component_id'], target_existing_child_id), edge_pairs)
+        self.assertIn((manual_jb['component_id'], source_branch_root_id), edge_pairs)
+
     def test_combine_feeders_preview_requires_two_mcbs(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         component_ids = self._mcb_component_ids()
@@ -2287,9 +2480,9 @@ class ProjectDataFormTests(TestCase):
 
     def test_form_accepts_small_standard_breaker_ratings(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
-        self.assertEqual([rating for rating, _label in MAX_CB_SIZE[:2]], [4, 6])
+        self.assertEqual([rating for rating, _label in MAX_CB_SIZE[:3]], [2, 4, 6])
 
-        for rating in ['4', '6']:
+        for rating in ['2', '4', '6']:
             form = ProjectDataForm(data=make_project_form_payload(max_cb_size=rating))
             self.assertTrue(form.is_valid(), form.errors)
 

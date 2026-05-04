@@ -4,7 +4,8 @@
     const COMPONENT_SORT_ORDER = {};
     const EXTERNAL_DETAIL_COMPONENTS = new Set(['Cable4C', 'Cable3C', 'Tracer']);
     const CABLE_COMPONENTS = new Set(['Cable4C', 'Cable3C']);
-    const SLD_LABEL_FONT_SIZE = 9.5;
+    const SLD_LABEL_FONT_SIZE = 10.5;
+    const SLD_SCHEMATIC_LABEL_FONT_SIZE = 11.3;
     const SLD_LABEL_FONT_WEIGHT = 500;
     const POWER_LINK_OVERLAP = 4;
     const NODE_STYLE = {
@@ -302,7 +303,9 @@
             const symbolX = width / 2;
             const point = function (rawX, rawY) { return mapInlineSvgSymbolPoint(rawX, rawY, symbolX, centerY, 0.86, 2.2); };
             common.tagLabel.text = formatNodeBody(node);
+            common.tagLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             common.bodyLabel.text = node.display_tag || 'MCB';
+            common.bodyLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             const p = {
                 top1: point(10, 0),
                 top2: point(10, 15),
@@ -379,12 +382,12 @@
             common.terminalPath.d = `M -2 ${centerY} L ${busX} ${centerY}`;
             common.symbolPath.strokeWidth = 5;
             common.tagLabel.x = busX - 8;
-            common.tagLabel.y = centerY - 17;
-            common.tagLabel.fontSize = SLD_LABEL_FONT_SIZE;
+            common.tagLabel.y = centerY - 19;
+            common.tagLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             common.tagLabel.textAnchor = 'end';
             common.bodyLabel.x = busX + 8;
-            common.bodyLabel.y = centerY + 22;
-            common.bodyLabel.fontSize = SLD_LABEL_FONT_SIZE;
+            common.bodyLabel.y = centerY + 24;
+            common.bodyLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             common.bodyLabel.textAnchor = 'start';
             common.bodyLabel.text = node.component_type === 'JB3PH' ? '3PH JB' : '1PH JB';
             if (node.component_type === 'JB3PH') {
@@ -547,6 +550,28 @@
             return String(node.line_uid || '') === String(lineGroup.line_uid);
         }
         return (node.line_ids || []).includes(lineGroup.line_id);
+    }
+
+    function getNodeLineIds(node) {
+        const ids = new Set(node && node.line_ids ? node.line_ids : []);
+        if (node && node.line_id) {
+            ids.add(node.line_id);
+        }
+        return ids;
+    }
+
+    function nodesShareLineIdentity(firstNode, secondNode) {
+        if (!firstNode || !secondNode) {
+            return false;
+        }
+        if (firstNode.line_uid && secondNode.line_uid && String(firstNode.line_uid) === String(secondNode.line_uid)) {
+            return true;
+        }
+        const firstLineIds = getNodeLineIds(firstNode);
+        const secondLineIds = getNodeLineIds(secondNode);
+        return Array.from(firstLineIds).some(function (lineId) {
+            return secondLineIds.has(lineId);
+        });
     }
 
     function getLineGroupKey(lineGroup) {
@@ -973,12 +998,16 @@
 
     function applySchematicElementStyle(element, node, options) {
         const style = getNodeStyle(node.component_type);
+        const metadata = node.metadata || {};
         const isMuted = !!options.isMuted;
         const isPath = !!options.isPath;
         const isSelected = !!options.isSelected;
-        const stroke = isSelected ? '#c05621' : (isPath ? '#2f6c43' : style.stroke);
+        const needsBreakerReview = node.component_type === 'MCB'
+            && (metadata.move_branch_to_jb_review_required || metadata.attach_to_jb_review_required);
+        const defaultStroke = needsBreakerReview ? '#d97706' : style.stroke;
+        const stroke = isSelected ? '#c05621' : (isPath ? '#2f6c43' : defaultStroke);
         const opacity = isMuted ? 0.22 : 1;
-        const strokeWidth = isSelected ? 3 : (isPath ? 2.6 : 2.1);
+        const strokeWidth = isSelected ? 3 : (isPath ? 2.6 : (needsBreakerReview ? 2.8 : 2.1));
         let symbolStrokeWidth = strokeWidth;
         if (node.component_type === 'JB3PH' || node.component_type === 'JB1PH') {
             symbolStrokeWidth = 5;
@@ -987,7 +1016,7 @@
         }
         const terminalStrokeWidth = node.component_type === 'Tracer' ? 2.4 : strokeWidth;
         const ringFill = isSelected ? '#fff1e6' : '#ffffff';
-        const textFill = isMuted ? '#829ab1' : '#17324d';
+        const textFill = isMuted ? '#829ab1' : (needsBreakerReview ? '#8a5b12' : '#17324d');
 
         element.attr({
             body: {
@@ -1271,6 +1300,19 @@
         state.topologyPreviewKey = '';
     }
 
+    function clearTopologySelectionState(state) {
+        if (!state) {
+            return;
+        }
+        state.combineSelectionIds.clear();
+        state.splitSelectionIds.clear();
+        state.downstreamJbParentId = '';
+        state.downstreamJbSelectionIds.clear();
+        state.attachSourceId = '';
+        state.attachTargetJbId = '';
+        clearTopologyPreviewState(state);
+    }
+
     function directDownstreamJbChildIds(state) {
         if (!state || !state.downstreamJbParentId) {
             return new Set();
@@ -1279,8 +1321,45 @@
         return new Set(edges.map(function (edge) { return edge.to_component_id; }));
     }
 
+    function directCableOutgoingCount(state, componentId) {
+        if (!state || !componentId) {
+            return 0;
+        }
+        return (state.outgoingBySource[componentId] || []).filter(function (edge) {
+            const target = state.nodeByComponentId[edge.to_component_id];
+            return target && CABLE_COMPONENTS.has(target.component_type);
+        }).length;
+    }
+
     function selectedAttachCount(state) {
         return state && state.attachSourceId && state.attachTargetJbId ? 2 : 0;
+    }
+
+    function formatBreakerRating(value) {
+        return value === null || value === undefined || value === '' ? '-' : `${value}A`;
+    }
+
+    function renderBranchMoveBreakerReview(preview) {
+        if (!preview.cross_mcb_move) {
+            return '';
+        }
+        const movedRating = formatBreakerRating(preview.estimated_branch_rating);
+        return `
+            <div class="sld-breaker-review mt-2">
+                <div class="fw-semibold mb-1">Breaker review required</div>
+                <div class="sld-breaker-review-grid">
+                    <span>MCB</span><span>Before</span><span>Moved load</span><span>Recommended</span>
+                    <strong>${escapeHtml(preview.upstream_mcb_display_tag || 'Source')}</strong>
+                    <span>${escapeHtml(formatBreakerRating(preview.source_breaker_rating))}</span>
+                    <span>-${escapeHtml(movedRating)}</span>
+                    <strong>${escapeHtml(formatBreakerRating(preview.recommended_source_breaker_rating))}</strong>
+                    <strong>${escapeHtml(preview.target_mcb_display_tag || 'Target')}</strong>
+                    <span>${escapeHtml(formatBreakerRating(preview.target_breaker_rating))}</span>
+                    <span>+${escapeHtml(movedRating)}</span>
+                    <strong>${escapeHtml(formatBreakerRating(preview.recommended_target_breaker_rating))}</strong>
+                </div>
+            </div>
+        `;
     }
 
     function updateCombineControls(root) {
@@ -1331,9 +1410,9 @@
             } else if (isDownstreamJb && !state.downstreamJbParentId) {
                 summary.textContent = 'Select the upstream 3PH JB, then select outgoing branches to move under a new downstream 3PH JB.';
             } else if (isAttachJb && !state.attachSourceId) {
-                summary.textContent = 'Select an MCB-fed circuit or downstream branch to feed from another 3PH JB.';
+                summary.textContent = 'Select an MCB-fed circuit or downstream branch to feed from another 3PH JB or standalone MCB.';
             } else if (isAttachJb && !state.attachTargetJbId) {
-                summary.textContent = `Selected ${(state.nodeByComponentId[state.attachSourceId] || {}).display_tag || 'source'}. Select a target 3PH JB with spare outgoing capacity.`;
+                summary.textContent = `Selected ${(state.nodeByComponentId[state.attachSourceId] || {}).display_tag || 'source'}. Select a target 3PH JB with spare outgoing capacity, or a standalone MCB to insert a new 3PH JB under it.`;
             } else if (selectedCount < minimumSelection) {
                 summary.textContent = isDownstreamJb
                     ? `Selected parent ${(state.nodeByComponentId[state.downstreamJbParentId] || {}).display_tag || '3PH JB'}. Select at least two direct outgoing branches.`
@@ -1350,7 +1429,16 @@
                 summary.innerHTML = `Parent ${escapeHtml(preview.parent_display_tag || '3PH JB')}: ${escapeHtml(preview.parent_outgoing_before)} outgoing now, ${escapeHtml(preview.parent_outgoing_after)} after edit. Move ${escapeHtml(preview.downstream_outgoing_count)} branch(es) under ${escapeHtml((preview.added_display_tags || [])[1] || 'new JB')} with ${escapeHtml(preview.trunk_length_m)} m 4C trunk.`;
             } else if (preview && preview.ok && isAttachJb) {
                 if (preview.edit_type === 'move_branch_to_jb') {
-                    summary.innerHTML = `Move ${escapeHtml(preview.branch_root_display_tag || preview.source_display_tag || 'branch')} from ${escapeHtml(preview.source_jb_display_tag || 'source JB')} to ${escapeHtml(preview.target_jb_display_tag || 'target JB')}. Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}.`;
+                    const addedNote = preview.insert_target_distribution_jb
+                        ? ` Add ${escapeHtml((preview.added_display_tags || []).join(', ') || 'new 4C cable and 3PH JB')}.`
+                        : '';
+                    summary.innerHTML = `
+                        Move ${escapeHtml(preview.branch_root_display_tag || preview.source_display_tag || 'branch')}
+                        from ${escapeHtml(preview.source_jb_display_tag || 'source JB')}
+                        to ${escapeHtml(preview.target_display_tag || preview.target_jb_display_tag || 'target')}.
+                        Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}.${addedNote}
+                        ${renderBranchMoveBreakerReview(preview)}
+                    `;
                 } else {
                     summary.innerHTML = `Feed ${escapeHtml(preview.source_display_tag || 'source')} from ${escapeHtml(preview.target_jb_display_tag || '3PH JB')}. Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}. Recommended source MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
                 }
@@ -1382,6 +1470,26 @@
             rows.push([key.replace(/_/g, ' '), Array.isArray(value) ? value.join(', ') : value]);
         });
         return rows;
+    }
+
+    function renderBreakerReviewInspector(node) {
+        const metadata = node.metadata || {};
+        if (
+            node.component_type !== 'MCB'
+            || !(metadata.move_branch_to_jb_review_required || metadata.attach_to_jb_review_required)
+        ) {
+            return '';
+        }
+        return `
+            <div class="sld-breaker-review mb-3">
+                <div class="fw-semibold mb-1">Breaker review required</div>
+                <div class="sld-breaker-review-grid sld-breaker-review-grid--compact">
+                    <span>Previous</span><strong>${escapeHtml(formatBreakerRating(metadata.previous_breaker_size))}</strong>
+                    <span>Moved load</span><strong>${escapeHtml(formatBreakerRating(metadata.estimated_moved_branch_rating))}</strong>
+                    <span>Recommended</span><strong>${escapeHtml(formatBreakerRating(metadata.recommended_breaker_size || metadata.breaker_size))}</strong>
+                </div>
+            </div>
+        `;
     }
 
     function renderCableEditor(root, node) {
@@ -1439,7 +1547,7 @@
             return;
         }
         summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. Highlighted path follows the directed source-to-component route in the current rendered graph.`;
-        details.innerHTML = buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
+        details.innerHTML = renderBreakerReviewInspector(node) + buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
         renderCableEditor(root, node);
@@ -1570,21 +1678,56 @@
             return;
         }
         if (node.component_type === 'MCB') {
-            state.attachSourceId = componentId;
+            const sourceNode = state.attachSourceId ? state.nodeByComponentId[state.attachSourceId] : null;
+            if (sourceNode && sourceNode.component_type !== 'MCB' && state.attachSourceId !== componentId) {
+                state.attachTargetJbId = componentId;
+            } else {
+                setAttachSourceSelection(root, componentId);
+                return;
+            }
         } else if (node.component_type === 'JB3PH') {
             if (!state.attachSourceId) {
-                state.topologyPreviewError = 'Select the circuit or branch before selecting a target 3PH JB.';
+                state.topologyPreviewError = 'Select the circuit or branch before selecting a target 3PH JB or standalone MCB.';
                 updateCombineControls(root);
+                if (typeof window.showToast === 'function') {
+                    window.showToast(state.topologyPreviewError, 'warning');
+                }
                 return;
             }
             state.attachTargetJbId = componentId;
         } else {
-            state.attachSourceId = componentId;
+            setAttachSourceSelection(root, componentId);
+            return;
         }
         clearTopologyPreviewState(state);
         applyCombineSelectionStyle(state);
         updateCombineControls(root);
         scheduleTopologyPreview(root);
+    }
+
+    function setAttachSourceSelection(root, componentId, edgeKey) {
+        const state = root && root.__sldState;
+        const node = state && state.nodeByComponentId[componentId];
+        if (!state || !node) {
+            return;
+        }
+        state.attachJbMode = true;
+        state.combineMode = false;
+        state.splitMode = false;
+        state.downstreamJbMode = false;
+        state.attachSourceId = componentId;
+        state.attachTargetJbId = '';
+        clearTopologyPreviewState(state);
+        if (edgeKey) {
+            highlightLinkSelection(root, edgeKey);
+        } else {
+            highlightSelection(root, componentId);
+        }
+        applyCombineSelectionStyle(state);
+        updateCombineControls(root);
+        if (typeof window.showToast === 'function') {
+            window.showToast(`Attach source selected: ${node.display_tag || componentId}. Select a target 3PH JB with spare capacity, or a standalone MCB.`, 'info');
+        }
     }
 
     function collectComponentPositions(state, componentIds) {
@@ -1888,7 +2031,7 @@
                 applyMutedLinkStyle(state.linkByEdgeKey[key].link);
             }
         });
-        setFitSelectedLineState(root, false);
+        setFitSelectedLineState(root, true);
         renderLinkInspector(
             root,
             entry.edge,
@@ -1975,6 +2118,13 @@
                 }
             });
         });
+        if (!componentIds.size) {
+            (state.payload.nodes || []).forEach(function (node) {
+                if (nodesShareLineIdentity(node, selectedNode)) {
+                    componentIds.add(node.component_id);
+                }
+            });
+        }
 
         const elements = [];
         matchingGroups.forEach(function (lineGroup) {
@@ -2000,13 +2150,34 @@
                 }
             });
         });
+        if (!elements.length) {
+            const path = findSourcePath(state, selectedNode.component_id);
+            path.nodeIds.forEach(function (componentId) {
+                const element = state.elementByComponentId[componentId];
+                if (element) {
+                    elements.push(element);
+                }
+            });
+            path.edgeKeys.forEach(function (edgeKey) {
+                const entry = state.linkByEdgeKey[edgeKey];
+                if (entry && entry.link) {
+                    elements.push(entry.link);
+                }
+            });
+        }
         return elements;
     }
 
     function fitSelectedLine(root) {
         const state = root.__sldState;
-        if (!state || !state.selectedComponentId) {
+        if (!state || (!state.selectedComponentId && !state.selectedEdgeKey)) {
             return;
+        }
+        if (!state.selectedComponentId && state.selectedEdgeKey) {
+            const entry = state.linkByEdgeKey[state.selectedEdgeKey];
+            if (entry && entry.edge && entry.edge.to_component_id) {
+                state.selectedComponentId = entry.edge.to_component_id;
+            }
         }
         const elements = getSelectedLineElements(state);
         if (elements.length) {
@@ -2041,20 +2212,37 @@
             ? `<button type="button" data-sld-context-action="apply-edit">${mode === 'attach_to_jb' ? 'Apply Attach' : (mode === 'downstream_jb' ? 'Apply Downstream JB' : (state.splitMode ? 'Apply Split' : 'Apply Combine'))}</button>`
             : '';
         const isDirectDownstreamBranch = componentId && directDownstreamJbChildIds(state).has(componentId);
+        const attachSourceNode = state.attachSourceId ? state.nodeByComponentId[state.attachSourceId] : null;
+        const nodeOutgoingCount = node ? directCableOutgoingCount(state, node.component_id) : 0;
+        const canUseMcbAsAttachTarget = node
+            && node.component_type === 'MCB'
+            && attachSourceNode
+            && attachSourceNode.component_type !== 'MCB';
+        const canUseJbAsAttachTarget = node
+            && node.component_type === 'JB3PH'
+            && attachSourceNode
+            && nodeOutgoingCount < 3;
+        const isFullJbTarget = node
+            && node.component_type === 'JB3PH'
+            && attachSourceNode
+            && nodeOutgoingCount >= 3;
         menu.innerHTML = edgeEntry ? `
             <button type="button" data-sld-context-action="inspect-link">Inspect Link</button>
-            <button type="button" data-sld-context-action="attach-link-source">Feed Downstream From JB</button>
+            <button type="button" data-sld-context-action="fit-line">Fit Connected Line</button>
+            <button type="button" data-sld-context-action="attach-link-source">Move Downstream Branch</button>
             ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
         ` : (node ? `
             <button type="button" data-sld-context-action="inspect">Inspect ${escapeHtml(node.display_tag || 'Component')}</button>
-            <button type="button" data-sld-context-action="fit-line">Fit Line</button>
-            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select for Combine</button>' : ''}
-            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select for Split</button>' : ''}
-            ${node.component_type !== 'JB3PH' ? '<button type="button" data-sld-context-action="attach-source">Feed This From JB</button>' : ''}
-            ${node.component_type === 'JB3PH' ? '<button type="button" data-sld-context-action="downstream-parent">Use as Upstream 3PH JB</button>' : ''}
-            ${node.component_type === 'JB3PH' ? '<button type="button" data-sld-context-action="attach-target">Use as Target JB</button>' : ''}
-            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch">Move Branch Under New JB</button>' : ''}
+            <button type="button" data-sld-context-action="fit-line">Fit This Line Group</button>
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select MCB for Combine</button>' : ''}
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select MCB for Split</button>' : ''}
+            ${node.component_type !== 'JB3PH' ? '<button type="button" data-sld-context-action="attach-source">Move This Branch / Feeder</button>' : ''}
+            ${canUseMcbAsAttachTarget ? '<button type="button" data-sld-context-action="attach-target">Promote MCB + Feed Here</button>' : ''}
+            ${node.component_type === 'JB3PH' ? `<button type="button" data-sld-context-action="downstream-parent">Add Downstream 3PH JB Here (${escapeHtml(nodeOutgoingCount)} outgoing)</button>` : ''}
+            ${canUseJbAsAttachTarget ? `<button type="button" data-sld-context-action="attach-target">Feed Selected Branch Here (${escapeHtml(nodeOutgoingCount)}/3 used)</button>` : ''}
+            ${isFullJbTarget ? '<button type="button" disabled>Target JB Full (3/3 used)</button>' : ''}
+            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch">Include In New Downstream JB</button>' : ''}
             ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
         ` : `
@@ -2080,8 +2268,12 @@
             highlightSelection(root, componentId);
         } else if (action === 'inspect-link' && edgeEntry) {
             highlightLinkSelection(root, edgeKey);
-        } else if (action === 'fit-line' && componentId) {
-            highlightSelection(root, componentId);
+        } else if (action === 'fit-line' && (componentId || edgeEntry)) {
+            if (componentId) {
+                highlightSelection(root, componentId);
+            } else {
+                highlightLinkSelection(root, edgeKey);
+            }
             fitSelectedLine(root);
         } else if (action === 'combine' && componentId) {
             root.__sldState.combineMode = true;
@@ -2112,11 +2304,7 @@
             root.__sldState.attachJbMode = false;
             toggleDownstreamJbSelection(root, componentId);
         } else if (action === 'attach-source' && componentId) {
-            root.__sldState.attachJbMode = true;
-            root.__sldState.combineMode = false;
-            root.__sldState.splitMode = false;
-            root.__sldState.downstreamJbMode = false;
-            toggleAttachJbSelection(root, componentId);
+            setAttachSourceSelection(root, componentId);
         } else if (action === 'attach-target' && componentId) {
             root.__sldState.attachJbMode = true;
             root.__sldState.combineMode = false;
@@ -2124,20 +2312,13 @@
             root.__sldState.downstreamJbMode = false;
             toggleAttachJbSelection(root, componentId);
         } else if (action === 'attach-link-source' && edgeEntry) {
-            root.__sldState.attachJbMode = true;
-            root.__sldState.combineMode = false;
-            root.__sldState.splitMode = false;
-            root.__sldState.downstreamJbMode = false;
-            root.__sldState.attachSourceId = edgeEntry.edge.to_component_id;
-            clearTopologyPreviewState(root.__sldState);
-            highlightLinkSelection(root, edgeKey);
-            updateCombineControls(root);
-            scheduleTopologyPreview(root);
+            setAttachSourceSelection(root, edgeEntry.edge.to_component_id, edgeKey);
         } else if (action === 'fit-all') {
             fitPaperToContent(root);
         } else if (action === 'apply-edit') {
             applyCombineFeeders(root);
         } else if (action === 'clear') {
+            clearTopologySelectionState(root.__sldState);
             highlightSelection(root, null);
         }
         updateCombineControls(root);
@@ -2495,11 +2676,7 @@
             hideSldContextMenu();
             const edgeKey = getEdgeKey(meta.edge);
             if (root.__sldState && root.__sldState.attachJbMode) {
-                root.__sldState.attachSourceId = meta.edge.to_component_id;
-                clearTopologyPreviewState(root.__sldState);
-                highlightLinkSelection(root, edgeKey);
-                updateCombineControls(root);
-                scheduleTopologyPreview(root);
+                setAttachSourceSelection(root, meta.edge.to_component_id, edgeKey);
                 return;
             }
             highlightLinkSelection(root, edgeKey);

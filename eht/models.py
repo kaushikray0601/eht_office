@@ -8,7 +8,7 @@ from django.utils import timezone
 
 
 # Choices should be an iterable of (value, label) tuples
-MAX_CB_SIZE = [(4, 4), (6, 6), (10, 10), (16, 16), (20, 20), (25, 25), (32, 32), (40, 40)]
+MAX_CB_SIZE = [(2, 2), (4, 4), (6, 6), (10, 10), (16, 16), (20, 20), (25, 25), (32, 32), (40, 40)]
 SELECT_VENDOR = [('THR', 'Thermon'), ('CHR', 'Chromalox'), ('nVN', 'nVent'), ('SST', 'SST'), ('KRZ', 'KRUS-Zapad')]
 ALLOW_SPIRAL_WRAP = [(True, 'Allowed'), (False, 'Not Allowed')]
 SELECT_RTD_THERMOSTAT = [('RI', 'RTD-Inline'), ('RO', 'RTD-Offline'), ('TI', 'Thermostat-Inline'), ('TO', 'Thermostat-Offline')]
