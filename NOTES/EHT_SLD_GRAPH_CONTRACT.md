@@ -283,6 +283,9 @@ Split topology rule:
   continue to use `-partN` suffixes.
 - when a manual combine of distinct line IDs is split, each resulting feeder
   keeps its original line identity instead of receiving a synthetic part suffix.
+- when the same original line identity remains elsewhere in the active graph,
+  the split branch receives a `-partN` identity to avoid accidental regrouping
+  across separate MCB-fed paths.
 - the generated baseline snapshot remains stored with the edit, so full
   reset-to-generated still returns to the original calculated arrangement.
 - the upstream MCB feeding the target JB receives a review-required breaker

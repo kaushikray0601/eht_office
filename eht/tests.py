@@ -2438,6 +2438,62 @@ class SldTopologyWorkflowTests(TestCase):
             ['LINE-001', 'LINE-002'],
         )
 
+    def test_split_circuits_after_branch_move_avoids_line_identity_collision(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        payload = build_project_sld_payload('p1')
+        source_jb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'JB3PH' and node.get('line_id') == 'LINE-001'
+        )
+        target_jb = next(
+            node for node in payload['nodes']
+            if node['component_type'] == 'JB3PH' and node.get('line_id') == 'LINE-002'
+        )
+        source_branch_root_id = next(
+            edge['to_component_id']
+            for edge in payload['edges']
+            if edge['from_component_id'] == source_jb['component_id']
+        )
+        target_mcb_id = next(
+            node['component_id']
+            for node in payload['nodes']
+            if node['component_type'] == 'MCB' and node.get('line_id') == 'LINE-002'
+        )
+
+        move_response = self.client.post(
+            reverse('sld_topology_attach_jb_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'source_component_id': source_branch_root_id,
+                'target_jb_component_id': target_jb['component_id'],
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(move_response.status_code, 200)
+
+        split_response = self.client.post(
+            reverse('sld_topology_split_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': [target_mcb_id]}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(split_response.status_code, 200)
+        edited_payload = build_project_sld_payload('p1')
+        line_ids = sorted(group['line_id'] for group in edited_payload['line_groups'])
+        self.assertIn('LINE-001', line_ids)
+        self.assertIn('LINE-001-part1', line_ids)
+        self.assertIn('LINE-002-part1', line_ids)
+        self.assertIn('LINE-002-part2', line_ids)
+        self.assertEqual(
+            sum(1 for node in edited_payload['nodes'] if node['component_type'] == 'MCB'),
+            4,
+        )
+        self.assertFalse(any(
+            node.get('component_type') == 'JB3PH'
+            and node.get('line_id') == 'LINE-002'
+            for node in edited_payload['nodes']
+        ))
+
     def test_split_circuits_preview_rejects_downstream_selection(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         component_ids = self._downstream_component_ids()[:1]

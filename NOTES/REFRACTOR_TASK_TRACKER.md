@@ -141,3 +141,9 @@ Progress notes:
   preserved; when it splits one generated multi-circuit line, the established
   `-part1`, `-part2` naming remains. More complex split semantics after deep
   branch moves/downstream JBs remain open under Task 11.3.
+- Task 11.3 second slice: Split line-identity handling now detects mixed
+  branch-move cases where a line still exists elsewhere in the active SLD. In
+  those cases the split branch receives a `-partN` identity so the renderer and
+  cable schedule do not accidentally regroup it with an unrelated remaining
+  branch from the same original line. Distinct manually combined line IDs still
+  split back to their original names when there is no collision.

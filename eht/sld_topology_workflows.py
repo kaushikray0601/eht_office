@@ -591,11 +591,11 @@ def _new_split_mcb_node(source_mcb, entry_node, index, recommended_rating, circu
     }
 
 
-def _split_part_identity(entry_node, index, use_part_suffix):
+def _split_part_identity(entry_node, suffix_index=None):
     original_line_id = entry_node.get('line_id') or 'LINE'
     original_line_uid = entry_node.get('line_uid') or original_line_id
-    line_id = f"{original_line_id}-part{index}" if use_part_suffix else original_line_id
-    line_uid = f"{original_line_uid}:manual_split:part{index}" if use_part_suffix else original_line_uid
+    line_id = f"{original_line_id}-part{suffix_index}" if suffix_index else original_line_id
+    line_uid = f"{original_line_uid}:manual_split:part{suffix_index}" if suffix_index else original_line_uid
     return {
         'line_id': line_id,
         'line_uid': line_uid,
@@ -630,15 +630,26 @@ def _build_split_payload(payload, source_mcb, split_details, recommended_rating)
     removed_ids = set(split_details['shared_component_ids'])
     entry_nodes = split_details['entry_nodes']
     entry_ids = {node['component_id'] for node in entry_nodes}
-    unique_line_uids = {
-        entry.get('line_uid') or entry.get('line_id') or entry.get('component_id')
-        for entry in entry_nodes
+    split_scope_ids = _descendant_component_ids(payload, source_id) | {source_id}
+    entry_counts_by_uid = {}
+    entry_index_by_uid = {}
+    for entry in entry_nodes:
+        line_uid = entry.get('line_uid') or entry.get('line_id') or entry.get('component_id')
+        entry_counts_by_uid[line_uid] = entry_counts_by_uid.get(line_uid, 0) + 1
+    outside_line_uids = {
+        node.get('line_uid')
+        for node in payload.get('nodes', [])
+        if node.get('line_uid') and node.get('component_id') not in split_scope_ids
     }
-    use_part_suffix = len(unique_line_uids) == 1
-    part_identity_by_key = {
-        _split_circuit_key(entry): _split_part_identity(entry, index, use_part_suffix)
-        for index, entry in enumerate(entry_nodes, start=1)
-    }
+    part_identity_by_key = {}
+    for entry in entry_nodes:
+        line_uid = entry.get('line_uid') or entry.get('line_id') or entry.get('component_id')
+        needs_part_suffix = entry_counts_by_uid[line_uid] > 1 or line_uid in outside_line_uids
+        suffix_index = None
+        if needs_part_suffix:
+            entry_index_by_uid[line_uid] = entry_index_by_uid.get(line_uid, 0) + 1
+            suffix_index = entry_index_by_uid[line_uid]
+        part_identity_by_key[_split_circuit_key(entry)] = _split_part_identity(entry, suffix_index)
     split_mcb_by_entry = {
         entry['component_id']: _new_split_mcb_node(
             source_mcb,
