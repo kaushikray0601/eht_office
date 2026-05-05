@@ -407,6 +407,9 @@ footer {
 .sld-diagram-shell--canvas {
     align-items: flex-start;
     justify-content: flex-start;
+    height: clamp(360px, calc(100vh - 260px), 720px);
+    max-height: calc(100vh - 220px);
+    scrollbar-gutter: stable both-edges;
 }
 
 .sld-diagram-shell__inner {
@@ -478,6 +481,18 @@ footer {
     border: 1px solid rgba(148, 163, 184, 0.18);
 }
 
+.sld-topology-mode-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.35rem;
+}
+
+.sld-topology-mode-grid .btn {
+    min-width: 0;
+    white-space: normal;
+    line-height: 1.2;
+}
+
 .sld-cable-manual-label,
 .sld-cable-manual-note {
     color: #8a5b12;
@@ -491,8 +506,10 @@ footer {
 .sld-context-menu {
     position: fixed;
     z-index: 1080;
-    min-width: 190px;
-    padding: 0.35rem;
+    width: max-content;
+    min-width: 220px;
+    max-width: min(360px, calc(100vw - 16px));
+    padding: 0.36rem;
     border-radius: 0.55rem;
     border: 1px solid rgba(148, 163, 184, 0.32);
     background: rgba(255, 255, 255, 0.98);
@@ -502,20 +519,41 @@ footer {
 .sld-context-menu button {
     width: 100%;
     border: 0;
-    border-radius: 0.35rem;
+    border-radius: 0.28rem;
     background: transparent;
     color: #17324d;
     font-size: 0.88rem;
     text-align: left;
-    padding: 0.42rem 0.55rem;
+    padding: 0.42rem 0.6rem;
+    line-height: 1.25;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .sld-context-menu button:hover {
     background: #eef4f8;
 }
 
+.sld-context-menu button:disabled {
+    color: #829ab1;
+    cursor: not-allowed;
+    background: transparent;
+}
+
 .sld-inspector-panel {
     min-height: 340px;
+}
+
+@media (min-width: 1500px) {
+    .sld-topology-mode-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 575.98px) {
+    .sld-topology-mode-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (min-width: 1200px) {

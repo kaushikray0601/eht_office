@@ -222,10 +222,14 @@ Combine-feeder topology rule:
 - a combined MCB must not directly feed multiple outgoing 3C power cables.
 - the edited graph must insert a manual 4C trunk cable and 3PH junction box
   between the combined MCB and the existing outgoing feeder paths.
+- when project settings require an incoming 3PH isolator, the manual combined
+  feeder path must include that isolator before the 3PH junction box, matching
+  the generated topology rule.
 - required flow:
-  `MCB -> Cable4C -> JB3PH -> existing outgoing Cable3C/JB1PH/tracer paths`.
-- the MCB, 4C cable, and 3PH JB must carry manual edit metadata and display-tag
-  markers; cable sizing remains a review-required downstream design step.
+  `MCB -> Cable4C -> optional Isolator3PH -> JB3PH -> existing outgoing Cable3C/JB1PH/tracer paths`.
+- the MCB, 4C cable, optional isolator, and 3PH JB must carry manual edit
+  metadata and display-tag markers; cable sizing remains a review-required
+  downstream design step.
 - repeated combine operations may extend the active combine topology. In that
   case the new edit revision supersedes the previous applied revision and reuses
   the existing manual trunk/JB instead of creating another trunk layer.
@@ -233,8 +237,10 @@ Combine-feeder topology rule:
 Downstream-3PH-JB topology rule:
 - the user selects one upstream `JB3PH` and then selects direct outgoing branch
   root components fed by that JB.
-- the edit inserts `JB3PH -> Cable4C -> JB3PH` between the selected upstream
-  JB and the moved branch roots.
+- the edit inserts `JB3PH -> Cable4C -> optional Isolator3PH -> JB3PH`
+  between the selected upstream JB and the moved branch roots.
+- the optional isolator is included when the project isolator setting requires
+  incoming 3PH isolation for 3PH junction boxes.
 - the new 4C trunk length is entered during the edit flow, with the project
   `loop_ln` value as the default.
 - in this pass, each 3PH JB may feed at most three direct outgoing feeders. The
@@ -253,6 +259,32 @@ Attach-to-JB topology rule:
   after the feeder is attached.
 - the selected source MCB is removed from the edited graph and its outgoing
   feeder entry is reconnected to the selected target `JB3PH`.
+- when a branch is attached to a standalone target MCB, that MCB is promoted
+  to a manual 3PH distribution path using
+  `MCB -> Cable4C -> optional Isolator3PH -> JB3PH`, with the optional
+  isolator governed by the same project incoming-isolator setting.
+
+Redundant 3PH-JB simplification rule:
+- after an edited topology rewires branches, any `JB3PH` with exactly one
+  incoming and one outgoing path is treated as a redundant distribution point.
+- the renderer/export graph should not show that as a live 3PH distribution
+  island. The edit layer removes the single-purpose upstream `Cable4C`,
+  optional `Isolator3PH`, and `JB3PH` chain when it is safe to do so, then
+  reconnects the upstream source directly to the remaining branch root.
+- this simplification is intentionally graph-local: it does not rewrite the
+  generated baseline, and reset-to-generated still restores the original
+  calculated topology.
+
+Split topology rule:
+- split works against the active SLD graph, not only the generated baseline.
+  This allows an engineer to split a manually combined feeder without first
+  discarding unrelated manual topology edits.
+- when one generated multi-circuit line is split, the edited line identities
+  continue to use `-partN` suffixes.
+- when a manual combine of distinct line IDs is split, each resulting feeder
+  keeps its original line identity instead of receiving a synthetic part suffix.
+- the generated baseline snapshot remains stored with the edit, so full
+  reset-to-generated still returns to the original calculated arrangement.
 - the upstream MCB feeding the target JB receives a review-required breaker
   recommendation based on the previous target-source rating plus the removed
   source MCB rating.

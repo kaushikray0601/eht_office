@@ -5,7 +5,7 @@ from django.db import transaction
 
 from .models import MAX_CB_SIZE, ProjectData, SLDTopologyEdit
 from .sld_payload import build_project_sld_payload
-from .sld_topology import get_active_topology_edit, payload_fingerprint
+from .sld_topology import payload_fingerprint
 
 
 def _next_breaker_size(total_rating):
@@ -132,6 +132,10 @@ def _graph_component_count(payload, component_types):
     return sum(1 for node in payload.get('nodes', []) if node.get('component_type') in component_types)
 
 
+def _requires_incoming_isolator(isolator_location):
+    return isolator_location in {'bothSides', 'incomingOnly'}
+
+
 def _node_line_ids(nodes):
     return sorted({
         line_id
@@ -203,6 +207,120 @@ def _edited_cable_schedule_rows(payload):
     return rows
 
 
+def _manual_display_name(component_type):
+    return {
+        'Cable4C': '4C Cable',
+        'Isolator3PH': '3PH Isolator',
+        'JB3PH': '3PH JB',
+    }.get(component_type, component_type)
+
+
+def _manual_distribution_edges(source_component_id, cable4c, isolator3ph, jb3ph):
+    chain = [cable4c]
+    if isolator3ph:
+        chain.append(isolator3ph)
+    chain.append(jb3ph)
+    edges = []
+    previous_id = source_component_id
+    for node in chain:
+        edges.append({
+            'from_component_id': previous_id,
+            'to_component_id': node['component_id'],
+            'line_ids': node.get('line_ids', []),
+            'line_uid': node.get('line_uid'),
+            'branch_index': node.get('branch_index'),
+            'circuit_index': None,
+        })
+        previous_id = node['component_id']
+    return edges
+
+
+def _single_edge(edges, component_id, node_by_id):
+    valid_edges = [
+        edge for edge in edges.get(component_id, [])
+        if edge.get('from_component_id') in node_by_id or edge.get('to_component_id') in node_by_id
+    ]
+    return valid_edges[0] if len(valid_edges) == 1 else None
+
+
+def _collapse_single_outgoing_3ph_jbs(payload):
+    """Remove redundant 3PH distribution islands that now feed one branch."""
+    simplified = deepcopy(payload)
+    collapsed_count = 0
+
+    while True:
+        node_by_id = _node_lookup(simplified)
+        incoming_by_id, outgoing_by_id = _edge_lookup(simplified)
+        collapse = None
+
+        for jb in simplified.get('nodes', []):
+            if jb.get('component_type') != 'JB3PH':
+                continue
+            incoming_edge = _single_edge(incoming_by_id, jb['component_id'], node_by_id)
+            outgoing_edge = _single_edge(outgoing_by_id, jb['component_id'], node_by_id)
+            if not incoming_edge or not outgoing_edge:
+                continue
+
+            remove_ids = {jb['component_id']}
+            upstream_source_id = incoming_edge.get('from_component_id')
+            cursor_id = upstream_source_id
+            current_child_id = jb['component_id']
+
+            while cursor_id in node_by_id and node_by_id[cursor_id].get('component_type') in {'Isolator3PH', 'Cable4C'}:
+                cursor_incoming = _single_edge(incoming_by_id, cursor_id, node_by_id)
+                cursor_outgoing = _single_edge(outgoing_by_id, cursor_id, node_by_id)
+                if not cursor_incoming or not cursor_outgoing:
+                    break
+                if cursor_outgoing.get('to_component_id') != current_child_id:
+                    break
+                remove_ids.add(cursor_id)
+                current_child_id = cursor_id
+                upstream_source_id = cursor_incoming.get('from_component_id')
+                cursor_id = upstream_source_id
+
+            target_id = outgoing_edge.get('to_component_id')
+            if not upstream_source_id or upstream_source_id == target_id or target_id not in node_by_id:
+                continue
+
+            target_node = node_by_id[target_id]
+            collapse = {
+                'remove_ids': remove_ids,
+                'bypass_edge': {
+                    'from_component_id': upstream_source_id,
+                    'to_component_id': target_id,
+                    'line_ids': target_node.get('line_ids', []),
+                    'line_uid': target_node.get('line_uid'),
+                    'branch_index': target_node.get('branch_index'),
+                    'circuit_index': target_node.get('circuit_index'),
+                },
+            }
+            break
+
+        if not collapse:
+            break
+
+        remove_ids = collapse['remove_ids']
+        simplified['nodes'] = [
+            node for node in simplified.get('nodes', [])
+            if node.get('component_id') not in remove_ids
+        ]
+        simplified['edges'] = _dedupe_edges([
+            *[
+                dict(edge) for edge in simplified.get('edges', [])
+                if edge.get('from_component_id') not in remove_ids
+                and edge.get('to_component_id') not in remove_ids
+            ],
+            collapse['bypass_edge'],
+        ])
+        collapsed_count += 1
+
+    if collapsed_count:
+        meta = dict(simplified.get('meta') or {})
+        meta['single_outgoing_3ph_jb_collapsed_count'] = collapsed_count
+        simplified['meta'] = meta
+    return simplified
+
+
 def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes, recommended_rating):
     component_id = f"{source_mcb['component_id']}:manual_combine:{component_type}"
     line_ids = sorted({
@@ -220,6 +338,11 @@ def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes
             'cable_role': 'MCB_TO_JB3PH',
             'note': 'Manual feeder-combine trunk cable. Cable sizing is pending detailed cable design.',
         })
+    if component_type == 'Isolator3PH':
+        metadata.update({
+            'location': 'incoming',
+            'source_mcb': source_mcb.get('display_tag'),
+        })
     if component_type == 'JB3PH':
         metadata.update({
             'circuit_count': len(selected_nodes),
@@ -232,7 +355,7 @@ def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes
         'component_uid': _component_uid(component_id),
         'display_tag': display_tag,
         'component_type': component_type,
-        'display_name': '4C Cable' if component_type == 'Cable4C' else '3PH JB',
+        'display_name': _manual_display_name(component_type),
         'label': display_tag,
         'line_id': source_mcb.get('line_id'),
         'line_ids': line_ids,
@@ -261,24 +384,30 @@ def _manual_combine_distribution(payload, source_mcb):
         if (cable.get('metadata') or {}).get('manual_topology_edit') != 'combine_feeders':
             continue
         for cable_edge in outgoing_by_id.get(cable['component_id'], []):
-            jb = node_by_id.get(cable_edge.get('to_component_id'))
+            next_node = node_by_id.get(cable_edge.get('to_component_id'))
+            isolator = None
+            jb = next_node
+            if next_node and next_node.get('component_type') == 'Isolator3PH':
+                isolator = next_node
+                next_edges = outgoing_by_id.get(next_node['component_id'], [])
+                jb = node_by_id.get(next_edges[0].get('to_component_id')) if len(next_edges) == 1 else None
             if (
                 jb
                 and jb.get('component_type') == 'JB3PH'
                 and (jb.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
             ):
-                return cable, jb
-    return None, None
+                return cable, isolator, jb
+    return None, None, None
 
 
-def _build_edited_payload(payload, selected_nodes, recommended_rating):
+def _build_edited_payload(payload, selected_nodes, recommended_rating, isolator_location='noIsolator'):
     primary = selected_nodes[0]
     secondary_ids = {node['component_id'] for node in selected_nodes[1:]}
     selected_ids = {node['component_id'] for node in selected_nodes}
     primary_id = primary['component_id']
     edited = deepcopy(payload)
     _, outgoing_by_id = _edge_lookup(edited)
-    existing_cable4c, existing_jb3ph = _manual_combine_distribution(edited, primary)
+    existing_cable4c, existing_isolator3ph, existing_jb3ph = _manual_combine_distribution(edited, primary)
 
     for node in edited['nodes']:
         if node['component_id'] != primary_id:
@@ -308,6 +437,11 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
     cable4c = existing_cable4c or _manual_combine_node(
         primary, 'Cable4C', f"CCAB4C_{tag_suffix}-M", selected_nodes, recommended_rating
     )
+    isolator3ph = existing_isolator3ph
+    if _requires_incoming_isolator(isolator_location) and not isolator3ph:
+        isolator3ph = _manual_combine_node(
+            primary, 'Isolator3PH', f"ISOL_3PH_{tag_suffix}-M", selected_nodes, recommended_rating
+        )
     jb3ph = existing_jb3ph or _manual_combine_node(
         primary, 'JB3PH', f"JB3PH_{tag_suffix}-M", selected_nodes, recommended_rating
     )
@@ -320,6 +454,9 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
     if cable4c['component_id'] not in existing_manual_ids:
         edited['nodes'].append(cable4c)
         existing_manual_ids.add(cable4c['component_id'])
+    if isolator3ph and isolator3ph['component_id'] not in existing_manual_ids:
+        edited['nodes'].append(isolator3ph)
+        existing_manual_ids.add(isolator3ph['component_id'])
     if jb3ph['component_id'] not in existing_manual_ids:
         edited['nodes'].append(jb3ph)
 
@@ -331,27 +468,18 @@ def _build_edited_payload(payload, selected_nodes, recommended_rating):
             existing_jb3ph and edge.get('from_component_id') == primary_id
         ):
             continue
+        if (
+            isolator3ph
+            and existing_jb3ph
+            and not existing_isolator3ph
+            and edge.get('from_component_id') == cable4c['component_id']
+            and edge.get('to_component_id') == jb3ph['component_id']
+        ):
+            continue
         rewired_edges.append(dict(edge))
 
-    if not existing_jb3ph:
-        rewired_edges.extend([
-            {
-                'from_component_id': primary_id,
-                'to_component_id': cable4c['component_id'],
-                'line_ids': cable4c['line_ids'],
-                'line_uid': cable4c.get('line_uid'),
-                'branch_index': cable4c.get('branch_index'),
-                'circuit_index': None,
-            },
-            {
-                'from_component_id': cable4c['component_id'],
-                'to_component_id': jb3ph['component_id'],
-                'line_ids': cable4c['line_ids'],
-                'line_uid': cable4c.get('line_uid'),
-                'branch_index': cable4c.get('branch_index'),
-                'circuit_index': None,
-            },
-        ])
+    if not existing_jb3ph or (isolator3ph and not existing_isolator3ph):
+        rewired_edges.extend(_manual_distribution_edges(primary_id, cable4c, isolator3ph, jb3ph))
     node_by_id = _node_lookup(edited)
     for entry_id in feeder_entry_ids:
         entry_node = node_by_id.get(entry_id)
@@ -463,12 +591,14 @@ def _new_split_mcb_node(source_mcb, entry_node, index, recommended_rating, circu
     }
 
 
-def _split_part_identity(entry_node, index):
+def _split_part_identity(entry_node, index, use_part_suffix):
     original_line_id = entry_node.get('line_id') or 'LINE'
     original_line_uid = entry_node.get('line_uid') or original_line_id
+    line_id = f"{original_line_id}-part{index}" if use_part_suffix else original_line_id
+    line_uid = f"{original_line_uid}:manual_split:part{index}" if use_part_suffix else original_line_uid
     return {
-        'line_id': f"{original_line_id}-part{index}",
-        'line_uid': f"{original_line_uid}:manual_split:part{index}",
+        'line_id': line_id,
+        'line_uid': line_uid,
         'original_line_id': original_line_id,
         'original_line_uid': original_line_uid,
     }
@@ -500,8 +630,13 @@ def _build_split_payload(payload, source_mcb, split_details, recommended_rating)
     removed_ids = set(split_details['shared_component_ids'])
     entry_nodes = split_details['entry_nodes']
     entry_ids = {node['component_id'] for node in entry_nodes}
+    unique_line_uids = {
+        entry.get('line_uid') or entry.get('line_id') or entry.get('component_id')
+        for entry in entry_nodes
+    }
+    use_part_suffix = len(unique_line_uids) == 1
     part_identity_by_key = {
-        _split_circuit_key(entry): _split_part_identity(entry, index)
+        _split_circuit_key(entry): _split_part_identity(entry, index, use_part_suffix)
         for index, entry in enumerate(entry_nodes, start=1)
     }
     split_mcb_by_entry = {
@@ -688,6 +823,10 @@ def _downstream_jb_manual_node(parent_jb, component_type, display_tag, selected_
             'generated_cable_size': '4C',
             'note': 'Manual downstream 3PH JB trunk cable.',
         })
+    if component_type == 'Isolator3PH':
+        metadata.update({
+            'location': 'incoming',
+        })
     if component_type == 'JB3PH':
         metadata.update({
             'circuit_count': len(selected_nodes),
@@ -697,7 +836,7 @@ def _downstream_jb_manual_node(parent_jb, component_type, display_tag, selected_
         'component_uid': _component_uid(component_id),
         'display_tag': display_tag,
         'component_type': component_type,
-        'display_name': '4C Cable' if component_type == 'Cable4C' else '3PH JB',
+        'display_name': _manual_display_name(component_type),
         'label': display_tag,
         'line_id': parent_jb.get('line_id'),
         'line_ids': line_ids,
@@ -708,23 +847,29 @@ def _downstream_jb_manual_node(parent_jb, component_type, display_tag, selected_
     }
 
 
-def _downstream_jb_preview_tags(payload, parent_jb):
+def _downstream_jb_preview_tags(payload, parent_jb, isolator_location='noIsolator'):
     existing_tags = {node.get('display_tag') for node in payload.get('nodes', [])}
     base_suffix = _display_tag_suffix(parent_jb.get('display_tag', 'JB3PH'))
     cable_tag = _unique_manual_tag(existing_tags, 'CCAB4C', base_suffix)
-    jb_tag = _unique_manual_tag(existing_tags | {cable_tag}, 'JB3PH', base_suffix)
-    return cable_tag, jb_tag
+    isolator_tag = ''
+    if _requires_incoming_isolator(isolator_location):
+        isolator_tag = _unique_manual_tag(existing_tags | {cable_tag}, 'ISOL_3PH', base_suffix)
+    jb_tag = _unique_manual_tag(existing_tags | {cable_tag, isolator_tag}, 'JB3PH', base_suffix)
+    return cable_tag, isolator_tag, jb_tag
 
 
-def _target_mcb_distribution_preview_tags(payload, target_mcb):
+def _target_mcb_distribution_preview_tags(payload, target_mcb, isolator_location='noIsolator'):
     existing_tags = {node.get('display_tag') for node in payload.get('nodes', [])}
     base_suffix = _display_tag_suffix(target_mcb.get('display_tag', 'MCB'))
     cable_tag = _unique_manual_tag(existing_tags, 'CCAB4C', base_suffix)
-    jb_tag = _unique_manual_tag(existing_tags | {cable_tag}, 'JB3PH', base_suffix)
-    return cable_tag, jb_tag
+    isolator_tag = ''
+    if _requires_incoming_isolator(isolator_location):
+        isolator_tag = _unique_manual_tag(existing_tags | {cable_tag}, 'ISOL_3PH', base_suffix)
+    jb_tag = _unique_manual_tag(existing_tags | {cable_tag, isolator_tag}, 'JB3PH', base_suffix)
+    return cable_tag, isolator_tag, jb_tag
 
 
-def _build_downstream_jb_payload(payload, details, trunk_length_m):
+def _build_downstream_jb_payload(payload, details, trunk_length_m, isolator_location='noIsolator'):
     edited = deepcopy(payload)
     parent = details['parent']
     selected_edges = details['selected_edges']
@@ -735,10 +880,15 @@ def _build_downstream_jb_payload(payload, details, trunk_length_m):
         for component_id in selected_target_ids
         if component_id in node_by_id
     ]
-    cable_tag, jb_tag = _downstream_jb_preview_tags(edited, parent)
+    cable_tag, isolator_tag, jb_tag = _downstream_jb_preview_tags(edited, parent, isolator_location)
     cable4c = _downstream_jb_manual_node(parent, 'Cable4C', cable_tag, selected_nodes, trunk_length_m)
+    isolator3ph = (
+        _downstream_jb_manual_node(parent, 'Isolator3PH', isolator_tag, selected_nodes, trunk_length_m)
+        if isolator_tag
+        else None
+    )
     jb3ph = _downstream_jb_manual_node(parent, 'JB3PH', jb_tag, selected_nodes, trunk_length_m)
-    edited['nodes'].extend([cable4c, jb3ph])
+    edited['nodes'].extend([node for node in [cable4c, isolator3ph, jb3ph] if node])
 
     rewired_edges = []
     for edge in edited['edges']:
@@ -749,24 +899,7 @@ def _build_downstream_jb_payload(payload, details, trunk_length_m):
             continue
         rewired_edges.append(dict(edge))
 
-    rewired_edges.extend([
-        {
-            'from_component_id': parent['component_id'],
-            'to_component_id': cable4c['component_id'],
-            'line_ids': cable4c['line_ids'],
-            'line_uid': cable4c.get('line_uid'),
-            'branch_index': cable4c.get('branch_index'),
-            'circuit_index': None,
-        },
-        {
-            'from_component_id': cable4c['component_id'],
-            'to_component_id': jb3ph['component_id'],
-            'line_ids': cable4c['line_ids'],
-            'line_uid': cable4c.get('line_uid'),
-            'branch_index': cable4c.get('branch_index'),
-            'circuit_index': None,
-        },
-    ])
+    rewired_edges.extend(_manual_distribution_edges(parent['component_id'], cable4c, isolator3ph, jb3ph))
     for edge in selected_edges:
         target = node_by_id.get(edge.get('to_component_id'))
         if not target:
@@ -781,6 +914,7 @@ def _build_downstream_jb_payload(payload, details, trunk_length_m):
         })
 
     edited['edges'] = _dedupe_edges(rewired_edges)
+    edited = _collapse_single_outgoing_3ph_jbs(edited)
     meta = dict(edited.get('meta') or {})
     meta.update({
         'node_count': len(edited['nodes']),
@@ -837,7 +971,7 @@ def _selected_attach_to_jb_details(payload, source_component_id, target_jb_compo
     }, ''
 
 
-def _selected_branch_move_details(payload, source_component_id, target_component_id):
+def _selected_branch_move_details(payload, source_component_id, target_component_id, isolator_location='noIsolator'):
     node_by_id = _node_lookup(payload)
     incoming_by_id, outgoing_by_id = _edge_lookup(payload)
     selected_node = node_by_id.get(source_component_id)
@@ -895,6 +1029,7 @@ def _selected_branch_move_details(payload, source_component_id, target_component
     target_mcb_existing_edge = None
     target_mcb_existing_child = None
     target_insert_cable_tag = ''
+    target_insert_isolator_tag = ''
     target_insert_jb_tag = ''
     target_insert_trunk_length = None
     if target_node.get('component_type') == 'MCB':
@@ -912,7 +1047,11 @@ def _selected_branch_move_details(payload, source_component_id, target_component
             return None, 'Target MCB already has a 3PH distribution path. Select its existing 3PH JB as the target.'
         target_outgoing_before = 1
         target_after_count = 2
-        target_insert_cable_tag, target_insert_jb_tag = _target_mcb_distribution_preview_tags(payload, target_mcb)
+        target_insert_cable_tag, target_insert_isolator_tag, target_insert_jb_tag = _target_mcb_distribution_preview_tags(
+            payload,
+            target_mcb,
+            isolator_location,
+        )
         target_insert_trunk_length = _to_positive_float((target_mcb_existing_child.get('metadata') or {}).get('length_m'))
     else:
         target_outgoing_before = len(target_outgoing_edges)
@@ -953,6 +1092,7 @@ def _selected_branch_move_details(payload, source_component_id, target_component
         'target_mcb_existing_edge': target_mcb_existing_edge,
         'target_mcb_existing_child': target_mcb_existing_child,
         'target_insert_cable_tag': target_insert_cable_tag,
+        'target_insert_isolator_tag': target_insert_isolator_tag,
         'target_insert_jb_tag': target_insert_jb_tag,
         'target_insert_trunk_length': target_insert_trunk_length,
         'cross_mcb_move': is_cross_mcb_move,
@@ -1027,6 +1167,7 @@ def _build_attach_to_jb_payload(payload, details, recommended_rating):
             'circuit_index': target_node.get('circuit_index'),
         })
     edited['edges'] = _dedupe_edges(rewired_edges)
+    edited = _collapse_single_outgoing_3ph_jbs(edited)
 
     meta = dict(edited.get('meta') or {})
     meta.update({
@@ -1056,6 +1197,10 @@ def _target_mcb_distribution_node(target_mcb, component_type, display_tag, selec
             'generated_cable_size': '4C',
             'note': 'Manual target-MCB 3PH distribution trunk cable.',
         })
+    if component_type == 'Isolator3PH':
+        metadata.update({
+            'location': 'incoming',
+        })
     if component_type == 'JB3PH':
         metadata.update({
             'circuit_count': len(selected_nodes),
@@ -1065,7 +1210,7 @@ def _target_mcb_distribution_node(target_mcb, component_type, display_tag, selec
         'component_uid': _component_uid(component_id),
         'display_tag': display_tag,
         'component_type': component_type,
-        'display_name': '4C Cable' if component_type == 'Cable4C' else '3PH JB',
+        'display_name': _manual_display_name(component_type),
         'label': display_tag,
         'line_id': target_mcb.get('line_id'),
         'line_ids': _node_line_ids([target_mcb, *selected_nodes]),
@@ -1096,6 +1241,17 @@ def _build_branch_move_payload(payload, details):
             selected_nodes,
             details['target_insert_trunk_length'],
         )
+        isolator3ph = (
+            _target_mcb_distribution_node(
+                details['target_mcb'],
+                'Isolator3PH',
+                details['target_insert_isolator_tag'],
+                selected_nodes,
+                details['target_insert_trunk_length'],
+            )
+            if details['target_insert_isolator_tag']
+            else None
+        )
         jb3ph = _target_mcb_distribution_node(
             details['target_mcb'],
             'JB3PH',
@@ -1104,7 +1260,7 @@ def _build_branch_move_payload(payload, details):
             details['target_insert_trunk_length'],
         )
         target_distribution_jb_id = jb3ph['component_id']
-        edited['nodes'].extend([cable4c, jb3ph])
+        edited['nodes'].extend([node for node in [cable4c, isolator3ph, jb3ph] if node])
 
     nodes = []
     for node in edited.get('nodes', []):
@@ -1181,25 +1337,9 @@ def _build_branch_move_payload(payload, details):
         rewired_edges.append(dict(edge))
 
     if details['target_mcb_existing_child']:
-        cable_id = cable4c['component_id']
         jb_id = target_distribution_jb_id
         rewired_edges.extend([
-            {
-                'from_component_id': target_mcb_id,
-                'to_component_id': cable_id,
-                'line_ids': cable4c.get('line_ids', []),
-                'line_uid': cable4c.get('line_uid'),
-                'branch_index': cable4c.get('branch_index'),
-                'circuit_index': None,
-            },
-            {
-                'from_component_id': cable_id,
-                'to_component_id': jb_id,
-                'line_ids': cable4c.get('line_ids', []),
-                'line_uid': cable4c.get('line_uid'),
-                'branch_index': cable4c.get('branch_index'),
-                'circuit_index': None,
-            },
+            *_manual_distribution_edges(target_mcb_id, cable4c, isolator3ph, jb3ph),
             {
                 'from_component_id': jb_id,
                 'to_component_id': details['target_mcb_existing_child']['component_id'],
@@ -1219,6 +1359,7 @@ def _build_branch_move_payload(payload, details):
         'circuit_index': branch_root.get('circuit_index'),
     })
     edited['edges'] = _dedupe_edges(rewired_edges)
+    edited = _collapse_single_outgoing_3ph_jbs(edited)
 
     meta = dict(edited.get('meta') or {})
     meta.update({
@@ -1239,6 +1380,7 @@ def preview_combine_feeders(project_id, component_ids):
             'ok': False,
             'error': 'Select at least two MCB feeder sources to combine.',
         }
+    project = ProjectData.objects.get(proj_id=project_id)
     payload = build_project_sld_payload(project_id)
     selected_nodes, invalid_ids = _selected_mcb_nodes(payload, component_ids)
     if invalid_ids:
@@ -1283,11 +1425,20 @@ def preview_combine_feeders(project_id, component_ids):
 
     primary = selected_nodes[0]
     removed_nodes = selected_nodes[1:]
-    existing_cable4c, existing_jb3ph = _manual_combine_distribution(payload, primary)
+    existing_cable4c, existing_isolator3ph, existing_jb3ph = _manual_combine_distribution(payload, primary)
     primary_tag = _manual_display_tag(primary.get('display_tag', 'MCB'))
     tag_suffix = primary_tag.split('_', 1)[1] if '_' in primary_tag else primary_tag
-    added_component_types = [] if existing_jb3ph else ['Cable4C', 'JB3PH']
-    added_display_tags = [] if existing_jb3ph else [f"CCAB4C_{tag_suffix}-M", f"JB3PH_{tag_suffix}-M"]
+    added_component_types = []
+    added_display_tags = []
+    if not existing_cable4c:
+        added_component_types.append('Cable4C')
+        added_display_tags.append(f"CCAB4C_{tag_suffix}-M")
+    if _requires_incoming_isolator(project.isolator_location) and not existing_isolator3ph:
+        added_component_types.append('Isolator3PH')
+        added_display_tags.append(f"ISOL_3PH_{tag_suffix}-M")
+    if not existing_jb3ph:
+        added_component_types.append('JB3PH')
+        added_display_tags.append(f"JB3PH_{tag_suffix}-M")
     return {
         'ok': True,
         'project_id': project_id,
@@ -1322,12 +1473,6 @@ def preview_split_circuits(project_id, component_ids):
             'ok': False,
             'error': 'Select one MCB feeder source with multiple downstream circuits to split.',
         }
-    if get_active_topology_edit(project_id):
-        return {
-            'ok': False,
-            'error': 'Reset or supersede the active topology edit before applying another split operation.',
-        }
-
     payload = build_project_sld_payload(project_id)
     source_mcb, invalid_ids = _selected_split_mcb(payload, component_ids)
     if invalid_ids or source_mcb is None:
@@ -1432,7 +1577,14 @@ def preview_downstream_jb(project_id, parent_component_id, branch_component_ids,
 
     node_by_id = details['node_by_id']
     selected_nodes = [node_by_id[edge['to_component_id']] for edge in selected_edges]
-    cable_tag, jb_tag = _downstream_jb_preview_tags(payload, details['parent'])
+    cable_tag, isolator_tag, jb_tag = _downstream_jb_preview_tags(payload, details['parent'], project.isolator_location)
+    added_component_types = ['Cable4C']
+    added_display_tags = [cable_tag]
+    if isolator_tag:
+        added_component_types.append('Isolator3PH')
+        added_display_tags.append(isolator_tag)
+    added_component_types.append('JB3PH')
+    added_display_tags.append(jb_tag)
     return {
         'ok': True,
         'project_id': project_id,
@@ -1441,8 +1593,8 @@ def preview_downstream_jb(project_id, parent_component_id, branch_component_ids,
         'parent_display_tag': details['parent']['display_tag'],
         'selected_component_ids': [node['component_id'] for node in selected_nodes],
         'selected_display_tags': [node['display_tag'] for node in selected_nodes],
-        'added_component_types': ['Cable4C', 'JB3PH'],
-        'added_display_tags': [cable_tag, jb_tag],
+        'added_component_types': added_component_types,
+        'added_display_tags': added_display_tags,
         'parent_outgoing_before': outgoing_count,
         'parent_outgoing_after': parent_after_count,
         'downstream_outgoing_count': selected_count,
@@ -1461,10 +1613,16 @@ def preview_downstream_jb(project_id, parent_component_id, branch_component_ids,
 
 
 def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id):
+    project = ProjectData.objects.get(proj_id=project_id)
     payload = build_project_sld_payload(project_id)
     source_node = _node_lookup(payload).get(source_component_id)
     if source_node and source_node.get('component_type') != 'MCB':
-        details, error = _selected_branch_move_details(payload, source_component_id, target_jb_component_id)
+        details, error = _selected_branch_move_details(
+            payload,
+            source_component_id,
+            target_jb_component_id,
+            project.isolator_location,
+        )
         if not details:
             return {
                 'ok': False,
@@ -1504,7 +1662,11 @@ def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id
             'target_mcb_display_tag': details['target_mcb']['display_tag'],
             'insert_target_distribution_jb': bool(details['target_mcb_existing_child']),
             'added_display_tags': [
-                tag for tag in [details['target_insert_cable_tag'], details['target_insert_jb_tag']] if tag
+                tag for tag in [
+                    details['target_insert_cable_tag'],
+                    details['target_insert_isolator_tag'],
+                    details['target_insert_jb_tag'],
+                ] if tag
             ],
             'cross_mcb_move': details['cross_mcb_move'],
             'estimated_branch_rating': details['estimated_branch_rating'],
@@ -1598,6 +1760,7 @@ def apply_combine_feeders(project_id, component_ids, user=None, remarks=''):
         active_payload,
         selected_nodes,
         preview['recommended_breaker_rating'],
+        project.isolator_location,
     )
 
     boq_overrides = {
@@ -1650,6 +1813,7 @@ def apply_attach_to_jb(project_id, source_component_id, target_jb_component_id, 
             active_payload,
             preview['source_component_id'],
             preview.get('target_component_id') or preview.get('target_jb_component_id'),
+            project.isolator_location,
         )
         if not details:
             return {
@@ -1726,7 +1890,12 @@ def apply_downstream_jb(project_id, parent_component_id, branch_component_ids, t
             'ok': False,
             'error': 'Selected downstream JB topology could not be rebuilt safely.',
         }
-    edited_payload = _build_downstream_jb_payload(active_payload, details, preview['trunk_length_m'])
+    edited_payload = _build_downstream_jb_payload(
+        active_payload,
+        details,
+        preview['trunk_length_m'],
+        project.isolator_location,
+    )
     boq_overrides = {
         'mcb_total': _graph_component_count(edited_payload, ['MCB']),
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
@@ -1771,20 +1940,21 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         return preview
 
     generated_payload = build_project_sld_payload(project_id, apply_topology=False)
-    source_mcb, _invalid_ids = _selected_split_mcb(generated_payload, preview['selected_component_ids'])
+    active_payload = build_project_sld_payload(project_id)
+    source_mcb, _invalid_ids = _selected_split_mcb(active_payload, preview['selected_component_ids'])
     if source_mcb is None:
         return {
             'ok': False,
             'error': 'Selected MCB split topology could not be rebuilt safely.',
         }
-    split_details = _split_source_details(generated_payload, source_mcb)
+    split_details = _split_source_details(active_payload, source_mcb)
     if not split_details:
         return {
             'ok': False,
             'error': 'Selected MCB split topology could not be rebuilt safely.',
         }
     edited_payload = _build_split_payload(
-        generated_payload,
+        active_payload,
         source_mcb,
         split_details,
         preview['recommended_breaker_rating'],

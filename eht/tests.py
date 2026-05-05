@@ -1710,8 +1710,8 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(preview['edit_type'], 'combine_feeders')
         self.assertEqual(preview['recommended_breaker_rating'], 20)
         self.assertEqual(len(preview['removed_component_ids']), 1)
-        self.assertEqual(preview['added_component_types'], ['Cable4C', 'JB3PH'])
-        self.assertEqual(len(preview['added_display_tags']), 2)
+        self.assertEqual(preview['added_component_types'], ['Cable4C', 'Isolator3PH', 'JB3PH'])
+        self.assertEqual(len(preview['added_display_tags']), 3)
 
     def test_combine_feeders_apply_persists_active_topology_edit(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -1760,16 +1760,23 @@ class SldTopologyWorkflowTests(TestCase):
             node for node in nodes_by_type['JB3PH']
             if (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
         ]
+        manual_isolators = [
+            node for node in nodes_by_type['Isolator3PH']
+            if (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        ]
         self.assertEqual(len(manual_trunk_cables), 1)
+        self.assertEqual(len(manual_isolators), 1)
         self.assertEqual(len(manual_distribution_jbs), 1)
         trunk_cable = manual_trunk_cables[0]
+        isolator = manual_isolators[0]
         distribution_jb = manual_distribution_jbs[0]
         edge_pairs = {
             (edge['from_component_id'], edge['to_component_id'])
             for edge in edited_payload['edges']
         }
         self.assertIn((combined_mcb['component_id'], trunk_cable['component_id']), edge_pairs)
-        self.assertIn((trunk_cable['component_id'], distribution_jb['component_id']), edge_pairs)
+        self.assertIn((trunk_cable['component_id'], isolator['component_id']), edge_pairs)
+        self.assertIn((isolator['component_id'], distribution_jb['component_id']), edge_pairs)
         self.assertEqual(
             sum(
                 1
@@ -1896,7 +1903,19 @@ class SldTopologyWorkflowTests(TestCase):
             if node['component_type'] == 'Cable4C'
             and (node.get('metadata') or {}).get('manual_topology_edit') == 'downstream_jb'
         )
+        downstream_isolator = next(
+            node for node in edited_payload['nodes']
+            if node['component_type'] == 'Isolator3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'downstream_jb'
+        )
+        edge_pairs = {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in edited_payload['edges']
+        }
         self.assertEqual(downstream_trunk['metadata']['length_m'], 18.5)
+        self.assertIn((parent_jb['component_id'], downstream_trunk['component_id']), edge_pairs)
+        self.assertIn((downstream_trunk['component_id'], downstream_isolator['component_id']), edge_pairs)
+        self.assertIn((downstream_isolator['component_id'], downstream_jb['component_id']), edge_pairs)
         self.assertEqual(
             len([edge for edge in edited_payload['edges'] if edge['from_component_id'] == parent_jb['component_id']]),
             2,
@@ -2071,6 +2090,12 @@ class SldTopologyWorkflowTests(TestCase):
             for edge in payload['edges']
             if edge['from_component_id'] == source_jb['component_id']
         )
+        remaining_source_child_id = next(
+            edge['to_component_id']
+            for edge in payload['edges']
+            if edge['from_component_id'] == source_jb['component_id']
+            and edge['to_component_id'] != branch_root_id
+        )
 
         preview_response = self.client.post(
             reverse('sld_topology_attach_jb_preview_view'),
@@ -2113,6 +2138,7 @@ class SldTopologyWorkflowTests(TestCase):
         }
         self.assertIn((target_jb['component_id'], branch_root_id), edge_pairs)
         self.assertNotIn((source_jb['component_id'], branch_root_id), edge_pairs)
+        self.assertFalse(any(node['component_id'] == source_jb['component_id'] for node in edited_payload['nodes']))
         source_mcb = next(
             node for node in edited_payload['nodes']
             if node['component_id'] == preview['upstream_mcb_component_id']
@@ -2123,6 +2149,7 @@ class SldTopologyWorkflowTests(TestCase):
         )
         self.assertEqual((source_mcb.get('metadata') or {}).get('breaker_size'), 6)
         self.assertEqual((target_mcb.get('metadata') or {}).get('breaker_size'), 16)
+        self.assertIn((source_mcb['component_id'], remaining_source_child_id), edge_pairs)
         self.assertEqual((source_mcb.get('metadata') or {}).get('previous_breaker_size'), 10)
         self.assertEqual((target_mcb.get('metadata') or {}).get('previous_breaker_size'), 10)
         self.assertEqual((source_mcb.get('metadata') or {}).get('recommended_breaker_size'), 6)
@@ -2243,8 +2270,14 @@ class SldTopologyWorkflowTests(TestCase):
             if node['component_type'] == 'Cable4C'
             and (node.get('metadata') or {}).get('target_mcb_distribution')
         )
+        manual_isolator = next(
+            node for node in final_payload['nodes']
+            if node['component_type'] == 'Isolator3PH'
+            and (node.get('metadata') or {}).get('target_mcb_distribution')
+        )
         self.assertIn((target_mcb['component_id'], manual_cable['component_id']), edge_pairs)
-        self.assertIn((manual_cable['component_id'], manual_jb['component_id']), edge_pairs)
+        self.assertIn((manual_cable['component_id'], manual_isolator['component_id']), edge_pairs)
+        self.assertIn((manual_isolator['component_id'], manual_jb['component_id']), edge_pairs)
         self.assertIn((manual_jb['component_id'], target_existing_child_id), edge_pairs)
         self.assertIn((manual_jb['component_id'], source_branch_root_id), edge_pairs)
 
@@ -2350,6 +2383,59 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(
             [group['line_id'] for group in filtered_payload['line_groups']],
             ['LINE-001-part1', 'LINE-001-part2'],
+        )
+
+    def test_split_circuits_can_split_active_manual_combine_topology(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        combine_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(combine_response.status_code, 200)
+
+        active_mcb_ids = self._mcb_component_ids()
+        self.assertEqual(len(active_mcb_ids), 1)
+        preview_response = self.client.post(
+            reverse('sld_topology_split_preview_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': active_mcb_ids}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(preview_response.status_code, 200)
+        preview = preview_response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['selected_circuit_count'], 2)
+        self.assertIn('JB3PH_001-M', preview['removed_display_tags'])
+
+        apply_response = self.client.post(
+            reverse('sld_topology_split_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_ids': active_mcb_ids,
+                'remarks': 'Undo combined feeder after review.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(apply_response.status_code, 200)
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='applied').count(), 1)
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='superseded').count(), 1)
+        applied_edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        edited_payload = build_project_sld_payload('p1')
+        self.assertEqual(
+            sorted(group['line_id'] for group in edited_payload['line_groups']),
+            ['LINE-001', 'LINE-002'],
+        )
+        self.assertEqual(sum(1 for node in edited_payload['nodes'] if node['component_type'] == 'MCB'), 2)
+        self.assertFalse(any(
+            node['component_type'] in {'Cable4C', 'Isolator3PH', 'JB3PH'}
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+            for node in edited_payload['nodes']
+        ))
+        self.assertEqual(
+            [row['distribution']['line']['line_id'] for row in applied_edit.edit_payload['cable_schedule_rows']],
+            ['LINE-001', 'LINE-002'],
         )
 
     def test_split_circuits_preview_rejects_downstream_selection(self):

@@ -110,3 +110,34 @@ Carry-over items:
 - [ ] Refine SLD presentation after the architecture phase: conventional SLD visual language, geometry/symbol sizing, text sizing, page layout, cable/spec label placement, and overall UI polish.
 - [ ] Improve SLD interaction correctness: fully derived link routing on node move/reset, clearer grouping cues per line, and review/reset behavior for saved vs derived visual elements.
 - [ ] Add scalable SLD browsing UX for large projects: server-side filtering by `line_id`, one-line focused browsing, collapsible validation panels, and other large-project readability improvements.
+
+Next SLD follow-up queue:
+- [x] Task 11.1: First UI cleanup block: remove redundant context-menu inspect actions, right-click-select the component/link before showing actions, compact/style the context menu, make topology mode buttons responsive, restore visible scrollbars for zoomed canvas work, and increase schematic MCB/JB/isolator label scale for readability.
+- [x] Task 11.2: Engineering topology correctness: when manual operations insert a 3PH JB, insert the configured upstream/downstream isolator if project settings require it; when a 3PH JB is reduced to one outgoing branch, collapse it to the appropriate 1PH path instead of leaving a misleading 3PH distribution point.
+- [ ] Task 11.3: Enable split for manually edited topologies, especially manually combined and branch-moved MCB trees, without forcing reset/recombine workflows.
+- [ ] Task 11.4: Add scoped reset-to-generated for a selected MCB/downstream tree so one engineer can undo a local mistake without deleting unrelated manual edits elsewhere in the project.
+- [ ] Task 11.5: Extend tracer inspection/editing: show tracer family and calculated alternate tracer options in the property inspector, then allow a controlled tracer selection override.
+- [ ] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
+
+Progress notes:
+- Task 11.2 first slice: manual topology operations that create a 3PH
+  distribution path now mirror the generated incoming-isolator rule. Combine
+  feeders, Add Downstream 3PH JB, and Attach-to-standalone-MCB insert
+  `Isolator3PH` between the manual 4C trunk and 3PH JB when project settings
+  are `bothSides` or `incomingOnly`. The remaining Task 11.2 slice is the
+  reverse cleanup: collapsing a now-single-outgoing 3PH JB into the appropriate
+  one-phase path when branches are moved away.
+- Task 11.2 second slice: topology edits now run a conservative graph
+  simplification pass after branch/feeder moves. A 3PH JB with exactly one
+  incoming and one outgoing path is removed together with its single-purpose
+  upstream 4C/isolator chain, and the upstream source is reconnected directly
+  to the remaining branch root. This keeps manually edited SLDs from showing
+  misleading one-outgoing 3PH distribution points while preserving the
+  generated baseline for full reset.
+- Task 11.3 first slice: Split now operates on the active SLD graph rather
+  than refusing to run whenever a topology edit exists. This allows a manually
+  combined MCB tree to be split without first resetting the whole project. When
+  the split separates different original line IDs, those original line IDs are
+  preserved; when it splits one generated multi-circuit line, the established
+  `-part1`, `-part2` naming remains. More complex split semantics after deep
+  branch moves/downstream JBs remain open under Task 11.3.

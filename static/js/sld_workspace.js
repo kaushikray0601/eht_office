@@ -5,9 +5,11 @@
     const EXTERNAL_DETAIL_COMPONENTS = new Set(['Cable4C', 'Cable3C', 'Tracer']);
     const CABLE_COMPONENTS = new Set(['Cable4C', 'Cable3C']);
     const SLD_LABEL_FONT_SIZE = 10.5;
-    const SLD_SCHEMATIC_LABEL_FONT_SIZE = 11.3;
+    const SLD_SCHEMATIC_LABEL_FONT_SIZE = 14;
     const SLD_LABEL_FONT_WEIGHT = 500;
     const POWER_LINK_OVERLAP = 4;
+    const GENERATED_COMPONENT_GAP = 38;
+    const EDITED_TOPOLOGY_LEVEL_GAP = 136;
     const NODE_STYLE = {
         MCB: { width: 116, height: 60, fill: '#f3f7fb', stroke: '#1f3447' },
         Cable4C: { width: 74, height: 12, fill: '#fff8e8', stroke: '#7a5b2b' },
@@ -349,6 +351,7 @@
                 `M ${p.contact1.x} ${p.contact1.y} L ${p.contact2.x} ${p.contact2.y}`,
             ].join(' ');
             common.bodyLabel.text = node.component_type === 'Isolator3PH' ? '3PH Isolator' : '1PH Isolator';
+            common.bodyLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             return common;
         }
 
@@ -382,11 +385,11 @@
             common.terminalPath.d = `M -2 ${centerY} L ${busX} ${centerY}`;
             common.symbolPath.strokeWidth = 5;
             common.tagLabel.x = busX - 8;
-            common.tagLabel.y = centerY - 19;
+            common.tagLabel.y = centerY - 22;
             common.tagLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             common.tagLabel.textAnchor = 'end';
             common.bodyLabel.x = busX + 8;
-            common.bodyLabel.y = centerY + 24;
+            common.bodyLabel.y = centerY + 26;
             common.bodyLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
             common.bodyLabel.textAnchor = 'start';
             common.bodyLabel.text = node.component_type === 'JB3PH' ? '3PH JB' : '1PH JB';
@@ -493,7 +496,7 @@
         const isCableOverride = (node.component_type === 'Cable4C' || node.component_type === 'Cable3C')
             && !!(metadata.cable_override_active || metadata.manual_length_m || metadata.manual_cable_size);
         const isCable = CABLE_COMPONENTS.has(node.component_type);
-        const labelWidth = isCable ? 132 : style.width + 48;
+        const labelWidth = isCable ? 120 : style.width + 34;
         const label = new joint.shapes.standard.TextBlock();
         label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 7);
         label.resize(labelWidth, isCable ? 36 : 24);
@@ -628,7 +631,7 @@
         const lineGroups = groupNodesByLine(payload);
         const positions = {};
         const startX = 240;
-        const componentGap = 48;
+        const componentGap = GENERATED_COMPONENT_GAP;
         const branchGap = 102;
         const circuitGap = 108;
         const lineGap = 110;
@@ -766,7 +769,7 @@
             startX: 240,
             startY: 98,
             rowGap: 124,
-            levelGap: 156,
+            levelGap: EDITED_TOPOLOGY_LEVEL_GAP,
             rowIndex: 0,
         };
         roots.forEach(function (rootNode, index) {
@@ -1426,7 +1429,8 @@
             } else if (preview && preview.ok && isSplit) {
                 summary.innerHTML = `Selected ${escapeHtml(preview.source_mcb_display_tag || 'MCB')}. Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else if (preview && preview.ok && isDownstreamJb) {
-                summary.innerHTML = `Parent ${escapeHtml(preview.parent_display_tag || '3PH JB')}: ${escapeHtml(preview.parent_outgoing_before)} outgoing now, ${escapeHtml(preview.parent_outgoing_after)} after edit. Move ${escapeHtml(preview.downstream_outgoing_count)} branch(es) under ${escapeHtml((preview.added_display_tags || [])[1] || 'new JB')} with ${escapeHtml(preview.trunk_length_m)} m 4C trunk.`;
+                const addedTags = preview.added_display_tags || [];
+                summary.innerHTML = `Parent ${escapeHtml(preview.parent_display_tag || '3PH JB')}: ${escapeHtml(preview.parent_outgoing_before)} outgoing now, ${escapeHtml(preview.parent_outgoing_after)} after edit. Move ${escapeHtml(preview.downstream_outgoing_count)} branch(es) under ${escapeHtml(addedTags[addedTags.length - 1] || 'new JB')} with ${escapeHtml(preview.trunk_length_m)} m 4C trunk.`;
             } else if (preview && preview.ok && isAttachJb) {
                 if (preview.edit_type === 'move_branch_to_jb') {
                     const addedNote = preview.insert_target_distribution_jb
@@ -2099,7 +2103,18 @@
         if (!state) {
             return;
         }
-        fitPaperToElements(root, state.graph.getElements());
+        const elements = state.graph.getElements();
+        const area = state.graph.getBBox(elements);
+        if (!area || !area.width || !area.height) {
+            return;
+        }
+        const hostWidth = root.clientWidth || 1200;
+        const scale = Math.max(0.78, Math.min(1.15, (hostWidth - 56) / area.width));
+        state.scale = Number(scale.toFixed(3));
+        state.paper.scale(state.scale, state.scale);
+        resizePaperToScaledContent(root);
+        root.scrollLeft = Math.max(0, (area.x * state.scale) - 28);
+        root.scrollTop = Math.max(0, (area.y * state.scale) - 28);
     }
 
     function getSelectedLineElements(state) {
@@ -2227,13 +2242,11 @@
             && attachSourceNode
             && nodeOutgoingCount >= 3;
         menu.innerHTML = edgeEntry ? `
-            <button type="button" data-sld-context-action="inspect-link">Inspect Link</button>
             <button type="button" data-sld-context-action="fit-line">Fit Connected Line</button>
             <button type="button" data-sld-context-action="attach-link-source">Move Downstream Branch</button>
             ${applyAction}
             <button type="button" data-sld-context-action="clear">Clear Selection</button>
         ` : (node ? `
-            <button type="button" data-sld-context-action="inspect">Inspect ${escapeHtml(node.display_tag || 'Component')}</button>
             <button type="button" data-sld-context-action="fit-line">Fit This Line Group</button>
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select MCB for Combine</button>' : ''}
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select MCB for Split</button>' : ''}
@@ -2695,6 +2708,13 @@
             event.preventDefault();
             const view = paper.findView(event.target);
             const meta = view && view.model ? (view.model.prop('sldMeta') || {}) : {};
+            if (meta.componentId) {
+                highlightSelection(root, meta.componentId);
+            } else if (meta.edge) {
+                highlightLinkSelection(root, getEdgeKey(meta.edge));
+            } else {
+                highlightSelection(root, null);
+            }
             showSldContextMenu(root, event, meta.componentId || '', meta.edge ? getEdgeKey(meta.edge) : '');
         });
 
