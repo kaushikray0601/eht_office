@@ -354,6 +354,19 @@ Workflow rules:
 - only applied topology edits become the active basis for SLD, BOQ, cable
   schedule, and connected-load summaries.
 - failed or abandoned previews must not affect downstream outputs.
+
+Scoped reset rule:
+- full reset deactivates the applied topology edit and returns the whole project
+  to generated topology.
+- scoped reset is different: it creates a new audited topology edit revision
+  where only the selected MCB/downstream tree's generated line scope is replaced
+  from the generated baseline.
+- the selected component may be anywhere inside the feeder tree; the server
+  resolves its upstream MCB, gathers the original line identities in that tree,
+  removes the matching active edit-layer nodes/edges/groups, and inserts the
+  corresponding generated baseline nodes/edges/groups.
+- unrelated manual edits outside that selected generated line scope must remain
+  active.
 - the generated baseline must remain available for comparison and reset.
 
 Recommended persistence shape:

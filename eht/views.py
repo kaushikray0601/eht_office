@@ -49,6 +49,7 @@ from .sld_topology_workflows import (
     apply_attach_to_jb,
     apply_combine_feeders,
     apply_downstream_jb,
+    apply_scoped_reset,
     apply_split_circuits,
     preview_attach_to_jb,
     preview_combine_feeders,
@@ -779,6 +780,7 @@ def sld_workspace_view(request):
         'sld_topology_attach_jb_preview_url': reverse('sld_topology_attach_jb_preview_view'),
         'sld_topology_attach_jb_apply_url': reverse('sld_topology_attach_jb_apply_view'),
         'sld_topology_reset_url': reverse('sld_topology_reset_view'),
+        'sld_topology_reset_selected_url': reverse('sld_topology_reset_selected_view'),
         'sld_cable_override_save_url': reverse('sld_cable_override_save_view'),
         'sld_cable_override_reset_url': reverse('sld_cable_override_reset_view'),
         'sld_topology_state': sld_data['topology_state'],
@@ -1215,6 +1217,34 @@ def sld_topology_reset_view(request):
         'project_id': project_id,
         'reset_count': reset_count,
     })
+
+
+def sld_topology_reset_selected_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+
+    body = _parse_json_request(request)
+    if body is None:
+        return JsonResponse({'error': 'Invalid topology reset payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_id = body.get('component_id') or ''
+    remarks = body.get('remarks') or ''
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to reset selected topology.'}, status=400)
+    if not component_id:
+        return JsonResponse({'error': 'Select a feeder component to reset.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    result = apply_scoped_reset(
+        project_id,
+        component_id,
+        user=getattr(request, 'user', None),
+        remarks=remarks,
+    )
+    if not result['ok']:
+        return JsonResponse({'error': result['error'], **result}, status=400)
+    return JsonResponse({'success': 'Selected feeder tree reset to generated topology.', **result})
 
 
 def result_export_view(request):

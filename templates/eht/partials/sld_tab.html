@@ -171,6 +171,7 @@
                             data-sld-topology-attach-jb-preview-url="{{ sld_topology_attach_jb_preview_url }}"
                             data-sld-topology-attach-jb-apply-url="{{ sld_topology_attach_jb_apply_url }}"
                             data-sld-topology-reset-url="{{ sld_topology_reset_url }}"
+                            data-sld-topology-reset-selected-url="{{ sld_topology_reset_selected_url }}"
                             data-sld-cable-override-save-url="{{ sld_cable_override_save_url }}"
                             data-sld-cable-override-reset-url="{{ sld_cable_override_reset_url }}"
                             data-default-jb-loop-length="{{ project_setup.loop_ln|default:'' }}"
@@ -227,6 +228,14 @@
                                     {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
                                 >
                                     <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Generated
+                                </button>
+                                <button
+                                    type="button"
+                                    id="sld-topology-reset-selected"
+                                    class="btn btn-outline-secondary btn-sm w-100 mt-2"
+                                    {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
+                                >
+                                    <i class="bi bi-arrow-return-left me-1"></i>Reset Selected
                                 </button>
                             </div>
                             <div class="d-flex justify-content-between align-items-center gap-2 mb-2">

@@ -1242,6 +1242,15 @@
         }
     }
 
+    function updateSelectedResetButton(root) {
+        const panel = root.closest('.sld-panel');
+        const button = panel ? panel.querySelector('#sld-topology-reset-selected') : null;
+        const state = root.__sldState;
+        if (button) {
+            button.disabled = !(state && state.hasTopologyEdit && state.selectedComponentId);
+        }
+    }
+
     function getSelectionSummaryContainer(root) {
         const panel = root.closest('.sld-panel');
         return panel ? panel.querySelector('#sld-selection-summary') : null;
@@ -1982,6 +1991,7 @@
             });
             setFitSelectedLineState(root, false);
             renderInspector(root, null, 0, 0);
+            updateSelectedResetButton(root);
             return;
         }
 
@@ -2009,6 +2019,7 @@
 
         setFitSelectedLineState(root, true);
         renderInspector(root, state.nodeByComponentId[componentId], path.nodeIds.size, path.edgeKeys.size);
+        updateSelectedResetButton(root);
     }
 
     function highlightLinkSelection(root, edgeKey) {
@@ -2019,6 +2030,7 @@
         }
         state.selectedComponentId = null;
         state.selectedEdgeKey = edgeKey;
+        updateSelectedResetButton(root);
         Object.keys(state.elementByComponentId).forEach(function (id) {
             applyMutedElementStyle(state.elementByComponentId[id]);
         });
@@ -2599,6 +2611,7 @@
             dirtyComponentIds: new Set(),
             selectedComponentId: null,
             selectedEdgeKey: null,
+            hasTopologyEdit: !!(payload.meta && payload.meta.has_topology_edit),
             combineMode: false,
             combineSelectionIds: new Set(),
             combinePreview: null,
@@ -2621,6 +2634,7 @@
             isSyncingDerivedGeometry: false,
         };
         setFitSelectedLineState(root, false);
+        updateSelectedResetButton(root);
 
         graph.on('change:position', function (cell) {
             const state = root.__sldState;
@@ -3110,6 +3124,10 @@
         if (resetButton) {
             resetButton.disabled = !hasEdit;
         }
+        if (root.__sldState) {
+            root.__sldState.hasTopologyEdit = hasEdit;
+            updateSelectedResetButton(root);
+        }
         if (!hasEdit) {
             if (alert) {
                 alert.remove();
@@ -3178,6 +3196,51 @@
         }).fail(function (xhr) {
             if (typeof window.showToast === 'function') {
                 window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to reset topology edit.', 'error');
+            }
+        });
+    }
+
+    function resetSelectedTopologyEdit(root) {
+        const state = root.__sldState;
+        const url = root.dataset.sldTopologyResetSelectedUrl;
+        const projectId = root.dataset.projectId;
+        const componentId = state && state.selectedComponentId;
+        const remarksInput = document.getElementById('sld-combine-remarks');
+        if (!url || !projectId || !componentId) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Select a feeder component before resetting selected topology.', 'warning');
+            }
+            return;
+        }
+        $.ajax({
+            url: url,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify({
+                project_id: projectId,
+                component_id: componentId,
+                remarks: remarksInput ? remarksInput.value : '',
+            }),
+        }).done(function (response) {
+            if (root.__sldState) {
+                clearTopologySelectionState(root.__sldState);
+            }
+            updateTopologyStateUi(root, {
+                hasEdit: true,
+                editType: response.preview ? response.preview.edit_type : 'scoped_reset',
+                warning: response.validation_summary && response.validation_summary.warnings
+                    ? response.validation_summary.warnings[0]
+                    : '',
+            });
+            updateCombineControls(root);
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Selected topology reset.', 'info');
+            }
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to reset selected topology.', 'error');
             }
         });
     }
@@ -3338,6 +3401,13 @@
         const root = document.getElementById('sld-diagram-shell');
         if (root) {
             resetTopologyEdit(root);
+        }
+    });
+
+    $(document).on('click', '#sld-topology-reset-selected', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            resetSelectedTopologyEdit(root);
         }
     });
 

@@ -115,7 +115,7 @@ Next SLD follow-up queue:
 - [x] Task 11.1: First UI cleanup block: remove redundant context-menu inspect actions, right-click-select the component/link before showing actions, compact/style the context menu, make topology mode buttons responsive, restore visible scrollbars for zoomed canvas work, and increase schematic MCB/JB/isolator label scale for readability.
 - [x] Task 11.2: Engineering topology correctness: when manual operations insert a 3PH JB, insert the configured upstream/downstream isolator if project settings require it; when a 3PH JB is reduced to one outgoing branch, collapse it to the appropriate 1PH path instead of leaving a misleading 3PH distribution point.
 - [ ] Task 11.3: Enable split for manually edited topologies, especially manually combined and branch-moved MCB trees, without forcing reset/recombine workflows.
-- [ ] Task 11.4: Add scoped reset-to-generated for a selected MCB/downstream tree so one engineer can undo a local mistake without deleting unrelated manual edits elsewhere in the project.
+- [x] Task 11.4: Add scoped reset-to-generated for a selected MCB/downstream tree so one engineer can undo a local mistake without deleting unrelated manual edits elsewhere in the project.
 - [ ] Task 11.5: Extend tracer inspection/editing: show tracer family and calculated alternate tracer options in the property inspector, then allow a controlled tracer selection override.
 - [ ] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
 
@@ -147,3 +147,9 @@ Progress notes:
   cable schedule do not accidentally regroup it with an unrelated remaining
   branch from the same original line. Distinct manually combined line IDs still
   split back to their original names when there is no collision.
+- Task 11.4 scoped reset pass: added `Reset Selected` beside the full reset.
+  The user can select any component in an MCB-fed tree and reset just that
+  original generated line scope while preserving unrelated active manual edits.
+  The full `Reset to Generated` button remains the factory reset for the whole
+  project. Scoped reset is persisted as another audited topology edit revision
+  and refreshes BOQ/cable-schedule overrides from the resulting active graph.

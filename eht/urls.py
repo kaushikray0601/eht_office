@@ -30,6 +30,7 @@ urlpatterns = [
     path('sld/topology/attach-jb/preview/', views.sld_topology_attach_jb_preview_view, name='sld_topology_attach_jb_preview_view'),
     path('sld/topology/attach-jb/apply/', views.sld_topology_attach_jb_apply_view, name='sld_topology_attach_jb_apply_view'),
     path('sld/topology/reset/', views.sld_topology_reset_view, name='sld_topology_reset_view'),
+    path('sld/topology/reset-selected/', views.sld_topology_reset_selected_view, name='sld_topology_reset_selected_view'),
     path('sld/cable-override/save/', views.sld_cable_override_save_view, name='sld_cable_override_save_view'),
     path('sld/cable-override/reset/', views.sld_cable_override_reset_view, name='sld_cable_override_reset_view'),
     path('download-template-file/', views.download_template, name='download_template_file'),

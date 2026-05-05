@@ -2494,6 +2494,72 @@ class SldTopologyWorkflowTests(TestCase):
             for node in edited_payload['nodes']
         ))
 
+    def test_scoped_reset_restores_selected_tree_without_resetting_other_manual_edit(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003', 'LINE-004'])
+        initial_mcb_ids = self._mcb_component_ids()
+        first_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': initial_mcb_ids[:2]}),
+            content_type='application/json',
+        )
+        self.assertEqual(first_response.status_code, 200)
+
+        active_payload = build_project_sld_payload('p1')
+        second_pair_ids = [
+            node['component_id']
+            for node in active_payload['nodes']
+            if node['component_type'] == 'MCB' and node.get('line_id') in {'LINE-003', 'LINE-004'}
+        ]
+        second_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': second_pair_ids}),
+            content_type='application/json',
+        )
+        self.assertEqual(second_response.status_code, 200)
+
+        combined_payload = build_project_sld_payload('p1')
+        first_combined_component = next(
+            node for node in combined_payload['nodes']
+            if node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+            and {'LINE-001', 'LINE-002'}.issubset(set(node.get('line_ids') or []))
+        )
+        reset_response = self.client.post(
+            reverse('sld_topology_reset_selected_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_id': first_combined_component['component_id'],
+                'remarks': 'Reset first reviewed feeder only.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+        self.assertTrue(reset_response.json()['ok'])
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='applied').count(), 1)
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='superseded').count(), 2)
+        edited_payload = build_project_sld_payload('p1')
+        mcb_line_sets = [
+            set(node.get('line_ids') or [node.get('line_id')])
+            for node in edited_payload['nodes']
+            if node['component_type'] == 'MCB'
+        ]
+        self.assertIn({'LINE-001'}, mcb_line_sets)
+        self.assertIn({'LINE-002'}, mcb_line_sets)
+        self.assertTrue(any({'LINE-003', 'LINE-004'}.issubset(line_set) for line_set in mcb_line_sets))
+        self.assertTrue(any(
+            node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+            and {'LINE-003', 'LINE-004'}.issubset(set(node.get('line_ids') or []))
+            for node in edited_payload['nodes']
+        ))
+        self.assertFalse(any(
+            node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+            and {'LINE-001', 'LINE-002'}.issubset(set(node.get('line_ids') or []))
+            for node in edited_payload['nodes']
+        ))
+
     def test_split_circuits_preview_rejects_downstream_selection(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         component_ids = self._downstream_component_ids()[:1]

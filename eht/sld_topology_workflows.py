@@ -321,6 +321,134 @@ def _collapse_single_outgoing_3ph_jbs(payload):
     return simplified
 
 
+def _node_line_identity(node):
+    metadata = node.get('metadata') or {}
+    line_uids = {
+        value
+        for value in [node.get('line_uid'), metadata.get('original_line_uid')]
+        if value
+    }
+    line_ids = {
+        value
+        for value in [node.get('line_id'), metadata.get('original_line_id'), *(node.get('line_ids') or [])]
+        if value
+    }
+    return line_uids, line_ids
+
+
+def _node_matches_line_scope(node, line_uids, line_ids):
+    node_line_uids, node_line_ids = _node_line_identity(node)
+    return bool(node_line_uids & line_uids or node_line_ids & line_ids)
+
+
+def _group_matches_line_scope(group, line_uids, line_ids):
+    group_uids = {
+        value
+        for value in [group.get('line_uid'), group.get('original_line_uid')]
+        if value
+    }
+    group_ids = {
+        value
+        for value in [group.get('line_id'), group.get('original_line_id')]
+        if value
+    }
+    return bool(group_uids & line_uids or group_ids & line_ids)
+
+
+def _selected_reset_scope(payload, component_id):
+    node_by_id = _node_lookup(payload)
+    selected = node_by_id.get(component_id)
+    if not selected:
+        return None, 'Select a component in the feeder tree to reset.'
+    source_mcb = selected if selected.get('component_type') == 'MCB' else _upstream_mcb_node(payload, component_id)
+    if not source_mcb:
+        return None, 'Selected component does not have a clear upstream MCB source.'
+    tree_ids = _descendant_component_ids(payload, source_mcb['component_id']) | {source_mcb['component_id']}
+    scope_nodes = [node_by_id[node_id] for node_id in tree_ids if node_id in node_by_id]
+    line_uids = set()
+    line_ids = set()
+    for node in scope_nodes:
+        node_uids, node_ids = _node_line_identity(node)
+        line_uids.update(node_uids)
+        line_ids.update(node_ids)
+    if not line_uids and not line_ids:
+        return None, 'Selected feeder tree does not carry enough line identity to reset safely.'
+    return {
+        'source_mcb': source_mcb,
+        'tree_component_ids': tree_ids,
+        'line_uids': line_uids,
+        'line_ids': line_ids,
+    }, ''
+
+
+def _build_scoped_reset_payload(active_payload, generated_payload, reset_scope):
+    line_uids = reset_scope['line_uids']
+    line_ids = reset_scope['line_ids']
+    remove_ids = {
+        node['component_id']
+        for node in active_payload.get('nodes', [])
+        if node['component_id'] in reset_scope['tree_component_ids']
+        or _node_matches_line_scope(node, line_uids, line_ids)
+    }
+    generated_nodes = [
+        deepcopy(node)
+        for node in generated_payload.get('nodes', [])
+        if _node_matches_line_scope(node, line_uids, line_ids)
+    ]
+    generated_node_ids = {node['component_id'] for node in generated_nodes}
+    if not generated_nodes:
+        return None
+
+    nodes = [
+        deepcopy(node)
+        for node in active_payload.get('nodes', [])
+        if node['component_id'] not in remove_ids
+    ]
+    existing_ids = {node['component_id'] for node in nodes}
+    nodes.extend(node for node in generated_nodes if node['component_id'] not in existing_ids)
+
+    kept_edges = [
+        deepcopy(edge)
+        for edge in active_payload.get('edges', [])
+        if edge.get('from_component_id') not in remove_ids
+        and edge.get('to_component_id') not in remove_ids
+    ]
+    generated_edges = [
+        deepcopy(edge)
+        for edge in generated_payload.get('edges', [])
+        if edge.get('from_component_id') in generated_node_ids
+        and edge.get('to_component_id') in generated_node_ids
+    ]
+
+    line_groups = [
+        deepcopy(group)
+        for group in active_payload.get('line_groups', [])
+        if not _group_matches_line_scope(group, line_uids, line_ids)
+    ]
+    line_groups.extend(
+        deepcopy(group)
+        for group in generated_payload.get('line_groups', [])
+        if _group_matches_line_scope(group, line_uids, line_ids)
+    )
+
+    edited = deepcopy(active_payload)
+    edited['nodes'] = nodes
+    edited['edges'] = _dedupe_edges([*kept_edges, *generated_edges])
+    edited['line_groups'] = line_groups
+    meta = dict(edited.get('meta') or {})
+    meta.update({
+        'node_count': len(edited['nodes']),
+        'edge_count': len(edited['edges']),
+        'branch_count': sum(len(group.get('branch_indices') or []) for group in line_groups),
+        'scoped_reset_line_ids': sorted(line_ids),
+        'manual_topology_warning': (
+            'Selected feeder tree reset to generated topology. Other manual topology edits remain active.'
+        ),
+    })
+    edited['meta'] = meta
+    return edited
+
+
 def _manual_combine_node(source_mcb, component_type, display_tag, selected_nodes, recommended_rating):
     component_id = f"{source_mcb['component_id']}:manual_combine:{component_type}"
     line_ids = sorted({
@@ -1988,6 +2116,77 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         edit_payload={
             'sld_payload': edited_payload,
             'split_preview': preview,
+            'downstream_summaries': {
+                'boq': boq_overrides,
+                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
+            },
+            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
+        },
+        validation_summary={
+            'status': 'needs_review',
+            'warnings': [preview['warning']],
+        },
+    )
+    return {
+        'ok': True,
+        'edit_id': edit.id,
+        'preview': preview,
+        'validation_summary': edit.validation_summary,
+    }
+
+
+@transaction.atomic
+def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
+    project = ProjectData.objects.get(proj_id=project_id)
+    generated_payload = build_project_sld_payload(project_id, apply_topology=False)
+    active_payload = build_project_sld_payload(project_id)
+    if not active_payload.get('meta', {}).get('has_topology_edit'):
+        return {
+            'ok': False,
+            'error': 'There is no active manual topology edit to reset selectively.',
+        }
+
+    reset_scope, error = _selected_reset_scope(active_payload, component_id)
+    if not reset_scope:
+        return {
+            'ok': False,
+            'error': error or 'Selected feeder tree could not be resolved for reset.',
+        }
+    edited_payload = _build_scoped_reset_payload(active_payload, generated_payload, reset_scope)
+    if not edited_payload:
+        return {
+            'ok': False,
+            'error': 'Generated topology for the selected feeder tree could not be resolved.',
+        }
+
+    preview = {
+        'ok': True,
+        'project_id': project_id,
+        'edit_type': 'scoped_reset',
+        'selected_component_id': component_id,
+        'source_mcb_component_id': reset_scope['source_mcb']['component_id'],
+        'source_mcb_display_tag': reset_scope['source_mcb'].get('display_tag'),
+        'reset_line_ids': sorted(reset_scope['line_ids']),
+        'reset_component_count': len(reset_scope['tree_component_ids']),
+        'warning': 'Selected feeder tree reset to generated topology. Other manual topology edits remain active.',
+    }
+    boq_overrides = {
+        'mcb_total': _graph_component_count(edited_payload, ['MCB']),
+        'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
+    }
+
+    SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
+    edit = SLDTopologyEdit.objects.create(
+        project=project,
+        edit_type='scoped_reset',
+        status='applied',
+        created_by=user if getattr(user, 'is_authenticated', False) else None,
+        remarks=remarks or '',
+        baseline_fingerprint=payload_fingerprint(generated_payload),
+        generated_snapshot=generated_payload,
+        edit_payload={
+            'sld_payload': edited_payload,
+            'scoped_reset_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
                 'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
