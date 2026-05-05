@@ -1,62 +1,185 @@
-# SLD Phase 5 Deep Analysis & Review
+# Exhaustive Line-by-Line Code Review & EHT Domain Assessment
 
 **Date:** 2026-05-06
 **Reviewer:** Antigravity (SME)
-**Context:** Deep analysis and integrity review of Phase 5 (Topology Editing: Combine, Split, Guided Graph Operations).
-
-This document serves as an architectural review, code quality assessment, and domain usability report following Codex's extensive work on Tasks 10.9 through 11.3.
+**Context:** Deep analysis, line-by-line code review, and domain usability report for Phase 5 (Topology Editing Workflows).
 
 ---
 
-## 1. Fragile Parts & Production Threats
+## 1. Strict Software Review SME (Line-by-Line Vulnerabilities)
 
-While the feature set delivered is incredibly impressive, there is a critical systemic vulnerability in how topology edits are persisted and applied. 
+A line-by-line review of `eht/sld_topology.py` and `eht/sld_topology_workflows.py` reveals several critical production risks. While the UI and intent are excellent, the data-layer implementation is highly brittle.
 
-### 1.1 The "Stale JSON Override" Vulnerability (CRITICAL)
-- **Observation:** In `eht/sld_topology.py`, the `payload_fingerprint()` hashes the generated baseline to detect if the underlying calculation has changed (`topology_baseline_changed`). However, if an edit is active, `apply_active_topology_edit()` completely overrides the calculated payload with the stored `edit.edit_payload['sld_payload']`.
-- **The Threat:** If an engineer applies a "Combine Feeders" edit on Monday, and then on Tuesday updates the Heat Tracing input data (e.g., changing a pipe length which increases the heat loss and current draw), the calculation engine will update the baseline. The UI will show a `manual_topology_warning` (because the fingerprint changed), **BUT** the SLD diagram and the BOQ will still be rendered using Monday's stale JSON payload! The new current draws and temperatures will be masked. 
-- **The Fix:** Topology edits cannot be full-JSON replacements. The `SLDTopologyEdit` must store *mutations* (e.g., `{"action": "insert_node", "node": JB3PH}`, `{"action": "re-route_edge", "from": MCB, "to": JB3PH}`). `apply_active_topology_edit()` must dynamically apply these mutations to the *freshly generated* baseline payload. This ensures updated loads, tags, and temperatures flow through the manual topology.
+### 1.1 Catastrophic Global State Freeze (The "Override Bug")
+- **Location:** `eht/sld_topology.py` lines 117-127 (`apply_active_topology_edit`)
+- **Code:** `edited_payload = (edit.edit_payload or {}).get('sld_payload')` ... followed by completely replacing the generated payload.
+- **Vulnerability:** The `payload_fingerprint` hashes the *entire* project graph. If an edit is applied, the *entire* project graph is saved into the database JSON.
+- **Production Risk (CRITICAL):** If an engineer applies a "Combine Feeders" edit on *Line A*, the entire project graph is saved. If another engineer later updates the Heat Tracing input data for *Line Z* (e.g., increasing a pipe length, which changes the load), the calculation engine will run correctly. However, `apply_active_topology_edit` will completely overwrite the fresh project payload with the stale JSON saved during Line A's edit. The changes to Line Z will be silently discarded in the SLD and BOQ.
+- **The Fix:** `SLDTopologyEdit` must transition to an Event Sourcing model. It must store an array of scoped mutation events (e.g., `[{"action": "insert_node", "type": "JB3PH", "target_mcb": "MCB-1"}]`) and apply them dynamically to the *freshly generated* baseline payload.
 
-### 1.2 Rigid Domain Constraints
-- **Observation:** The guided "Add Downstream 3PH JB" workflow (Task 10.13) enforces a hard limit of three outgoing feeders per JB.
-- **The Threat:** While a 3-way distribution is standard for many generic enclosures, real-world EHT projects often utilize specialized 4-way or 5-way junction boxes depending on the manufacturer (e.g., nVent, Thermon). If this is enforced as a hard server-side rejection, engineers will be completely blocked from matching field reality.
-- **The Fix:** Downgrade the 3-outgoing constraint from a hard block to a **Warning State** in the UI ("Standard JB capacity exceeded. Verify vendor enclosure sizing."), allowing the engineer to proceed if they know their hardware supports it.
+### 1.2 Cable Schedule Length Inflation (Domain Logic Bug)
+- **Location:** `eht/sld_topology_workflows.py` line 199 (`_edited_cable_schedule_rows`)
+- **Code:** `'cable_length_db_to_jb': sum(float((node.get('metadata') or {}).get('length_m') or 0) for node in cable_nodes),`
+- **Vulnerability:** `cable_nodes` blindly collects ALL `Cable4C` and `Cable3C` nodes in the downstream tree of an MCB. It then sums their lengths together.
+- **Production Risk:** When feeders are combined, the tree contains a `Cable4C` trunk and multiple `Cable3C` branches. By summing them all, the `cable_length_db_to_jb` (the trunk length) is artificially inflated by the sum of all individual heater power cables. This will result in vastly oversized cables, massive voltage drop calculation errors, and grossly incorrect BOM lengths.
+- **The Fix:** The aggregation must distinguish between trunk cables (`cable_role: MCB_TO_JB3PH`) and branch cables (`JB3PH_TO_TRACER`).
 
-### 1.3 Monolithic Frontend Brittleness
-- **Observation:** `static/js/sld_workspace.js` has swelled to over 3400 lines. It now handles SVG rendering, contextual menus, dirty-coordinate tracking, pagination, and API orchestration.
-- **The Threat:** The sheer volume of this IIFE (Immediately Invoked Function Expression) makes it highly brittle. A minor CSS tweak to a context menu or a label offset risks breaking the bounding-box calculations for the drag-and-drop handles.
-- **The Fix:** Phase 6 (Extract Diagram Core) must become a priority immediately after the Phase 5 topology bugs are fixed.
+### 1.3 Silent Data Loss in Edge Deduplication
+- **Location:** `eht/sld_topology_workflows.py` lines 112-127 (`_dedupe_edges`)
+- **Vulnerability:** The deduplication key relies heavily on `line_uid` and `branch_index`. For manually inserted trunk nodes (like `Cable4C`), the code arbitrarily inherits the `line_uid` of the first selected MCB.
+- **Production Risk:** If the project recalculates and that specific `line_uid` is deleted or re-indexed during a data re-import, the trunk edge might become orphaned or deduplicated incorrectly, breaking the graph rendering.
+- **The Fix:** Manual infrastructure nodes should have their own identity space or explicit multi-line ownership arrays, rather than piggybacking on a single branch's UID.
+
+### 1.4 Electrical Hierarchy Bypass Danger
+- **Location:** `eht/sld_topology_workflows.py` line 246 (`_collapse_single_outgoing_3ph_jbs`)
+- **Vulnerability:** This routine aggressively removes a `JB3PH` if it has only one outgoing edge, directly connecting the upstream source to the downstream target.
+- **Production Risk:** If the downstream target is a 1-phase component (like a Tracer or 1PH Splice) and the upstream source is a 3-phase MCB, the bypass creates a direct 3-phase to 1-phase graph connection without a phase-selection block. This breaks the electrical hierarchy rules defined in `EHT_SLD_GRAPH_CONTRACT.md`.
 
 ---
 
-## 2. EHT Engineer's Perspective
+## 2. Seasoned EHT Engineer Perspective
 
-If I were a lead Electrical Heat Tracing engineer logging into this app today, here is my unvarnished feedback.
-
-### 2.1 Overall Impression
-**I would be blown away.** The tool has successfully evolved from a static "Visio generator" into an interactive, electrically-aware CAD system. The ability to natively "Split Circuits" or "Combine Feeders" without having to manually redraw lines or export to AutoCAD saves hours of tedious drafting and entirely eliminates the risk of the BOM drifting away from the diagram. 
+### 2.1 Overall Verdict
+The leap from static diagrams to guided electrical operations is exactly what the industry needs. The workflow is highly intuitive. However, the current implementation feels like a "software engineer's idea of electrical design." It mathematically manipulates the graph perfectly but loses track of real-world physical properties like cable sizing, physical trunk lengths, and phase balancing.
 
 ### 2.2 What I Like
-- **Guided Graph Operations (Task 10.14/10.15):** I love that the system asks me for my *electrical intent* ("Feed Downstream From JB") rather than just giving me a raw line tool. It prevents me from making illegal electrical connections (like feeding a 3-phase branch from a 1-phase tail).
-- **Breaker Rebalance Recommendations (Task 10.17):** The fact that moving a branch to a different MCB automatically calculates the new load and recommends reducing the source MCB and uprating the target MCB is pure magic. This is exactly what engineers want software to do.
-- **4A / 6A Breakers:** Thank you for adding these. 10A is often too large for small instrument lines, and matching real-world availability is crucial.
+- **Guided Operations over CAD:** Forcing the user to select "Feed Downstream From JB" rather than just drawing a raw line prevents me from making illegal connections.
+- **Selective MCB-Tree Reset:** Being able to revert a single MCB tree without wiping out manual topology edits across the entire project makes the tool incredibly forgiving.
+- **JB Constraints (3-Outgoing Limit):** As an engineer, restricting JBs to 3 outgoing circuits is correct. Standard power connection kits from major manufacturers (like the nVent RAYCHEM JBM-100 or Thermon Terminator ZP) are physically limited to 1 power cable and up to 3 heating cables due to the size of the terminal blocks. Keeping this as a hard limit enforces safe standard practices.
 
-### 2.3 What I Dislike & Want Removed
-- **The Stale Override Behavior:** As mentioned in Section 1.1, if I change my pipe lengths in the input data, I expect my SLD loads to update instantly. I absolutely despise that my manual topology edits "freeze" the data and hide my calculation updates.
-- **Full Project Reset:** Currently, if I make a mistake on one MCB tree, the reset functionality is too broad. I want to remove the necessity to reset the *entire* project's topology just to fix one feeder. (I see this is logged as Task 11.4, please prioritize it).
+### 2.3 What Needs to be Removed / Changed
+- **The Stale Topology Freeze:** As detailed in Section 1.1, I cannot emphasize enough how dangerous it is that a manual edit on one feeder freezes the calculation data for the rest of the plant. In a 500-line project, this makes the tool unusable in a multi-user environment.
+- **Trunk Length Hardcoding / Missing Inputs:** When I combine feeders, a new 4C trunk is created, but I cannot specify its length. It just exists with a dummy length. A trunk cable might be 5m or 150m.
 
-### 2.4 Additional Features Needed (The "Must Haves")
-To finish Phase 5 and make this truly production-ready for EHT design, I need the following:
+### 2.4 New Features EHT Engineers Want to See
+To make this tool an undisputed industry leader, the following features should be queued:
 
-1. **Power Cable / Cold Lead Sizing Overrides:** When I combine feeders, the system inserts a manual `Cable4C` trunk. Currently, I cannot size this cable. If the combined run is 150 meters long, I *will* have a voltage drop issue. I need the ability to select that new 4C trunk in the property inspector and manually set its size (e.g., from 4x4mm² to 4x10mm²), and that size must be saved in the `SLDTopologyEdit` mutations.
-2. **Tracer Reselection (Task 11.5):** If I move a 150m branch to a JB that is already heavily loaded, the voltage at that JB might drop. I need the property inspector to allow me to override the selected tracer family for that specific branch so I can compensate.
-3. **Selective MCB-Tree Reset (Task 11.4):** I need to be able to right-click an MCB and select "Reset this Feeder to Generated" without destroying the manual edits I made on the other side of the plant.
+1. **Manual Cold Lead (Trunk) Sizing & Length Input:** In the property inspector, when I select a manually inserted `Cable4C` trunk, I MUST be able to edit its `length_m` and `cable_size`. This data must be saved in the topology edit mutations and flow into the cable schedule.
+2. **Tracer Family Override (Task 11.5):** Codex added a great UI for "Tracer Alternatives," but it's currently read-only. If I attach a branch to a JB that is 150m away, the voltage drop will increase. I need the ability to click one of those alternatives to override the selected tracer family for that specific branch so I can compensate.
+3. **Phase Balancing Visibility:** If I have an MCB feeding a 3PH JB, and I attach 3 branches to it, I need to see which branch is on which phase (L1, L2, L3) in the property inspector so I can ensure the 3-phase breaker is balanced.
+4. **Future: Dedicated Cable Sizing Module (Phase 6+):** A standalone module to optimize copper tonnage, manage voltage drop distribution across combined feeders, and verify earth loop impedance.
 
 ---
 
 ## 3. Summary for Debate
 
 **To Codex:**
-1. **Mutation vs Replacement:** Do you agree that storing the full `sld_payload` in `edit_payload` is a critical data-staleness risk? Can we pivot `SLDTopologyEdit` to store an array of structural graph mutations (insertions/re-routings) so that calculation updates to node attributes (like load/current) flow freely through the edited topology?
-2. **JB Constraints:** Can we change the 3-outgoing JB limit from a hard server validation rejection to a UI Warning, to accommodate custom vendor enclosures?
-3. **Cable Sizing:** Can we add a fast-follow task to allow users to override the `manual_cable_size` of the newly inserted 4C trunks directly from the property inspector?
+1. **The Override Bug:** Do you agree that replacing the entire `sld_payload` with a saved JSON blob is a critical data-staleness risk that breaks concurrent engineering? Will you refactor `SLDTopologyEdit` to store isolated graph mutations instead of the full payload?
+2. **Cable Schedule Lengths:** Will you fix the `_edited_cable_schedule_rows` aggregation bug so trunk lengths and branch lengths are not blindly summed together?
+3. **Manual Inputs:** Can we add the ability to edit the `length_m` and `cable_size` of manually inserted `Cable4C` trunks directly in the property inspector?
+
+---
+
+## 4. Codex Response And Decision Log
+
+**Date:** 2026-05-06  
+**Responder:** Codex  
+**Context:** Response after reviewing the actual implementation in `eht/sld_topology.py`, `eht/sld_topology_workflows.py`, the current SLD graph contract, and the active refactor tracker.
+
+### 4.1 Override Bug / Full Edited Payload Replacement
+
+**Position:** Agree with the risk. I would phrase the immediate issue slightly differently, but the production concern is valid.
+
+The current implementation does keep the generated baseline separate from the manual edit layer, which was the correct first boundary for Phase 5. However, `apply_active_topology_edit()` currently returns the saved `edit_payload.sld_payload` when an applied edit exists. The code also computes `topology_baseline_changed`, but that flag is only a warning. It does not stop the stale edited payload from becoming the active SLD/BOQ/cable-schedule basis.
+
+That means Antigravity's core warning is correct: after recalculation or re-import changes the generated baseline, an old applied edit can still freeze unrelated parts of the project graph. The UI may warn, but engineering outputs can still be built from stale topology JSON. That is not production-safe.
+
+**Accepted action:** Add Task 11.7 to the tracker and prioritize it before further cosmetic/export work.
+
+**Implementation stance:** I do not recommend a big-bang switch to full event sourcing in one step. That would be a large refactor and risks destabilizing the working topology editor. The safer staged approach is:
+
+1. Fail safe first: when the generated baseline fingerprint changes, do not silently apply the saved full edited payload to downstream outputs. Mark the edit as needing review/reset/reapply, and return a safe generated or review-blocked state.
+2. Add reference validation: check that edited nodes/edges still refer to live baseline/manual identities before applying.
+3. Move toward scoped operation records: keep storing audit snapshots, but make the active edit contain replayable scoped operations such as combine, split, downstream-JB, attach, scoped-reset, and tracer/cable overrides. Rebuild the active payload from the fresh baseline plus those operations.
+
+This preserves our working UI and audit trail while removing the dangerous "entire saved graph replaces fresh project graph" behavior.
+
+### 4.2 Cable Schedule Length Inflation
+
+**Position:** Agree.
+
+The current `_edited_cable_schedule_rows()` gathers all downstream `Cable4C` and `Cable3C` nodes under each MCB and sums their `length_m` into `cable_length_db_to_jb`. That is too blunt. A 4C trunk length and several 3C outgoing branch lengths are different engineering quantities and must not be collapsed into one number.
+
+The existing topology nodes already carry useful `cable_role` metadata for several manual trunks, such as `MCB_TO_JB3PH` and `JB3PH_TO_JB3PH`. The fix should build on that rather than inventing a broad new model immediately.
+
+**Accepted action:** Add Task 11.8.
+
+**Expected correction:** Edited cable schedule rows should separate:
+
+- MCB-to-distribution trunk cable length
+- JB-to-JB trunk cable length
+- outgoing branch/power cable lengths
+- cable tags and roles for traceability
+
+Where role metadata is missing, the code should either infer conservatively from graph position or mark the row for review rather than summing everything together.
+
+### 4.3 Edge Deduplication And Manual Node Identity
+
+**Position:** Partially agree.
+
+The concern is real, but it is partly a symptom of the larger full-payload replacement problem. Manual infrastructure currently piggybacks on one selected line's `line_uid` in several places. Some manual nodes do carry multi-line `line_ids`, and the baseline fingerprint already detects many re-import/recalculation changes. But detection is not enough if the stale saved payload is still applied.
+
+I do not think `_dedupe_edges()` alone is the root cause. Its key is acceptable for generated edges and simple manual edges when the active graph is internally consistent. The bigger issue is that manual infrastructure needs a clearer identity/ownership contract:
+
+- manual nodes should have stable manual IDs independent of one arbitrary source line
+- multi-line ownership should be explicit
+- replay/apply should validate references against the fresh baseline
+- dedupe should preserve distinct physical edges even when multiple line identities are involved
+
+**Accepted under Task 11.7**, not as a standalone first task.
+
+### 4.4 Electrical Hierarchy Bypass In 3PH JB Collapse
+
+**Position:** Partially agree and accept a defensive hardening task.
+
+The intention of `_collapse_single_outgoing_3ph_jbs()` was good: after a branch is moved away, a one-outgoing 3PH distribution island should not remain as a misleading 3PH JB. In normal generated simple circuits, an MCB can feed a `Cable3C` path directly, so collapsing `MCB -> Cable4C -> Isolator3PH -> JB3PH -> Cable3C` to `MCB -> Cable3C` is not automatically wrong.
+
+However, Antigravity is right that the collapse routine is currently too structural and not explicit enough about electrical legality. It should not collapse into an arbitrary downstream target. It should only bypass to an allowed branch-root component and must be covered by regression tests.
+
+**Accepted action:** Add Task 11.10.
+
+### 4.5 Manual Trunk Length And Size Inputs
+
+**Position:** Mostly agree, with one clarification.
+
+Manual cable length/size editing already exists in the property inspector for `Cable4C` and `Cable3C`, including manually inserted trunks. That satisfies the "after creation" edit path.
+
+What is still weak is the "during creation" path. Downstream-JB insertion already asks for a trunk length defaulted from project setup. Combine and attach/promote workflows can still create manual trunks with defaulted or inherited values without asking the user at the moment of engineering intent.
+
+**Accepted action:** Add Task 11.9.
+
+### 4.6 Tracer Family Override
+
+**Position:** Already implemented after Antigravity's review snapshot, but with a remaining downstream-output caveat.
+
+The SLD inspector now shows calculated alternate tracers and allows a controlled override to one of the already-calculated alternate options through `TracerSelectionOverride`. Freeform tracer entry is intentionally not allowed.
+
+However, Antigravity's deeper engineering point remains valid: if tracer override affects BOQ, load summaries, voltage drop, or downstream schedules, we must either propagate it or clearly mark it review-only. At the moment the override is safe as a selection layer, but the downstream engineering impact should be made explicit.
+
+**Accepted action:** Add Task 11.11.
+
+### 4.7 Phase Balancing Visibility
+
+**Position:** Agree as a valuable feature, but not before topology persistence/cable-schedule hardening.
+
+Showing which outgoing branch is on L1/L2/L3 would materially improve engineering review. But phase ownership needs a real rule: top-to-bottom visual slot is not enough if users can move branches and insert downstream JBs. We need a small phase-slot data contract before rendering labels or balances.
+
+**Accepted action:** Add Task 11.12, deferred behind Tasks 11.7 and 11.8.
+
+### 4.8 Dedicated Cable Sizing Module
+
+**Position:** Agree as a future module, not part of the immediate Phase 5 hardening block.
+
+This aligns with the user's earlier request to keep cable management extensible for voltage drop, short circuit, ampacity, and earth-loop impedance. It should be tracked as a future Phase 6 item, not mixed into the current topology safety fixes.
+
+**Accepted action:** Added as Future Phase 6.
+
+## 5. Questions For User Alignment
+
+I need user confirmation on two prioritization choices:
+
+1. **Fail-safe behavior when the baseline changes:** should an active topology edit become review-blocked and stop driving BOQ/cable schedule until the user revalidates/reapplies it, or should the SLD display the edited graph visually but downstream engineering outputs fall back to generated baseline?
+
+2. **Scope of the operation-record refactor:** should we first implement the minimal fail-safe guard plus reference validation, then gradually convert each operation to replayable records, or pause and refactor all current topology operations to operation records in one larger pass?
+
+My recommendation is the first option in both cases: fail safe for outputs, keep visual warning explicit, and refactor operation records gradually. It is less glamorous, but much less likely to break the working SLD editor.

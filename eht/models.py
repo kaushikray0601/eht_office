@@ -366,6 +366,40 @@ class CableScheduleOverride(models.Model):
         ]
 
 
+class TracerSelectionOverride(models.Model):
+    project = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='project_id',
+        on_delete=models.CASCADE,
+        related_name='tracer_selection_overrides',
+    )
+    line = models.ForeignKey(
+        HeatTracingInput,
+        on_delete=models.CASCADE,
+        related_name='tracer_selection_overrides',
+    )
+    selected_v_uid = models.CharField(max_length=100)
+    selected_option_rank = models.PositiveIntegerField(null=True, blank=True)
+    remarks = models.TextField(blank=True, default='')
+    is_active = models.BooleanField(default=True)
+    created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_tracer_overrides')
+    updated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='updated_tracer_overrides')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['project', 'line__line_id']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'line'], name='unique_tracer_override_line_per_project'),
+        ]
+        indexes = [
+            models.Index(fields=['project', 'line']),
+            models.Index(fields=['selected_v_uid']),
+            models.Index(fields=['is_active']),
+        ]
+
+
 class SLDNodeLayout(models.Model):
     project = models.ForeignKey(
         ProjectData,

@@ -148,6 +148,12 @@ Node `metadata` is domain-specific and may include values such as:
 - branch type
 - circuit count
 - isolator location
+- tracer selection details on `Tracer` nodes:
+  - `tracer_selection.selected`: selected tracer UID, family, power, spiral factor, and lengths
+  - `tracer_selection.generated_selected`: generated calculation result before any manual override
+  - `tracer_selection.alternatives`: calculated alternate tracer options by rank
+  - `tracer_selection.override_supported`: `true` when calculated alternate options exist
+  - `tracer_selection.override_active`: `true` when a saved SLD tracer override is active
 
 Rules:
 - metadata enriches presentation and inspection

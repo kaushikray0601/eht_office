@@ -40,6 +40,7 @@ from eht.models import (
     SLDNodeLayout,
     SLDTopologyEdit,
     SelectedTracer,
+    TracerSelectionOverride,
     is_default_project_id,
 )
 from eht.sld_layout import get_project_sld_layout
@@ -1247,6 +1248,77 @@ class SldPayloadTests(TestCase):
         self.assertEqual(adjusted['metadata']['manual_length_m'], 123.45)
         self.assertEqual(adjusted['metadata']['cable_size'], '4C x 2.5')
         self.assertTrue(adjusted['metadata']['cable_override_active'])
+
+    def test_build_project_sld_payload_adds_tracer_selection_metadata(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+        AlternateTracer.objects.create(
+            line=line,
+            option_rank=1,
+            v_uid='V-ALT-001',
+            a_coeff=0.0,
+            b_coeff=0.0,
+            c_coeff=80.0,
+            power_at_startup_t=10.0,
+            ohm_per_km=1.0,
+            res_corrFactor_mica=1.0,
+            tracer_family='SR-ALT',
+            voltage_float=230.0,
+            voltage_correction_factor=1.0,
+            power_output=24.5,
+            spiral_factor=1.15,
+            tracer_length=21.25,
+            tracer_with_margin=23.38,
+        )
+
+        payload = build_project_sld_payload('p1')
+        tracer_node = next(node for node in payload['nodes'] if node['component_type'] == 'Tracer')
+        tracer_selection = tracer_node['metadata']['tracer_selection']
+
+        self.assertEqual(tracer_selection['selected']['v_uid'], 'V-001')
+        self.assertEqual(tracer_selection['selected']['tracer_family'], 'SR')
+        self.assertEqual(tracer_selection['selected']['power_output'], 30.0)
+        self.assertEqual(tracer_selection['alternate_count'], 1)
+        self.assertTrue(tracer_selection['override_supported'])
+        self.assertEqual(tracer_selection['alternatives'][0]['v_uid'], 'V-ALT-001')
+        self.assertEqual(tracer_selection['alternatives'][0]['option_rank'], 1)
+        self.assertEqual(tracer_selection['alternatives'][0]['tracer_family'], 'SR-ALT')
+
+    def test_build_project_sld_payload_applies_tracer_override_metadata(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+        AlternateTracer.objects.create(
+            line=line,
+            option_rank=1,
+            v_uid='V-ALT-001',
+            a_coeff=0.0,
+            b_coeff=0.0,
+            c_coeff=80.0,
+            power_at_startup_t=10.0,
+            ohm_per_km=1.0,
+            res_corrFactor_mica=1.0,
+            tracer_family='SR-ALT',
+            voltage_float=230.0,
+            voltage_correction_factor=1.0,
+            power_output=24.5,
+            spiral_factor=1.15,
+            tracer_length=21.25,
+            tracer_with_margin=23.38,
+        )
+        TracerSelectionOverride.objects.create(
+            project_id='p1',
+            line=line,
+            selected_v_uid='V-ALT-001',
+            selected_option_rank=1,
+            remarks='Use alternate after engineering review.',
+        )
+
+        payload = build_project_sld_payload('p1')
+        tracer_node = next(node for node in payload['nodes'] if node['component_type'] == 'Tracer')
+        tracer_selection = tracer_node['metadata']['tracer_selection']
+
+        self.assertTrue(tracer_selection['override_active'])
+        self.assertEqual(tracer_selection['selected']['v_uid'], 'V-ALT-001')
+        self.assertEqual(tracer_selection['generated_selected']['v_uid'], 'V-001')
+        self.assertEqual(tracer_selection['override_remarks'], 'Use alternate after engineering review.')
 
     def test_build_project_sld_payload_is_deterministic_for_repeated_builds(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -3130,6 +3202,56 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(reset_response.status_code, 200)
         self.assertFalse(CableScheduleOverride.objects.get(project_id='p1', component_id=cable_node['component_id']).is_active)
+
+    def test_sld_tracer_override_save_and_reset_views_update_payload(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+        AlternateTracer.objects.create(
+            line=line,
+            option_rank=1,
+            v_uid='V-ALT-001',
+            a_coeff=0.0,
+            b_coeff=0.0,
+            c_coeff=80.0,
+            power_at_startup_t=10.0,
+            ohm_per_km=1.0,
+            res_corrFactor_mica=1.0,
+            tracer_family='SR-ALT',
+            voltage_float=230.0,
+            voltage_correction_factor=1.0,
+            power_output=24.5,
+            spiral_factor=1.15,
+            tracer_length=21.25,
+            tracer_with_margin=23.38,
+        )
+        payload = build_project_sld_payload('p1')
+        tracer_node = next(node for node in payload['nodes'] if node['component_type'] == 'Tracer')
+
+        save_response = self.client.post(
+            reverse('sld_tracer_override_save_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_id': tracer_node['component_id'],
+                'selected_v_uid': 'V-ALT-001',
+                'remarks': 'Reviewed against alternate tracer.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertTrue(TracerSelectionOverride.objects.filter(project_id='p1', line=line, is_active=True).exists())
+        adjusted_payload = build_project_sld_payload('p1')
+        adjusted_node = next(node for node in adjusted_payload['nodes'] if node['component_id'] == tracer_node['component_id'])
+        self.assertEqual(adjusted_node['metadata']['tracer_selection']['selected']['v_uid'], 'V-ALT-001')
+        self.assertTrue(adjusted_node['metadata']['tracer_selection']['override_active'])
+
+        reset_response = self.client.post(
+            reverse('sld_tracer_override_reset_view'),
+            data=json.dumps({'project_id': 'p1', 'line_uid': str(line.uid)}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+        self.assertFalse(TracerSelectionOverride.objects.get(project_id='p1', line=line).is_active)
 
     def test_sld_payload_view_returns_json_graph_payload(self):
         make_calculated_project_snapshot()

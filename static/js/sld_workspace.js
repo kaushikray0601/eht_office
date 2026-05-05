@@ -1266,6 +1266,11 @@
         return panel ? panel.querySelector('#sld-cable-editor') : null;
     }
 
+    function getTracerEditorContainer(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-tracer-editor') : null;
+    }
+
     function getCombineSummaryContainer(root) {
         const panel = root.closest('.sld-panel');
         return panel ? panel.querySelector('#sld-combine-summary') : null;
@@ -1476,13 +1481,104 @@
             ['Path Links', pathLinkCount],
         ];
         Object.keys(metadata).sort().forEach(function (key) {
+            if (key === 'tracer_selection') {
+                return;
+            }
             const value = metadata[key];
             if (value === null || value === undefined || value === '') {
                 return;
             }
             rows.push([key.replace(/_/g, ' '), Array.isArray(value) ? value.join(', ') : value]);
         });
+        if (node.component_type === 'Tracer' && metadata.tracer_selection) {
+            const selectedTracer = metadata.tracer_selection.selected || {};
+            const alternatives = metadata.tracer_selection.alternatives || [];
+            rows.push(['Tracer UID', selectedTracer.v_uid || '-']);
+            rows.push(['Tracer Family', selectedTracer.tracer_family || '-']);
+            rows.push(['Power Output', selectedTracer.power_output !== undefined && selectedTracer.power_output !== '' ? `${selectedTracer.power_output} W/m` : '-']);
+            rows.push(['Spiral Factor', selectedTracer.spiral_factor !== undefined && selectedTracer.spiral_factor !== '' ? selectedTracer.spiral_factor : '-']);
+            rows.push(['Tracer Length', selectedTracer.tracer_length !== undefined && selectedTracer.tracer_length !== '' ? `${selectedTracer.tracer_length} m` : '-']);
+            rows.push(['With Margin', selectedTracer.tracer_with_margin !== undefined && selectedTracer.tracer_with_margin !== '' ? `${selectedTracer.tracer_with_margin} m` : '-']);
+            rows.push(['Alternate Options', alternatives.length ? alternatives.map(function (item) { return item.v_uid; }).join(', ') : '-']);
+        }
         return rows;
+    }
+
+    function renderTracerEditor(root, node) {
+        const editor = getTracerEditorContainer(root);
+        if (!editor) {
+            return;
+        }
+        editor.innerHTML = '';
+        if (!node || node.component_type !== 'Tracer') {
+            return;
+        }
+        const metadata = node.metadata || {};
+        const tracerSelection = metadata.tracer_selection || {};
+        const selectedTracer = tracerSelection.selected || {};
+        const generatedTracer = tracerSelection.generated_selected || {};
+        const alternatives = tracerSelection.alternatives || [];
+        if (!alternatives.length) {
+            return;
+        }
+        const optionChoices = [
+            { v_uid: generatedTracer.v_uid, label: `${generatedTracer.v_uid || 'Generated'} (generated)` },
+        ].concat(alternatives.map(function (item) {
+            return {
+                v_uid: item.v_uid,
+                label: `${item.v_uid || '-'} | ${item.tracer_family || '-'} | ${item.power_output || '-'} W/m`,
+            };
+        })).filter(function (item) {
+            return item.v_uid;
+        }).map(function (item) {
+            const isSelected = item.v_uid === selectedTracer.v_uid;
+            return `<option value="${escapeHtml(item.v_uid)}" ${isSelected ? 'selected' : ''}>${escapeHtml(item.label)}</option>`;
+        }).join('');
+        const rows = alternatives.map(function (item) {
+            return `
+                <tr>
+                    <td>${escapeHtml(item.option_rank || '-')}</td>
+                    <td>${escapeHtml(item.v_uid || '-')}</td>
+                    <td>${escapeHtml(item.tracer_family || '-')}</td>
+                    <td>${escapeHtml(item.power_output !== undefined && item.power_output !== '' ? item.power_output : '-')}</td>
+                    <td>${escapeHtml(item.spiral_factor !== undefined && item.spiral_factor !== '' ? item.spiral_factor : '-')}</td>
+                    <td>${escapeHtml(item.tracer_with_margin !== undefined && item.tracer_with_margin !== '' ? item.tracer_with_margin : '-')}</td>
+                </tr>
+            `;
+        }).join('');
+        const activeNote = tracerSelection.override_active
+            ? 'Using user-selected tracer option for this line.'
+            : 'Using generated tracer selection.';
+        editor.innerHTML = `
+            <div class="sld-tracer-options mt-3">
+                <div class="fw-semibold small mb-2">Calculated Alternate Tracers</div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle mb-0">
+                        <thead>
+                            <tr>
+                                <th>Rank</th>
+                                <th>UID</th>
+                                <th>Family</th>
+                                <th>W/m</th>
+                                <th>Spiral</th>
+                                <th>Length</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <div class="mt-3">
+                    <label class="form-label small text-muted mb-1" for="sld-tracer-select">Active tracer</label>
+                    <select class="form-select form-select-sm" id="sld-tracer-select">${optionChoices}</select>
+                </div>
+                <textarea class="form-control form-control-sm mt-2" id="sld-tracer-remarks-input" rows="2" placeholder="Optional tracer selection note">${escapeHtml(tracerSelection.override_remarks || '')}</textarea>
+                <div class="d-flex flex-wrap gap-2 mt-2">
+                    <button type="button" class="btn btn-primary btn-sm" id="sld-tracer-save">Save Tracer</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-tracer-reset" ${tracerSelection.override_active ? '' : 'disabled'}>Reset</button>
+                </div>
+                <div class="small text-muted mt-2">${activeNote}</div>
+            </div>
+        `;
     }
 
     function renderBreakerReviewInspector(node) {
@@ -1556,6 +1652,7 @@
         if (!node) {
             summary.textContent = 'Select a component in the diagram to inspect its details and highlight the source path.';
             details.innerHTML = '';
+            renderTracerEditor(root, null);
             renderCableEditor(root, null);
             return;
         }
@@ -1563,6 +1660,7 @@
         details.innerHTML = renderBreakerReviewInspector(node) + buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
+        renderTracerEditor(root, node);
         renderCableEditor(root, node);
     }
 
@@ -1582,6 +1680,7 @@
         ].map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
+        renderTracerEditor(root, null);
         renderCableEditor(root, null);
     }
 
@@ -3308,6 +3407,68 @@
         });
     }
 
+    function saveTracerOverride(root) {
+        const state = root.__sldState;
+        const componentId = state && state.selectedComponentId;
+        const node = componentId ? state.nodeByComponentId[componentId] : null;
+        const saveUrl = root.dataset.sldTracerOverrideSaveUrl;
+        if (!node || node.component_type !== 'Tracer' || !saveUrl) {
+            return;
+        }
+        const tracerSelect = document.getElementById('sld-tracer-select');
+        const remarksInput = document.getElementById('sld-tracer-remarks-input');
+        $.ajax({
+            url: saveUrl,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify({
+                project_id: root.dataset.projectId,
+                component_id: componentId,
+                selected_v_uid: tracerSelect ? tracerSelect.value : '',
+                remarks: remarksInput ? remarksInput.value : '',
+            }),
+        }).done(function (response) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Tracer override saved.', 'success');
+            }
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to save tracer override.', 'error');
+            }
+        });
+    }
+
+    function resetTracerOverride(root) {
+        const state = root.__sldState;
+        const componentId = state && state.selectedComponentId;
+        const node = componentId ? state.nodeByComponentId[componentId] : null;
+        const resetUrl = root.dataset.sldTracerOverrideResetUrl;
+        if (!node || node.component_type !== 'Tracer' || !resetUrl) {
+            return;
+        }
+        $.ajax({
+            url: resetUrl,
+            type: 'POST',
+            headers: { 'X-CSRFToken': getSldCsrfToken() },
+            contentType: 'application/json',
+            data: JSON.stringify({
+                project_id: root.dataset.projectId,
+                line_uid: node.line_uid,
+            }),
+        }).done(function (response) {
+            if (typeof window.showToast === 'function') {
+                window.showToast(response.success || 'Tracer override reset.', 'info');
+            }
+            fetchAndRenderSld(root);
+        }).fail(function (xhr) {
+            if (typeof window.showToast === 'function') {
+                window.showToast((xhr.responseJSON && xhr.responseJSON.error) || 'Unable to reset tracer override.', 'error');
+            }
+        });
+    }
+
     $(document).on('click', '#sld-save-layout', function () {
         const root = document.getElementById('sld-diagram-shell');
         if (!root) {
@@ -3422,6 +3583,20 @@
         const root = document.getElementById('sld-diagram-shell');
         if (root) {
             resetCableOverride(root);
+        }
+    });
+
+    $(document).on('click', '#sld-tracer-save', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            saveTracerOverride(root);
+        }
+    });
+
+    $(document).on('click', '#sld-tracer-reset', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        if (root) {
+            resetTracerOverride(root);
         }
     });
 

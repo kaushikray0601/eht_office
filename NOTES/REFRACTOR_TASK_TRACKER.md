@@ -116,8 +116,19 @@ Next SLD follow-up queue:
 - [x] Task 11.2: Engineering topology correctness: when manual operations insert a 3PH JB, insert the configured upstream/downstream isolator if project settings require it; when a 3PH JB is reduced to one outgoing branch, collapse it to the appropriate 1PH path instead of leaving a misleading 3PH distribution point.
 - [ ] Task 11.3: Enable split for manually edited topologies, especially manually combined and branch-moved MCB trees, without forcing reset/recombine workflows.
 - [x] Task 11.4: Add scoped reset-to-generated for a selected MCB/downstream tree so one engineer can undo a local mistake without deleting unrelated manual edits elsewhere in the project.
-- [ ] Task 11.5: Extend tracer inspection/editing: show tracer family and calculated alternate tracer options in the property inspector, then allow a controlled tracer selection override.
+- [x] Task 11.5: Extend tracer inspection/editing: show tracer family and calculated alternate tracer options in the property inspector, then allow a controlled tracer selection override.
 - [ ] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
+- [ ] Task 11.7: Production safety hardening for active topology edits: stop silently applying a saved full edited payload when the generated baseline fingerprint has changed, add reference validation for edited nodes/edges, and begin moving persisted topology edits toward scoped operation records that can be replayed on a fresh baseline.
+- [ ] Task 11.8: Fix edited cable-schedule generation so trunk cable lengths and outgoing branch cable lengths are separated by `cable_role` instead of summing every downstream `Cable4C` and `Cable3C` into `cable_length_db_to_jb`.
+- [ ] Task 11.9: Add explicit manual trunk-length/size entry to combine/attach workflows where new `Cable4C` trunks are created, while preserving the property-inspector cable override path for later field adjustments.
+- [ ] Task 11.10: Guard the single-outgoing-3PH-JB collapse routine with electrical hierarchy checks and regression tests so it never creates an invalid direct 3PH source-to-1PH load path.
+- [ ] Task 11.11: Carry tracer selection overrides into downstream BOQ/result summaries or clearly mark them review-only until recalculation logic can consume the selected alternate.
+- [ ] Task 11.12: Add phase-balancing visibility for 3PH JB outgoing branches once phase-slot ownership semantics are defined.
+- [ ] Future Phase 6: Dedicated cable-sizing module for voltage drop, short circuit, earth-loop impedance, ampacity, and copper optimization.
+
+Priority adjustment after Antigravity Phase 5 cold review:
+- Take Task 11.7 before further cosmetic/export work. The current baseline-change warning is useful, but production behavior must fail safe before the SLD can be trusted after recalculation/import changes.
+- Take Task 11.8 immediately after Task 11.7 because cable schedule quantities feed engineering outputs and should not be role-ambiguous.
 
 Progress notes:
 - Task 11.2 first slice: manual topology operations that create a 3PH
@@ -153,3 +164,13 @@ Progress notes:
   The full `Reset to Generated` button remains the factory reset for the whole
   project. Scoped reset is persisted as another audited topology edit revision
   and refreshes BOQ/cable-schedule overrides from the resulting active graph.
+- Task 11.5 first inspection slice: tracer nodes now carry selected tracer
+  metadata and calculated alternate tracer options into the SLD payload. The
+  property inspector shows selected UID/family/power/spiral/length values and a
+  compact alternate-options table for engineering review.
+- Task 11.5 controlled override slice: added a separate
+  `TracerSelectionOverride` layer so generated tracer selections remain
+  recoverable. The SLD inspector allows saving one of the already-calculated
+  alternate tracer options or resetting back to the generated selection. Freeform
+  tracer entry is intentionally not allowed in this pass; sizing/recalculation
+  impact remains bounded to calculated alternates plus an audit note.

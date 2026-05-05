@@ -3,6 +3,7 @@ import hashlib
 from .cable_management import apply_cable_overrides_to_payload
 from .models import PowerDistributionBranch
 from .sld_topology import apply_active_topology_edit
+from .tracer_management import apply_tracer_selection_to_payload
 
 
 COMPONENT_DISPLAY_NAMES = {
@@ -340,9 +341,11 @@ def build_project_sld_payload(project_id, line_id=None, apply_topology=True):
         },
     }
     generated_payload = apply_cable_overrides_to_payload(project_id, generated_payload)
+    generated_payload = apply_tracer_selection_to_payload(project_id, generated_payload)
     payload = apply_active_topology_edit(project_id, generated_payload) if apply_topology else generated_payload
     if apply_topology:
         payload = apply_cable_overrides_to_payload(project_id, payload)
+        payload = apply_tracer_selection_to_payload(project_id, payload)
     if selected_line_id:
         filtered_payload, _normalized_line_id = filter_sld_payload_by_line(payload, selected_line_id)
         return filtered_payload or _empty_payload(project_id)

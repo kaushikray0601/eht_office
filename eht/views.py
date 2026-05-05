@@ -56,6 +56,7 @@ from .sld_topology_workflows import (
     preview_downstream_jb,
     preview_split_circuits,
 )
+from .tracer_management import find_tracer_node, reset_tracer_override, save_tracer_override
 from .sld_validation import validate_project_sld_payload
 
 COOLDOWN_PERIOD_MINUTES = 30
@@ -783,6 +784,8 @@ def sld_workspace_view(request):
         'sld_topology_reset_selected_url': reverse('sld_topology_reset_selected_view'),
         'sld_cable_override_save_url': reverse('sld_cable_override_save_view'),
         'sld_cable_override_reset_url': reverse('sld_cable_override_reset_view'),
+        'sld_tracer_override_save_url': reverse('sld_tracer_override_save_view'),
+        'sld_tracer_override_reset_url': reverse('sld_tracer_override_reset_view'),
         'sld_topology_state': sld_data['topology_state'],
         'sld_validation_url': reverse('sld_validation_view'),
         'sld_selected_line_id': sld_data.get('selected_line_id', ''),
@@ -901,6 +904,71 @@ def sld_cable_override_reset_view(request):
     reset_count = reset_cable_override(project_id, component_id)
     return JsonResponse({
         'success': 'Cable override reset to generated value.',
+        'reset_count': reset_count,
+    })
+
+
+def sld_tracer_override_save_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+    try:
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid tracer override payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    component_id = body.get('component_id')
+    if not project_id or not component_id:
+        return JsonResponse({'error': 'Project ID and tracer component ID are required.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    payload = build_project_sld_payload(project_id)
+    node = find_tracer_node(payload, component_id)
+    if node is None:
+        return JsonResponse({'error': 'Selected component is not a tracer in the active SLD payload.'}, status=404)
+
+    try:
+        override = save_tracer_override(
+            project_id,
+            node,
+            selected_v_uid=body.get('selected_v_uid', ''),
+            remarks=body.get('remarks', ''),
+            user=getattr(request, 'user', None),
+        )
+    except ValidationError as exc:
+        return _json_validation_error(exc)
+
+    if override is None:
+        return JsonResponse({'success': 'Tracer override reset to generated selection.'})
+    return JsonResponse({
+        'success': f'Tracer override saved for {node.get("display_tag")}.',
+        'component_id': component_id,
+        'line_uid': str(override.line_id),
+        'selected_v_uid': override.selected_v_uid,
+        'selected_option_rank': override.selected_option_rank,
+    })
+
+
+def sld_tracer_override_reset_view(request):
+    if request.method != 'POST':
+        return JsonResponse({'error': 'Invalid request method.'}, status=405)
+    try:
+        body = json.loads(request.body or '{}')
+    except json.JSONDecodeError:
+        return JsonResponse({'error': 'Invalid tracer override reset payload.'}, status=400)
+
+    project_id = body.get('project_id')
+    line_uid = body.get('line_uid')
+    if not project_id or not line_uid:
+        return JsonResponse({'error': 'Project ID and tracer line UID are required.'}, status=400)
+
+    _get_project_workspace_context(request, project_id)
+    reset_count = reset_tracer_override(project_id, line_uid)
+    return JsonResponse({
+        'success': 'Tracer override reset to generated selection.',
         'reset_count': reset_count,
     })
 
