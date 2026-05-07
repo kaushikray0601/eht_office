@@ -47,6 +47,7 @@ from eht.sld_layout import get_project_sld_layout
 from eht.sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
 from eht.sld_pdf import build_sld_pdf
 from eht.sld_schema import audit_tagged_component_schema
+from eht.sld_topology import payload_fingerprint
 from eht.sld_validation import validate_project_sld_payload
 
 
@@ -1794,6 +1795,8 @@ class SldTopologyWorkflowTests(TestCase):
             data=json.dumps({
                 'project_id': 'p1',
                 'component_ids': component_ids,
+                'trunk_length_m': 42.5,
+                'cable_size': '4C x 10',
                 'remarks': 'Combined after engineering review.',
             }),
             content_type='application/json',
@@ -1810,7 +1813,12 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(edit.edit_payload['downstream_summaries']['boq']['mcb_total'], 1)
         self.assertEqual(edit.edit_payload['downstream_summaries']['result']['branch_count'], 1)
         self.assertEqual(len(edit.edit_payload['cable_schedule_rows']), 1)
-        self.assertEqual(edit.edit_payload['cable_schedule_rows'][0]['tagged_components']['MCB'], 'MCB_001-M')
+        schedule_row = edit.edit_payload['cable_schedule_rows'][0]
+        self.assertEqual(schedule_row['tagged_components']['MCB'], 'MCB_001-M')
+        self.assertGreater(schedule_row['cable_length_db_to_jb'], 0)
+        self.assertGreater(schedule_row['branch_cable_length_total_m'], 0)
+        self.assertTrue(schedule_row['tagged_components']['CableRoles']['mcb_trunks'])
+        self.assertTrue(schedule_row['tagged_components']['CableRoles']['branch_cables'])
 
         edited_payload = build_project_sld_payload('p1')
         self.assertTrue(edited_payload['meta']['has_topology_edit'])
@@ -1842,6 +1850,8 @@ class SldTopologyWorkflowTests(TestCase):
         trunk_cable = manual_trunk_cables[0]
         isolator = manual_isolators[0]
         distribution_jb = manual_distribution_jbs[0]
+        self.assertEqual((trunk_cable.get('metadata') or {}).get('length_m'), 42.5)
+        self.assertEqual((trunk_cable.get('metadata') or {}).get('cable_size'), '4C x 10')
         edge_pairs = {
             (edge['from_component_id'], edge['to_component_id'])
             for edge in edited_payload['edges']
@@ -1865,6 +1875,34 @@ class SldTopologyWorkflowTests(TestCase):
             ],
             [trunk_cable['component_id']],
         )
+
+    def test_single_outgoing_3ph_collapse_does_not_bypass_to_tracer(self):
+        from eht.sld_topology_workflows import _collapse_single_outgoing_3ph_jbs
+
+        payload = {
+            'project_id': 'p1',
+            'nodes': [
+                {'component_id': 'mcb', 'component_type': 'MCB', 'display_tag': 'MCB_001', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1},
+                {'component_id': 'c4', 'component_type': 'Cable4C', 'display_tag': 'CCAB4C_001', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1, 'metadata': {'length_m': 10}},
+                {'component_id': 'jb3', 'component_type': 'JB3PH', 'display_tag': 'JB3PH_001', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1},
+                {'component_id': 'tr', 'component_type': 'Tracer', 'display_tag': 'Tracer_001', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1},
+            ],
+            'edges': [
+                {'from_component_id': 'mcb', 'to_component_id': 'c4', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1, 'circuit_index': None},
+                {'from_component_id': 'c4', 'to_component_id': 'jb3', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1, 'circuit_index': None},
+                {'from_component_id': 'jb3', 'to_component_id': 'tr', 'line_ids': ['L1'], 'line_uid': 'line-1', 'branch_index': 1, 'circuit_index': 1},
+            ],
+            'line_groups': [],
+            'meta': {},
+        }
+
+        collapsed = _collapse_single_outgoing_3ph_jbs(payload)
+
+        self.assertEqual({node['component_id'] for node in collapsed['nodes']}, {'mcb', 'c4', 'jb3', 'tr'})
+        self.assertNotIn(('mcb', 'tr'), {
+            (edge['from_component_id'], edge['to_component_id'])
+            for edge in collapsed['edges']
+        })
 
     def test_combine_feeders_can_extend_active_combine_edit(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003'])
@@ -1954,6 +1992,7 @@ class SldTopologyWorkflowTests(TestCase):
                 'parent_component_id': parent_jb['component_id'],
                 'branch_component_ids': direct_children[:3],
                 'trunk_length_m': 18.5,
+                'cable_size': '4C x 6',
                 'remarks': 'Add downstream JB to limit outgoing feeders.',
             }),
             content_type='application/json',
@@ -1980,6 +2019,8 @@ class SldTopologyWorkflowTests(TestCase):
             if node['component_type'] == 'Isolator3PH'
             and (node.get('metadata') or {}).get('manual_topology_edit') == 'downstream_jb'
         )
+        self.assertEqual((downstream_trunk.get('metadata') or {}).get('length_m'), 18.5)
+        self.assertEqual((downstream_trunk.get('metadata') or {}).get('cable_size'), '4C x 6')
         edge_pairs = {
             (edge['from_component_id'], edge['to_component_id'])
             for edge in edited_payload['edges']
@@ -2289,7 +2330,7 @@ class SldTopologyWorkflowTests(TestCase):
             edit_type='move_branch_to_jb',
             status='applied',
             generated_snapshot=payload,
-            baseline_fingerprint='standalone-target-fixture',
+            baseline_fingerprint=payload_fingerprint(payload),
             edit_payload={'sld_payload': edited_payload},
         )
 
@@ -2321,6 +2362,8 @@ class SldTopologyWorkflowTests(TestCase):
                 'project_id': 'p1',
                 'source_component_id': source_branch_root_id,
                 'target_jb_component_id': target_mcb['component_id'],
+                'trunk_length_m': 77.5,
+                'cable_size': '4C x 16',
                 'remarks': 'Promote target MCB to 3PH distribution.',
             }),
             content_type='application/json',
@@ -2347,6 +2390,8 @@ class SldTopologyWorkflowTests(TestCase):
             if node['component_type'] == 'Isolator3PH'
             and (node.get('metadata') or {}).get('target_mcb_distribution')
         )
+        self.assertEqual((manual_cable.get('metadata') or {}).get('length_m'), 77.5)
+        self.assertEqual((manual_cable.get('metadata') or {}).get('cable_size'), '4C x 16')
         self.assertIn((target_mcb['component_id'], manual_cable['component_id']), edge_pairs)
         self.assertIn((manual_cable['component_id'], manual_isolator['component_id']), edge_pairs)
         self.assertIn((manual_isolator['component_id'], manual_jb['component_id']), edge_pairs)
@@ -2434,6 +2479,12 @@ class SldTopologyWorkflowTests(TestCase):
         )
         self.assertFalse(any(node['component_type'] == 'JB3PH' for node in edited_payload['nodes']))
         self.assertFalse(any(node['component_type'] == 'Cable4C' for node in edited_payload['nodes']))
+        split_tracers = [node for node in edited_payload['nodes'] if node['component_type'] == 'Tracer']
+        self.assertTrue(all((node.get('metadata') or {}).get('tracer_selection') for node in split_tracers))
+        self.assertEqual(
+            {node['metadata']['tracer_selection']['selected']['v_uid'] for node in split_tracers},
+            {'V-001'},
+        )
 
         incoming_sources_by_target = {
             edge['to_component_id']: edge['from_component_id']
@@ -2700,6 +2751,44 @@ class SldTopologyWorkflowTests(TestCase):
 
         payload = build_project_sld_payload('p1')
         self.assertTrue(payload['meta']['topology_baseline_changed'])
+        self.assertTrue(payload['meta']['topology_edit_review_required'])
+        self.assertIn('requires review', payload['meta']['manual_topology_warning'])
+        self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 2)
+
+        result_response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+        self.assertEqual(result_response.status_code, 200)
+        self.assertContains(result_response, '2 branch rows')
+        self.assertNotContains(result_response, 'MCB_001-M')
+
+    def test_invalid_saved_topology_payload_falls_back_to_generated_payload(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
+            edit_payload={
+                'sld_payload': {
+                    **generated_payload,
+                    'edges': [{
+                        'from_component_id': 'missing-source',
+                        'to_component_id': generated_payload['nodes'][0]['component_id'],
+                    }],
+                },
+            },
+            validation_summary={'status': 'needs_review'},
+        )
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertTrue(payload['meta']['topology_edit_review_required'])
+        self.assertFalse(payload['meta']['topology_baseline_changed'])
+        self.assertIn('saved graph references are invalid', payload['meta']['manual_topology_warning'])
+        self.assertNotIn('missing-source', {
+            edge.get('from_component_id')
+            for edge in payload['edges']
+        })
 
     def test_topology_reset_restores_generated_payload(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -2937,13 +3026,31 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, cable_node['display_tag'])
         self.assertContains(response, '88.50 m')
 
+    def test_result_view_marks_sld_tracer_override_as_review_only(self):
+        line = make_calculated_project_snapshot()
+        TracerSelectionOverride.objects.create(
+            project_id='p1',
+            line=line,
+            selected_v_uid='V-ALT-001',
+            selected_option_rank=1,
+            remarks='Use alternate tracer after field review.',
+        )
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'tracer selection override')
+        self.assertContains(response, 'V-ALT-001')
+        self.assertContains(response, 'Review-only')
+
     def test_result_view_uses_applied_topology_summary_override(self):
         make_calculated_project_snapshot()
+        generated_payload = build_project_sld_payload('p1')
         SLDTopologyEdit.objects.create(
             project_id='p1',
             edit_type='combine_feeders',
             status='applied',
-            baseline_fingerprint='baseline-result',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
             edit_payload={
                 'downstream_summaries': {'result': {'branch_count': 99}},
                 'cable_schedule_rows': [{
@@ -2989,6 +3096,25 @@ class ResultAndBoqViewTests(TestCase):
         self.assertTrue(any(row[1] == line.line_id for row in line_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in branch_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in alternate_rows[1:]))
+
+    def test_result_export_marks_sld_tracer_override_review_only(self):
+        line = make_calculated_project_snapshot()
+        TracerSelectionOverride.objects.create(
+            project_id='p1',
+            line=line,
+            selected_v_uid='V-ALT-001',
+            selected_option_rank=1,
+        )
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Line Results'].iter_rows(values_only=True))
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('SLD Tracer Override')], 'V-ALT-001')
+        self.assertIn('Review-only', data[header.index('SLD Override Review Status')])
 
     def test_boq_view_renders_consolidated_and_line_items(self):
         line = make_calculated_project_snapshot()

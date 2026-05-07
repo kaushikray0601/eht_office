@@ -1300,6 +1300,23 @@
         return panel ? panel.querySelector('#sld-downstream-jb-length') : null;
     }
 
+    function getManualTrunkSizeInput(root) {
+        const panel = root.closest('.sld-panel');
+        return panel ? panel.querySelector('#sld-manual-trunk-size') : null;
+    }
+
+    function defaultTrunkLength(root, mode) {
+        if (mode === 'downstream_jb') {
+            return root.dataset.defaultJbLoopLength || '';
+        }
+        return root.dataset.defaultDbJbLength || root.dataset.defaultJbLoopLength || '';
+    }
+
+    function manualTrunkCableSize(root) {
+        const sizeInput = getManualTrunkSizeInput(root);
+        return sizeInput && sizeInput.value ? sizeInput.value : '4C';
+    }
+
     function selectedDownstreamBranchCount(state) {
         return state && state.downstreamJbSelectionIds ? state.downstreamJbSelectionIds.size : 0;
     }
@@ -1386,13 +1403,17 @@
         const splitButton = panel ? panel.querySelector('#sld-split-mode') : null;
         const downstreamButton = panel ? panel.querySelector('#sld-downstream-jb-mode') : null;
         const attachButton = panel ? panel.querySelector('#sld-attach-jb-mode') : null;
-        const downstreamLengthGroup = panel ? panel.querySelector('#sld-downstream-jb-length-group') : null;
+        const downstreamLengthGroup = panel ? panel.querySelector('#sld-manual-trunk-group') : null;
+        const trunkLengthInput = panel ? panel.querySelector('#sld-downstream-jb-length') : null;
+        const trunkLengthLabel = panel ? panel.querySelector('#sld-manual-trunk-length-label') : null;
         const applyButton = panel ? panel.querySelector('#sld-combine-apply') : null;
         const summary = getCombineSummaryContainer(root);
         const mode = getTopologyMode(state);
         const isSplit = mode === 'split';
         const isDownstreamJb = mode === 'downstream_jb';
         const isAttachJb = mode === 'attach_to_jb';
+        const attachTargetNode = isAttachJb ? state.nodeByComponentId[state.attachTargetJbId] : null;
+        const attachCreatesTrunk = !!(attachTargetNode && attachTargetNode.component_type === 'MCB');
         const selectedSet = isDownstreamJb ? state.downstreamJbSelectionIds : (isSplit ? state.splitSelectionIds : state.combineSelectionIds);
         const selectedCount = isAttachJb ? selectedAttachCount(state) : (selectedSet ? selectedSet.size : 0);
         const preview = isAttachJb ? state.attachJbPreview : (isDownstreamJb ? state.downstreamJbPreview : (isSplit ? state.splitPreview : state.combinePreview));
@@ -1411,7 +1432,19 @@
             attachButton.classList.toggle('active', isAttachJb);
         }
         if (downstreamLengthGroup) {
-            downstreamLengthGroup.classList.toggle('d-none', !isDownstreamJb);
+            const showTrunkInputs = mode === 'combine' || isDownstreamJb || attachCreatesTrunk;
+            downstreamLengthGroup.classList.toggle('d-none', !showTrunkInputs);
+            if (trunkLengthInput && showTrunkInputs && trunkLengthInput.dataset.mode !== mode) {
+                const defaultLength = defaultTrunkLength(root, mode);
+                trunkLengthInput.value = defaultLength;
+                trunkLengthInput.placeholder = defaultLength;
+                trunkLengthInput.dataset.mode = mode;
+            }
+            if (trunkLengthLabel) {
+                trunkLengthLabel.textContent = isDownstreamJb
+                    ? 'New JB-to-JB 4C trunk length (m)'
+                    : (isAttachJb ? 'New target-MCB 4C trunk length (m)' : 'New MCB-to-JB 4C trunk length (m)');
+            }
         }
         if (applyButton) {
             applyButton.disabled = !(preview && preview.ok);
@@ -1444,11 +1477,11 @@
                 summary.innerHTML = `Selected ${escapeHtml(preview.source_mcb_display_tag || 'MCB')}. Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
             } else if (preview && preview.ok && isDownstreamJb) {
                 const addedTags = preview.added_display_tags || [];
-                summary.innerHTML = `Parent ${escapeHtml(preview.parent_display_tag || '3PH JB')}: ${escapeHtml(preview.parent_outgoing_before)} outgoing now, ${escapeHtml(preview.parent_outgoing_after)} after edit. Move ${escapeHtml(preview.downstream_outgoing_count)} branch(es) under ${escapeHtml(addedTags[addedTags.length - 1] || 'new JB')} with ${escapeHtml(preview.trunk_length_m)} m 4C trunk.`;
+                summary.innerHTML = `Parent ${escapeHtml(preview.parent_display_tag || '3PH JB')}: ${escapeHtml(preview.parent_outgoing_before)} outgoing now, ${escapeHtml(preview.parent_outgoing_after)} after edit. Move ${escapeHtml(preview.downstream_outgoing_count)} branch(es) under ${escapeHtml(addedTags[addedTags.length - 1] || 'new JB')} with ${escapeHtml(preview.trunk_length_m)} m ${escapeHtml(preview.cable_size || '4C')} trunk.`;
             } else if (preview && preview.ok && isAttachJb) {
                 if (preview.edit_type === 'move_branch_to_jb') {
                     const addedNote = preview.insert_target_distribution_jb
-                        ? ` Add ${escapeHtml((preview.added_display_tags || []).join(', ') || 'new 4C cable and 3PH JB')}.`
+                        ? ` Add ${escapeHtml((preview.added_display_tags || []).join(', ') || 'new 4C cable and 3PH JB')} with ${escapeHtml(preview.target_insert_trunk_length || '-')} m ${escapeHtml(preview.target_insert_cable_size || '4C')} trunk.`
                         : '';
                     summary.innerHTML = `
                         Move ${escapeHtml(preview.branch_root_display_tag || preview.source_display_tag || 'branch')}
@@ -1461,7 +1494,7 @@
                     summary.innerHTML = `Feed ${escapeHtml(preview.source_display_tag || 'source')} from ${escapeHtml(preview.target_jb_display_tag || '3PH JB')}. Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}. Recommended source MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
                 }
             } else if (preview && preview.ok) {
-                summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
+                summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>; trunk: ${escapeHtml(preview.trunk_length_m || '-')} m ${escapeHtml(preview.cable_size || '4C')}.`;
             } else {
                 summary.textContent = 'Waiting for automatic topology check.';
             }
@@ -2997,10 +3030,16 @@
         }
         const panel = root.closest('.sld-panel');
         const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
+        const mode = getTopologyMode(state);
+        const lengthInput = getDownstreamLengthInput(root);
         const payload = {
             project_id: root.dataset.projectId,
             component_ids: Array.from(selectedIds),
         };
+        if (mode === 'combine') {
+            payload.trunk_length_m = lengthInput && lengthInput.value ? lengthInput.value : defaultTrunkLength(root, mode);
+            payload.cable_size = manualTrunkCableSize(root);
+        }
         if (includeRemarks && remarks) {
             payload.remarks = remarks.value;
         }
@@ -3026,6 +3065,7 @@
             parent_component_id: state.downstreamJbParentId,
             branch_component_ids: Array.from(state.downstreamJbSelectionIds),
             trunk_length_m: lengthInput ? lengthInput.value : root.dataset.defaultJbLoopLength,
+            cable_size: manualTrunkCableSize(root),
         };
         if (includeRemarks && remarks) {
             payload.remarks = remarks.value;
@@ -3046,10 +3086,13 @@
         }
         const panel = root.closest('.sld-panel');
         const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
+        const lengthInput = getDownstreamLengthInput(root);
         const payload = {
             project_id: root.dataset.projectId,
             source_component_id: state.attachSourceId,
             target_jb_component_id: state.attachTargetJbId,
+            trunk_length_m: lengthInput && lengthInput.value ? lengthInput.value : defaultTrunkLength(root, 'attach_to_jb'),
+            cable_size: manualTrunkCableSize(root),
         };
         if (includeRemarks && remarks) {
             payload.remarks = remarks.value;
@@ -3092,12 +3135,13 @@
             return;
         }
         const lengthInput = getDownstreamLengthInput(root);
-        const lengthValue = isDownstreamJb && lengthInput ? lengthInput.value : '';
+        const lengthValue = lengthInput ? lengthInput.value : '';
+        const sizeValue = manualTrunkCableSize(root);
         const requestKey = isDownstreamJb
-            ? `${mode}:${state.downstreamJbParentId}:${Array.from(selectedIds).sort().join('|')}:${lengthValue}`
+            ? `${mode}:${state.downstreamJbParentId}:${Array.from(selectedIds).sort().join('|')}:${lengthValue}:${sizeValue}`
             : (isAttachJb
-                ? `${mode}:${state.attachSourceId}:${state.attachTargetJbId}`
-                : `${mode}:${Array.from(selectedIds).sort().join('|')}`);
+                ? `${mode}:${state.attachSourceId}:${state.attachTargetJbId}:${lengthValue}:${sizeValue}`
+                : `${mode}:${Array.from(selectedIds).sort().join('|')}:${mode === 'combine' ? `${lengthValue}:${sizeValue}` : ''}`);
         state.topologyPreviewKey = requestKey;
         state.topologyPreviewStatus = 'checking';
         state.topologyPreviewError = '';
@@ -3541,7 +3585,7 @@
         scheduleTopologyPreview(root);
     });
 
-    $(document).on('input change', '#sld-downstream-jb-length', function () {
+    $(document).on('input change', '#sld-downstream-jb-length, #sld-manual-trunk-size', function () {
         const root = document.getElementById('sld-diagram-shell');
         if (!root || !root.__sldState) {
             return;

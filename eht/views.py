@@ -36,6 +36,7 @@ from .models import (
     ProcessLineCalculation,
     ProjectData,
     SLDTopologyEdit,
+    TracerSelectionOverride,
     UserAttempt,
     is_default_project_id,
 )
@@ -335,23 +336,49 @@ def _build_result_workspace_data(project_id):
         )
         .order_by('line__line_id')
     )
+    sld_payload = build_project_sld_payload(project_id)
+    allow_topology_overrides = not (sld_payload.get('meta') or {}).get('topology_baseline_changed')
     branch_rows = list(
         PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
         .select_related('distribution__line')
         .order_by('distribution__line__line_id', 'branch_index')
     )
-    branch_rows = apply_active_cable_schedule_rows(project_id, branch_rows)
-    sld_payload = build_project_sld_payload(project_id)
+    branch_rows = apply_active_cable_schedule_rows(
+        project_id,
+        branch_rows,
+        allow_stale=allow_topology_overrides,
+    )
     branch_rows = attach_cable_override_summaries(branch_rows, sld_payload)
+    active_tracer_overrides = {
+        str(override.line_id): override
+        for override in TracerSelectionOverride.objects.filter(
+            project_id=project_id,
+            is_active=True,
+        ).select_related('line')
+    }
+    override_alternates = {
+        (str(alternate.line_id), alternate.v_uid): alternate
+        for alternate in AlternateTracer.objects.filter(
+            line_id__in=active_tracer_overrides.keys(),
+        )
+    }
 
     line_results = []
     for calculation in calculations:
         line = calculation.line
+        tracer_override = active_tracer_overrides.get(str(line.uid))
+        override_alternate = (
+            override_alternates.get((str(line.uid), tracer_override.selected_v_uid))
+            if tracer_override
+            else None
+        )
         line_results.append({
             'calculation': calculation,
             'line': line,
             'selected_tracer': getattr(line, 'selected_tracer_result', None),
             'alternate_tracers': list(line.alternate_tracer_results.all()),
+            'tracer_override': tracer_override,
+            'tracer_override_alternate': override_alternate,
             'branch_count': len(getattr(line.power_distribution_result, 'branches').all()) if hasattr(line, 'power_distribution_result') else 0,
         })
 
@@ -361,8 +388,14 @@ def _build_result_workspace_data(project_id):
         'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results) / 1000 if line_results else 0,
         'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
         'branch_count': len(branch_rows),
+        'tracer_override_count': len(active_tracer_overrides),
     }
-    summary = apply_active_summary_overrides(project_id, 'result', summary)
+    summary = apply_active_summary_overrides(
+        project_id,
+        'result',
+        summary,
+        allow_stale=allow_topology_overrides,
+    )
     return {
         'line_results': line_results,
         'branch_rows': branch_rows,
@@ -520,6 +553,8 @@ def _build_boq_workspace_data(project_id):
 
     line_groups.sort(key=lambda group: group['line'].line_id if group['line'] else '')
     consolidated_lookup = {item.item_code: item.quantity for item in consolidated_items}
+    sld_payload = build_project_sld_payload(project_id)
+    allow_topology_overrides = not (sld_payload.get('meta') or {}).get('topology_baseline_changed')
     summary = {
         'consolidated_item_count': len(consolidated_items),
         'line_group_count': len(line_groups),
@@ -527,7 +562,12 @@ def _build_boq_workspace_data(project_id):
         'mcb_total': consolidated_lookup.get('MCB', 0),
         'junction_box_total': consolidated_lookup.get('JB3PH', 0) + consolidated_lookup.get('JB1PH', 0),
     }
-    summary = apply_active_summary_overrides(project_id, 'boq', summary)
+    summary = apply_active_summary_overrides(
+        project_id,
+        'boq',
+        summary,
+        allow_stale=allow_topology_overrides,
+    )
     return {
         'consolidated_items': consolidated_items,
         'line_groups': line_groups,
@@ -1080,11 +1120,13 @@ def sld_topology_combine_preview_view(request):
 
     project_id = body.get('project_id')
     component_ids = body.get('component_ids') or []
+    trunk_length_m = body.get('trunk_length_m')
+    cable_size = body.get('cable_size') or '4C'
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
 
     _get_project_workspace_context(request, project_id)
-    preview = preview_combine_feeders(project_id, component_ids)
+    preview = preview_combine_feeders(project_id, component_ids, trunk_length_m=trunk_length_m, cable_size=cable_size)
     if not preview['ok']:
         return JsonResponse({'error': preview['error'], **preview}, status=400)
     return JsonResponse(preview)
@@ -1100,6 +1142,8 @@ def sld_topology_combine_apply_view(request):
 
     project_id = body.get('project_id')
     component_ids = body.get('component_ids') or []
+    trunk_length_m = body.get('trunk_length_m')
+    cable_size = body.get('cable_size') or '4C'
     remarks = body.get('remarks') or ''
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
@@ -1108,6 +1152,8 @@ def sld_topology_combine_apply_view(request):
     result = apply_combine_feeders(
         project_id,
         component_ids,
+        trunk_length_m=trunk_length_m,
+        cable_size=cable_size,
         user=getattr(request, 'user', None),
         remarks=remarks,
     )
@@ -1174,11 +1220,18 @@ def sld_topology_downstream_jb_preview_view(request):
     parent_component_id = body.get('parent_component_id') or ''
     branch_component_ids = body.get('branch_component_ids') or []
     trunk_length_m = body.get('trunk_length_m')
+    cable_size = body.get('cable_size') or '4C'
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
 
     _get_project_workspace_context(request, project_id)
-    preview = preview_downstream_jb(project_id, parent_component_id, branch_component_ids, trunk_length_m)
+    preview = preview_downstream_jb(
+        project_id,
+        parent_component_id,
+        branch_component_ids,
+        trunk_length_m,
+        cable_size=cable_size,
+    )
     if not preview['ok']:
         return JsonResponse({'error': preview['error'], **preview}, status=400)
     return JsonResponse(preview)
@@ -1196,6 +1249,7 @@ def sld_topology_downstream_jb_apply_view(request):
     parent_component_id = body.get('parent_component_id') or ''
     branch_component_ids = body.get('branch_component_ids') or []
     trunk_length_m = body.get('trunk_length_m')
+    cable_size = body.get('cable_size') or '4C'
     remarks = body.get('remarks') or ''
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
@@ -1206,6 +1260,7 @@ def sld_topology_downstream_jb_apply_view(request):
         parent_component_id,
         branch_component_ids,
         trunk_length_m=trunk_length_m,
+        cable_size=cable_size,
         user=getattr(request, 'user', None),
         remarks=remarks,
     )
@@ -1225,11 +1280,19 @@ def sld_topology_attach_jb_preview_view(request):
     project_id = body.get('project_id')
     source_component_id = body.get('source_component_id') or ''
     target_jb_component_id = body.get('target_jb_component_id') or ''
+    trunk_length_m = body.get('trunk_length_m')
+    cable_size = body.get('cable_size') or '4C'
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to preview topology edits.'}, status=400)
 
     _get_project_workspace_context(request, project_id)
-    preview = preview_attach_to_jb(project_id, source_component_id, target_jb_component_id)
+    preview = preview_attach_to_jb(
+        project_id,
+        source_component_id,
+        target_jb_component_id,
+        trunk_length_m=trunk_length_m,
+        cable_size=cable_size,
+    )
     if not preview['ok']:
         return JsonResponse({'error': preview['error'], **preview}, status=400)
     return JsonResponse(preview)
@@ -1246,6 +1309,8 @@ def sld_topology_attach_jb_apply_view(request):
     project_id = body.get('project_id')
     source_component_id = body.get('source_component_id') or ''
     target_jb_component_id = body.get('target_jb_component_id') or ''
+    trunk_length_m = body.get('trunk_length_m')
+    cable_size = body.get('cable_size') or '4C'
     remarks = body.get('remarks') or ''
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to apply topology edits.'}, status=400)
@@ -1255,6 +1320,8 @@ def sld_topology_attach_jb_apply_view(request):
         project_id,
         source_component_id,
         target_jb_component_id,
+        trunk_length_m=trunk_length_m,
+        cable_size=cable_size,
         user=getattr(request, 'user', None),
         remarks=remarks,
     )
@@ -1334,6 +1401,8 @@ def result_export_view(request):
         calculation = item['calculation']
         line = item['line']
         selected_tracer = item['selected_tracer']
+        tracer_override = item.get('tracer_override')
+        tracer_override_alternate = item.get('tracer_override_alternate')
         line_rows.append({
             'Project ID': project_id,
             'Line ID': line.line_id,
@@ -1344,6 +1413,13 @@ def result_export_view(request):
             'Heat Loss': calculation.heat_loss,
             'Selected Tracer': calculation.selected_tracer,
             'Tracer Family': getattr(selected_tracer, 'tracer_family', ''),
+            'SLD Tracer Override': tracer_override.selected_v_uid if tracer_override else '',
+            'SLD Override Family': getattr(tracer_override_alternate, 'tracer_family', ''),
+            'SLD Override Review Status': (
+                'Review-only: load/BOQ/cable sizing not recalculated from override'
+                if tracer_override
+                else ''
+            ),
             'Spiral Factor': calculation.spiral_factor,
             'Breaker Size': calculation.breaker_size,
             'Total Circuits': calculation.total_circuits,
@@ -1376,6 +1452,7 @@ def result_export_view(request):
             'Circuit Count': _branch_value(branch, ['circuit_count']),
             'Cable Length DB to JB': _branch_value(branch, ['cable_length_db_to_jb']),
             'Cable Length JB to JB': _branch_value(branch, ['cable_length_jb_to_jb']),
+            'Branch Cable Length Total': _branch_value(branch, ['branch_cable_length_total_m']),
             'Cable Overrides': json.dumps(_branch_value(branch, ['cable_override_summary'], []), default=str),
             'Tagged Components': str(_branch_value(branch, ['tagged_components'], {})),
         }

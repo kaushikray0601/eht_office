@@ -59,6 +59,11 @@
                     {{ pending_input_count }} imported line{{ pending_input_count|pluralize }} still remain pending confirmation, so this view may not include the latest upload.
                 </div>
             {% endif %}
+            {% if result_summary.tracer_override_count %}
+                <div class="alert alert-warning">
+                    {{ result_summary.tracer_override_count }} tracer selection override{{ result_summary.tracer_override_count|pluralize }} active from the SLD. Per-line tracer choices are shown for review, but load, BOQ, and cable sizing remain based on the stored calculation until the recalculation engine consumes tracer overrides.
+                </div>
+            {% endif %}
 
             <div class="workspace-section mb-4">
                 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -82,6 +87,7 @@
                             <th data-field="line" data-sortable="true">Line</th>
                             <th data-field="heat-loss" data-sortable="true">Heat Loss</th>
                             <th data-field="selected-tracer" data-sortable="true">Selected Tracer</th>
+                            <th data-field="tracer-override" data-sortable="true">Tracer Override</th>
                             <th data-field="spiral" data-sortable="true">Spiral</th>
                             <th data-field="breaker" data-sortable="true">Breaker</th>
                             <th data-field="circuits" data-sortable="true">Circuits</th>
@@ -108,6 +114,23 @@
                                     <div class="small text-muted">
                                         {{ item.selected_tracer.tracer_family|default:"-" }}
                                     </div>
+                                </td>
+                                <td>
+                                    {% if item.tracer_override %}
+                                        <div><span class="badge text-bg-warning text-dark">{{ item.tracer_override.selected_v_uid }}</span></div>
+                                        <div class="small text-muted">
+                                            {% if item.tracer_override_alternate %}
+                                                {{ item.tracer_override_alternate.tracer_family }} |
+                                                {{ item.tracer_override_alternate.power_output|floatformat:2 }} W/m |
+                                                SF {{ item.tracer_override_alternate.spiral_factor|floatformat:2 }}
+                                            {% else %}
+                                                Override option requires review
+                                            {% endif %}
+                                        </div>
+                                        <div class="small text-warning">Review-only until recalculation consumes this override.</div>
+                                    {% else %}
+                                        <span class="text-muted small">Generated</span>
+                                    {% endif %}
                                 </td>
                                 <td>{{ item.calculation.spiral_factor|floatformat:2 }}</td>
                                 <td>{{ item.calculation.breaker_size|floatformat:0 }} A</td>
@@ -161,6 +184,7 @@
                             <th data-field="circuits" data-sortable="true">Circuits</th>
                             <th data-field="db-to-jb" data-sortable="true">DB to JB</th>
                             <th data-field="jb-to-jb" data-sortable="true">JB to JB</th>
+                            <th data-field="branch-cables" data-sortable="true">Branch Cables</th>
                             <th data-field="cable-overrides">Cable Overrides</th>
                             <th data-field="tags">Tags</th>
                         </tr>
@@ -177,6 +201,13 @@
                                 <td>
                                     {% if branch.cable_length_jb_to_jb %}
                                         {{ branch.cable_length_jb_to_jb|floatformat:2 }} m
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if branch.branch_cable_length_total_m %}
+                                        {{ branch.branch_cable_length_total_m|floatformat:2 }} m
                                     {% else %}
                                         <span class="text-muted">-</span>
                                     {% endif %}

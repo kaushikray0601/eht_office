@@ -45,12 +45,26 @@ def _active_overrides(project_id, line_uids):
     }
 
 
-def apply_tracer_selection_to_payload(project_id, payload):
+def _source_line_uid(node):
+    metadata = (node or {}).get('metadata') or {}
+    return str(metadata.get('original_line_uid') or (node or {}).get('line_uid') or '')
+
+
+def _real_line_uids(nodes):
     line_uids = {
-        str(node.get('line_uid'))
-        for node in payload.get('nodes', [])
-        if node.get('component_type') == 'Tracer' and node.get('line_uid')
+        _source_line_uid(node)
+        for node in nodes
+        if node.get('component_type') == 'Tracer' and _source_line_uid(node)
     }
+    return {
+        line_uid
+        for line_uid in line_uids
+        if str(line_uid).isdigit()
+    }
+
+
+def apply_tracer_selection_to_payload(project_id, payload):
+    line_uids = _real_line_uids(payload.get('nodes', []))
     if not line_uids:
         return payload
 
@@ -66,7 +80,7 @@ def apply_tracer_selection_to_payload(project_id, payload):
     for node in payload.get('nodes', []):
         if node.get('component_type') != 'Tracer':
             continue
-        line_uid = str(node.get('line_uid') or '')
+        line_uid = _source_line_uid(node)
         selected = selected_by_line_uid.get(line_uid)
         alternatives = alternate_by_line_uid.get(line_uid, [])
         override = overrides.get(line_uid)
@@ -106,7 +120,7 @@ def find_tracer_node(payload, component_id):
 
 def save_tracer_override(project_id, node, *, selected_v_uid='', remarks='', user=None):
     selected_uid = str(selected_v_uid or '').strip()
-    line_uid = str((node or {}).get('line_uid') or '')
+    line_uid = _source_line_uid(node)
     if not project_id or not node or node.get('component_type') != 'Tracer' or not line_uid:
         raise ValidationError('A valid tracer component is required.')
     if not selected_uid:
@@ -144,6 +158,7 @@ def save_tracer_override(project_id, node, *, selected_v_uid='', remarks='', use
 
 
 def reset_tracer_override(project_id, line_uid):
+    line_uid = str(line_uid or '').split(':manual_split:', 1)[0]
     return TracerSelectionOverride.objects.filter(
         project_id=project_id,
         line_id=line_uid,

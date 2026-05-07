@@ -114,22 +114,95 @@ def _normalize_payload(payload, project_id, edit, generated_payload=None):
     return normalized
 
 
+def _baseline_changed(edit, generated_payload):
+    return bool(
+        edit.baseline_fingerprint
+        and edit.baseline_fingerprint != payload_fingerprint(generated_payload)
+    )
+
+
+def _payload_reference_errors(payload):
+    node_ids = []
+    duplicate_ids = set()
+    seen_ids = set()
+    for node in payload.get('nodes', []):
+        component_id = node.get('component_id')
+        if not component_id:
+            continue
+        if component_id in seen_ids:
+            duplicate_ids.add(component_id)
+        seen_ids.add(component_id)
+        node_ids.append(component_id)
+
+    node_id_set = set(node_ids)
+    errors = []
+    if duplicate_ids:
+        errors.append(f"Duplicate component IDs: {', '.join(sorted(duplicate_ids))}.")
+    for edge in payload.get('edges', []):
+        source_id = edge.get('from_component_id')
+        target_id = edge.get('to_component_id')
+        if source_id not in node_id_set or target_id not in node_id_set:
+            errors.append(
+                f"Invalid edge reference: {source_id or '-'} -> {target_id or '-'}."
+            )
+    return errors
+
+
+def _normalize_review_required_payload(generated_payload, project_id, edit, warning):
+    normalized = _normalize_payload(generated_payload, project_id, edit, generated_payload=generated_payload)
+    meta = dict(normalized.get('meta') or {})
+    meta.update({
+        'topology_edit_review_required': True,
+        'manual_topology_warning': warning,
+    })
+    normalized['meta'] = meta
+    return normalized
+
+
 def apply_active_topology_edit(project_id, generated_payload):
     edit = get_active_topology_edit(project_id)
     if edit is None:
         return generated_payload
 
     edited_payload = (edit.edit_payload or {}).get('sld_payload')
+    if _baseline_changed(edit, generated_payload):
+        return _normalize_review_required_payload(
+            generated_payload,
+            project_id,
+            edit,
+            (
+                'Manual topology edit requires review because the generated SLD baseline changed. '
+                'Generated topology is shown until the manual edit can be reapplied safely.'
+            ),
+        )
+
     if isinstance(edited_payload, dict):
+        reference_errors = _payload_reference_errors(edited_payload)
+        if reference_errors:
+            return _normalize_review_required_payload(
+                generated_payload,
+                project_id,
+                edit,
+                'Manual topology edit requires review because its saved graph references are invalid.',
+            )
         return _normalize_payload(edited_payload, project_id, edit, generated_payload=generated_payload)
 
     return _normalize_payload(generated_payload, project_id, edit, generated_payload=generated_payload)
 
 
-def apply_active_summary_overrides(project_id, summary_name, summary):
+def apply_active_summary_overrides(project_id, summary_name, summary, *, allow_stale=True):
     edit = get_active_topology_edit(project_id)
     if edit is None:
         return summary
+    if not allow_stale:
+        adjusted = {**summary}
+        adjusted.update({
+            'has_topology_edit': True,
+            'topology_edit_id': edit.id,
+            'topology_edit_type': edit.edit_type,
+            'topology_edit_review_required': True,
+        })
+        return adjusted
 
     overrides = (edit.edit_payload or {}).get('downstream_summaries', {}).get(summary_name)
     if not isinstance(overrides, dict):
@@ -144,9 +217,11 @@ def apply_active_summary_overrides(project_id, summary_name, summary):
     return adjusted
 
 
-def apply_active_cable_schedule_rows(project_id, branch_rows):
+def apply_active_cable_schedule_rows(project_id, branch_rows, *, allow_stale=True):
     edit = get_active_topology_edit(project_id)
     if edit is None:
+        return branch_rows
+    if not allow_stale:
         return branch_rows
 
     rows = (edit.edit_payload or {}).get('cable_schedule_rows')

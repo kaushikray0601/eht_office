@@ -90,6 +90,7 @@ WSGI_APPLICATION = 'ELECSENSE.wsgi.application'
 
 USE_POSTGRES = env.bool("USE_POSTGRES", default=False)
 EHT_TIMING_LOGS = env.bool("EHT_TIMING_LOGS", default=False)
+USE_EXISTING_POSTGRES_TEST_DB = env.bool("USE_EXISTING_POSTGRES_TEST_DB", default=False)
 
 SQLITE_DB_PATH = BASE_DIR / env("SQLITE_DB_NAME", default="db.sqlite3")
 SQLITE_SOURCE_DB_PATH = BASE_DIR / env("SQLITE_SOURCE_DB_NAME", default="db.sqlite3")
@@ -127,6 +128,9 @@ else:
             "NAME": SQLITE_DB_PATH,
         }
     }
+
+if USE_POSTGRES and USE_EXISTING_POSTGRES_TEST_DB:
+    TEST_RUNNER = "ELECSENSE.test_runner.ExistingPostgresTestRunner"
 
 # Convenience aliases used during one-time migration from SQLite to PostgreSQL.
 DATABASES["sqlite_source"] = {

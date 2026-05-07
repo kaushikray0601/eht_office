@@ -176,6 +176,7 @@
                             data-sld-cable-override-reset-url="{{ sld_cable_override_reset_url }}"
                             data-sld-tracer-override-save-url="{{ sld_tracer_override_save_url }}"
                             data-sld-tracer-override-reset-url="{{ sld_tracer_override_reset_url }}"
+                            data-default-db-jb-length="{{ project_setup.ckt_ln|default:'' }}"
                             data-default-jb-loop-length="{{ project_setup.loop_ln|default:'' }}"
                             data-selected-line-id="{{ sld_selected_line_id }}"
                         >
@@ -206,8 +207,8 @@
                                         <i class="bi bi-plug me-1"></i>Attach
                                     </button>
                                 </div>
-                                <div id="sld-downstream-jb-length-group" class="mb-2 d-none">
-                                    <label for="sld-downstream-jb-length" class="form-label small text-muted mb-1">New 4C trunk length (m)</label>
+                                <div id="sld-manual-trunk-group" class="mb-2 d-none">
+                                    <label for="sld-downstream-jb-length" class="form-label small text-muted mb-1" id="sld-manual-trunk-length-label">New 4C trunk length (m)</label>
                                     <input
                                         type="number"
                                         step="0.01"
@@ -216,6 +217,14 @@
                                         class="form-control form-control-sm"
                                         value="{{ project_setup.loop_ln|default:'' }}"
                                         placeholder="{{ project_setup.loop_ln|default:'' }}"
+                                    >
+                                    <label for="sld-manual-trunk-size" class="form-label small text-muted mb-1 mt-2">New trunk cable size</label>
+                                    <input
+                                        type="text"
+                                        id="sld-manual-trunk-size"
+                                        class="form-control form-control-sm"
+                                        value="4C"
+                                        placeholder="4C"
                                     >
                                 </div>
                                 <div id="sld-combine-summary" class="small text-muted mb-2">Select a topology edit mode.</div>

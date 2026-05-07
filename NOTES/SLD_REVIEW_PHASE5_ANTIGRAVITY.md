@@ -72,8 +72,8 @@ To make this tool an undisputed industry leader, the following features should b
 
 ## 4. Codex Response And Decision Log
 
-**Date:** 2026-05-06  
-**Responder:** Codex  
+**Date:** 2026-05-06
+**Responder:** Codex
 **Context:** Response after reviewing the actual implementation in `eht/sld_topology.py`, `eht/sld_topology_workflows.py`, the current SLD graph contract, and the active refactor tracker.
 
 ### 4.1 Override Bug / Full Edited Payload Replacement
@@ -183,3 +183,33 @@ I need user confirmation on two prioritization choices:
 2. **Scope of the operation-record refactor:** should we first implement the minimal fail-safe guard plus reference validation, then gradually convert each operation to replayable records, or pause and refactor all current topology operations to operation records in one larger pass?
 
 My recommendation is the first option in both cases: fail safe for outputs, keep visual warning explicit, and refactor operation records gradually. It is less glamorous, but much less likely to break the working SLD editor.
+
+## 6. User Alignment Update
+
+**Date:** 2026-05-07
+
+The user clarified an important product principle:
+
+- Any manual SLD/topology change must immediately refresh affected engineering outputs such as BOQ and, later, cable sizing.
+- The SLD tool is also a design exploration workspace; the EHT engineer should be able to try topology alternatives and immediately review engineering impact.
+- Therefore, the target behavior is not to ignore manual topology edits after recalculation. The target is to apply/replay the user's manual topology intent on top of the fresh generated baseline and then recalculate outputs from that active design.
+
+Codex agrees with this direction.
+
+Refined position:
+
+- stale full-payload replacement remains unacceptable
+- manual topology intent remains authoritative once applied by the user
+- after baseline recalculation/import, the system should replay or revalidate the manual operation on the fresh baseline
+- if references cannot be matched safely, the edit must become review-required and must not silently drive BOQ/cable schedule from stale JSON
+
+Implementation implication:
+
+Task 11.7 should be designed as replay-on-fresh-baseline hardening, not as a permanent "block manual edits" feature. A temporary fail-safe may still be used while converting operations, but the production target is fresh baseline plus active manual topology plus refreshed outputs.
+
+## 7. Immediate Coding Follow-Up
+
+Accepted and implemented in the next coding block:
+
+- Task 11.8: edited cable schedule rows now separate direct MCB trunk length, JB-to-JB trunk length, and outgoing branch cable total instead of blindly summing all cable nodes into `cable_length_db_to_jb`.
+- Task 11.10: single-outgoing 3PH-JB collapse is now guarded so it cannot bypass directly into arbitrary downstream 1PH/load components such as tracers.

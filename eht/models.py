@@ -537,10 +537,48 @@ class ProcessLineCalculation(models.Model):
 
 
 
+# ------ MI CABLE MODELS -----------------------------------------------------------
 
+class MICableFamily(models.Model):
+    vendor = models.CharField(max_length=30, choices=SELECT_VENDOR)
+    family_name = models.CharField(max_length=50) # e.g., 'MIQ', 'XMI-A'
+    alloy_type = models.CharField(max_length=50) # e.g., 'Alloy 825', 'Stainless Steel'
+    max_voltage = models.FloatField(default=600.0)
+    max_sheath_temp_c = models.FloatField() # e.g., 600.0
+    max_maintain_temp_c = models.FloatField() # e.g., 500.0
+    max_watt_density_w_m = models.FloatField() # e.g., 250.0 W/m limit
 
+    class Meta:
+        unique_together = ('vendor', 'family_name')
+        verbose_name_plural = "MI Cable Families"
 
+    def __str__(self):
+        return f"{self.get_vendor_display()} {self.family_name}"
 
+class MICableHeater(models.Model):
+    family = models.ForeignKey(MICableFamily, on_delete=models.CASCADE, related_name='heaters')
+    part_number = models.CharField(max_length=100, unique=True) # e.g., '61XMI2100' or 'MIQ-2500'
+    conductors = models.IntegerField(default=1) # 1 for Single Core, 2 for Dual Core
+    base_resistance_ohms_km = models.FloatField() # Ohms per km at 20°C
+    max_ampacity = models.FloatField() # e.g., 60A
+
+    class Meta:
+        ordering = ['base_resistance_ohms_km']
+
+    def __str__(self):
+        return f"{self.part_number} ({self.base_resistance_ohms_km} ohms/km)"
+
+class MIAlloyTempFactor(models.Model):
+    alloy_type = models.CharField(max_length=50)
+    temperature_c = models.FloatField()
+    resistance_multiplier = models.FloatField() # e.g., 1.04 at 200°C
+
+    class Meta:
+        unique_together = ('alloy_type', 'temperature_c')
+        ordering = ['alloy_type', 'temperature_c']
+
+    def __str__(self):
+        return f"{self.alloy_type} at {self.temperature_c}°C: {self.resistance_multiplier}x"
 
 
 # ######################### OLD Models for reference #####################################
