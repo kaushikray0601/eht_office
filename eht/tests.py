@@ -2508,6 +2508,52 @@ class SldTopologyWorkflowTests(TestCase):
             ['LINE-001-part1', 'LINE-001-part2'],
         )
 
+    def test_scoped_reset_restores_split_circuit_without_full_reset(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        component_ids = self._mcb_component_ids()[:1]
+
+        split_response = self.client.post(
+            reverse('sld_topology_split_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': component_ids}),
+            content_type='application/json',
+        )
+        self.assertEqual(split_response.status_code, 200)
+
+        split_payload = build_project_sld_payload('p1')
+        split_mcb = next(
+            node for node in split_payload['nodes']
+            if node['component_type'] == 'MCB'
+            and node['display_tag'].endswith('-S2')
+        )
+        reset_response = self.client.post(
+            reverse('sld_topology_reset_selected_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_id': split_mcb['component_id'],
+                'remarks': 'Reset split only.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(reset_response.status_code, 200)
+        self.assertTrue(reset_response.json()['ok'])
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='applied').count(), 1)
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='superseded').count(), 1)
+        edited_payload = build_project_sld_payload('p1')
+        self.assertEqual(
+            [group['line_id'] for group in edited_payload['line_groups']],
+            ['LINE-001'],
+        )
+        self.assertEqual(
+            [node['display_tag'] for node in edited_payload['nodes'] if node['component_type'] == 'MCB'],
+            ['MCB_001'],
+        )
+        self.assertTrue(any(node['component_type'] == 'JB3PH' for node in edited_payload['nodes']))
+        self.assertFalse(any(
+            (node.get('metadata') or {}).get('manual_topology_edit') == 'split_circuits'
+            for node in edited_payload['nodes']
+        ))
+
     def test_split_circuits_can_split_active_manual_combine_topology(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
         combine_response = self.client.post(
@@ -2529,7 +2575,7 @@ class SldTopologyWorkflowTests(TestCase):
         preview = preview_response.json()
         self.assertTrue(preview['ok'])
         self.assertEqual(preview['selected_circuit_count'], 2)
-        self.assertIn('JB3PH_001-M', preview['removed_display_tags'])
+        self.assertTrue(any(tag.startswith('JB3PH_001') for tag in preview['removed_display_tags']))
 
         apply_response = self.client.post(
             reverse('sld_topology_split_apply_view'),
@@ -2701,12 +2747,13 @@ class SldTopologyWorkflowTests(TestCase):
         self.client.force_login(user)
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
         ManagedProject.objects.get(proj_id='p1').assigned_users.add(user)
+        component_ids = self._mcb_component_ids()
 
         response = self.client.post(
             reverse('sld_topology_combine_apply_view'),
             data=json.dumps({
                 'project_id': 'p1',
-                'component_ids': self._mcb_component_ids(),
+                'component_ids': component_ids,
                 'remarks': 'Approved by electrical lead.',
             }),
             content_type='application/json',
@@ -2718,6 +2765,12 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertIn('electrical lead', edit.remarks)
         self.assertEqual(edit.generated_snapshot['schema_version'], SLD_GRAPH_SCHEMA_VERSION)
         self.assertIn('sld_payload', edit.edit_payload)
+        self.assertEqual(edit.edit_payload['topology_operations'][0]['schema_version'], 1)
+        self.assertEqual(edit.edit_payload['topology_operations'][0]['operation_type'], 'combine_feeders')
+        self.assertEqual(
+            edit.edit_payload['topology_operations'][0]['inputs']['component_ids'],
+            component_ids,
+        )
         self.assertIn('warnings', edit.validation_summary)
 
     def test_applied_topology_edit_feeds_result_cable_schedule_rows(self):
@@ -2789,6 +2842,27 @@ class SldTopologyWorkflowTests(TestCase):
             edge.get('from_component_id')
             for edge in payload['edges']
         })
+
+    def test_invalid_topology_operation_records_fall_back_to_generated_payload(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        SLDTopologyEdit.objects.create(
+            project_id='p1',
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
+            edit_payload={
+                'sld_payload': generated_payload,
+                'topology_operations': {'operation_type': 'combine_feeders'},
+            },
+            validation_summary={'status': 'needs_review'},
+        )
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertTrue(payload['meta']['topology_edit_review_required'])
+        self.assertFalse(payload['meta']['topology_baseline_changed'])
+        self.assertIn('operation records are invalid', payload['meta']['manual_topology_warning'])
 
     def test_topology_reset_restores_generated_payload(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -3131,11 +3205,12 @@ class ResultAndBoqViewTests(TestCase):
 
     def test_boq_view_uses_applied_topology_summary_override(self):
         make_calculated_project_snapshot()
+        generated_payload = build_project_sld_payload('p1', apply_topology=False)
         SLDTopologyEdit.objects.create(
             project_id='p1',
             edit_type='combine_feeders',
             status='applied',
-            baseline_fingerprint='baseline-boq',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
             edit_payload={'downstream_summaries': {'boq': {'mcb_total': 7, 'junction_box_total': 11}}},
             validation_summary={'status': 'passed'},
         )
@@ -3287,14 +3362,90 @@ class ResultAndBoqViewTests(TestCase):
         self.assertGreater(len(response.content), 1000)
 
     def test_sld_pdf_renderer_draws_multicircuit_branch_links(self):
+        from eht.sld_pdf import _pdf_rows
+
         make_calculated_project_snapshot()
         payload = build_project_sld_payload('p1')
 
-        with patch('eht.sld_pdf._draw_branch_link') as branch_link:
+        pdf_bytes = build_sld_pdf('p1', payload)
+        rows = _pdf_rows(payload)
+
+        self.assertTrue(pdf_bytes.startswith(b'%PDF'))
+        self.assertGreaterEqual(len(rows), 2)
+        self.assertTrue(all(row['path'][0]['component_type'] == 'MCB' for row in rows))
+
+    def test_sld_pdf_renderer_routes_3ph_jb_outgoings_from_distinct_slots(self):
+        from eht.sld_pdf import _edge_source_offsets, _pdf_trees, _tree_layout
+
+        make_calculated_project_snapshot()
+        payload = build_project_sld_payload('p1')
+        trees = _pdf_trees(payload)
+        layouts = [_tree_layout(tree) for tree in trees]
+        layout = next(layout for layout in layouts if any(
+            item['node'].get('component_type') == 'JB3PH'
+            for item in layout['positions'].values()
+        ))
+
+        source_offsets = _edge_source_offsets(layout['edges'], layout['positions'])
+        jb3ph_ids = {
+            node_id
+            for node_id, item in layout['positions'].items()
+            if item['node'].get('component_type') == 'JB3PH'
+        }
+        jb3ph_outgoing_offsets = [
+            offset
+            for (source_id, _target_id), offset in source_offsets.items()
+            if source_id in jb3ph_ids
+        ]
+
+        self.assertGreaterEqual(len(jb3ph_outgoing_offsets), 2)
+        self.assertGreaterEqual(len(set(jb3ph_outgoing_offsets)), 2)
+        self.assertIn(10, jb3ph_outgoing_offsets)
+        self.assertIn(0, jb3ph_outgoing_offsets)
+
+    def test_sld_pdf_renderer_keeps_shared_manual_components_on_combined_lines(self):
+        from eht.sld_pdf import _line_rows, _pdf_trees
+
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        generated_payload = build_project_sld_payload('p1')
+        mcb_component_ids = [
+            node['component_id']
+            for node in generated_payload['nodes']
+            if node['component_type'] == 'MCB'
+        ]
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': mcb_component_ids}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+
+        payload = build_project_sld_payload('p1')
+        line_two_group = next(group for group in payload['line_groups'] if group['line_id'] == 'LINE-002')
+        line_two_rows = _line_rows(payload, line_two_group)
+        trees = _pdf_trees(payload)
+        line_two_tags = {
+            node['display_tag']
+            for row in line_two_rows
+            for node in [*row['upstream'], *row['downstream']]
+        }
+
+        self.assertIn('MCB_001-M', line_two_tags)
+        self.assertTrue(any(tag.startswith('JB3PH_001') for tag in line_two_tags))
+        self.assertEqual(len(trees), 1)
+        self.assertEqual(len(trees[0]['paths']), 4)
+
+    def test_sld_pdf_renderer_marks_review_required_topology_exports(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        payload = build_project_sld_payload('p1')
+        payload['meta']['topology_edit_review_required'] = True
+        payload['meta']['manual_topology_warning'] = 'Manual topology edit requires review before issue.'
+
+        with patch('eht.sld_pdf._start_page') as start_page:
             pdf_bytes = build_sld_pdf('p1', payload)
 
         self.assertTrue(pdf_bytes.startswith(b'%PDF'))
-        self.assertGreaterEqual(branch_link.call_count, 1)
+        self.assertIn('Manual topology edit requires review before issue.', start_page.call_args.args)
 
     def test_sld_cable_override_save_and_reset_views_update_payload(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -3418,6 +3569,32 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(set(node['component_id'] for node in payload['nodes']), line_two_component_ids)
         self.assertTrue(all('LINE-002' in node.get('line_ids', []) for node in payload['nodes']))
         self.assertTrue(all('LINE-002' in edge.get('line_ids', []) for edge in payload['edges']))
+
+    def test_sld_payload_view_keeps_shared_manual_components_in_focused_line(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        generated_payload = build_project_sld_payload('p1')
+        mcb_component_ids = [
+            node['component_id']
+            for node in generated_payload['nodes']
+            if node['component_type'] == 'MCB'
+        ]
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': mcb_component_ids}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+
+        focused_response = self.client.get(
+            reverse('sld_payload_view'),
+            {'project_id': 'p1', 'line_id': 'line-002'},
+        )
+
+        self.assertEqual(focused_response.status_code, 200)
+        payload = focused_response.json()
+        tags = {node['display_tag'] for node in payload['nodes']}
+        self.assertIn('MCB_001-M', tags)
+        self.assertTrue(any(tag.startswith('JB3PH_001') for tag in tags))
 
     def test_sld_payload_view_supports_partial_line_filtering(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])

@@ -5,7 +5,16 @@ from django.db import transaction
 
 from .models import MAX_CB_SIZE, ProjectData, SLDTopologyEdit
 from .sld_payload import build_project_sld_payload
-from .sld_topology import payload_fingerprint
+from .sld_topology import TOPOLOGY_OPERATION_SCHEMA_VERSION, payload_fingerprint
+
+
+def _topology_operation(operation_type, preview, inputs):
+    return {
+        'schema_version': TOPOLOGY_OPERATION_SCHEMA_VERSION,
+        'operation_type': operation_type,
+        'inputs': inputs,
+        'preview': preview,
+    }
 
 
 def _next_breaker_size(total_rating):
@@ -612,6 +621,7 @@ def _build_edited_payload(
     edited = deepcopy(payload)
     _, outgoing_by_id = _edge_lookup(edited)
     existing_cable4c, existing_isolator3ph, existing_jb3ph = _manual_combine_distribution(edited, primary)
+    combined_line_ids = _node_line_ids(selected_nodes)
 
     for node in edited['nodes']:
         if node['component_id'] != primary_id:
@@ -623,6 +633,7 @@ def _build_edited_payload(
             'combined_feeder_count': len(selected_nodes),
         })
         node['metadata'] = metadata
+        node['line_ids'] = combined_line_ids
         node['display_tag'] = _manual_display_tag(node.get('display_tag', 'MCB'))
         node['label'] = node['display_tag']
 
@@ -953,13 +964,33 @@ def _build_split_payload(payload, source_mcb, split_details, recommended_rating)
         })
     edited['edges'] = _dedupe_edges(rewired_edges)
     split_group_uids = {
-        identity['original_line_uid']
+        str(identity['original_line_uid'])
         for identity in part_identity_by_key.values()
     }
-    edited['line_groups'] = [
-        group for group in edited.get('line_groups', [])
-        if str(group.get('line_uid')) not in split_group_uids
-    ]
+    remaining_original_branches = {}
+    new_split_mcb_ids = {
+        node['component_id']
+        for node in split_mcb_by_entry.values()
+    }
+    for node in edited['nodes']:
+        if node.get('component_id') in split_scope_ids or node.get('component_id') in new_split_mcb_ids:
+            continue
+        line_uid = str(node.get('line_uid'))
+        if line_uid not in split_group_uids:
+            continue
+        branch_index = node.get('branch_index')
+        if branch_index is not None:
+            remaining_original_branches.setdefault(str(line_uid), set()).add(branch_index)
+    preserved_groups = []
+    for group in edited.get('line_groups', []):
+        group_uid = str(group.get('line_uid'))
+        if group_uid in split_group_uids:
+            remaining_branches = remaining_original_branches.get(group_uid)
+            if not remaining_branches:
+                continue
+            group = {**group, 'branch_indices': sorted(remaining_branches)}
+        preserved_groups.append(group)
+    edited['line_groups'] = preserved_groups
     for entry in entry_nodes:
         identity = part_identity_by_key[_split_circuit_key(entry)]
         edited['line_groups'].append({
@@ -2049,6 +2080,11 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         generated_snapshot=baseline_payload,
         edit_payload={
             'sld_payload': edited_payload,
+            'topology_operations': [_topology_operation('combine_feeders', preview, {
+                'component_ids': preview['selected_component_ids'],
+                'trunk_length_m': preview['trunk_length_m'],
+                'cable_size': preview['cable_size'],
+            })],
             'combine_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2140,6 +2176,12 @@ def apply_attach_to_jb(
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
+            'topology_operations': [_topology_operation(preview['edit_type'], preview, {
+                'source_component_id': preview['source_component_id'],
+                'target_component_id': preview.get('target_component_id') or preview.get('target_jb_component_id'),
+                'trunk_length_m': preview.get('target_insert_trunk_length') or trunk_length_m,
+                'cable_size': preview.get('target_insert_cable_size') or cable_size,
+            })],
             edit_payload_key: preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2216,6 +2258,12 @@ def apply_downstream_jb(
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
+            'topology_operations': [_topology_operation('downstream_jb', preview, {
+                'parent_component_id': preview['parent_component_id'],
+                'branch_component_ids': preview['selected_component_ids'],
+                'trunk_length_m': preview['trunk_length_m'],
+                'cable_size': preview['cable_size'],
+            })],
             'downstream_jb_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2280,6 +2328,9 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
+            'topology_operations': [_topology_operation('split_circuits', preview, {
+                'component_ids': preview['selected_component_ids'],
+            })],
             'split_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2351,6 +2402,11 @@ def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
+            'topology_operations': [_topology_operation('scoped_reset', preview, {
+                'component_id': component_id,
+                'source_mcb_component_id': preview['source_mcb_component_id'],
+                'reset_line_ids': preview['reset_line_ids'],
+            })],
             'scoped_reset_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,

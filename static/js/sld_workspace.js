@@ -2884,6 +2884,19 @@
         });
     }
 
+    function clearFocusedLineFilter(root) {
+        if (!root || !root.dataset.selectedLineId) {
+            return false;
+        }
+        root.dataset.selectedLineId = '';
+        const panel = root.closest('.sld-panel');
+        const lineInput = panel ? panel.querySelector('#sld-line-id') : document.getElementById('sld-line-id');
+        if (lineInput) {
+            lineInput.value = '';
+        }
+        return true;
+    }
+
     function fetchAndRenderSld(root) {
         const payloadUrl = root.dataset.sldPayloadUrl;
         const layoutUrl = root.dataset.sldLayoutUrl;
@@ -2928,6 +2941,10 @@
                     });
             },
             error: function (xhr) {
+                if (selectedLineId && xhr.status === 404 && clearFocusedLineFilter(root)) {
+                    fetchAndRenderSld(root);
+                    return;
+                }
                 let errorMessage = 'Failed to load the stored SLD graph payload.';
                 if (xhr.responseJSON && xhr.responseJSON.error) {
                     errorMessage = xhr.responseJSON.error;
@@ -3380,6 +3397,7 @@
             if (typeof window.showToast === 'function') {
                 window.showToast(response.success || 'Selected topology reset.', 'info');
             }
+            clearFocusedLineFilter(root);
             fetchAndRenderSld(root);
         }).fail(function (xhr) {
             if (typeof window.showToast === 'function') {

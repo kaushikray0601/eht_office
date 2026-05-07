@@ -243,10 +243,16 @@ def filter_sld_payload_by_line(payload, selected_line_id):
         for group in target_groups
         if group.get('line_uid')
     }
+    target_line_ids = {
+        group.get('line_id')
+        for group in target_groups
+        if group.get('line_id')
+    }
     filtered_nodes = [
         node for node in payload.get('nodes', [])
         if (
             str(node.get('line_uid') or '') in target_line_uids
+            or bool(target_line_ids & set(node.get('line_ids') or []))
             or (not target_line_uids and normalized_line_id in node.get('line_ids', []))
         )
     ]
@@ -257,6 +263,7 @@ def filter_sld_payload_by_line(payload, selected_line_id):
         and edge['to_component_id'] in component_ids
         and (
             str(edge.get('line_uid') or '') in target_line_uids
+            or bool(target_line_ids & set(edge.get('line_ids') or []))
             or (not edge.get('line_uid') and normalized_line_id in edge.get('line_ids', []))
             or (not target_line_uids and normalized_line_id in edge.get('line_ids', []))
         )
@@ -283,7 +290,7 @@ def build_project_sld_payload(project_id, line_id=None, apply_topology=True):
         .select_related('distribution__line', 'distribution__line__process_line_calculation')
         .order_by('distribution__line__line_id', 'distribution__line__uid', 'branch_index')
     )
-    if selected_line_id:
+    if selected_line_id and not apply_topology:
         branch_query = branch_query.filter(distribution__line__line_id__icontains=selected_line_id)
     branches = list(branch_query)
 

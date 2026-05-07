@@ -5,6 +5,17 @@ import json
 from .models import SLDTopologyEdit
 
 
+TOPOLOGY_OPERATION_SCHEMA_VERSION = 1
+KNOWN_TOPOLOGY_OPERATION_TYPES = {
+    'combine_feeders',
+    'split_circuits',
+    'downstream_jb',
+    'attach_to_jb',
+    'move_branch_to_jb',
+    'scoped_reset',
+}
+
+
 def payload_fingerprint(payload):
     stable_payload = {
         'schema_version': payload.get('schema_version'),
@@ -148,6 +159,27 @@ def _payload_reference_errors(payload):
     return errors
 
 
+def _operation_record_errors(edit_payload):
+    operations = (edit_payload or {}).get('topology_operations')
+    if operations is None:
+        return []
+    if not isinstance(operations, list):
+        return ['Topology operation records must be stored as a list.']
+
+    errors = []
+    for index, operation in enumerate(operations, start=1):
+        if not isinstance(operation, dict):
+            errors.append(f'Topology operation #{index} is not a structured record.')
+            continue
+        if operation.get('schema_version') != TOPOLOGY_OPERATION_SCHEMA_VERSION:
+            errors.append(f'Topology operation #{index} has an unsupported schema version.')
+        if operation.get('operation_type') not in KNOWN_TOPOLOGY_OPERATION_TYPES:
+            errors.append(f'Topology operation #{index} has an unknown operation type.')
+        if not isinstance(operation.get('inputs'), dict):
+            errors.append(f'Topology operation #{index} is missing structured inputs.')
+    return errors
+
+
 def _normalize_review_required_payload(generated_payload, project_id, edit, warning):
     normalized = _normalize_payload(generated_payload, project_id, edit, generated_payload=generated_payload)
     meta = dict(normalized.get('meta') or {})
@@ -174,6 +206,15 @@ def apply_active_topology_edit(project_id, generated_payload):
                 'Manual topology edit requires review because the generated SLD baseline changed. '
                 'Generated topology is shown until the manual edit can be reapplied safely.'
             ),
+        )
+
+    operation_errors = _operation_record_errors(edit.edit_payload)
+    if operation_errors:
+        return _normalize_review_required_payload(
+            generated_payload,
+            project_id,
+            edit,
+            'Manual topology edit requires review because its operation records are invalid.',
         )
 
     if isinstance(edited_payload, dict):

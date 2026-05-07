@@ -117,7 +117,7 @@ Next SLD follow-up queue:
 - [ ] Task 11.3: Enable split for manually edited topologies, especially manually combined and branch-moved MCB trees, without forcing reset/recombine workflows.
 - [x] Task 11.4: Add scoped reset-to-generated for a selected MCB/downstream tree so one engineer can undo a local mistake without deleting unrelated manual edits elsewhere in the project.
 - [x] Task 11.5: Extend tracer inspection/editing: show tracer family and calculated alternate tracer options in the property inspector, then allow a controlled tracer selection override.
-- [ ] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
+- [~] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
 - [~] Task 11.7: Production safety hardening for active topology edits: stop silently applying a saved full edited payload when the generated baseline fingerprint has changed, add reference validation for edited nodes/edges, and begin moving persisted topology edits toward scoped operation records that can be replayed on a fresh baseline.
 - [x] Task 11.8: Fix edited cable-schedule generation so trunk cable lengths and outgoing branch cable lengths are separated by `cable_role` instead of summing every downstream `Cable4C` and `Cable3C` into `cable_length_db_to_jb`.
 - [~] Task 11.9: Add explicit manual trunk-length/size entry to combine/attach workflows where new `Cable4C` trunks are created, while preserving the property-inspector cable override path for later field adjustments.
@@ -160,6 +160,47 @@ Progress notes:
   cable schedule do not accidentally regroup it with an unrelated remaining
   branch from the same original line. Distinct manually combined line IDs still
   split back to their original names when there is no collision.
+- Task 11.3 third slice: Split now preserves untouched original line groups
+  when only part of that original line was moved into the selected manually
+  edited MCB tree. This keeps the active SLD, line-group table, and edited cable
+  schedule from losing the branch that remains outside the split scope. Nested
+  downstream-JB split semantics remain deliberately open: the current split
+  acts at the first fan-out below the selected MCB, so an engineered downstream
+  3PH grouping is preserved as one split branch instead of being exploded into
+  every leaf tracer without an explicit user decision.
+- Task 11.3 consistency cleanup: manual combine now updates the retained MCB
+  node with the full `line_ids` set it feeds, while preserving its primary
+  `line_id` for stable tagging. This keeps scoped reset, inspection, and
+  downstream schedule grouping aligned with the visible electrical topology.
+- Task 11.3 reset-selected regression: added coverage that a split branch can
+  be restored through `Reset Selected` without using the full project reset.
+  The browser SLD renderer now also clears a stale focused-line filter after a
+  scoped reset, so resetting a split part cannot leave the canvas asking for a
+  line ID that no longer exists after the generated topology is restored.
+- Task 11.6 PDF graph-renderer pass: PDF export now applies manual topology to
+  the full active SLD graph before any focused-line filtering, so manually
+  combined/split/attached circuits are exported instead of falling back to the
+  generated default SLD. The server-side PDF renderer now walks actual MCB-fed
+  graph paths, draws schematic-style MCB/isolator/JB/tracer/end-termination
+  symbols instead of generic boxes, and scales long rows to stay inside the A3
+  page width. Exact browser-canvas geometry remains a later polish item, but
+  the export now represents the active engineering topology rather than a
+  simplified default report.
+- Task 11.6 PDF 3PH-JB polish slice: PDF branch routing now connects outgoing
+  edges from distinct 3PH JB outlet slots rather than from one center point.
+  Two-outgoing JBs use the top and middle outlets and leave the bottom outlet
+  unused, matching the browser SLD convention and preserving visible 3PH
+  distribution intent in exported drawings.
+- Task 11.6 PDF symbol-alignment slice: PDF MCB and isolator symbols now use
+  the same inline SVG point-mapping convention as the browser renderer, reducing
+  the visual mismatch between exported drawings and the workspace SLD without
+  changing topology or layout logic. The PDF mapping also accounts for the
+  browser-vs-ReportLab vertical-axis direction so MCB/isolator symbols export
+  in the same orientation as the workspace.
+- Task 11.7 PDF export safety slice: SLD PDFs generated from review-required
+  topology payloads now carry the topology warning in the page header, so a
+  stale/review-required manual topology export is not silently presented as a
+  clean issue drawing.
 - Task 11.4 scoped reset pass: added `Reset Selected` beside the full reset.
   The user can select any component in an MCB-fed tree and reset just that
   original generated line scope while preserving unrelated active manual edits.
@@ -192,6 +233,13 @@ Progress notes:
   generated-topology fallback. The remaining Task 11.7 work is the larger
   replayable operation-record model so valid manual intent can be reapplied to a
   fresh baseline instead of only falling back.
+- Task 11.7 operation-record seed slice: new manual topology edits now persist a
+  normalized `topology_operations` list in the edit payload, with operation type,
+  schema version, user inputs, and preview snapshot. The active-topology
+  fail-safe now treats malformed operation records as review-required and shows
+  the generated topology instead. This does not yet replay edits after baseline
+  change, but it gives the next pass a safer scoped-operation contract to build
+  on without trusting only full saved graph payloads.
 - Task 11.9 first slice: combine-feeders, downstream-3PH-JB insertion, and
   standalone-MCB promotion now capture explicit manual 4C trunk length and
   cable-size values at edit time. Those values are stored on the created
