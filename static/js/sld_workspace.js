@@ -1441,9 +1441,13 @@
                 trunkLengthInput.dataset.mode = mode;
             }
             if (trunkLengthLabel) {
-                trunkLengthLabel.textContent = isDownstreamJb
+                const fullLengthLabel = isDownstreamJb
                     ? 'New JB-to-JB 4C trunk length (m)'
                     : (isAttachJb ? 'New target-MCB 4C trunk length (m)' : 'New MCB-to-JB 4C trunk length (m)');
+                trunkLengthLabel.textContent = isDownstreamJb
+                    ? 'JB-JB length (m)'
+                    : (isAttachJb ? 'Target length (m)' : 'MCB-JB length (m)');
+                trunkLengthLabel.title = fullLengthLabel;
             }
         }
         if (applyButton) {
@@ -1618,7 +1622,7 @@
             <div class="sld-tracer-options sld-tracer-options-preview mt-3">
                 <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
                     <div class="fw-semibold small">Tracer Selection</div>
-                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#sld-tracer-options-modal">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-review-tracer-options">
                         <i class="bi bi-table me-1"></i>Review Alternates
                     </button>
                 </div>
@@ -3354,6 +3358,27 @@
         }
     }
 
+    function showTracerOptionsModal(root) {
+        const panel = root ? root.closest('.sld-panel') : null;
+        const scopedModal = panel ? panel.querySelector('#sld-tracer-options-modal') : null;
+        const existingBodyModal = Array.from(document.querySelectorAll('body > #sld-tracer-options-modal'))[0];
+        const modal = scopedModal || existingBodyModal || document.getElementById('sld-tracer-options-modal');
+        if (!modal || !window.bootstrap || !window.bootstrap.Modal) {
+            if (window.showToast) {
+                window.showToast('Calculated alternate tracer options are not available right now.', 'warning');
+            }
+            return;
+        }
+
+        if (existingBodyModal && existingBodyModal !== modal) {
+            existingBodyModal.remove();
+        }
+        if (modal.parentElement !== document.body) {
+            document.body.appendChild(modal);
+        }
+        window.bootstrap.Modal.getOrCreateInstance(modal).show();
+    }
+
     function resetTopologyEdit(root) {
         const url = root.dataset.sldTopologyResetUrl;
         const projectId = root.dataset.projectId;
@@ -3702,6 +3727,11 @@
         if (root) {
             resetTracerOverride(root);
         }
+    });
+
+    $(document).on('click', '#sld-review-tracer-options', function () {
+        const root = document.getElementById('sld-diagram-shell');
+        showTracerOptionsModal(root);
     });
 
     $(document).on('click', '#sld-fit-view', function () {

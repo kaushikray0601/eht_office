@@ -504,7 +504,7 @@ footer {
 
 .sld-topology-command-grid {
     display: grid;
-    grid-template-columns: minmax(270px, auto) minmax(260px, 380px) minmax(220px, 1fr) auto;
+    grid-template-columns: minmax(270px, auto) minmax(260px, 360px) minmax(180px, 1fr) auto;
     gap: 0.55rem;
     align-items: end;
 }
@@ -523,8 +523,26 @@ footer {
 
 .sld-manual-trunk-inline {
     display: grid;
-    grid-template-columns: minmax(120px, 1fr) minmax(88px, 0.8fr);
-    gap: 0.18rem 0.45rem;
+    grid-template-columns: minmax(120px, 1fr) minmax(86px, 0.72fr);
+    gap: 0.45rem;
+    align-items: end;
+}
+
+.sld-topology-field {
+    min-width: 0;
+}
+
+.sld-topology-field .form-label {
+    display: block;
+    line-height: 1.1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.sld-topology-remarks {
+    min-height: calc(1.5em + 0.5rem + 2px);
+    resize: none;
 }
 
 .sld-cable-manual-label,
