@@ -2804,14 +2804,44 @@ class SldTopologyWorkflowTests(TestCase):
 
         payload = build_project_sld_payload('p1')
         self.assertTrue(payload['meta']['topology_baseline_changed'])
-        self.assertTrue(payload['meta']['topology_edit_review_required'])
-        self.assertIn('requires review', payload['meta']['manual_topology_warning'])
-        self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 2)
+        self.assertFalse(payload['meta']['topology_edit_review_required'])
+        self.assertTrue(payload['meta']['topology_edit_replayed_on_current_baseline'])
+        self.assertIn('replayed from audited operation records', payload['meta']['manual_topology_warning'])
+        self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 1)
+        self.assertTrue(any(
+            node['component_type'] == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+            for node in payload['nodes']
+        ))
 
         result_response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
         self.assertEqual(result_response.status_code, 200)
-        self.assertContains(result_response, '2 branch rows')
-        self.assertNotContains(result_response, 'MCB_001-M')
+        self.assertContains(result_response, '1 branch row')
+        self.assertContains(result_response, 'MCB_001-M')
+
+    def test_replay_failure_after_baseline_change_requires_review(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        edit.baseline_fingerprint = 'stale-baseline'
+        edit.edit_payload['topology_operations'][0]['inputs']['component_ids'] = [
+            'missing-mcb',
+            *edit.edit_payload['topology_operations'][0]['inputs']['component_ids'][1:],
+        ]
+        edit.save(update_fields=['baseline_fingerprint', 'edit_payload'])
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertTrue(payload['meta']['topology_baseline_changed'])
+        self.assertTrue(payload['meta']['topology_edit_review_required'])
+        self.assertIn('requires review', payload['meta']['manual_topology_warning'])
+        self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 2)
 
     def test_invalid_saved_topology_payload_falls_back_to_generated_payload(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -3148,6 +3178,126 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'EDITED-LINE')
         self.assertContains(response, 'MCB_001-M')
 
+    def test_cable_schedule_view_prompts_for_project_selection_when_missing(self):
+        response = self.client.get(reverse('cable_schedule_view'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Select a project in the Project Data form')
+
+    def test_cable_schedule_view_renders_active_schedule_table(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cable Schedule')
+        self.assertContains(response, 'data-toggle="table"')
+        self.assertContains(response, 'Cable Tag')
+        self.assertContains(response, 'Cable Specification')
+        self.assertContains(response, 'Connected From')
+        self.assertContains(response, 'LINE-001')
+        self.assertContains(response, 'CCAB')
+        self.assertContains(response, 'MCB_001')
+
+    def test_cable_schedule_view_uses_applied_topology_rows(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        generated_payload = build_project_sld_payload('p1')
+        mcb_component_ids = [
+            node['component_id']
+            for node in generated_payload['nodes']
+            if node['component_type'] == 'MCB'
+        ]
+        apply_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_ids': mcb_component_ids,
+                'trunk_length_m': 25,
+                'cable_size': '4C x 10',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(apply_response.status_code, 200)
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Manual SLD topology')
+        self.assertContains(response, 'MCB_001-M')
+        self.assertContains(response, '4C x 10')
+        self.assertContains(response, '25.00')
+        self.assertContains(response, 'MCB to first 3PhJB')
+
+    def test_cable_schedule_export_requires_project_id(self):
+        response = self.client.get(reverse('cable_schedule_export_view'))
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()['error'], 'Project ID is required to export cable schedule.')
+
+    def test_cable_schedule_export_returns_schedule_sheet(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response['Content-Type'],
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        self.assertIn('p1_cable_schedule.xlsx', response['Content-Disposition'])
+
+        workbook = load_workbook(BytesIO(response.content))
+        self.assertEqual(workbook.sheetnames, ['Cable Schedule'])
+
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        self.assertEqual(rows[0], (
+            'Sr. No',
+            'Cable Tag',
+            'Cable Specification',
+            'Cable Length (m)',
+            'Connected From',
+            'Connected To',
+            'Line IDs',
+            'Purpose',
+            'Cable Drum Tag',
+            'Cable Route Details',
+            'Remarks',
+            'Rev. No.',
+        ))
+        self.assertTrue(any(row[1] and str(row[1]).startswith('CCAB') for row in rows[1:]))
+        self.assertTrue(any(row[6] == 'LINE-001' for row in rows[1:]))
+
+    def test_cable_schedule_export_uses_applied_topology_rows(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        generated_payload = build_project_sld_payload('p1')
+        mcb_component_ids = [
+            node['component_id']
+            for node in generated_payload['nodes']
+            if node['component_type'] == 'MCB'
+        ]
+        apply_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_ids': mcb_component_ids,
+                'trunk_length_m': 25,
+                'cable_size': '4C x 10',
+            }),
+            content_type='application/json',
+        )
+        self.assertEqual(apply_response.status_code, 200)
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        self.assertTrue(any(
+            row[1] and '-M' in row[1] and row[2] == '4C x 10' and row[3] == 25
+            for row in rows[1:]
+        ))
+        self.assertTrue(any(row[4] == 'MCB_001-M' for row in rows[1:]))
+
     def test_result_export_returns_line_branch_and_alternate_sheets(self):
         line = make_calculated_project_snapshot()
 
@@ -3219,18 +3369,6 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, '7 / 11')
-
-    def test_boq_view_filters_selected_line_for_verification(self):
-        line = make_calculated_project_snapshot()
-
-        response = self.client.get(
-            reverse('boq_view'),
-            {'project_id': 'p1', 'line_lookup': line.line_id},
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, f'Selected Line: {line.line_id}')
-        self.assertContains(response, 'Show Line BOQ')
 
     def test_boq_line_detail_view_renders_inline_detail_partial(self):
         line = make_calculated_project_snapshot()

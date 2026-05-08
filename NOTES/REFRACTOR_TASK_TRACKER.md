@@ -114,18 +114,25 @@ Carry-over items:
 Next SLD follow-up queue:
 - [x] Task 11.1: First UI cleanup block: remove redundant context-menu inspect actions, right-click-select the component/link before showing actions, compact/style the context menu, make topology mode buttons responsive, restore visible scrollbars for zoomed canvas work, and increase schematic MCB/JB/isolator label scale for readability.
 - [x] Task 11.2: Engineering topology correctness: when manual operations insert a 3PH JB, insert the configured upstream/downstream isolator if project settings require it; when a 3PH JB is reduced to one outgoing branch, collapse it to the appropriate 1PH path instead of leaving a misleading 3PH distribution point.
-- [ ] Task 11.3: Enable split for manually edited topologies, especially manually combined and branch-moved MCB trees, without forcing reset/recombine workflows.
+- [x] Task 11.3: Enable split for manually edited topologies, especially manually combined and branch-moved MCB trees, without forcing reset/recombine workflows.
 - [x] Task 11.4: Add scoped reset-to-generated for a selected MCB/downstream tree so one engineer can undo a local mistake without deleting unrelated manual edits elsewhere in the project.
 - [x] Task 11.5: Extend tracer inspection/editing: show tracer family and calculated alternate tracer options in the property inspector, then allow a controlled tracer selection override.
-- [~] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
-- [~] Task 11.7: Production safety hardening for active topology edits: stop silently applying a saved full edited payload when the generated baseline fingerprint has changed, add reference validation for edited nodes/edges, and begin moving persisted topology edits toward scoped operation records that can be replayed on a fresh baseline.
+- [x] Task 11.6: Repair SLD PDF export so exported output matches the visible SLD, including multi-page diagrams, links, labels, and edited topology geometry.
+- [x] Task 11.7: Production safety hardening for active topology edits: stop silently applying a saved full edited payload when the generated baseline fingerprint has changed, add reference validation for edited nodes/edges, and begin moving persisted topology edits toward scoped operation records that can be replayed on a fresh baseline.
 - [x] Task 11.8: Fix edited cable-schedule generation so trunk cable lengths and outgoing branch cable lengths are separated by `cable_role` instead of summing every downstream `Cable4C` and `Cable3C` into `cable_length_db_to_jb`.
-- [~] Task 11.9: Add explicit manual trunk-length/size entry to combine/attach workflows where new `Cable4C` trunks are created, while preserving the property-inspector cable override path for later field adjustments.
+- [x] Task 11.9: Add explicit manual trunk-length/size entry to combine/attach workflows where new `Cable4C` trunks are created, while preserving the property-inspector cable override path for later field adjustments.
 - [x] Task 11.10: Guard the single-outgoing-3PH-JB collapse routine with electrical hierarchy checks and regression tests so it never creates an invalid direct 3PH source-to-1PH load path.
 - [x] Task 11.11: Carry tracer selection overrides into downstream BOQ/result summaries or clearly mark them review-only until recalculation logic can consume the selected alternate.
 - [ ] Task 11.12: Add phase-balancing visibility for 3PH JB outgoing branches once phase-slot ownership semantics are defined.
-- [ ] Task 11.13: Start a dedicated cable schedule module/page that separates generated and manually edited cable quantities from the generic Power Distribution Schedule, then later extend it with cable sizing, voltage drop, short-circuit, earth-loop impedance, ampacity, and optimization workflows.
-- [ ] Future Phase 6: Dedicated cable-sizing module for voltage drop, short circuit, earth-loop impedance, ampacity, and copper optimization.
+- [x] Task 11.13: Start a dedicated cable schedule module/page that separates generated and manually edited cable quantities from the generic Power Distribution Schedule.
+- [ ] Future Phase 6: Dedicated cable-sizing module for voltage drop, short circuit, earth-loop impedance, ampacity, cable route/drum management, and copper optimization. This is intentionally parked for a later design/build phase after the SLD editing pass is closed.
+
+Future SLD polish / product-quality ideas:
+- [ ] Add an "Impact Summary" after each topology edit showing MCB rating changes, cables added/removed, BOQ delta, and affected line IDs.
+- [ ] Add a compact audit timeline per selected MCB/JB so users can review who changed what, when, and with which remarks.
+- [ ] Add a manual-SLD review checklist panel for breaker validation, JB outgoing count, cable lengths, tracer review, and stale/review-required topology state.
+- [ ] Add visual issue badges directly on SLD components for warnings such as overfilled JB, review-required MCB, missing cable length, and stale topology.
+- [ ] Add editable persistent Cable Schedule fields for cable drum tag, route details, remarks, and revision number when those fields become part of the engineering workflow.
 
 Priority adjustment after Antigravity Phase 5 cold review:
 - Take Task 11.7 before further cosmetic/export work. The current baseline-change warning is useful, but production behavior must fail safe before the SLD can be trusted after recalculation/import changes.
@@ -240,6 +247,16 @@ Progress notes:
   the generated topology instead. This does not yet replay edits after baseline
   change, but it gives the next pass a safer scoped-operation contract to build
   on without trusting only full saved graph payloads.
+- Task 11.7 replay slice: active manual topology edits now attempt to replay
+  audited operation records on the current generated baseline when the original
+  baseline fingerprint has changed. Replay is conservative: combine, split,
+  downstream-JB, attach/move-branch, and scoped-reset operations are reapplied
+  only when their referenced components and engineering guardrails still match.
+  If any operation cannot be matched safely, the system falls back to generated
+  topology with a review-required warning instead of using stale saved graph
+  JSON. New topology edits also carry forward prior operation records so a
+  multi-step manual design has replayable intent rather than only the final
+  edited graph payload.
 - Task 11.9 first slice: combine-feeders, downstream-3PH-JB insertion, and
   standalone-MCB promotion now capture explicit manual 4C trunk length and
   cable-size values at edit time. Those values are stored on the created
@@ -252,3 +269,15 @@ Progress notes:
   for recalculated load, BOQ, or cable sizing output. A later calculation-engine
   pass can promote tracer overrides from review annotations into true
   recalculation inputs.
+- Task 11.13 first slice: added a dedicated Cable Schedule workspace tab backed
+  by a small cable-schedule module. The page now derives one row per active SLD
+  cable component (`Cable3C` / `Cable4C`) with cable tag, specification, length,
+  connected-from/to endpoints, line IDs, purpose, blank drum/route/remarks
+  fields, and revision number. It reflects active manual SLD topology and cable
+  overrides while staying separate from the generic Result page. Full cable
+  sizing, voltage-drop, short-circuit, earth-loop impedance, ampacity, and
+  optimization calculations remain future cable-module work.
+- Task 11.13 second slice: added Cable Schedule Excel export from the same
+  active schedule rows shown in the new tab. The export uses the engineering
+  column order requested for cable scheduling and reflects active manual SLD
+  topology instead of falling back to the older branch-style result schedule.

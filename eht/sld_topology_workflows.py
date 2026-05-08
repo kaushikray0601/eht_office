@@ -17,6 +17,24 @@ def _topology_operation(operation_type, preview, inputs):
     }
 
 
+def _active_topology_operations(project):
+    active_edit = (
+        SLDTopologyEdit.objects
+        .filter(project=project, status='applied')
+        .order_by('-created_at', '-id')
+        .first()
+    )
+    operations = (active_edit.edit_payload or {}).get('topology_operations') if active_edit else []
+    return deepcopy(operations) if isinstance(operations, list) else []
+
+
+def _topology_operation_chain(project, operation_type, preview, inputs):
+    return [
+        *_active_topology_operations(project),
+        _topology_operation(operation_type, preview, inputs),
+    ]
+
+
 def _next_breaker_size(total_rating):
     ratings = [value for value, _label in MAX_CB_SIZE]
     return next((rating for rating in ratings if rating >= total_rating), None)
@@ -2045,6 +2063,165 @@ def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id
     }
 
 
+def _replay_combine_feeders(project, payload, inputs):
+    trunk_length = _to_positive_float(inputs.get('trunk_length_m'), project.ckt_ln)
+    if trunk_length is None:
+        return None, 'Combine feeders replay failed: invalid or missing trunk cable length.'
+    selected_nodes, invalid_ids = _selected_mcb_nodes(payload, inputs.get('component_ids') or [])
+    if invalid_ids or len(selected_nodes) < 2:
+        return None, 'Combine feeders replay failed: selected MCB sources no longer match the generated SLD.'
+
+    selected_ids = {node['component_id'] for node in selected_nodes}
+    _incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    if any(
+        not any(edge.get('to_component_id') not in selected_ids for edge in outgoing_by_id.get(node['component_id'], []))
+        for node in selected_nodes
+    ):
+        return None, 'Combine feeders replay failed: one selected MCB no longer has an outgoing feeder path.'
+
+    recommended_rating = _next_breaker_size(sum(_breaker_rating(node) for node in selected_nodes))
+    if recommended_rating is None:
+        return None, 'Combine feeders replay failed: combined rating exceeds available breaker sizes.'
+
+    return _build_edited_payload(
+        payload,
+        selected_nodes,
+        recommended_rating,
+        project.isolator_location,
+        trunk_length_m=trunk_length,
+        cable_size=inputs.get('cable_size') or '4C',
+    ), ''
+
+
+def _replay_split_circuits(_project, payload, inputs):
+    source_mcb, invalid_ids = _selected_split_mcb(payload, inputs.get('component_ids') or [])
+    if invalid_ids or source_mcb is None:
+        return None, 'Split circuits replay failed: selected MCB source no longer matches the generated SLD.'
+    split_details = _split_source_details(payload, source_mcb)
+    if not split_details or len(split_details['entry_nodes']) < 2:
+        return None, 'Split circuits replay failed: selected MCB no longer feeds multiple downstream circuits.'
+
+    source_rating = _breaker_rating(source_mcb)
+    proportional_rating = source_rating / len(split_details['entry_nodes'])
+    recommended_rating = _next_breaker_size(proportional_rating)
+    if recommended_rating is None:
+        return None, 'Split circuits replay failed: reduced rating exceeds available breaker sizes.'
+
+    return _build_split_payload(payload, source_mcb, split_details, recommended_rating), ''
+
+
+def _replay_downstream_jb(project, payload, inputs):
+    trunk_length = _to_positive_float(inputs.get('trunk_length_m'), project.loop_ln)
+    if trunk_length is None:
+        return None, 'Downstream JB replay failed: invalid or missing trunk cable length.'
+    details = _selected_downstream_jb_details(
+        payload,
+        inputs.get('parent_component_id'),
+        inputs.get('branch_component_ids') or [],
+    )
+    if not details or details.get('invalid_ids'):
+        return None, 'Downstream JB replay failed: selected parent JB or outgoing branches no longer match.'
+
+    selected_count = len(details['selected_edges'])
+    parent_after_count = len(details['outgoing_edges']) - selected_count + 1
+    if selected_count < 2 or selected_count > 3 or parent_after_count > 3:
+        return None, 'Downstream JB replay failed: 3PH JB outgoing-count rules are no longer satisfied.'
+
+    return _build_downstream_jb_payload(
+        payload,
+        details,
+        trunk_length,
+        project.isolator_location,
+        cable_size=inputs.get('cable_size') or '4C',
+    ), ''
+
+
+def _replay_attach_to_jb(project, payload, inputs):
+    source_component_id = inputs.get('source_component_id')
+    target_component_id = inputs.get('target_component_id')
+    source_node = _node_lookup(payload).get(source_component_id)
+    if not source_node:
+        return None, 'Attach replay failed: selected source component no longer exists.'
+
+    if source_node.get('component_type') != 'MCB':
+        details, error = _selected_branch_move_details(
+            payload,
+            source_component_id,
+            target_component_id,
+            project.isolator_location,
+        )
+        if not details:
+            return None, error or 'Branch move replay failed: source branch or target no longer matches.'
+        target_trunk_length = _to_positive_float(
+            inputs.get('trunk_length_m'),
+            details.get('target_insert_trunk_length') or project.ckt_ln,
+        )
+        if details.get('target_mcb_existing_child') and target_trunk_length is None:
+            return None, 'Branch move replay failed: target MCB promotion needs a valid trunk cable length.'
+        return _build_branch_move_payload(
+            payload,
+            details,
+            target_trunk_length_m=target_trunk_length,
+            target_cable_size=inputs.get('cable_size') or '4C',
+        ), ''
+
+    details, error = _selected_attach_to_jb_details(payload, source_component_id, target_component_id)
+    if not details:
+        return None, error or 'Attach replay failed: source feeder or target JB no longer matches.'
+    recommended_rating = _next_breaker_size(
+        _breaker_rating(details['source_mcb']) + _breaker_rating(details['target_source_mcb'])
+    )
+    if recommended_rating is None:
+        return None, 'Attach replay failed: combined rating exceeds available breaker sizes.'
+    return _build_attach_to_jb_payload(payload, details, recommended_rating), ''
+
+
+def _replay_scoped_reset(generated_payload, payload, inputs):
+    reset_scope, error = _selected_reset_scope(
+        payload,
+        inputs.get('component_id') or inputs.get('source_mcb_component_id'),
+    )
+    if not reset_scope:
+        return None, error or 'Scoped reset replay failed: selected feeder tree no longer matches.'
+    edited_payload = _build_scoped_reset_payload(payload, generated_payload, reset_scope)
+    if not edited_payload:
+        return None, 'Scoped reset replay failed: generated replacement tree could not be resolved.'
+    return edited_payload, ''
+
+
+def replay_topology_operations(project_id, generated_payload, operations):
+    project = ProjectData.objects.get(proj_id=project_id)
+    replayed_payload = deepcopy(generated_payload)
+    for index, operation in enumerate(operations or [], start=1):
+        operation_type = operation.get('operation_type')
+        inputs = operation.get('inputs') or {}
+        if operation_type == 'combine_feeders':
+            replayed_payload, error = _replay_combine_feeders(project, replayed_payload, inputs)
+        elif operation_type == 'split_circuits':
+            replayed_payload, error = _replay_split_circuits(project, replayed_payload, inputs)
+        elif operation_type == 'downstream_jb':
+            replayed_payload, error = _replay_downstream_jb(project, replayed_payload, inputs)
+        elif operation_type in {'attach_to_jb', 'move_branch_to_jb'}:
+            replayed_payload, error = _replay_attach_to_jb(project, replayed_payload, inputs)
+        elif operation_type == 'scoped_reset':
+            replayed_payload, error = _replay_scoped_reset(generated_payload, replayed_payload, inputs)
+        else:
+            replayed_payload, error = None, f'Unsupported topology operation: {operation_type or "unknown"}.'
+
+        if not replayed_payload:
+            return {
+                'ok': False,
+                'error': error or 'Topology operation replay failed.',
+                'failed_operation_index': index,
+                'failed_operation_type': operation_type or '',
+            }
+
+    return {
+        'ok': True,
+        'payload': replayed_payload,
+    }
+
+
 @transaction.atomic
 def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_size='4C', user=None, remarks=''):
     project = ProjectData.objects.get(proj_id=project_id)
@@ -2069,6 +2246,11 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
+    topology_operations = _topology_operation_chain(project, 'combine_feeders', preview, {
+        'component_ids': preview['selected_component_ids'],
+        'trunk_length_m': preview['trunk_length_m'],
+        'cable_size': preview['cable_size'],
+    })
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2080,11 +2262,7 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         generated_snapshot=baseline_payload,
         edit_payload={
             'sld_payload': edited_payload,
-            'topology_operations': [_topology_operation('combine_feeders', preview, {
-                'component_ids': preview['selected_component_ids'],
-                'trunk_length_m': preview['trunk_length_m'],
-                'cable_size': preview['cable_size'],
-            })],
+            'topology_operations': topology_operations,
             'combine_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2165,6 +2343,12 @@ def apply_attach_to_jb(
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
+    topology_operations = _topology_operation_chain(project, preview['edit_type'], preview, {
+        'source_component_id': preview['source_component_id'],
+        'target_component_id': preview.get('target_component_id') or preview.get('target_jb_component_id'),
+        'trunk_length_m': preview.get('target_insert_trunk_length') or trunk_length_m,
+        'cable_size': preview.get('target_insert_cable_size') or cable_size,
+    })
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2176,12 +2360,7 @@ def apply_attach_to_jb(
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
-            'topology_operations': [_topology_operation(preview['edit_type'], preview, {
-                'source_component_id': preview['source_component_id'],
-                'target_component_id': preview.get('target_component_id') or preview.get('target_jb_component_id'),
-                'trunk_length_m': preview.get('target_insert_trunk_length') or trunk_length_m,
-                'cable_size': preview.get('target_insert_cable_size') or cable_size,
-            })],
+            'topology_operations': topology_operations,
             edit_payload_key: preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2247,6 +2426,12 @@ def apply_downstream_jb(
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
+    topology_operations = _topology_operation_chain(project, 'downstream_jb', preview, {
+        'parent_component_id': preview['parent_component_id'],
+        'branch_component_ids': preview['selected_component_ids'],
+        'trunk_length_m': preview['trunk_length_m'],
+        'cable_size': preview['cable_size'],
+    })
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2258,12 +2443,7 @@ def apply_downstream_jb(
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
-            'topology_operations': [_topology_operation('downstream_jb', preview, {
-                'parent_component_id': preview['parent_component_id'],
-                'branch_component_ids': preview['selected_component_ids'],
-                'trunk_length_m': preview['trunk_length_m'],
-                'cable_size': preview['cable_size'],
-            })],
+            'topology_operations': topology_operations,
             'downstream_jb_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2317,6 +2497,9 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
+    topology_operations = _topology_operation_chain(project, 'split_circuits', preview, {
+        'component_ids': preview['selected_component_ids'],
+    })
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2328,9 +2511,7 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
-            'topology_operations': [_topology_operation('split_circuits', preview, {
-                'component_ids': preview['selected_component_ids'],
-            })],
+            'topology_operations': topology_operations,
             'split_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,
@@ -2391,6 +2572,11 @@ def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
+    topology_operations = _topology_operation_chain(project, 'scoped_reset', preview, {
+        'component_id': component_id,
+        'source_mcb_component_id': preview['source_mcb_component_id'],
+        'reset_line_ids': preview['reset_line_ids'],
+    })
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2402,11 +2588,7 @@ def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
         generated_snapshot=generated_payload,
         edit_payload={
             'sld_payload': edited_payload,
-            'topology_operations': [_topology_operation('scoped_reset', preview, {
-                'component_id': component_id,
-                'source_mcb_component_id': preview['source_mcb_component_id'],
-                'reset_line_ids': preview['reset_line_ids'],
-            })],
+            'topology_operations': topology_operations,
             'scoped_reset_preview': preview,
             'downstream_summaries': {
                 'boq': boq_overrides,

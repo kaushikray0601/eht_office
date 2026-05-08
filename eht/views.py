@@ -24,6 +24,11 @@ from .cable_management import (
     reset_cable_override,
     save_cable_override,
 )
+from .cable_schedule import (
+    CABLE_SCHEDULE_EXPORT_HEADERS,
+    build_cable_schedule_workspace_data,
+    cable_schedule_export_rows,
+)
 from .forms import ProjectDataForm
 from .data_service import clear_project_workspace_data
 from .models import (
@@ -62,7 +67,6 @@ from .sld_validation import validate_project_sld_payload
 
 COOLDOWN_PERIOD_MINUTES = 30
 MAX_FAILED_ATTEMPTS = 3
-BOQ_LINE_DROPDOWN_LIMIT = 25
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +341,8 @@ def _build_result_workspace_data(project_id):
         .order_by('line__line_id')
     )
     sld_payload = build_project_sld_payload(project_id)
-    allow_topology_overrides = not (sld_payload.get('meta') or {}).get('topology_baseline_changed')
+    sld_meta = sld_payload.get('meta') or {}
+    allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
     branch_rows = list(
         PowerDistributionBranch.objects.filter(distribution__line__proj_id=project_id)
         .select_related('distribution__line')
@@ -442,6 +447,66 @@ def result_view(request):
         'has_results': bool(line_results),
     })
     return render(request, 'eht/partials/result_tab.html', context)
+
+
+def cable_schedule_view(request):
+    project_id = request.GET.get('project_id')
+    context = _get_project_workspace_context(request, project_id)
+    cable_schedule_rows = []
+    cable_schedule_summary = {
+        'row_count': 0,
+        'source_label': 'Generated calculation',
+        'has_topology_edit': False,
+        'topology_baseline_changed': False,
+        'manual_topology_warning': '',
+        'db_to_jb_total_m': 0,
+        'jb_to_jb_total_m': 0,
+        'branch_cable_total_m': 0,
+        'override_count': 0,
+    }
+
+    if project_id and context['project_setup']:
+        cable_schedule_data = build_cable_schedule_workspace_data(project_id)
+        cable_schedule_rows = cable_schedule_data['cable_rows']
+        cable_schedule_summary = cable_schedule_data['summary']
+
+    context.update({
+        'cable_schedule_rows': cable_schedule_rows,
+        'cable_schedule_summary': cable_schedule_summary,
+        'has_cable_schedule_rows': bool(cable_schedule_rows),
+        'cable_schedule_export_url': reverse('cable_schedule_export_view'),
+    })
+    return render(request, 'eht/partials/cable_schedule_tab.html', context)
+
+
+def cable_schedule_export_view(request):
+    project_id = request.GET.get('project_id')
+    if not project_id:
+        return JsonResponse({'error': 'Project ID is required to export cable schedule.'}, status=400)
+
+    context = _get_project_workspace_context(request, project_id)
+    if not context['project_setup']:
+        return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
+
+    cable_schedule_data = build_cable_schedule_workspace_data(project_id)
+    cable_rows = cable_schedule_data['cable_rows']
+    if not cable_rows:
+        return JsonResponse({'error': 'No cable schedule rows are available for this project yet.'}, status=400)
+
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        pd.DataFrame(
+            cable_schedule_export_rows(cable_rows),
+            columns=CABLE_SCHEDULE_EXPORT_HEADERS,
+        ).to_excel(writer, sheet_name='Cable Schedule', index=False)
+
+    output.seek(0)
+    response = HttpResponse(
+        output.getvalue(),
+        content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    )
+    response['Content-Disposition'] = f'attachment; filename="{project_id}_cable_schedule.xlsx"'
+    return response
 
 
 def import_input_view(request):
@@ -554,7 +619,8 @@ def _build_boq_workspace_data(project_id):
     line_groups.sort(key=lambda group: group['line'].line_id if group['line'] else '')
     consolidated_lookup = {item.item_code: item.quantity for item in consolidated_items}
     sld_payload = build_project_sld_payload(project_id)
-    allow_topology_overrides = not (sld_payload.get('meta') or {}).get('topology_baseline_changed')
+    sld_meta = sld_payload.get('meta') or {}
+    allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
     summary = {
         'consolidated_item_count': len(consolidated_items),
         'line_group_count': len(line_groups),
@@ -667,9 +733,6 @@ def boq_view(request):
     context = _get_project_workspace_context(request, project_id)
     consolidated_items = []
     line_groups = []
-    selected_line_group = None
-    selected_line_query = (request.GET.get('line_lookup') or request.GET.get('line_id') or '').strip()
-    selected_line_error = ''
     summary = {
         'consolidated_item_count': 0,
         'line_group_count': 0,
@@ -684,30 +747,11 @@ def boq_view(request):
         line_groups = boq_data['line_groups']
         summary = boq_data['summary']
 
-        if len(line_groups) == 1 and not selected_line_query:
-            selected_line_group = line_groups[0]
-            selected_line_query = selected_line_group['line'].line_id
-        elif selected_line_query:
-            selected_line_group = next(
-                (
-                    group
-                    for group in line_groups
-                    if group['line'] and group['line'].line_id.casefold() == selected_line_query.casefold()
-                ),
-                None,
-            )
-            if selected_line_group is None:
-                selected_line_error = f"No BOQ line items were found for line ID '{selected_line_query}'."
-
     context.update({
         'consolidated_items': consolidated_items,
         'line_groups': line_groups,
         'boq_summary': summary,
         'has_boq': bool(consolidated_items or line_groups),
-        'selected_line_group': selected_line_group,
-        'selected_line_query': selected_line_query,
-        'selected_line_error': selected_line_error,
-        'show_line_dropdown': len(line_groups) < BOQ_LINE_DROPDOWN_LIMIT,
     })
     return render(request, 'eht/partials/boq_tab.html', context)
 

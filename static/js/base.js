@@ -182,6 +182,10 @@ window.resetWorkspaceTabContent = function () {
         'Select a project in the Project Data form, then open this tab to load stored calculation results.'
     );
     renderWorkspacePlaceholder(
+        '#cable-schedule-tab-pane',
+        'Select a project in the Project Data form, then open this tab to load the active cable schedule.'
+    );
+    renderWorkspacePlaceholder(
         '#boq-tab-pane',
         'Select a project in the Project Data form, then open this tab to load stored BOQ data.'
     );
@@ -235,22 +239,6 @@ document.addEventListener('shown.bs.tab', function (event) {
     }
     initializeBootstrapTables(target);
     resetBootstrapTables(target);
-});
-
-$(document).on('submit', '#boq-line-filter-form', function (e) {
-    e.preventDefault();
-    loadWorkspaceFilterForm(this, 'button.nav-link#boq-tab', '#boq-tab-pane');
-});
-
-$(document).on('change', '#boq-line-filter-form select[name="line_id"]', function () {
-    const $form = $(this).closest('form');
-    $form.find('input[name="line_lookup"]').val('');
-    $form.trigger('submit');
-});
-
-$(document).on('click', '#boq-line-filter-reset', function () {
-    const activeButton = document.querySelector('button.nav-link#boq-tab');
-    loadWorkspaceTab(activeButton);
 });
 
 $(document).on('submit', '#sld-line-filter-form', function (e) {

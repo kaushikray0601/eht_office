@@ -56,6 +56,10 @@
                             type="button" role="tab" aria-controls="result-tab-pane" aria-selected="false" data-url="{% url 'result_view' %}">Result</button>
                     </li>
                     <li class="nav-item" role="presentation">
+                        <button class="nav-link" id="cable-schedule-tab" data-bs-toggle="tab" data-bs-target="#cable-schedule-tab-pane"
+                            type="button" role="tab" aria-controls="cable-schedule-tab-pane" aria-selected="false" data-url="{% url 'cable_schedule_view' %}">Cable Schedule</button>
+                    </li>
+                    <li class="nav-item" role="presentation">
                         <button class="nav-link" id="boq-tab" data-bs-toggle="tab" data-bs-target="#boq-tab-pane" 
                             type="button" role="tab" aria-controls="boq-tab-pane" aria-selected="false" data-url="{% url 'boq_view' %}">BOQ</button>
                     </li>
@@ -79,6 +83,9 @@
                     </div>
                     <div class="tab-pane fade" id="result-tab-pane">
                         <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to load stored calculation results.</div>
+                    </div>
+                    <div class="tab-pane fade" id="cable-schedule-tab-pane">
+                        <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to load the active cable schedule.</div>
                     </div>
                     <div class="tab-pane fade" id="boq-tab-pane">
                         <div class="alert alert-info mt-3 mb-0">Select a project in the Project Data form, then open this tab to load stored BOQ data.</div>

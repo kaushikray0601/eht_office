@@ -197,17 +197,6 @@ def apply_active_topology_edit(project_id, generated_payload):
         return generated_payload
 
     edited_payload = (edit.edit_payload or {}).get('sld_payload')
-    if _baseline_changed(edit, generated_payload):
-        return _normalize_review_required_payload(
-            generated_payload,
-            project_id,
-            edit,
-            (
-                'Manual topology edit requires review because the generated SLD baseline changed. '
-                'Generated topology is shown until the manual edit can be reapplied safely.'
-            ),
-        )
-
     operation_errors = _operation_record_errors(edit.edit_payload)
     if operation_errors:
         return _normalize_review_required_payload(
@@ -215,6 +204,53 @@ def apply_active_topology_edit(project_id, generated_payload):
             project_id,
             edit,
             'Manual topology edit requires review because its operation records are invalid.',
+        )
+
+    if _baseline_changed(edit, generated_payload):
+        operations = (edit.edit_payload or {}).get('topology_operations')
+        if operations:
+            from .sld_topology_workflows import replay_topology_operations
+
+            replay_result = replay_topology_operations(project_id, generated_payload, operations)
+            if replay_result.get('ok'):
+                normalized = _normalize_payload(
+                    replay_result['payload'],
+                    project_id,
+                    edit,
+                    generated_payload=generated_payload,
+                )
+                meta = dict(normalized.get('meta') or {})
+                meta.update({
+                    'topology_edit_replayed_on_current_baseline': True,
+                    'topology_edit_review_required': False,
+                    'manual_topology_warning': (
+                        'Manual topology edit was replayed from audited operation records on the current generated baseline. '
+                        'Review affected ratings and cable data before issue.'
+                    ),
+                })
+                normalized['meta'] = meta
+                return normalized
+
+            failed_message = replay_result.get('error') or 'The saved operation could not be matched safely.'
+            failed_index = replay_result.get('failed_operation_index')
+            failed_type = replay_result.get('failed_operation_type')
+            operation_context = (
+                f" Operation #{failed_index} ({failed_type}) failed: {failed_message}"
+                if failed_index
+                else f" {failed_message}"
+            )
+        else:
+            operation_context = ' No replayable operation records are available.'
+
+        return _normalize_review_required_payload(
+            generated_payload,
+            project_id,
+            edit,
+            (
+                'Manual topology edit requires review because the generated SLD baseline changed. '
+                'Generated topology is shown until the manual edit can be reapplied safely.'
+                f'{operation_context}'
+            ),
         )
 
     if isinstance(edited_payload, dict):
