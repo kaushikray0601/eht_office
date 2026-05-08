@@ -1,5 +1,5 @@
-<div class="card border-0 shadow-sm mt-3 workspace-panel glass-panel sld-panel">
-    <div class="card-body p-4">
+<div class="card border-0 shadow-sm mt-3 workspace-panel glass-panel sld-panel sld-workbench-panel">
+    <div class="card-body p-3">
         <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-2 workspace-header">
             <div>
                 <span class="workspace-eyebrow">Stored Graph Data</span>
@@ -29,14 +29,31 @@
         {% else %}
             <div class="sld-header-alert-anchor">
                 {% if sld_topology_state.has_topology_edit %}
-                    <div class="alert alert-warning alert-dismissible fade show py-2 mb-2 sld-topology-edit-alert">
-                        <span>
-                            Active topology edit: <strong>{{ sld_topology_state.topology_edit_type }}</strong>.
-                            {% if sld_topology_state.topology_baseline_changed %}
-                                Generated topology has changed since this edit was applied; validate or reset before issue.
-                            {% endif %}
-                            {{ sld_topology_state.manual_topology_warning|default:"Review downstream BOQ and cable schedule outputs before issue." }}
-                        </span>
+                    <div class="alert alert-warning alert-dismissible fade show py-2 mb-2 sld-topology-edit-alert" data-edit-type="{{ sld_topology_state.topology_edit_type }}">
+                        <div class="d-flex align-items-start gap-2 pe-4">
+                            <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                            <div>
+                                <div class="fw-semibold">
+                                    {% if sld_topology_state.topology_baseline_changed %}
+                                        Manual SLD Edit Needs Review
+                                    {% else %}
+                                        Manual SLD Edit Active
+                                    {% endif %}
+                                </div>
+                                <div class="small">
+                                    {% if sld_topology_state.topology_baseline_changed %}
+                                        The project was recalculated after this edit. The app will show the safest available SLD state until the edit is reviewed or replayed.
+                                    {% else %}
+                                        This SLD includes a manual engineering edit. Review BOQ and cable schedule impact before issue.
+                                    {% endif %}
+                                </div>
+                                <details class="small mt-1">
+                                    <summary>Technical details</summary>
+                                    <div>Edit type: <strong>{{ sld_topology_state.topology_edit_type }}</strong></div>
+                                    <div>{{ sld_topology_state.manual_topology_warning|default:"Review downstream BOQ and cable schedule outputs before issue." }}</div>
+                                </details>
+                            </div>
+                        </div>
                         <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
                     </div>
                 {% endif %}
@@ -56,8 +73,8 @@
                 {% endif %}
             </div>
 
-            <div class="workspace-section mb-3">
-                <div class="sld-browse-toolbar d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
+            <div class="workspace-section sld-workbench-surface mb-3">
+                <div class="sld-browse-toolbar sld-command-bar d-flex justify-content-between align-items-end flex-wrap gap-2 mb-2">
                     <form
                         id="sld-line-filter-form"
                         method="get"
@@ -106,7 +123,7 @@
                 {% elif sld_selected_line_id %}
                     <div class="alert alert-info py-2 mb-2">Focused view for line <strong>{{ sld_selected_line_id }}</strong>. Saved layout positions outside this line are preserved.</div>
                 {% endif %}
-                <div class="sld-layout-toolbar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                <div class="sld-layout-toolbar sld-command-bar d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
                     <div class="small text-muted">Canvas tools</div>
                     <div class="d-flex flex-wrap gap-2">
                         <button type="button" id="sld-fit-view" class="btn btn-outline-dark btn-sm">
@@ -153,8 +170,72 @@
                         </button>
                     </div>
                 </div>
-                <div class="row g-3 align-items-stretch">
-                    <div class="col-xl-9 sld-canvas-column">
+                <div class="sld-topology-control-panel sld-command-bar mb-2">
+                    <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                        <h6 class="mb-0">Topology Edit</h6>
+                        <span id="sld-combine-summary" class="small text-muted">Select a topology edit mode.</span>
+                    </div>
+                    <div class="sld-topology-command-grid">
+                        <div class="sld-topology-mode-grid" role="group" aria-label="Topology edit mode">
+                            <button type="button" id="sld-combine-mode" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-intersect me-1"></i>Combine
+                            </button>
+                            <button type="button" id="sld-split-mode" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-diagram-2 me-1"></i>Split
+                            </button>
+                            <button type="button" id="sld-downstream-jb-mode" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-node-plus me-1"></i>Add JB
+                            </button>
+                            <button type="button" id="sld-attach-jb-mode" class="btn btn-outline-primary btn-sm">
+                                <i class="bi bi-plug me-1"></i>Attach
+                            </button>
+                        </div>
+                        <div id="sld-manual-trunk-group" class="sld-manual-trunk-inline d-none">
+                            <label for="sld-downstream-jb-length" class="form-label small text-muted mb-1" id="sld-manual-trunk-length-label">New 4C trunk length (m)</label>
+                            <input
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                id="sld-downstream-jb-length"
+                                class="form-control form-control-sm"
+                                value="{{ project_setup.loop_ln|default:'' }}"
+                                placeholder="{{ project_setup.loop_ln|default:'' }}"
+                            >
+                            <label for="sld-manual-trunk-size" class="form-label small text-muted mb-1">New trunk cable size</label>
+                            <input
+                                type="text"
+                                id="sld-manual-trunk-size"
+                                class="form-control form-control-sm"
+                                value="4C"
+                                placeholder="4C"
+                            >
+                        </div>
+                        <textarea id="sld-combine-remarks" class="form-control form-control-sm" rows="1" placeholder="Optional audit remarks"></textarea>
+                        <div class="d-flex flex-wrap gap-2">
+                            <button type="button" id="sld-combine-apply" class="btn btn-primary btn-sm" disabled>
+                                Apply Edit
+                            </button>
+                            <button
+                                type="button"
+                                id="sld-topology-reset"
+                                class="btn btn-outline-danger btn-sm"
+                                {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
+                            >
+                                <i class="bi bi-arrow-counterclockwise me-1"></i>Reset All
+                            </button>
+                            <button
+                                type="button"
+                                id="sld-topology-reset-selected"
+                                class="btn btn-outline-secondary btn-sm"
+                                {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
+                            >
+                                <i class="bi bi-arrow-return-left me-1"></i>Reset Selected
+                            </button>
+                        </div>
+                    </div>
+                </div>
+                <div class="sld-workbench-main">
+                    <div class="sld-canvas-column">
                         <div
                             id="sld-diagram-shell"
                             class="sld-diagram-shell"
@@ -186,69 +267,8 @@
                             </div>
                         </div>
                     </div>
-                    <div class="col-xl-3 sld-inspector-column">
+                    <div class="sld-inspector-column">
                         <div class="workspace-section h-100 sld-inspector-panel">
-                            <div class="sld-topology-control-panel mb-3">
-                                <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
-                                    <h6 class="mb-0">Topology Edit</h6>
-                                    <span class="badge text-bg-light border">Workflow</span>
-                                </div>
-                                <div class="sld-topology-mode-grid mb-2" role="group" aria-label="Topology edit mode">
-                                    <button type="button" id="sld-combine-mode" class="btn btn-outline-primary btn-sm">
-                                        <i class="bi bi-intersect me-1"></i>Combine
-                                    </button>
-                                    <button type="button" id="sld-split-mode" class="btn btn-outline-primary btn-sm">
-                                        <i class="bi bi-diagram-2 me-1"></i>Split
-                                    </button>
-                                    <button type="button" id="sld-downstream-jb-mode" class="btn btn-outline-primary btn-sm">
-                                        <i class="bi bi-node-plus me-1"></i>Add JB
-                                    </button>
-                                    <button type="button" id="sld-attach-jb-mode" class="btn btn-outline-primary btn-sm">
-                                        <i class="bi bi-plug me-1"></i>Attach
-                                    </button>
-                                </div>
-                                <div id="sld-manual-trunk-group" class="mb-2 d-none">
-                                    <label for="sld-downstream-jb-length" class="form-label small text-muted mb-1" id="sld-manual-trunk-length-label">New 4C trunk length (m)</label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        min="0.01"
-                                        id="sld-downstream-jb-length"
-                                        class="form-control form-control-sm"
-                                        value="{{ project_setup.loop_ln|default:'' }}"
-                                        placeholder="{{ project_setup.loop_ln|default:'' }}"
-                                    >
-                                    <label for="sld-manual-trunk-size" class="form-label small text-muted mb-1 mt-2">New trunk cable size</label>
-                                    <input
-                                        type="text"
-                                        id="sld-manual-trunk-size"
-                                        class="form-control form-control-sm"
-                                        value="4C"
-                                        placeholder="4C"
-                                    >
-                                </div>
-                                <div id="sld-combine-summary" class="small text-muted mb-2">Select a topology edit mode.</div>
-                                <textarea id="sld-combine-remarks" class="form-control form-control-sm mb-2" rows="2" placeholder="Optional audit remarks"></textarea>
-                                <button type="button" id="sld-combine-apply" class="btn btn-primary btn-sm w-100 mb-2" disabled>
-                                    Apply Edit
-                                </button>
-                                <button
-                                    type="button"
-                                    id="sld-topology-reset"
-                                    class="btn btn-outline-danger btn-sm w-100"
-                                    {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
-                                >
-                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reset to Generated
-                                </button>
-                                <button
-                                    type="button"
-                                    id="sld-topology-reset-selected"
-                                    class="btn btn-outline-secondary btn-sm w-100 mt-2"
-                                    {% if not sld_topology_state.has_topology_edit %}disabled{% endif %}
-                                >
-                                    <i class="bi bi-arrow-return-left me-1"></i>Reset Selected
-                                </button>
-                            </div>
                             <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
                                 <h6 class="mb-0">Property Inspector</h6>
                                 <span class="badge text-bg-light border">Selection</span>
@@ -264,6 +284,26 @@
                 </div>
             </div>
 
+            <div class="modal fade" id="sld-tracer-options-modal" tabindex="-1" aria-labelledby="sld-tracer-options-title" aria-hidden="true">
+                <div class="modal-dialog modal-xl modal-dialog-scrollable">
+                    <div class="modal-content">
+                        <div class="modal-header">
+                            <h5 class="modal-title" id="sld-tracer-options-title">Calculated Alternate Tracers</h5>
+                            <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                        </div>
+                        <div class="modal-body" id="sld-tracer-options-modal-body">
+                            <div class="text-muted">Select a tracer on the SLD to review calculated alternates.</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <details class="workspace-section sld-diagnostics-panel mb-3">
+                <summary class="sld-diagnostics-summary">
+                    <span><i class="bi bi-clipboard-pulse me-1"></i>Diagnostics & Index</span>
+                    <span class="small text-muted">Validation, component summary, and line groups</span>
+                </summary>
+                <div class="pt-3">
             <div class="workspace-section mb-3">
                 <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-3">
                     <div>
@@ -472,6 +512,8 @@
                     </div>
                 </div>
             </div>
+                </div>
+            </details>
         {% endif %}
     </div>
 </div>

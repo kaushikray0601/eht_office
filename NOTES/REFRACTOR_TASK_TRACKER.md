@@ -125,7 +125,9 @@ Next SLD follow-up queue:
 - [x] Task 11.11: Carry tracer selection overrides into downstream BOQ/result summaries or clearly mark them review-only until recalculation logic can consume the selected alternate.
 - [ ] Task 11.12: Add phase-balancing visibility for 3PH JB outgoing branches once phase-slot ownership semantics are defined.
 - [x] Task 11.13: Start a dedicated cable schedule module/page that separates generated and manually edited cable quantities from the generic Power Distribution Schedule.
+- [x] Task 11.14: First SLD workbench redesign slice: auto-collapse the left sidebar while the SLD tab is active, give the canvas a wider scrollable work area, move topology edit controls above the drawing, widen/stabilize the inspector, move tracer alternate options into a modal, collapse diagnostics/index tables, and replace raw topology warning prose with a user-readable warning plus folded technical details.
 - [ ] Future Phase 6: Dedicated cable-sizing module for voltage drop, short circuit, earth-loop impedance, ampacity, cable route/drum management, and copper optimization. This is intentionally parked for a later design/build phase after the SLD editing pass is closed.
+- [ ] Future topology node: Add Mineral Insulated cable star-point support (`MI_STAR_POINT`) when MI cable modeling is introduced. Treat it as a terminal/topology endpoint in traversal and validation unless a later domain rule defines outgoing paths.
 
 Future SLD polish / product-quality ideas:
 - [ ] Add an "Impact Summary" after each topology edit showing MCB rating changes, cables added/removed, BOQ delta, and affected line IDs.

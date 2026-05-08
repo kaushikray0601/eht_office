@@ -172,6 +172,35 @@ function loadWorkspaceFilterForm(formElement, tabSelector, targetFallback) {
 
 window.loadWorkspaceTab = loadWorkspaceTab;
 
+function setSldWorkbenchMode(isActive) {
+    const sidebar = document.getElementById('sidebar');
+    const mainContent = document.getElementById('mainContent');
+    if (!sidebar || !mainContent) {
+        return;
+    }
+
+    if (isActive) {
+        if (!sidebar.classList.contains('collapsed')) {
+            sidebar.dataset.autoCollapsedBySld = 'true';
+            sidebar.classList.add('collapsed');
+            sidebar.classList.remove('expanded');
+            mainContent.classList.add('collapsed');
+            mainContent.classList.remove('expanded');
+        }
+        document.body.classList.add('sld-workbench-active');
+        return;
+    }
+
+    document.body.classList.remove('sld-workbench-active');
+    if (sidebar.dataset.autoCollapsedBySld === 'true') {
+        sidebar.classList.remove('collapsed');
+        sidebar.classList.add('expanded');
+        mainContent.classList.remove('collapsed');
+        mainContent.classList.add('expanded');
+        delete sidebar.dataset.autoCollapsedBySld;
+    }
+}
+
 window.resetWorkspaceTabContent = function () {
     renderWorkspacePlaceholder(
         '#import-input-tab-pane',
@@ -229,6 +258,7 @@ function loadBoqInlineDetail(tableElement, index, row, $detail) {
 
 // Click-driven load is more reliable here than depending only on Bootstrap tab events.
 $(document).on('click', 'button.nav-link[data-url]', debounce(function () {
+    setSldWorkbenchMode(this.getAttribute('data-bs-target') === '#sld-tab-pane');
     loadWorkspaceTab(this);
 }, 150));
 
@@ -237,6 +267,7 @@ document.addEventListener('shown.bs.tab', function (event) {
     if (!target) {
         return;
     }
+    setSldWorkbenchMode(target === '#sld-tab-pane');
     initializeBootstrapTables(target);
     resetBootstrapTables(target);
 });

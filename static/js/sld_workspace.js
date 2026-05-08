@@ -1544,6 +1544,10 @@
         }
         editor.innerHTML = '';
         if (!node || node.component_type !== 'Tracer') {
+            const modalBody = document.getElementById('sld-tracer-options-modal-body');
+            if (modalBody) {
+                modalBody.innerHTML = '<div class="text-muted">Select a tracer on the SLD to review calculated alternates.</div>';
+            }
             return;
         }
         const metadata = node.metadata || {};
@@ -1552,6 +1556,10 @@
         const generatedTracer = tracerSelection.generated_selected || {};
         const alternatives = tracerSelection.alternatives || [];
         if (!alternatives.length) {
+            const modalBody = document.getElementById('sld-tracer-options-modal-body');
+            if (modalBody) {
+                modalBody.innerHTML = '<div class="text-muted">No calculated alternate tracer options are available for the selected tracer.</div>';
+            }
             return;
         }
         const optionChoices = [
@@ -1579,28 +1587,42 @@
                 </tr>
             `;
         }).join('');
+        const optionsTable = `
+            <div class="table-responsive">
+                <table class="table table-sm table-striped table-hover align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Rank</th>
+                            <th>UID</th>
+                            <th>Family</th>
+                            <th>W/m</th>
+                            <th>Spiral</th>
+                            <th>Length</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `;
+        const modalBody = document.getElementById('sld-tracer-options-modal-body');
+        if (modalBody) {
+            modalBody.innerHTML = `
+                <div class="small text-muted mb-2">Calculated options for ${escapeHtml(node.display_tag || node.component_id || 'selected tracer')}.</div>
+                ${optionsTable}
+            `;
+        }
         const activeNote = tracerSelection.override_active
             ? 'Using user-selected tracer option for this line.'
             : 'Using generated tracer selection.';
         editor.innerHTML = `
-            <div class="sld-tracer-options mt-3">
-                <div class="fw-semibold small mb-2">Calculated Alternate Tracers</div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-bordered align-middle mb-0">
-                        <thead>
-                            <tr>
-                                <th>Rank</th>
-                                <th>UID</th>
-                                <th>Family</th>
-                                <th>W/m</th>
-                                <th>Spiral</th>
-                                <th>Length</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
+            <div class="sld-tracer-options sld-tracer-options-preview mt-3">
+                <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
+                    <div class="fw-semibold small">Tracer Selection</div>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-toggle="modal" data-bs-target="#sld-tracer-options-modal">
+                        <i class="bi bi-table me-1"></i>Review Alternates
+                    </button>
                 </div>
-                <div class="mt-3">
+                <div>
                     <label class="form-label small text-muted mb-1" for="sld-tracer-select">Active tracer</label>
                     <select class="form-select form-select-sm" id="sld-tracer-select">${optionChoices}</select>
                 </div>
@@ -2368,7 +2390,7 @@
                 ? state.attachJbPreview
                 : (state.splitMode ? state.splitPreview : state.combinePreview));
         const applyAction = activePreview && activePreview.ok
-            ? `<button type="button" data-sld-context-action="apply-edit">${mode === 'attach_to_jb' ? 'Apply Attach' : (mode === 'downstream_jb' ? 'Apply Downstream JB' : (state.splitMode ? 'Apply Split' : 'Apply Combine'))}</button>`
+            ? `<button type="button" data-sld-context-action="apply-edit"><i class="bi bi-check2-circle me-2"></i>${mode === 'attach_to_jb' ? 'Apply Attach' : (mode === 'downstream_jb' ? 'Apply Downstream JB' : (state.splitMode ? 'Apply Split' : 'Apply Combine'))}</button>`
             : '';
         const isDirectDownstreamBranch = componentId && directDownstreamJbChildIds(state).has(componentId);
         const attachSourceNode = state.attachSourceId ? state.nodeByComponentId[state.attachSourceId] : null;
@@ -2386,26 +2408,26 @@
             && attachSourceNode
             && nodeOutgoingCount >= 3;
         menu.innerHTML = edgeEntry ? `
-            <button type="button" data-sld-context-action="fit-line">Fit Connected Line</button>
-            <button type="button" data-sld-context-action="attach-link-source">Move Downstream Branch</button>
+            <button type="button" data-sld-context-action="fit-line"><i class="bi bi-crosshair me-2"></i>Fit Line</button>
+            <button type="button" data-sld-context-action="attach-link-source"><i class="bi bi-arrow-left-right me-2"></i>Move Branch</button>
             ${applyAction}
-            <button type="button" data-sld-context-action="clear">Clear Selection</button>
+            <button type="button" data-sld-context-action="clear"><i class="bi bi-x-circle me-2"></i>Clear Selection</button>
         ` : (node ? `
-            <button type="button" data-sld-context-action="fit-line">Fit This Line Group</button>
-            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine">Select MCB for Combine</button>' : ''}
-            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split">Select MCB for Split</button>' : ''}
-            ${node.component_type !== 'JB3PH' ? '<button type="button" data-sld-context-action="attach-source">Move This Branch / Feeder</button>' : ''}
-            ${canUseMcbAsAttachTarget ? '<button type="button" data-sld-context-action="attach-target">Promote MCB + Feed Here</button>' : ''}
-            ${node.component_type === 'JB3PH' ? `<button type="button" data-sld-context-action="downstream-parent">Add Downstream 3PH JB Here (${escapeHtml(nodeOutgoingCount)} outgoing)</button>` : ''}
-            ${canUseJbAsAttachTarget ? `<button type="button" data-sld-context-action="attach-target">Feed Selected Branch Here (${escapeHtml(nodeOutgoingCount)}/3 used)</button>` : ''}
-            ${isFullJbTarget ? '<button type="button" disabled>Target JB Full (3/3 used)</button>' : ''}
-            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch">Include In New Downstream JB</button>' : ''}
+            <button type="button" data-sld-context-action="fit-line"><i class="bi bi-crosshair me-2"></i>Fit Line</button>
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine"><i class="bi bi-intersect me-2"></i>Select For Combine</button>' : ''}
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split"><i class="bi bi-diagram-2 me-2"></i>Split Circuits</button>' : ''}
+            ${node.component_type !== 'JB3PH' ? '<button type="button" data-sld-context-action="attach-source"><i class="bi bi-arrow-left-right me-2"></i>Move Branch / Feeder</button>' : ''}
+            ${canUseMcbAsAttachTarget ? '<button type="button" data-sld-context-action="attach-target"><i class="bi bi-plug me-2"></i>Use MCB As New Source</button>' : ''}
+            ${node.component_type === 'JB3PH' ? `<button type="button" data-sld-context-action="downstream-parent"><i class="bi bi-node-plus me-2"></i>Add Downstream JB (${escapeHtml(nodeOutgoingCount)} outgoing)</button>` : ''}
+            ${canUseJbAsAttachTarget ? `<button type="button" data-sld-context-action="attach-target"><i class="bi bi-plug me-2"></i>Feed Branch Here (${escapeHtml(nodeOutgoingCount)}/3 used)</button>` : ''}
+            ${isFullJbTarget ? '<button type="button" disabled><i class="bi bi-slash-circle me-2"></i>Target JB Full (3/3)</button>' : ''}
+            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch"><i class="bi bi-plus-square-dotted me-2"></i>Include In New JB</button>' : ''}
             ${applyAction}
-            <button type="button" data-sld-context-action="clear">Clear Selection</button>
+            <button type="button" data-sld-context-action="clear"><i class="bi bi-x-circle me-2"></i>Clear Selection</button>
         ` : `
-            <button type="button" data-sld-context-action="fit-all">Fit All</button>
+            <button type="button" data-sld-context-action="fit-all"><i class="bi bi-arrows-fullscreen me-2"></i>Fit All</button>
             ${applyAction}
-            <button type="button" data-sld-context-action="clear">Clear Selection</button>
+            <button type="button" data-sld-context-action="clear"><i class="bi bi-x-circle me-2"></i>Clear Selection</button>
         `);
         menu.dataset.componentId = componentId || '';
         menu.dataset.edgeKey = edgeKey || '';
@@ -3260,6 +3282,31 @@
         });
     }
 
+    function renderTopologyAlertHtml(topologyState) {
+        const editType = topologyState.editType || 'manual';
+        const warning = topologyState.warning || 'Review downstream BOQ and cable schedule outputs before issue.';
+        const needsReview = !!topologyState.baselineChanged || /requires review|failed/i.test(warning);
+        const title = needsReview ? 'Manual SLD Edit Needs Review' : 'Manual SLD Edit Active';
+        const message = needsReview
+            ? 'The project changed after this manual edit, or the edit needs engineering review. The app is avoiding unsafe assumptions.'
+            : 'This SLD includes a manual engineering edit. Review BOQ and cable schedule impact before issue.';
+        return `
+            <div class="d-flex align-items-start gap-2 pe-4">
+                <i class="bi bi-exclamation-triangle-fill mt-1"></i>
+                <div>
+                    <div class="fw-semibold">${escapeHtml(title)}</div>
+                    <div class="small">${escapeHtml(message)}</div>
+                    <details class="small mt-1">
+                        <summary>Technical details</summary>
+                        <div>Edit type: <strong>${escapeHtml(editType)}</strong></div>
+                        <div>${escapeHtml(warning)}</div>
+                    </details>
+                </div>
+            </div>
+            <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        `;
+    }
+
     function updateTopologyStateUi(root, topologyState) {
         const panel = root.closest('.sld-panel');
         if (!panel) {
@@ -3303,12 +3350,7 @@
             }
         }
         if (alert) {
-            const editType = topologyState.editType || 'manual';
-            const warning = topologyState.warning || 'Review downstream BOQ and cable schedule outputs before issue.';
-            alert.innerHTML = `
-                <span>Active topology edit: <strong>${escapeHtml(editType)}</strong>. ${escapeHtml(warning)}</span>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
-            `;
+            alert.innerHTML = renderTopologyAlertHtml(topologyState || {});
         }
     }
 

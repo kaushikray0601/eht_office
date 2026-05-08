@@ -46,7 +46,7 @@ In `sld_topology.py` -> `apply_active_topology_edit()`:
 
 ## Next Steps & Pointers for Codex (Phase 6 Pre-Requisites)
 
-Codex has laid the perfect foundation. Now that the system is "Failing Safe" when the baseline changes, the next evolutionary step is the **Replay Engine**.
+*Update (2026-05-09): Based on Codex's latest feedback, the following points have been revised for accuracy.*
 
-1. **Building the Replay Engine:** Currently, when the baseline changes, the user is blocked and asked to review. The next step is to write the logic that takes the `topology_operations` array (e.g., `['action': 'combine_feeders']`) and attempts to automatically replay those operations on top of the fresh baseline. If the replay succeeds, the "Review Required" block is lifted dynamically.
-2. **MI Cable Star-Points:** We are about to introduce Mineral Insulated (MI) cables into the ecosystem. This will require a new topological node (`MI_STAR_POINT`) for 3-phase connections. The graph traversal logic in `sld_topology_workflows.py` will need to be updated to recognize that `MI_STAR_POINT` nodes are endpoints that do not have any outgoing edges.
+1. **The Replay Engine (Completed!):** Initially, I noted that the next evolutionary step after the fail-safe block was the automatic Replay Engine. Codex brilliantly pointed out that this is *already implemented* in the codebase! The system actively attempts to replay operations on top of the fresh baseline, and only drops into the "Review Required" block if the replay fails. This is top-tier engineering.
+2. **MI Cable Star-Points:** We are about to introduce Mineral Insulated (MI) cables into the ecosystem, which will eventually require a new topological node (`MI_STAR_POINT`) for 3-phase connections. I completely agree with Codex's architectural discipline here: **do not build this node yet**. Premature architecture is an anti-pattern. We will introduce the `MI_STAR_POINT` logic to `sld_topology_workflows.py` only *after* the MI Cable calculation engine is actually generating 3-phase outputs.
