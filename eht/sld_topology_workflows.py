@@ -47,6 +47,20 @@ def _breaker_rating(node):
         return 0
 
 
+def _starting_current(node):
+    try:
+        return float((node.get('metadata') or {}).get('starting_current') or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _combined_feeder_current(nodes):
+    currents = [_starting_current(node) for node in nodes]
+    if currents and all(current > 0 for current in currents):
+        return sum(currents), 'starting_current'
+    return sum(_breaker_rating(node) for node in nodes), 'breaker_rating'
+
+
 def _mcb_nodes_by_id(payload):
     return {
         node['component_id']: node
@@ -553,6 +567,7 @@ def _manual_combine_node(
         'manual_topology_edit': 'combine_feeders',
         'combined_feeder_count': len(selected_nodes),
     }
+    combined_current, rating_basis = _combined_feeder_current(selected_nodes)
     if component_type == 'Cable4C':
         metadata.update({
             'cable_role': 'MCB_TO_JB3PH',
@@ -571,6 +586,8 @@ def _manual_combine_node(
         metadata.update({
             'circuit_count': len(selected_nodes),
             'source_mcb': source_mcb.get('display_tag'),
+            'combined_feeder_current': combined_current,
+            'breaker_rating_basis': rating_basis,
             'recommended_breaker_rating': recommended_rating,
         })
 
@@ -645,8 +662,12 @@ def _build_edited_payload(
         if node['component_id'] != primary_id:
             continue
         metadata = dict(node.get('metadata') or {})
+        combined_current, rating_basis = _combined_feeder_current(selected_nodes)
         metadata.update({
             'breaker_size': recommended_rating,
+            'starting_current': combined_current,
+            'combined_feeder_current': combined_current,
+            'breaker_rating_basis': rating_basis,
             'manual_topology_edit': 'combine_feeders',
             'combined_feeder_count': len(selected_nodes),
         })
@@ -1712,16 +1733,13 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
             'missing_outgoing_feeders': missing_outgoing,
         }
 
-    ratings = [
-        float((node.get('metadata') or {}).get('breaker_size') or 0)
-        for node in selected_nodes
-    ]
-    total_rating = sum(ratings)
-    recommended_rating = _next_breaker_size(total_rating)
+    ratings = [_breaker_rating(node) for node in selected_nodes]
+    total_current, rating_basis = _combined_feeder_current(selected_nodes)
+    recommended_rating = _next_breaker_size(total_current)
     if recommended_rating is None:
         return {
             'ok': False,
-            'error': f"Combined feeder rating {total_rating:g}A exceeds the largest configured breaker size.",
+            'error': f"Combined feeder current {total_current:g}A exceeds the largest configured breaker size.",
         }
 
     primary = selected_nodes[0]
@@ -1754,7 +1772,9 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
         'added_display_tags': added_display_tags,
         'extends_existing_combine': bool(existing_jb3ph),
         'input_breaker_ratings': ratings,
-        'combined_breaker_rating': total_rating,
+        'combined_breaker_rating': total_current,
+        'combined_feeder_current': total_current,
+        'breaker_rating_basis': rating_basis,
         'recommended_breaker_rating': recommended_rating,
         'trunk_length_m': trunk_length,
         'cable_size': normalized_cable_size,
@@ -2079,9 +2099,10 @@ def _replay_combine_feeders(project, payload, inputs):
     ):
         return None, 'Combine feeders replay failed: one selected MCB no longer has an outgoing feeder path.'
 
-    recommended_rating = _next_breaker_size(sum(_breaker_rating(node) for node in selected_nodes))
+    total_current, _rating_basis = _combined_feeder_current(selected_nodes)
+    recommended_rating = _next_breaker_size(total_current)
     if recommended_rating is None:
-        return None, 'Combine feeders replay failed: combined rating exceeds available breaker sizes.'
+        return None, 'Combine feeders replay failed: combined current exceeds available breaker sizes.'
 
     return _build_edited_payload(
         payload,

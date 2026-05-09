@@ -90,6 +90,7 @@
                             <th data-field="connected-to" data-sortable="true">Connected To</th>
                             <th data-field="line-ids" data-sortable="true">Line IDs</th>
                             <th data-field="purpose" data-sortable="true">Purpose</th>
+                            <th data-field="manual-edit" data-sortable="true" data-visible="false">Manual Edit</th>
                             <th data-field="cable-drum-tag" data-sortable="true" data-visible="false">Cable Drum Tag</th>
                             <th data-field="cable-route-details" data-sortable="true" data-visible="false">Cable Route Details</th>
                             <th data-field="remarks" data-sortable="true" data-visible="false">Remarks</th>
@@ -112,6 +113,7 @@
                                 <td>{{ row.connected_to|default:"-" }}</td>
                                 <td>{{ row.line_ids|default:"-" }}</td>
                                 <td>{{ row.purpose|default:"-" }}</td>
+                                <td>{% if row.manual_override_active %}Yes{% else %}No{% endif %}</td>
                                 <td>
                                     {% if row.cable_drum_tag %}
                                         {{ row.cable_drum_tag }}

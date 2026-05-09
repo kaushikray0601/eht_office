@@ -155,7 +155,7 @@ def _cable_schedule_rows(payload):
             'purpose': _purpose(node, incoming_edges, outgoing_edges, node_by_id),
             'cable_drum_tag': '',
             'cable_route_details': '',
-            'remarks': '',
+            'remarks': metadata.get('cable_override_remarks') or '',
             'revision_no': '0',
             'manual_override_active': bool(metadata.get('cable_override_active')),
         })

@@ -66,7 +66,13 @@ def _normalize_component(
     line_id = detail.get('line_id') or branch.distribution.line.line_id
     line_ids = detail.get('line_ids') or ([line_id] if line_id else [])
     component_uid = detail.get('component_uid') or _stable_uid(component_id)
-    metadata = detail.get('metadata') or {}
+    metadata = dict(detail.get('metadata') or {})
+    if component_type == 'MCB':
+        calculation = getattr(branch.distribution.line, 'process_line_calculation', None)
+        if calculation:
+            metadata.setdefault('starting_current', calculation.starting_current)
+            metadata.setdefault('operating_current', calculation.operating_current)
+            metadata.setdefault('total_power_consumption', calculation.total_power_consumption)
 
     return {
         'component_id': component_id,

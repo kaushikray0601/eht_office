@@ -1249,6 +1249,7 @@ class SldPayloadTests(TestCase):
         self.assertEqual(adjusted['metadata']['manual_length_m'], 123.45)
         self.assertEqual(adjusted['metadata']['cable_size'], '4C x 2.5')
         self.assertTrue(adjusted['metadata']['cable_override_active'])
+        self.assertEqual(adjusted['metadata']['cable_override_remarks'], 'Routed via field JB rack.')
 
     def test_build_project_sld_payload_adds_tracer_selection_metadata(self):
         line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
@@ -1785,6 +1786,26 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(len(preview['removed_component_ids']), 1)
         self.assertEqual(preview['added_component_types'], ['Cable4C', 'Isolator3PH', 'JB3PH'])
         self.assertEqual(len(preview['added_display_tags']), 3)
+
+    def test_combine_feeders_preview_uses_starting_current_not_existing_breaker_sum(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        lines = list(HeatTracingInput.objects.filter(proj_id='p1').order_by('line_id'))
+        ProcessLineCalculation.objects.filter(line=lines[0]).update(starting_current=0.5)
+        ProcessLineCalculation.objects.filter(line=lines[1]).update(starting_current=0.8)
+        component_ids = self._mcb_component_ids()
+
+        response = self.client.post(
+            reverse('sld_topology_combine_preview_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': component_ids}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        preview = response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['breaker_rating_basis'], 'starting_current')
+        self.assertAlmostEqual(preview['combined_feeder_current'], 1.3)
+        self.assertEqual(preview['recommended_breaker_rating'], 2)
 
     def test_combine_feeders_apply_persists_active_topology_edit(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -3195,9 +3216,40 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Cable Tag')
         self.assertContains(response, 'Cable Specification')
         self.assertContains(response, 'Connected From')
+        self.assertContains(response, 'Manual Edit')
+        self.assertContains(response, 'data-field="manual-edit"')
+        self.assertContains(response, 'data-visible="false"')
         self.assertContains(response, 'LINE-001')
         self.assertContains(response, 'CCAB')
         self.assertContains(response, 'MCB_001')
+
+    def test_cable_schedule_view_shows_manual_override_status_and_remarks(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            generated_length_m=(cable_node['metadata'] or {}).get('length_m'),
+            manual_length_m=55,
+            generated_cable_size=(cable_node['metadata'] or {}).get('cable_size'),
+            manual_cable_size='3C x 6',
+            remarks='Measured along pipe rack A.',
+        )
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Manual')
+        self.assertContains(response, '<td>Yes</td>', html=True)
+        self.assertContains(response, 'Measured along pipe rack A.')
 
     def test_cable_schedule_view_uses_applied_topology_rows(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
