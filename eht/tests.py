@@ -1807,6 +1807,61 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertAlmostEqual(preview['combined_feeder_current'], 1.3)
         self.assertEqual(preview['recommended_breaker_rating'], 2)
 
+    def test_combine_feeders_preview_uses_line_current_for_legacy_manual_combines(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003'])
+        lines = list(HeatTracingInput.objects.filter(proj_id='p1').order_by('line_id'))
+        for line in lines:
+            ProcessLineCalculation.objects.filter(line=line).update(starting_current=0.5)
+        generated_payload = build_project_sld_payload('p1')
+        first_two_mcbs = [
+            node['component_id']
+            for node in generated_payload['nodes']
+            if node['component_type'] == 'MCB'
+        ][:2]
+        apply_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': first_two_mcbs}),
+            content_type='application/json',
+        )
+        self.assertEqual(apply_response.status_code, 200)
+
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        edit_payload = deepcopy(edit.edit_payload)
+        for node in edit_payload['sld_payload']['nodes']:
+            if node.get('component_type') == 'MCB' and str(node.get('display_tag')).endswith('-M'):
+                metadata = dict(node.get('metadata') or {})
+                metadata['breaker_size'] = 40
+                metadata.pop('starting_current', None)
+                metadata.pop('combined_feeder_current', None)
+                node['metadata'] = metadata
+        edit.edit_payload = edit_payload
+        edit.save(update_fields=['edit_payload'])
+
+        active_payload = build_project_sld_payload('p1')
+        combined_mcb = next(
+            node for node in active_payload['nodes']
+            if node['component_type'] == 'MCB' and str(node['display_tag']).endswith('-M')
+        )
+        remaining_mcb = next(
+            node for node in active_payload['nodes']
+            if node['component_type'] == 'MCB' and node.get('line_id') == 'LINE-003'
+        )
+        response = self.client.post(
+            reverse('sld_topology_combine_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_ids': [combined_mcb['component_id'], remaining_mcb['component_id']],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        preview = response.json()
+        self.assertTrue(preview['ok'])
+        self.assertEqual(preview['breaker_rating_basis'], 'starting_current')
+        self.assertAlmostEqual(preview['combined_feeder_current'], 1.5)
+        self.assertEqual(preview['recommended_breaker_rating'], 2)
+
     def test_combine_feeders_apply_persists_active_topology_edit(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
         component_ids = self._mcb_component_ids()

@@ -3,7 +3,7 @@ import hashlib
 
 from django.db import transaction
 
-from .models import MAX_CB_SIZE, ProjectData, SLDTopologyEdit
+from .models import MAX_CB_SIZE, ProcessLineCalculation, ProjectData, SLDTopologyEdit
 from .sld_payload import build_project_sld_payload
 from .sld_topology import TOPOLOGY_OPERATION_SCHEMA_VERSION, payload_fingerprint
 
@@ -54,8 +54,45 @@ def _starting_current(node):
         return 0
 
 
-def _combined_feeder_current(nodes):
-    currents = [_starting_current(node) for node in nodes]
+def _project_line_current_lookup(project_id):
+    lookup = {'by_uid': {}, 'by_line_id': {}}
+    if not project_id:
+        return lookup
+    calculations = (
+        ProcessLineCalculation.objects
+        .filter(line__proj_id=project_id)
+        .select_related('line')
+    )
+    for calculation in calculations:
+        current = float(calculation.starting_current or 0)
+        if current <= 0:
+            continue
+        lookup['by_uid'][str(calculation.line_id)] = current
+        line_id = calculation.line.line_id if calculation.line else ''
+        if line_id:
+            lookup['by_line_id'][line_id] = lookup['by_line_id'].get(line_id, 0) + current
+    return lookup
+
+
+def _node_starting_current(node, current_lookup=None):
+    current = _starting_current(node)
+    if current > 0:
+        return current
+    if not current_lookup:
+        return 0
+
+    line_uids, line_ids = _node_line_identity(node)
+    if line_ids:
+        by_line_id = current_lookup.get('by_line_id') or {}
+        line_id_current = sum(by_line_id.get(line_id, 0) for line_id in line_ids)
+        if line_id_current > 0:
+            return line_id_current
+    by_uid = current_lookup.get('by_uid') or {}
+    return sum(by_uid.get(str(line_uid), 0) for line_uid in line_uids)
+
+
+def _combined_feeder_current(nodes, current_lookup=None):
+    currents = [_node_starting_current(node, current_lookup) for node in nodes]
     if currents and all(current > 0 for current in currents):
         return sum(currents), 'starting_current'
     return sum(_breaker_rating(node) for node in nodes), 'breaker_rating'
@@ -555,6 +592,7 @@ def _manual_combine_node(
     recommended_rating,
     trunk_length_m=None,
     cable_size='4C',
+    current_lookup=None,
 ):
     component_id = f"{source_mcb['component_id']}:manual_combine:{component_type}"
     line_ids = sorted({
@@ -567,7 +605,7 @@ def _manual_combine_node(
         'manual_topology_edit': 'combine_feeders',
         'combined_feeder_count': len(selected_nodes),
     }
-    combined_current, rating_basis = _combined_feeder_current(selected_nodes)
+    combined_current, rating_basis = _combined_feeder_current(selected_nodes, current_lookup)
     if component_type == 'Cable4C':
         metadata.update({
             'cable_role': 'MCB_TO_JB3PH',
@@ -648,6 +686,7 @@ def _build_edited_payload(
     isolator_location='noIsolator',
     trunk_length_m=None,
     cable_size='4C',
+    current_lookup=None,
 ):
     primary = selected_nodes[0]
     secondary_ids = {node['component_id'] for node in selected_nodes[1:]}
@@ -662,7 +701,7 @@ def _build_edited_payload(
         if node['component_id'] != primary_id:
             continue
         metadata = dict(node.get('metadata') or {})
-        combined_current, rating_basis = _combined_feeder_current(selected_nodes)
+        combined_current, rating_basis = _combined_feeder_current(selected_nodes, current_lookup)
         metadata.update({
             'breaker_size': recommended_rating,
             'starting_current': combined_current,
@@ -696,6 +735,7 @@ def _build_edited_payload(
         recommended_rating,
         trunk_length_m=trunk_length_m,
         cable_size=cable_size,
+        current_lookup=current_lookup,
     )
     if existing_cable4c:
         metadata = dict(cable4c.get('metadata') or {})
@@ -716,6 +756,7 @@ def _build_edited_payload(
             recommended_rating,
             trunk_length_m=trunk_length_m,
             cable_size=cable_size,
+            current_lookup=current_lookup,
         )
     jb3ph = existing_jb3ph or _manual_combine_node(
         primary,
@@ -725,6 +766,7 @@ def _build_edited_payload(
         recommended_rating,
         trunk_length_m=trunk_length_m,
         cable_size=cable_size,
+        current_lookup=current_lookup,
     )
 
     edited['nodes'] = [
@@ -1733,8 +1775,9 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
             'missing_outgoing_feeders': missing_outgoing,
         }
 
+    current_lookup = _project_line_current_lookup(project_id)
     ratings = [_breaker_rating(node) for node in selected_nodes]
-    total_current, rating_basis = _combined_feeder_current(selected_nodes)
+    total_current, rating_basis = _combined_feeder_current(selected_nodes, current_lookup)
     recommended_rating = _next_breaker_size(total_current)
     if recommended_rating is None:
         return {
@@ -2099,7 +2142,8 @@ def _replay_combine_feeders(project, payload, inputs):
     ):
         return None, 'Combine feeders replay failed: one selected MCB no longer has an outgoing feeder path.'
 
-    total_current, _rating_basis = _combined_feeder_current(selected_nodes)
+    current_lookup = _project_line_current_lookup(project.proj_id)
+    total_current, _rating_basis = _combined_feeder_current(selected_nodes, current_lookup)
     recommended_rating = _next_breaker_size(total_current)
     if recommended_rating is None:
         return None, 'Combine feeders replay failed: combined current exceeds available breaker sizes.'
@@ -2111,6 +2155,7 @@ def _replay_combine_feeders(project, payload, inputs):
         project.isolator_location,
         trunk_length_m=trunk_length,
         cable_size=inputs.get('cable_size') or '4C',
+        current_lookup=current_lookup,
     ), ''
 
 
@@ -2253,6 +2298,7 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
     baseline_payload = build_project_sld_payload(project_id, apply_topology=False)
     active_payload = build_project_sld_payload(project_id)
     selected_nodes, _invalid_ids = _selected_mcb_nodes(active_payload, preview['selected_component_ids'])
+    current_lookup = _project_line_current_lookup(project_id)
     edited_payload = _build_edited_payload(
         active_payload,
         selected_nodes,
@@ -2260,6 +2306,7 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         project.isolator_location,
         trunk_length_m=preview['trunk_length_m'],
         cable_size=preview['cable_size'],
+        current_lookup=current_lookup,
     )
 
     boq_overrides = {
