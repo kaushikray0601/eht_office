@@ -459,6 +459,14 @@ footer {
     border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.sld-component-find-form {
+    min-width: min(420px, 100%);
+}
+
+.sld-component-find-form .form-control {
+    width: min(260px, 42vw);
+}
+
 .sld-summary-strip {
     padding: 0.45rem 0.65rem;
     border-radius: 0.65rem;
@@ -659,6 +667,44 @@ footer {
         position: static;
         max-height: none;
     }
+}
+
+body.sld-zen-mode {
+    overflow: hidden;
+}
+
+body.sld-zen-mode .navbar,
+body.sld-zen-mode #sidebar,
+body.sld-zen-mode #myTab,
+body.sld-zen-mode footer {
+    display: none !important;
+}
+
+body.sld-zen-mode #mainContent {
+    margin-left: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 0.55rem !important;
+}
+
+body.sld-zen-mode .sld-workbench-panel {
+    margin: 0 !important;
+    min-height: calc(100vh - 1.1rem);
+    border-radius: 0.65rem;
+}
+
+body.sld-zen-mode .sld-panel > .card-body {
+    padding: 0.6rem !important;
+}
+
+body.sld-zen-mode .sld-panel .workspace-header,
+body.sld-zen-mode .sld-summary-strip {
+    display: none !important;
+}
+
+body.sld-zen-mode .sld-diagram-shell--canvas {
+    height: calc(100vh - 210px);
+    max-height: none;
 }
 
 .sld-inspector-details {

@@ -1452,11 +1452,12 @@
         }
         if (applyButton) {
             applyButton.disabled = !(preview && preview.ok);
-            applyButton.textContent = isAttachJb
+            const applyLabel = isAttachJb
                 ? 'Apply Attach'
                 : (isDownstreamJb
                 ? 'Apply Downstream JB'
                 : (isSplit ? 'Apply Split' : (mode === 'combine' ? 'Apply Combine' : 'Apply Edit')));
+            applyButton.innerHTML = `<i class="bi bi-check2-circle me-1"></i>${applyLabel}`;
         }
         if (summary && state) {
             if (!mode) {
@@ -1474,7 +1475,7 @@
                     ? 'Select one MCB feeder source with multiple downstream circuits.'
                     : `Select at least ${minimumSelection} MCB feeder sources.`);
             } else if (state.topologyPreviewStatus === 'checking') {
-                summary.textContent = 'Checking selected topology edit...';
+                summary.textContent = 'Checking edit selection...';
             } else if (state.topologyPreviewError) {
                 summary.innerHTML = `<span class="text-danger fw-semibold">Cannot apply:</span> ${escapeHtml(state.topologyPreviewError)}`;
             } else if (preview && preview.ok && isSplit) {
@@ -1500,7 +1501,7 @@
             } else if (preview && preview.ok) {
                 summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>; trunk: ${escapeHtml(preview.trunk_length_m || '-')} m ${escapeHtml(preview.cable_size || '4C')}.`;
             } else {
-                summary.textContent = 'Waiting for automatic topology check.';
+                summary.textContent = 'Waiting for validation.';
             }
         }
     }
@@ -1611,7 +1612,7 @@
         const modalBody = document.getElementById('sld-tracer-options-modal-body');
         if (modalBody) {
             modalBody.innerHTML = `
-                <div class="small text-muted mb-2">Calculated options for ${escapeHtml(node.display_tag || node.component_id || 'selected tracer')}.</div>
+                <div class="small text-muted mb-2">Calculated tracer alternatives for ${escapeHtml(node.display_tag || node.component_id || 'selected tracer')}.</div>
                 ${optionsTable}
             `;
         }
@@ -1632,7 +1633,7 @@
                 </div>
                 <textarea class="form-control form-control-sm mt-2" id="sld-tracer-remarks-input" rows="2" placeholder="Optional tracer selection note">${escapeHtml(tracerSelection.override_remarks || '')}</textarea>
                 <div class="d-flex flex-wrap gap-2 mt-2">
-                    <button type="button" class="btn btn-primary btn-sm" id="sld-tracer-save">Save Tracer</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="sld-tracer-save"><i class="bi bi-check2 me-1"></i>Save Tracer</button>
                     <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-tracer-reset" ${tracerSelection.override_active ? '' : 'disabled'}>Reset</button>
                 </div>
                 <div class="small text-muted mt-2">${activeNote}</div>
@@ -1694,7 +1695,7 @@
                 </div>
                 <textarea class="form-control form-control-sm mb-2" id="sld-cable-remarks-input" rows="2" placeholder="Optional reason / location note">${escapeHtml(remarks)}</textarea>
                 <div class="d-flex gap-2">
-                    <button type="button" class="btn btn-primary btn-sm" id="sld-cable-save">Save Cable</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="sld-cable-save"><i class="bi bi-check2 me-1"></i>Save Cable</button>
                     <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-cable-reset" ${metadata.cable_override_active ? '' : 'disabled'}>Reset</button>
                 </div>
                 <div class="small mt-2 ${isCableOverride ? 'sld-cable-manual-note' : 'text-muted'}">${statusText}</div>
@@ -1715,7 +1716,7 @@
             renderCableEditor(root, null);
             return;
         }
-        summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. Highlighted path follows the directed source-to-component route in the current rendered graph.`;
+        summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. The highlighted path shows how power reaches this component in the active SLD.`;
         details.innerHTML = renderBreakerReviewInspector(node) + buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
@@ -2370,6 +2371,103 @@
         }
     }
 
+    function allKnownNodes(root) {
+        const pagerPayload = root.__sldPager && root.__sldPager.payload;
+        const activePayload = root.__sldState && root.__sldState.payload;
+        return (pagerPayload || activePayload || {}).nodes || [];
+    }
+
+    function findComponentNode(root, query) {
+        const needle = String(query || '').trim().toLowerCase();
+        if (!needle) {
+            return null;
+        }
+        const nodes = allKnownNodes(root);
+        const searchable = nodes.map(function (node) {
+            return {
+                node: node,
+                tag: String(node.display_tag || '').toLowerCase(),
+                id: String(node.component_id || '').toLowerCase(),
+                type: String(node.component_type || '').toLowerCase(),
+            };
+        });
+        return (
+            searchable.find(function (entry) { return entry.tag === needle || entry.id === needle; })
+            || searchable.find(function (entry) { return entry.tag.includes(needle) || entry.id.includes(needle); })
+            || searchable.find(function (entry) { return entry.type.includes(needle); })
+            || {}
+        ).node || null;
+    }
+
+    function showComponentPageIfNeeded(root, node) {
+        const pager = root.__sldPager;
+        if (!pager || !pager.payload || !node || !pager.payload.line_groups || pager.pageSize === 'all') {
+            return;
+        }
+        const pageSize = pageSizeValue(pager.pageSize);
+        const groupIndex = (pager.payload.line_groups || []).findIndex(function (lineGroup) {
+            return nodeBelongsToLineGroup(node, lineGroup);
+        });
+        if (groupIndex < 0) {
+            return;
+        }
+        const targetPage = Math.floor(groupIndex / pageSize) + 1;
+        if (targetPage !== pager.page) {
+            pager.page = targetPage;
+            renderCurrentSldPage(root);
+        }
+    }
+
+    function findAndFocusComponent(root, query) {
+        if (!root) {
+            return;
+        }
+        const match = findComponentNode(root, query);
+        if (!match) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('No matching SLD component found.', 'warning');
+            }
+            return;
+        }
+        showComponentPageIfNeeded(root, match);
+        const state = root.__sldState;
+        if (!state || !state.nodeByComponentId[match.component_id]) {
+            if (typeof window.showToast === 'function') {
+                window.showToast('Component found, but it is outside the current SLD page. Change the page size or search the matching line first.', 'warning');
+            }
+            return;
+        }
+        highlightSelection(root, match.component_id);
+        const element = state.elementByComponentId[match.component_id];
+        if (element) {
+            fitPaperToElements(root, [element]);
+        }
+    }
+
+    function updateZenModeButton() {
+        const button = document.getElementById('sld-zen-toggle');
+        if (!button) {
+            return;
+        }
+        const enabled = document.body.classList.contains('sld-zen-mode');
+        button.innerHTML = enabled
+            ? '<i class="bi bi-fullscreen-exit me-1"></i>Exit Focus'
+            : '<i class="bi bi-fullscreen me-1"></i>Focus Mode';
+        button.classList.toggle('btn-dark', enabled);
+        button.classList.toggle('btn-outline-dark', !enabled);
+    }
+
+    function setSldZenMode(enabled) {
+        document.body.classList.toggle('sld-zen-mode', !!enabled);
+        updateZenModeButton();
+        const root = document.getElementById('sld-diagram-shell');
+        if (root && root.__sldState) {
+            window.setTimeout(function () {
+                fitPaperToContent(root);
+            }, 80);
+        }
+    }
+
     function hideSldContextMenu() {
         const existing = document.querySelector('.sld-context-menu');
         if (existing) {
@@ -2418,14 +2516,14 @@
             <button type="button" data-sld-context-action="clear"><i class="bi bi-x-circle me-2"></i>Clear Selection</button>
         ` : (node ? `
             <button type="button" data-sld-context-action="fit-line"><i class="bi bi-crosshair me-2"></i>Fit Line</button>
-            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine"><i class="bi bi-intersect me-2"></i>Select For Combine</button>' : ''}
+            ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="combine"><i class="bi bi-intersect me-2"></i>Select for Combine</button>' : ''}
             ${node.component_type === 'MCB' ? '<button type="button" data-sld-context-action="split"><i class="bi bi-diagram-2 me-2"></i>Split Circuits</button>' : ''}
             ${node.component_type !== 'JB3PH' ? '<button type="button" data-sld-context-action="attach-source"><i class="bi bi-arrow-left-right me-2"></i>Move Branch / Feeder</button>' : ''}
-            ${canUseMcbAsAttachTarget ? '<button type="button" data-sld-context-action="attach-target"><i class="bi bi-plug me-2"></i>Use MCB As New Source</button>' : ''}
+            ${canUseMcbAsAttachTarget ? '<button type="button" data-sld-context-action="attach-target"><i class="bi bi-plug me-2"></i>Use MCB as New Source</button>' : ''}
             ${node.component_type === 'JB3PH' ? `<button type="button" data-sld-context-action="downstream-parent"><i class="bi bi-node-plus me-2"></i>Add Downstream JB (${escapeHtml(nodeOutgoingCount)} outgoing)</button>` : ''}
             ${canUseJbAsAttachTarget ? `<button type="button" data-sld-context-action="attach-target"><i class="bi bi-plug me-2"></i>Feed Branch Here (${escapeHtml(nodeOutgoingCount)}/3 used)</button>` : ''}
             ${isFullJbTarget ? '<button type="button" disabled><i class="bi bi-slash-circle me-2"></i>Target JB Full (3/3)</button>' : ''}
-            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch"><i class="bi bi-plus-square-dotted me-2"></i>Include In New JB</button>' : ''}
+            ${isDirectDownstreamBranch ? '<button type="button" data-sld-context-action="downstream-branch"><i class="bi bi-plus-square-dotted me-2"></i>Include in New JB</button>' : ''}
             ${applyAction}
             <button type="button" data-sld-context-action="clear"><i class="bi bi-x-circle me-2"></i>Clear Selection</button>
         ` : `
@@ -3748,6 +3846,23 @@
             return;
         }
         fitSelectedLine(root);
+    });
+
+    $(document).on('submit', '#sld-component-find-form', function (event) {
+        event.preventDefault();
+        const root = document.getElementById('sld-diagram-shell');
+        const input = this.querySelector('#sld-component-find');
+        findAndFocusComponent(root, input ? input.value : '');
+    });
+
+    $(document).on('click', '#sld-zen-toggle', function () {
+        setSldZenMode(!document.body.classList.contains('sld-zen-mode'));
+    });
+
+    $(document).on('keydown', function (event) {
+        if (event.key === 'Escape' && document.body.classList.contains('sld-zen-mode')) {
+            setSldZenMode(false);
+        }
     });
 
     $(document).on('click', '#sld-zoom-in', function () {

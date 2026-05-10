@@ -3453,7 +3453,7 @@ class ResultAndBoqViewTests(TestCase):
         response = self.client.get(reverse('boq_view'), {'project_id': 'p1'})
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Bill Of Quantities')
+        self.assertContains(response, 'Bill of Quantities')
         self.assertContains(response, 'data-toggle="table"')
         self.assertContains(response, 'TRACER')
         self.assertContains(response, 'MCB')
@@ -3519,7 +3519,7 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Single Line Diagram')
-        self.assertContains(response, 'SLD Payload Ready')
+        self.assertContains(response, 'Graph Ready')
         self.assertContains(response, 'SLD Validation')
         self.assertContains(response, 'Validation Passed')
         self.assertContains(response, 'without changing the calculated topology')

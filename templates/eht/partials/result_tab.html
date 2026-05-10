@@ -24,6 +24,7 @@
         {% else %}
             <div class="d-flex justify-content-end mb-3">
                 <a class="btn btn-outline-primary btn-sm" href="{% url 'result_export_view' %}?project_id={{ project_id }}">
+                    <i class="bi bi-file-earmark-excel me-1"></i>
                     Download Result Excel
                 </a>
             </div>
@@ -56,7 +57,7 @@
 
             {% if pending_input_count %}
                 <div class="alert alert-warning">
-                    {{ pending_input_count }} imported line{{ pending_input_count|pluralize }} still remain pending confirmation, so this view may not include the latest upload.
+                    {{ pending_input_count }} imported line{{ pending_input_count|pluralize }} still require confirmation, so this view may not include the latest upload.
                 </div>
             {% endif %}
             {% if result_summary.tracer_override_count %}

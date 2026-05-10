@@ -192,6 +192,7 @@ function setSldWorkbenchMode(isActive) {
     }
 
     document.body.classList.remove('sld-workbench-active');
+    document.body.classList.remove('sld-zen-mode');
     if (sidebar.dataset.autoCollapsedBySld === 'true') {
         sidebar.classList.remove('collapsed');
         sidebar.classList.add('expanded');
