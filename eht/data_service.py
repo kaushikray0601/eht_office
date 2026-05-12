@@ -278,10 +278,18 @@ def store_calculated_results(project_id, aggregated_results):
         line = project_lines.get(str(normalized_item['uid']))
         if not line:
             continue
+        design_heat_loss = normalized_item.get('design_heat_loss', normalized_item['heat_loss'])
         heat_loss_rows.append(HeatLoss(
             uid=str(normalized_item['uid']),
             line=line,
-            heat_loss=normalized_item['heat_loss'],
+            heat_loss=design_heat_loss,
+            base_heat_loss=normalized_item.get('base_heat_loss', design_heat_loss),
+            design_heat_loss=design_heat_loss,
+            heat_loss_sf=normalized_item.get('heat_loss_sf', 1),
+            pipe_size_mm=normalized_item.get('pipe_size_mm', 0),
+            conductivity=normalized_item.get('conductivity', 0),
+            wind_correction=normalized_item.get('wind_correction', 1),
+            accessory_adders=normalized_item.get('accessory_adders', {}),
             tracer_adder=normalized_item['tracer_adder'],
         ))
     if heat_loss_rows:

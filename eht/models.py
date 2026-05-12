@@ -252,6 +252,13 @@ class HeatLoss(models.Model):
     uid = models.CharField(max_length=100, primary_key=True)
     line = models.OneToOneField(HeatTracingInput, on_delete=models.CASCADE, null=True, blank=True, related_name='heat_loss_result')
     heat_loss = models.FloatField()
+    base_heat_loss = models.FloatField(default=0)
+    design_heat_loss = models.FloatField(default=0)
+    heat_loss_sf = models.FloatField(default=1)
+    pipe_size_mm = models.FloatField(default=0)
+    conductivity = models.FloatField(default=0)
+    wind_correction = models.FloatField(default=1)
+    accessory_adders = models.JSONField(default=dict, blank=True)
     tracer_adder = models.FloatField()
 
     class Meta:

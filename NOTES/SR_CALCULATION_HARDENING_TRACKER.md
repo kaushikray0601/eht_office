@@ -33,6 +33,12 @@ Use layered calculation boundaries:
   updates that path.
 - Run targeted tests after each task, then broaden test coverage after related
   calculation tasks are complete.
+- When a task adds or changes model fields, run `makemigrations --check
+  --dry-run`, apply the migration to the local development database, and verify
+  with `migrate --check` before using the browser workflow.
+- Do not keep growing `eht/tests.py` for new SR/MI work. New substantial test
+  coverage should move into smaller `eht/test_*.py` modules by domain, then the
+  existing large file can be split incrementally.
 
 ## Task Queue
 
@@ -40,12 +46,12 @@ Use layered calculation boundaries:
   - Make project calculations use only `HeatTracingInput.status='confirmed'`.
   - Add regression coverage proving pending rows are ignored and pending-only
     projects are rejected.
-- [ ] SR-02: Heat loss safety factor
+- [x] SR-02: Heat loss safety factor
   - Apply `ProjectData.heat_loss_sf` explicitly.
   - Preserve/report base heat loss and design heat loss.
-- [ ] SR-03: Heat loss evidence payload
+- [x] SR-03: Heat loss evidence payload
   - Store/report pipe OD, conductivity, wind factor, and accessory breakdown.
-- [ ] SR-04: Accessory adder refactor
+- [x] SR-04: Accessory adder refactor
   - Replace hidden hard-coded valve/flange/support adders with named rules or
     project-configurable defaults.
 - [ ] SR-05: Conductivity basis review
@@ -84,3 +90,31 @@ Use layered calculation boundaries:
   and upload/confirm tests pass; one unrelated SLD payload test currently
   fails because a legacy saved-topology expectation conflicts with the newer
   fail-safe baseline-change behavior.
+- 2026-05-12: SR-02 complete. Heat-loss calculation now applies
+  `heat_loss_sf`; the compatibility `heat_loss` value is the design heat loss,
+  and `HeatLoss` persists `base_heat_loss`, `design_heat_loss`, and
+  `heat_loss_sf`. Focused heat-loss, tracer-selection, orchestration,
+  persistence, upload, and confirm tests pass. Full `eht` suite still has the
+  same unrelated SLD payload test failure noted above.
+- 2026-05-12: Local upload error fixed by applying migration
+  `0018_heatloss_design_basis_fields` to the development database. Added the
+  migration-application check to the review discipline because unit tests use a
+  test database and cannot prove the developer's current browser database has
+  been migrated.
+- 2026-05-12: SR-03 complete. Heat-loss calculation now returns pipe OD,
+  conductivity, wind correction, and accessory-adder breakdown. `HeatLoss`
+  persists this evidence through migration `0019_heatloss_evidence_fields`,
+  which was applied to the development database immediately. New SR hardening
+  tests start the modular `eht/test_*.py` pattern instead of growing
+  `eht/tests.py`.
+- 2026-05-13: SR-04 complete. The legacy valve/support/flange adder formulas
+  are now isolated in `calculate_accessory_adders()` under rule set
+  `SR_LEGACY_EMPIRICAL_PIPE_SIZE_IN_V1`. Numeric behavior is preserved, and
+  heat-loss evidence now records the named rule, pipe-size basis, quantities,
+  per-item adders, and totals.
+- 2026-05-13: SR-05 paused for engineering-basis decision. Created
+  `NOTES/SR_CONDUCTIVITY_BASIS_RESEARCH.md` after reviewing
+  `heat_tracing_insulation_conductivity_basis.docx` and checking insulation
+  design guidance, ASTM/ISO/IEC/IEEE references, and manufacturer design
+  guides. No conductivity-basis code change will be made until the preferred
+  method is agreed.

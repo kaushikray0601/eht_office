@@ -495,7 +495,23 @@ class HeatLossCalculationTests(SimpleTestCase):
 
         self.assertEqual(result['uid'], 'L1')
         self.assertAlmostEqual(result['heat_loss'], expected_heat_loss, places=6)
+        self.assertAlmostEqual(result['base_heat_loss'], expected_heat_loss, places=6)
+        self.assertAlmostEqual(result['design_heat_loss'], expected_heat_loss, places=6)
+        self.assertEqual(result['heat_loss_sf'], 1.0)
         self.assertAlmostEqual(result['tracer_adder'], expected_tracer_adder, places=6)
+
+    def test_calculate_heat_loss_applies_project_safety_factor(self):
+        line = make_line()
+        project_settings = make_project_settings(heat_loss_sf=1.25)
+        pipe_size_mm = 60.3
+
+        result = calculate_heat_loss(line, project_settings, make_asme_table(), make_thermal_table())
+
+        expected_base_heat_loss = (2 * math.pi * 0.05 * 80.0) / math.log((2 * 50.0 + pipe_size_mm) / pipe_size_mm)
+        self.assertAlmostEqual(result['base_heat_loss'], expected_base_heat_loss, places=6)
+        self.assertAlmostEqual(result['design_heat_loss'], expected_base_heat_loss * 1.25, places=6)
+        self.assertAlmostEqual(result['heat_loss'], result['design_heat_loss'], places=6)
+        self.assertEqual(result['heat_loss_sf'], 1.25)
 
     def test_calculate_heat_loss_returns_none_for_unknown_insulation(self):
         line = make_line(ins_mat_type='UNKNOWN')
@@ -828,7 +844,14 @@ class StoreCalculatedResultsTests(TestCase):
 
         aggregated_results = {
             'heat_loss': [
-                {'uid': line.uid, 'heat_loss': 12.5, 'tracer_adder': 1.2},
+                {
+                    'uid': line.uid,
+                    'heat_loss': 13.75,
+                    'base_heat_loss': 12.5,
+                    'design_heat_loss': 13.75,
+                    'heat_loss_sf': 1.1,
+                    'tracer_adder': 1.2,
+                },
             ],
             'selected_tracers': [
                 {
@@ -908,7 +931,11 @@ class StoreCalculatedResultsTests(TestCase):
 
         self.assertTrue(store_calculated_results('p1', aggregated_results))
 
-        self.assertEqual(HeatLoss.objects.get(line=line).heat_loss, 12.5)
+        heat_loss_result = HeatLoss.objects.get(line=line)
+        self.assertEqual(heat_loss_result.heat_loss, 13.75)
+        self.assertEqual(heat_loss_result.base_heat_loss, 12.5)
+        self.assertEqual(heat_loss_result.design_heat_loss, 13.75)
+        self.assertEqual(heat_loss_result.heat_loss_sf, 1.1)
         self.assertEqual(SelectedTracer.objects.get(line=line).power_output, 30.0)
         alternate_tracer = AlternateTracer.objects.get(line=line, option_rank=1)
         self.assertEqual(alternate_tracer.tracer_with_margin, 13.7)
@@ -919,6 +946,7 @@ class StoreCalculatedResultsTests(TestCase):
         self.assertEqual(branch.tagged_components['MCB'], 'MCB_001')
 
         process_line_calc = ProcessLineCalculation.objects.get(line=line)
+        self.assertEqual(process_line_calc.heat_loss, 13.75)
         self.assertEqual(process_line_calc.selected_tracer, 'V-001')
         self.assertEqual(process_line_calc.breaker_size, 0)
         self.assertEqual(process_line_calc.total_circuits, 0)
