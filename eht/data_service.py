@@ -131,8 +131,8 @@ def fetch_thermal_conductivity_data():
 
 
 def fetch_process_lines(project_id):
-    """Fetch process lines for the given project ID and return as a DataFrame."""
-    data = HeatTracingInput.objects.filter(proj_id=project_id).values()
+    """Fetch confirmed process lines for the given project ID and return as a DataFrame."""
+    data = HeatTracingInput.objects.filter(proj_id=project_id, status='confirmed').values()
     return pd.DataFrame(data)
 
 

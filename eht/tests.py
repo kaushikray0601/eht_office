@@ -19,7 +19,7 @@ from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
 from eht.calculations.tag_management import ProjectTagFactory
 from eht.calculations.tracer_selection import get_tracer_options
-from eht.data_service import clear_project_workspace_data, store_calculated_results
+from eht.data_service import clear_project_workspace_data, fetch_process_lines, store_calculated_results
 from eht.forms import ProjectDataForm
 from eht.models import (
     AlternateTracer,
@@ -49,6 +49,7 @@ from eht.sld_pdf import build_sld_pdf
 from eht.sld_schema import audit_tagged_component_schema
 from eht.sld_topology import payload_fingerprint
 from eht.sld_validation import validate_project_sld_payload
+from eht.pipeline import run_project_calculations
 
 
 def make_line(**overrides):
@@ -771,6 +772,41 @@ class OrchestrationTests(SimpleTestCase):
 
         self.assertEqual(key_tags(first_result), key_tags(second_result))
         self.assertEqual(key_tags(first_result), [('L1', 'MCB_001', 'Tracer_001'), ('L2', 'MCB_002', 'Tracer_002')])
+
+
+class ProcessLineFetchTests(TestCase):
+    def create_line(self, **overrides):
+        defaults = {
+            'proj_id': 'p1',
+            'line_id': 'LINE-001',
+            'service_type': 'EP',
+            'line_size': 2.0,
+            'line_length': 10.0,
+            'ins_mat_type': 'Mineral Wool',
+            'insul_thick': 50.0,
+            'maint_temp': 120.0,
+            'oper_temp': 100.0,
+            'design_temp': 140.0,
+            'status': 'confirmed',
+        }
+        defaults.update(overrides)
+        return HeatTracingInput.objects.create(**defaults)
+
+    def test_fetch_process_lines_returns_only_confirmed_rows(self):
+        confirmed_line = self.create_line(line_id='LINE-CONFIRMED', status='confirmed')
+        self.create_line(line_id='LINE-PENDING', status='pending')
+
+        process_lines = fetch_process_lines('p1')
+
+        self.assertEqual(list(process_lines['uid']), [confirmed_line.uid])
+        self.assertEqual(list(process_lines['status']), ['confirmed'])
+
+    def test_run_project_calculations_rejects_pending_only_project(self):
+        make_project_record()
+        self.create_line(status='pending')
+
+        with self.assertRaisesMessage(ValidationError, 'No confirmed input data found for this project.'):
+            run_project_calculations('p1')
 
 
 class StoreCalculatedResultsTests(TestCase):
