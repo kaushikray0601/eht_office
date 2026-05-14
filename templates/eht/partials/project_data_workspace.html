@@ -52,14 +52,17 @@
         </div>
 
         <div id="project-data-form-container">
-            <form method="post" id="project-data-form">
+            <form method="post" id="project-data-form" action="{% if project_id %}{% url 'update_project_data' project_id %}{% else %}{% url 'create_project_data' %}{% endif %}">
                 {% csrf_token %}
-                <div class="row justify-content-between g-3">
+                <div class="row g-3">
                     <div class="col-lg-4">
                         {{ form.proj_id|as_crispy_field }}
                     </div>
                     <div class="col-lg-4">
                         {{ form.vendor|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.heat_loss_method|as_crispy_field }}
                     </div>
                 </div>
                 <div class="row g-3 mt-1">

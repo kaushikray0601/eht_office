@@ -18,7 +18,12 @@ from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
 from eht.calculations.tag_management import ProjectTagFactory
-from eht.calculations.tracer_selection import get_tracer_options
+from eht.calculations.tracer_selection import (
+    calculate_voltage_scenarios,
+    filter_sr_catalogue_voltage_compatibility,
+    filter_sr_catalogue_suitability,
+    get_tracer_options,
+)
 from eht.data_service import clear_project_workspace_data, fetch_process_lines, store_calculated_results
 from eht.forms import ProjectDataForm
 from eht.models import (
@@ -50,6 +55,7 @@ from eht.sld_schema import audit_tagged_component_schema
 from eht.sld_topology import payload_fingerprint
 from eht.sld_validation import validate_project_sld_payload
 from eht.pipeline import run_project_calculations
+from eht.heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD
 
 
 def make_line(**overrides):
@@ -90,6 +96,7 @@ def make_project_settings(**overrides):
         'caution_label_interval': 10.0,
         'allowablevdrop': 5.0,
         'vendor': 'CHR',
+        'heat_loss_method': DEFAULT_HEAT_LOSS_METHOD,
     }
     settings.update(overrides)
     return settings
@@ -164,6 +171,7 @@ def make_project_record(**overrides):
         'res_tol': 10.0,
         'termination_margin': 250.0,
         'heat_loss_sf': 1.0,
+        'heat_loss_method': DEFAULT_HEAT_LOSS_METHOD,
         'rtd_thrm': 'TI',
         'wind_speed': 32.0,
         'req_local_isolator': 'required',
@@ -201,6 +209,7 @@ def make_project_form_payload(**overrides):
         'res_tol': '10.00',
         'termination_margin': '250.00',
         'heat_loss_sf': '1.00',
+        'heat_loss_method': DEFAULT_HEAT_LOSS_METHOD,
         'rtd_thrm': 'TI',
         'wind_speed': '32.00',
         'caution_label_interval': '10.00',
@@ -251,6 +260,7 @@ def make_default_project_record(**overrides):
         'res_tol': 5.0,
         'termination_margin': 200.0,
         'heat_loss_sf': 1.1,
+        'heat_loss_method': DEFAULT_HEAT_LOSS_METHOD,
         'rtd_thrm': 'TO',
         'wind_speed': 25.0,
         'req_local_isolator': 'required',
@@ -522,6 +532,25 @@ class HeatLossCalculationTests(SimpleTestCase):
 
 
 class TracerSelectionTests(SimpleTestCase):
+    def _catalogue(self, *rows):
+        base_row = {
+            'Voltage_Float': 230.0,
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 100.0,
+            'Power_at_Startup_T': 10.0,
+            'Ohm_per_km': 1.0,
+            'Res_corrFactor_Mica': 1.0,
+            'Tracer_Family': 'Self Regulating',
+            'Zone': 'Zone1, Zone2',
+            'Gas_Group': 'IIB',
+            'T_Rating': 'T1,T2,T3',
+            'Maint_T': 150.0,
+            'Max_Op_T': 150.0,
+            'Max_Exp_T_On': 232.0,
+        }
+        return pd.DataFrame([{**base_row, **row} for row in rows])
+
     def test_get_tracer_options_returns_best_and_sorted_alternatives(self):
         best_tracer, alternatives = get_tracer_options(
             {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
@@ -545,6 +574,166 @@ class TracerSelectionTests(SimpleTestCase):
         self.assertEqual(best_tracer, {})
         self.assertEqual(alternatives, [])
 
+    def test_get_tracer_options_filters_catalogue_temperature_limits_and_family(self):
+        vendor_data = self._catalogue(
+            {'V_UID': 'GOOD'},
+            {'V_UID': 'BAD_MAINT', 'Maint_T': 90.0},
+            {'V_UID': 'BAD_OPERATING', 'Max_Op_T': 70.0},
+            {'V_UID': 'BAD_EXPOSURE', 'Max_Exp_T_On': 110.0},
+            {'V_UID': 'MI_ROW', 'Tracer_Family': 'Constant Wattage'},
+        )
+
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            make_line(maint_temp=100.0, oper_temp=80.0, design_temp=120.0),
+            make_project_settings(area_class='SAFE', temp_class='T3'),
+            vendor_data,
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'GOOD')
+        self.assertEqual(alternatives, [])
+
+    def test_get_tracer_options_filters_zone_and_temperature_class_when_declared(self):
+        vendor_data = self._catalogue(
+            {'V_UID': 'BAD_ZONE', 'Zone': 'Zone2'},
+            {'V_UID': 'BAD_T_CLASS', 'T_Rating': 'T1,T2'},
+            {'V_UID': 'GOOD', 'Zone': 'Zone1, Zone2', 'T_Rating': 'T1,T2,T3'},
+        )
+
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            make_line(),
+            make_project_settings(area_class='Zone1', temp_class='T3'),
+            vendor_data,
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'GOOD')
+        self.assertEqual(alternatives, [])
+
+    def test_get_tracer_options_parses_combined_zone_and_gas_group_area_class(self):
+        vendor_data = self._catalogue(
+            {'V_UID': 'BAD_ZONE', 'Zone': 'Zone1'},
+            {'V_UID': 'GOOD', 'Zone': 'Zone1, Zone2', 'Gas_Group': 'NA'},
+        )
+
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            make_line(),
+            make_project_settings(area_class='Zone-II, IIB', temp_class='T3'),
+            vendor_data,
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'GOOD')
+        self.assertEqual(alternatives, [])
+
+    def test_get_tracer_options_keeps_nec_gas_group_text_for_iec_project_area(self):
+        vendor_data = self._catalogue(
+            {
+                'V_UID': 'CHROMALOX_STYLE',
+                'Zone': 'Zone1, Zone2',
+                'Gas_Group': 'Class I Div.2, Gr. A, B, C, D',
+            },
+        )
+
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            make_line(),
+            make_project_settings(area_class='Zone-II, IIB', temp_class='T3'),
+            vendor_data,
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'CHROMALOX_STYLE')
+        self.assertEqual(alternatives, [])
+
+    def test_get_tracer_options_handles_empty_vendor_catalogue(self):
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            make_line(),
+            make_project_settings(),
+            pd.DataFrame(),
+        )
+
+        self.assertEqual(best_tracer, {})
+        self.assertEqual(alternatives, [])
+
+    def test_calculate_voltage_scenarios_separates_low_nominal_and_high_voltage(self):
+        scenarios = calculate_voltage_scenarios(230.0, 0.10, 230.0)
+
+        self.assertAlmostEqual(scenarios['low_voltage'], 207.0, places=6)
+        self.assertAlmostEqual(scenarios['nominal_voltage'], 230.0, places=6)
+        self.assertAlmostEqual(scenarios['high_voltage'], 253.0, places=6)
+        self.assertAlmostEqual(scenarios['heat_delivery_correction'], 0.81, places=6)
+        self.assertAlmostEqual(scenarios['nominal_correction'], 1.0, places=6)
+        self.assertAlmostEqual(scenarios['max_current_correction'], 1.21, places=6)
+
+    def test_get_tracer_options_sizes_heat_delivery_at_low_voltage(self):
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 81.0, 'tracer_adder': 2.0},
+            make_line(),
+            make_project_settings(voltage_var_factor=10.0, margin_on_tracer_lengths=0.0),
+            self._catalogue({'V_UID': 'LOW_VOLTAGE_CASE'}),
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'LOW_VOLTAGE_CASE')
+        self.assertAlmostEqual(best_tracer['Power_Output'], 100.0, places=6)
+        self.assertAlmostEqual(best_tracer['Power_Output_Heat_Delivery'], 81.0, places=6)
+        self.assertAlmostEqual(best_tracer['Spiral_Factor'], 1.0, places=6)
+        self.assertAlmostEqual(best_tracer['Voltage_Correction_Factor_Heat_Delivery'], 0.81, places=6)
+        self.assertAlmostEqual(best_tracer['Voltage_Correction_Factor_Max_Current'], 1.21, places=6)
+        self.assertEqual(alternatives, [])
+
+    def test_filter_sr_catalogue_voltage_prefers_rows_at_or_above_system_voltage(self):
+        filtered = filter_sr_catalogue_voltage_compatibility(
+            self._catalogue(
+                {'V_UID': 'LOWER_NOMINAL', 'Voltage_Float': 230.0},
+                {'V_UID': 'MATCHING_NOMINAL', 'Voltage_Float': 240.0},
+                {'V_UID': 'HIGHER_NOMINAL', 'Voltage_Float': 300.0},
+            ),
+            240.0,
+        )
+
+        self.assertEqual(filtered['V_UID'].tolist(), ['MATCHING_NOMINAL', 'HIGHER_NOMINAL'])
+        self.assertEqual(
+            set(filtered['Catalogue_Voltage_Compatibility']),
+            {'rated_at_or_above_system_nominal'},
+        )
+
+    def test_filter_sr_catalogue_voltage_allows_nearby_nominal_class_when_needed(self):
+        filtered = filter_sr_catalogue_voltage_compatibility(
+            self._catalogue(
+                {'V_UID': 'SAME_CLASS_230', 'Voltage_Float': 230.0},
+                {'V_UID': 'TOO_LOW_200', 'Voltage_Float': 200.0},
+            ),
+            240.0,
+        )
+
+        self.assertEqual(filtered['V_UID'].tolist(), ['SAME_CLASS_230'])
+        self.assertEqual(filtered.iloc[0]['Catalogue_Voltage_Compatibility'], 'nearby_nominal_voltage_class')
+
+    def test_get_tracer_options_uses_nearby_230v_catalogue_for_240v_project(self):
+        best_tracer, alternatives = get_tracer_options(
+            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            make_line(),
+            make_project_settings(voltage=240.0),
+            self._catalogue({'V_UID': 'SST_STYLE_230V', 'Voltage_Float': 230.0}),
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'SST_STYLE_230V')
+        self.assertEqual(best_tracer['Catalogue_Voltage_Compatibility'], 'nearby_nominal_voltage_class')
+        self.assertEqual(alternatives, [])
+
+    def test_filter_sr_catalogue_suitability_handles_iec_gas_group_hierarchy(self):
+        filtered = filter_sr_catalogue_suitability(
+            self._catalogue(
+                {'V_UID': 'BAD_IIA', 'Gas_Group': 'IIA'},
+                {'V_UID': 'GOOD_IIC', 'Gas_Group': 'IIC'},
+            ),
+            make_line(),
+            make_project_settings(area_class='SAFE', gas_group='IIB'),
+        )
+
+        self.assertEqual(filtered['V_UID'].tolist(), ['GOOD_IIC'])
+
 
 class PowerDistributionCalculationTests(SimpleTestCase):
     def test_compute_power_params_and_distribution_for_two_circuits(self):
@@ -564,15 +753,33 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         )
         distribution = compute_power_distribution(power_params, make_project_settings())
         branch = distribution['branches'][0]
+        expected_line_current = 2000.0 / 230.0
+        expected_per_circuit_current = expected_line_current / 2
 
         self.assertEqual(power_params['no_of_circuits'], 2)
-        self.assertEqual(power_params['breaker_size'], 10)
+        self.assertEqual(power_params['breaker_size'], 6)
+        self.assertAlmostEqual(power_params['line_max_current'], expected_line_current, places=6)
+        self.assertAlmostEqual(power_params['max_current'], expected_per_circuit_current, places=6)
+        self.assertAlmostEqual(power_params['operating_current'], expected_per_circuit_current, places=6)
+        self.assertAlmostEqual(power_params['operating_load'], 2000.0, places=6)
+        self.assertAlmostEqual(power_params['heated_tracer_length'], 20.0, places=6)
+        self.assertAlmostEqual(power_params['termination_margin_length'], 0.5, places=6)
         self.assertAlmostEqual(power_params['total_tracer_length'], 20.5, places=6)
+        self.assertEqual(
+            power_params['termination_margin_basis']['semantics'],
+            'installation_allowance_excluded_from_electrical_load',
+        )
         self.assertAlmostEqual(power_params['pipe_size_mm'], 60.3, places=6)
 
         self.assertEqual(distribution['total_circuits'], 2)
         self.assertEqual(branch['type'], '3phJB')
         self.assertEqual(branch['connected_to'], '2x 1phJB')
+        self.assertEqual(branch['tagged_components']['component_details']['MCB']['metadata']['breaker_size'], 6)
+        self.assertAlmostEqual(
+            branch['tagged_components']['component_details']['MCB']['metadata']['max_current'],
+            expected_per_circuit_current,
+            places=6,
+        )
         self.assertEqual(branch['tagged_components']['Isolator3PH'], 'ISOL_3PH_001')
         self.assertEqual(branch['tagged_components']['component_details']['MCB']['component_type'], 'MCB')
         self.assertEqual(branch['tagged_components']['component_details']['MCB']['display_tag'], 'MCB_001')
@@ -650,6 +857,33 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         self.assertIsNone(branch['tagged_components']['Cable4C'])
         self.assertIsNone(branch['tagged_components']['Isolator3PH'])
         self.assertEqual(branch['tagged_components']['Downstream'][0]['JB1PH'], 'JB1PH_001')
+
+    def test_compute_power_params_uses_high_voltage_for_max_current(self):
+        selected_tracer = {
+            'Tracer_With_Margin': 20.0,
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 100.0,
+            'Voltage_Correction_Factor': 1.0,
+            'Voltage_Correction_Factor_Nominal': 1.0,
+            'Voltage_Correction_Factor_Max_Current': 1.21,
+            'Max_Current_Voltage': 253.0,
+        }
+
+        power_params = compute_power_params(
+            make_line(),
+            make_project_settings(voltage_var_factor=10.0),
+            make_asme_table(),
+            selected_tracer,
+        )
+
+        self.assertEqual(power_params['no_of_circuits'], 2)
+        self.assertAlmostEqual(power_params['line_operating_current'], 2000.0 / 230.0, places=6)
+        self.assertAlmostEqual(power_params['line_max_current'], 2420.0 / 253.0, places=6)
+        self.assertAlmostEqual(power_params['operating_current'], (2000.0 / 230.0) / 2, places=6)
+        self.assertAlmostEqual(power_params['max_current'], (2420.0 / 253.0) / 2, places=6)
+        self.assertEqual(power_params['breaker_size'], 6)
+        self.assertAlmostEqual(power_params['voltage_scenarios']['max_current_voltage'], 253.0, places=6)
 
 
 class BoqCalculationTests(SimpleTestCase):
@@ -1412,7 +1646,7 @@ class SldPayloadTests(TestCase):
             project_id='p1',
             edit_type='combine_feeders',
             status='applied',
-            baseline_fingerprint='baseline-a',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
             edit_payload={'sld_payload': edited_payload},
             validation_summary={'status': 'passed'},
         )
@@ -1846,7 +2080,7 @@ class SldTopologyWorkflowTests(TestCase):
         preview = response.json()
         self.assertTrue(preview['ok'])
         self.assertEqual(preview['edit_type'], 'combine_feeders')
-        self.assertEqual(preview['recommended_breaker_rating'], 20)
+        self.assertEqual(preview['recommended_breaker_rating'], 10)
         self.assertEqual(len(preview['removed_component_ids']), 1)
         self.assertEqual(preview['added_component_types'], ['Cable4C', 'Isolator3PH', 'JB3PH'])
         self.assertEqual(len(preview['added_display_tags']), 3)
@@ -2066,7 +2300,7 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertTrue(preview['ok'])
         self.assertTrue(preview['extends_existing_combine'])
         self.assertEqual(preview['added_component_types'], [])
-        self.assertEqual(preview['recommended_breaker_rating'], 32)
+        self.assertEqual(preview['recommended_breaker_rating'], 16)
 
         second_response = self.client.post(
             reverse('sld_topology_combine_apply_view'),
@@ -2215,7 +2449,7 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(preview['edit_type'], 'attach_to_jb')
         self.assertEqual(preview['target_outgoing_before'], 2)
         self.assertEqual(preview['target_outgoing_after'], 3)
-        self.assertEqual(preview['recommended_breaker_rating'], 32)
+        self.assertEqual(preview['recommended_breaker_rating'], 16)
 
         apply_response = self.client.post(
             reverse('sld_topology_attach_jb_apply_view'),
@@ -2242,7 +2476,7 @@ class SldTopologyWorkflowTests(TestCase):
         moved_entry_id = preview['moved_component_ids'][0]
         self.assertIn((target_jb['component_id'], moved_entry_id), edge_pairs)
         combined_mcb = next(node for node in edited_payload['nodes'] if node['component_type'] == 'MCB')
-        self.assertEqual((combined_mcb.get('metadata') or {}).get('breaker_size'), 32)
+        self.assertEqual((combined_mcb.get('metadata') or {}).get('breaker_size'), 16)
 
     def test_attach_to_jb_moves_downstream_branch_between_jbs(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003', 'LINE-004'])
@@ -2367,10 +2601,10 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertTrue(preview['cross_mcb_move'])
         self.assertEqual(preview['target_outgoing_before'], 2)
         self.assertEqual(preview['target_outgoing_after'], 3)
-        self.assertEqual(preview['source_breaker_rating'], 10)
-        self.assertEqual(preview['target_breaker_rating'], 10)
-        self.assertEqual(preview['recommended_source_breaker_rating'], 6)
-        self.assertEqual(preview['recommended_target_breaker_rating'], 16)
+        self.assertEqual(preview['source_breaker_rating'], 6)
+        self.assertEqual(preview['target_breaker_rating'], 6)
+        self.assertEqual(preview['recommended_source_breaker_rating'], 4)
+        self.assertEqual(preview['recommended_target_breaker_rating'], 10)
 
         apply_response = self.client.post(
             reverse('sld_topology_attach_jb_apply_view'),
@@ -2400,13 +2634,13 @@ class SldTopologyWorkflowTests(TestCase):
             node for node in edited_payload['nodes']
             if node['component_id'] == preview['target_mcb_component_id']
         )
-        self.assertEqual((source_mcb.get('metadata') or {}).get('breaker_size'), 6)
-        self.assertEqual((target_mcb.get('metadata') or {}).get('breaker_size'), 16)
+        self.assertEqual((source_mcb.get('metadata') or {}).get('breaker_size'), 4)
+        self.assertEqual((target_mcb.get('metadata') or {}).get('breaker_size'), 10)
         self.assertIn((source_mcb['component_id'], remaining_source_child_id), edge_pairs)
-        self.assertEqual((source_mcb.get('metadata') or {}).get('previous_breaker_size'), 10)
-        self.assertEqual((target_mcb.get('metadata') or {}).get('previous_breaker_size'), 10)
-        self.assertEqual((source_mcb.get('metadata') or {}).get('recommended_breaker_size'), 6)
-        self.assertEqual((target_mcb.get('metadata') or {}).get('recommended_breaker_size'), 16)
+        self.assertEqual((source_mcb.get('metadata') or {}).get('previous_breaker_size'), 6)
+        self.assertEqual((target_mcb.get('metadata') or {}).get('previous_breaker_size'), 6)
+        self.assertEqual((source_mcb.get('metadata') or {}).get('recommended_breaker_size'), 4)
+        self.assertEqual((target_mcb.get('metadata') or {}).get('recommended_breaker_size'), 10)
 
     def test_attach_to_jb_can_promote_standalone_mcb_target_to_3ph_distribution(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -2491,10 +2725,10 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertEqual(preview['target_component_type'], 'MCB')
         self.assertEqual(preview['target_outgoing_before'], 1)
         self.assertEqual(preview['target_outgoing_after'], 2)
-        self.assertEqual(preview['source_breaker_rating'], 10)
-        self.assertEqual(preview['target_breaker_rating'], 10)
-        self.assertEqual(preview['recommended_source_breaker_rating'], 6)
-        self.assertEqual(preview['recommended_target_breaker_rating'], 16)
+        self.assertEqual(preview['source_breaker_rating'], 6)
+        self.assertEqual(preview['target_breaker_rating'], 6)
+        self.assertEqual(preview['recommended_source_breaker_rating'], 4)
+        self.assertEqual(preview['recommended_target_breaker_rating'], 10)
 
         apply_response = self.client.post(
             reverse('sld_topology_attach_jb_apply_view'),
@@ -2565,7 +2799,7 @@ class SldTopologyWorkflowTests(TestCase):
         preview = response.json()
         self.assertTrue(preview['ok'])
         self.assertEqual(preview['edit_type'], 'split_circuits')
-        self.assertEqual(preview['recommended_breaker_rating'], 6)
+        self.assertEqual(preview['recommended_breaker_rating'], 4)
         self.assertEqual(preview['selected_circuit_count'], 2)
         self.assertEqual(preview['new_mcb_count'], 1)
         self.assertIn('JB3PH_001', preview['removed_display_tags'])
@@ -3145,6 +3379,33 @@ class ProjectDataViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertTrue(ProjectData.objects.filter(proj_id='PLANT_A_001').exists())
+
+    def test_create_project_data_view_updates_existing_project_vendor(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        make_project_record(proj_id='PLANT_A_001', vendor='THR')
+
+        response = self.client.post(
+            reverse('create_project_data'),
+            data=make_project_form_payload(proj_id='PLANT_A_001', vendor='CHR'),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProjectData.objects.get(proj_id='PLANT_A_001').vendor, 'CHR')
+
+    def test_base_workspace_form_posts_to_project_data_save_route(self):
+        response = self.client.get(reverse('base'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'action="/create-project-data/"')
+
+    def test_update_project_data_workspace_form_posts_to_project_update_route(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        make_project_record(proj_id='PLANT_A_001')
+
+        response = self.client.get(reverse('update_project_data', args=['PLANT_A_001']))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'action="/edit-project-data/PLANT_A_001/"')
 
     def test_update_project_data_view_renders_blank_form_for_registered_project_without_setup(self):
         make_managed_project(proj_id='PLANT_B_001', description='Plant B')

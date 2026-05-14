@@ -2,12 +2,15 @@
 
 <form method="post" id="project-data-form" action="{% url 'update_project_data' project_id %}">
     {% csrf_token %} 
-        <div class="row justify-content-between g-3">
+        <div class="row g-3">
             <div class="col-lg-4">
               {{ form.proj_id|as_crispy_field }}
             </div>
             <div class="col-lg-4">
                 {{ form.vendor|as_crispy_field }}
+            </div>
+            <div class="col-lg-4">
+                {{ form.heat_loss_method|as_crispy_field }}
             </div>
         </div>
         <div class="row g-3 mt-1">

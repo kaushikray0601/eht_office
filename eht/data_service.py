@@ -137,15 +137,22 @@ def fetch_process_lines(project_id):
 
 
 def fetch_vendor_data(selected_vendor, project_voltage):
-    """Fetch vendor data filtered by vendor and voltage and return as a DataFrame."""
+    """Fetch selected vendor catalogue data and return as a DataFrame.
+
+    Voltage compatibility is handled in the SR selection layer because some
+    catalogues store 230 V nominal rows that are valid candidates for 240 V
+    projects after voltage correction.
+    """
     data = ElecEHT_Vendor.objects.filter(
-        Vendor=selected_vendor,
-        Voltage__gte=float(project_voltage)
+        Vendor__iexact=selected_vendor,
     ).annotate(
         Voltage_Float=Cast('Voltage', FloatField())  # Convert to float at DB level
     ).values(
         'V_UID', 'Voltage_Float', 'A_Coeff', 'B_Coeff', 'C_Coeff',
-        'Power_at_Startup_T', 'Ohm_per_km', 'Res_corrFactor_Mica', 'Tracer_Family'
+        'Power_at_Startup_T', 'Ohm_per_km', 'Res_corrFactor_Mica',
+        'Tracer_Family', 'Tracer_Model', 'Tracer_Cat_No', 'Zone',
+        'Gas_Group', 'T_Rating', 'Maint_T', 'Max_Op_T',
+        'Min_Installation_T', 'Max_Exp_T_On', 'Max_Exp_T_Off',
     ).distinct()
     return pd.DataFrame(data)
 
@@ -172,6 +179,7 @@ def fetch_project_data(project_id):
         "res_tol": float(project_data.res_tol),
         "termination_margin": float(project_data.termination_margin),
         "heat_loss_sf": float(project_data.heat_loss_sf),
+        "heat_loss_method": project_data.heat_loss_method,
         "rtd_thrm": project_data.rtd_thrm,
         "wind_speed": float(project_data.wind_speed),
         "caution_label_interval": float(project_data.caution_label_interval),
@@ -288,6 +296,7 @@ def store_calculated_results(project_id, aggregated_results):
             heat_loss_sf=normalized_item.get('heat_loss_sf', 1),
             pipe_size_mm=normalized_item.get('pipe_size_mm', 0),
             conductivity=normalized_item.get('conductivity', 0),
+            conductivity_basis=normalized_item.get('conductivity_basis', {}),
             wind_correction=normalized_item.get('wind_correction', 1),
             accessory_adders=normalized_item.get('accessory_adders', {}),
             tracer_adder=normalized_item['tracer_adder'],

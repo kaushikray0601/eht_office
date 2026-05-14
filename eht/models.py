@@ -5,6 +5,7 @@ from django.utils.timezone import now, timedelta
 
 # from django.contrib.postgres.fields import JSONField  # or use TextField if DB doesn't support native JSON
 from django.utils import timezone
+from .heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD, HEAT_LOSS_METHOD_CHOICES
 
 
 # Choices should be an iterable of (value, label) tuples
@@ -71,6 +72,7 @@ class ProjectData(models.Model):
     res_tol = models.DecimalField(max_digits=5, decimal_places=2)
     termination_margin = models.DecimalField(max_digits=8, decimal_places=2)
     heat_loss_sf = models.DecimalField(max_digits=5, decimal_places=2)
+    heat_loss_method = models.CharField(max_length=40, choices=HEAT_LOSS_METHOD_CHOICES, default=DEFAULT_HEAT_LOSS_METHOD)
     rtd_thrm = models.CharField(max_length=50, choices=SELECT_RTD_THERMOSTAT, default='TI')
     wind_speed = models.DecimalField(max_digits=8, decimal_places=2)
     req_local_isolator = models.CharField(max_length=30, choices=LOCAL_ISOLATOR_REQUIREMENT, default='required')
@@ -257,6 +259,7 @@ class HeatLoss(models.Model):
     heat_loss_sf = models.FloatField(default=1)
     pipe_size_mm = models.FloatField(default=0)
     conductivity = models.FloatField(default=0)
+    conductivity_basis = models.JSONField(default=dict, blank=True)
     wind_correction = models.FloatField(default=1)
     accessory_adders = models.JSONField(default=dict, blank=True)
     tracer_adder = models.FloatField()

@@ -26,6 +26,7 @@ class ProjectDataForm(forms.ModelForm):
             'res_tol',
             'termination_margin',
             'heat_loss_sf',
+            'heat_loss_method',
             'rtd_thrm',
             'wind_speed',
             'caution_label_interval',
@@ -54,6 +55,7 @@ class ProjectDataForm(forms.ModelForm):
             'res_tol':'Tracer resistance tolerance (%)',
             'termination_margin':'Termination margin (in mm)',
             'heat_loss_sf':'Safety Factor on Heat Loss (> 1.0)',
+            'heat_loss_method':'Heat loss calculation method',
             'rtd_thrm':'Select RTD/Thermostat type',
             'wind_speed':'Wind speed (kmph)',
             'caution_label_interval':'Caution Label Interval (m)',
@@ -86,6 +88,9 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['min_amb_t'].widget.attrs.update({'placeholder': 'Min. ambient temperature (°C)'})
         self.fields['max_amb_t'].widget.attrs.update({'placeholder': 'Max. ambient temperature (°C)'})
         self.fields['startup_t'].widget.attrs.update({'placeholder': 'Startup temperature (°C)'})
+        self.fields['heat_loss_method'].widget.attrs.update({'title': (
+            'Mean temperature is active by default. Table, integrated k(T), and fixed-basis methods are placeholders for future releases.'
+        )})
 
         for name, field in self.fields.items():
             self._apply_bootstrap_widget_classes(name, field)
@@ -104,7 +109,7 @@ class ProjectDataForm(forms.ModelForm):
         else:
             ensure_class('form-control')
 
-        if name in {'proj_id', 'vendor'}:
+        if name in {'proj_id', 'vendor', 'heat_loss_method'}:
             ensure_class('project-hero-field')
 
         widget.attrs['class'] = ' '.join(token for token in class_tokens if token)

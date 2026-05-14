@@ -167,6 +167,18 @@ Adopt this policy:
 - Every heat-loss result must persist the selected method, input temperatures,
   final k or k_eff, data source, and any safety factors.
 
+## Decision Recorded 2026-05-14
+
+- Default project setup method: `mean_temperature`.
+- Active comparison method: `legacy_maint_temperature`.
+- Placeholder methods: `standard_table`, `integrated_kT`, and
+  `fixed_project_basis`.
+- Placeholder methods currently calculate using mean-temperature basis and
+  write an evidence warning so the result is reviewable.
+- External convection/radiation modelling, standard/vendor table sources,
+  integrated k(T), fixed project basis, and multi-layer insulation are deferred
+  to the heat-loss method backlog in `NOTES/SR_CALCULATION_HARDENING_TRACKER.md`.
+
 ## Sources
 
 - NIA Mechanical Insulation Design Guide, Design Data:

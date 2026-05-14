@@ -3,6 +3,19 @@ import logging
 
 from eht.calculations.tag_management import ProjectTagFactory, build_connection
 
+
+SR_PER_CIRCUIT_BREAKER_RULE_SET = 'SR_PER_CIRCUIT_BREAKER_SIZING_V1'
+SR_TERMINATION_MARGIN_RULE_SET = 'SR_TERMINATION_MARGIN_INSTALLATION_ALLOWANCE_V1'
+BREAKER_SIZES = [2, 4, 6, 10, 16, 20, 25, 32, 40]
+
+
+def _select_breaker_size(required_current, max_cb_size):
+    candidates = [size for size in BREAKER_SIZES if size <= max_cb_size]
+    if not candidates:
+        candidates = BREAKER_SIZES
+    return next((size for size in candidates if size >= required_current), max_cb_size)
+
+
 def compute_power_params(line, project_settings, asme_data, selected_tracer):
     """
     Computes electrical parameters for each heating circuit.
@@ -28,32 +41,46 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
         tracer_C_const = float(selected_tracer['C_Coeff'])
         min_amb_temp = float(project_settings['min_amb_t'])
         operating_temp = float(line['oper_temp'])
-        vendorVoltage_Correction = float(selected_tracer['Voltage_Correction_Factor'])
+        nominal_voltage_correction = float(
+            selected_tracer.get('Voltage_Correction_Factor_Nominal', selected_tracer['Voltage_Correction_Factor'])
+        )
+        max_current_voltage_correction = float(
+            selected_tracer.get('Voltage_Correction_Factor_Max_Current', nominal_voltage_correction)
+        )
+        max_current_voltage = float(selected_tracer.get('Max_Current_Voltage', voltage))
    
-        # Compute Maximum Current
-        maximum_current = (
+        # Compute line-level currents before circuit splitting.
+        line_maximum_current = (
             (tracer_A_const * min_amb_temp**2 + tracer_B_const * min_amb_temp + tracer_C_const)
-            * (tracer_length * vendorVoltage_Correction)
-        ) / voltage
+            * (tracer_length * max_current_voltage_correction)
+        ) / max_current_voltage
 
-        # Compute Operating Current
-        operating_current = (
+        line_operating_current = (
             (tracer_A_const * operating_temp**2 + tracer_B_const * operating_temp + tracer_C_const)
-            * (tracer_length * vendorVoltage_Correction)
+            * (tracer_length * nominal_voltage_correction)
         ) / voltage
 
-        # Compute No. of Circuits Required
-        no_of_circuits = math.ceil(maximum_current / (max_cb_size * margin_on_max_cb_size))
+        allowed_current_per_circuit = max_cb_size * margin_on_max_cb_size
+        if allowed_current_per_circuit <= 0:
+            raise ValueError("Maximum breaker size and loading restriction must allow positive current.")
+
+        # Compute No. of Circuits Required from line current, then size each circuit.
+        no_of_circuits = max(1, math.ceil(line_maximum_current / allowed_current_per_circuit))
+        per_circuit_max_current = line_maximum_current / no_of_circuits
+        per_circuit_operating_current = line_operating_current / no_of_circuits
 
         # Breaker Size Selection
-        breaker_sizes = [2, 4, 6, 10, 16, 20, 25, 32, 40]
-        breaker_size = next((size for size in breaker_sizes if size >= maximum_current), max_cb_size)
+        required_breaker_current = per_circuit_max_current / margin_on_max_cb_size
+        breaker_size = _select_breaker_size(required_breaker_current, max_cb_size)
         
         # Compute Operating Load
-        operating_load = operating_current * voltage
+        operating_load = line_operating_current * voltage
         
-        # Apply termination margins to tracer length
-        total_tracer_length = tracer_length + no_of_circuits * float(project_settings['termination_margin']) / 1000
+        # Termination margin is an installation allowance, not energized heat-delivery length.
+        heated_tracer_length = tracer_length
+        termination_margin_per_circuit_m = float(project_settings['termination_margin']) / 1000
+        termination_margin_length = no_of_circuits * termination_margin_per_circuit_m
+        total_tracer_length = heated_tracer_length + termination_margin_length
        
         outer_dia_mm = asme_data.loc[asme_data['Nominal_Pipe_Size'] == float(line['line_size']), 'Outside_Diameter_mm']
         pipe_size_mm = outer_dia_mm.iloc[0] if not outer_dia_mm.empty else 25.206 * float(line['line_size']) + 9.4852
@@ -63,10 +90,35 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
             'project_id': project_settings.get('proj_id'),
             'no_of_circuits': no_of_circuits,
             'breaker_size': breaker_size,
-            'operating_current': operating_current,
-            'max_current': maximum_current,
+            'operating_current': per_circuit_operating_current,
+            'max_current': per_circuit_max_current,
+            'line_operating_current': line_operating_current,
+            'line_max_current': line_maximum_current,
+            'per_circuit_operating_current': per_circuit_operating_current,
+            'per_circuit_max_current': per_circuit_max_current,
             'operating_load': operating_load,
             'total_tracer_length': total_tracer_length,
+            'heated_tracer_length': heated_tracer_length,
+            'termination_margin_length': termination_margin_length,
+            'termination_margin_per_circuit_m': termination_margin_per_circuit_m,
+            'termination_margin_basis': {
+                'rule_set': SR_TERMINATION_MARGIN_RULE_SET,
+                'semantics': 'installation_allowance_excluded_from_electrical_load',
+                'source_field': 'ProjectData.termination_margin',
+            },
+            'breaker_sizing': {
+                'rule_set': SR_PER_CIRCUIT_BREAKER_RULE_SET,
+                'max_cb_size': max_cb_size,
+                'restricted_loading_factor': margin_on_max_cb_size,
+                'allowed_current_per_circuit': allowed_current_per_circuit,
+                'required_breaker_current': required_breaker_current,
+            },
+            'voltage_scenarios': {
+                'operating_voltage': voltage,
+                'max_current_voltage': max_current_voltage,
+                'nominal_voltage_correction': nominal_voltage_correction,
+                'max_current_voltage_correction': max_current_voltage_correction,
+            },
             'pipe_size_mm':pipe_size_mm if pipe_size_mm else 0
         }
     except Exception as e:
@@ -133,6 +185,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
             sequence_index=1,
             metadata={
                 "breaker_size": power_params["breaker_size"],
+                "max_current": power_params.get("max_current"),
+                "operating_current": power_params.get("operating_current"),
+                "line_max_current": power_params.get("line_max_current"),
+                "line_operating_current": power_params.get("line_operating_current"),
+                "breaker_sizing": power_params.get("breaker_sizing", {}),
                 "branch_type": branch_type,
             },
         )

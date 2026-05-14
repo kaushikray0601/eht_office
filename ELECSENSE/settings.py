@@ -9,7 +9,8 @@ env = environ.Env()
 
 env_file = BASE_DIR / ".env"
 if env_file.exists():
-    environ.Env.read_env(env_file, overwrite=True)
+    # Let process environment win over .env (e.g. USE_POSTGRES=false for SQLite tests).
+    environ.Env.read_env(env_file, overwrite=False)
 
 
 # Quick-start development settings - unsuitable for production

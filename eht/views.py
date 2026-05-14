@@ -90,6 +90,7 @@ PROJECT_DATA_TEMPLATE_FIELDS = [
     'res_tol',
     'termination_margin',
     'heat_loss_sf',
+    'heat_loss_method',
     'rtd_thrm',
     'wind_speed',
     'req_local_isolator',

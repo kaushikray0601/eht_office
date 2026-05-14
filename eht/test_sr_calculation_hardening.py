@@ -1,18 +1,73 @@
 import math
 
+import pandas as pd
 from django.test import SimpleTestCase, TestCase
 
 from eht.calculations.heat_loss import (
+    CONDUCTIVITY_BASIS_LEGACY_MAINT_TEMPERATURE,
+    CONDUCTIVITY_BASIS_MEAN_TEMPERATURE,
     SR_ACCESSORY_ADDER_RULE_SET,
     calculate_accessory_adders,
     calculate_heat_loss,
+    calculate_insulation_conductivity,
 )
-from eht.data_service import store_calculated_results
-from eht.models import HeatLoss, HeatTracingInput
+from eht.data_service import fetch_vendor_data, store_calculated_results
+from eht.heat_loss_methods import (
+    DEFAULT_HEAT_LOSS_METHOD,
+    HEAT_LOSS_METHOD_INTEGRATED_KT,
+    HEAT_LOSS_METHOD_LEGACY_MAINT_TEMPERATURE,
+)
+from eht.models import ElecEHT_Vendor, HeatLoss, HeatTracingInput
 from eht.tests import make_asme_table, make_line, make_project_record, make_project_settings, make_thermal_table
 
 
+def make_temperature_dependent_thermal_table():
+    return pd.DataFrame([
+        {'Ins_Mat_Type': 'MW', 'K_factor_A': 0.0, 'K_factor_B': 0.001, 'K_factor_C': 0.0},
+    ])
+
+
 class HeatLossEvidenceTests(SimpleTestCase):
+    def test_calculate_insulation_conductivity_defaults_to_mean_temperature(self):
+        result = calculate_insulation_conductivity(
+            100.0,
+            20.0,
+            make_temperature_dependent_thermal_table(),
+        )
+
+        self.assertAlmostEqual(result['conductivity'], 0.06, places=6)
+        self.assertEqual(result['basis']['requested_method'], DEFAULT_HEAT_LOSS_METHOD)
+        self.assertEqual(result['basis']['effective_method'], DEFAULT_HEAT_LOSS_METHOD)
+        self.assertEqual(result['basis']['rule_set'], CONDUCTIVITY_BASIS_MEAN_TEMPERATURE)
+        self.assertEqual(result['basis']['temperature_basis'], 'mean_insulation_temperature')
+        self.assertAlmostEqual(result['basis']['evaluation_temperature_c'], 60.0, places=6)
+
+    def test_calculate_insulation_conductivity_preserves_legacy_method(self):
+        result = calculate_insulation_conductivity(
+            100.0,
+            20.0,
+            make_temperature_dependent_thermal_table(),
+            HEAT_LOSS_METHOD_LEGACY_MAINT_TEMPERATURE,
+        )
+
+        self.assertAlmostEqual(result['conductivity'], 0.1, places=6)
+        self.assertEqual(result['basis']['effective_method'], HEAT_LOSS_METHOD_LEGACY_MAINT_TEMPERATURE)
+        self.assertEqual(result['basis']['rule_set'], CONDUCTIVITY_BASIS_LEGACY_MAINT_TEMPERATURE)
+        self.assertEqual(result['basis']['temperature_basis'], 'maint_temp')
+
+    def test_calculate_insulation_conductivity_records_placeholder_fallback(self):
+        result = calculate_insulation_conductivity(
+            100.0,
+            20.0,
+            make_temperature_dependent_thermal_table(),
+            HEAT_LOSS_METHOD_INTEGRATED_KT,
+        )
+
+        self.assertAlmostEqual(result['conductivity'], 0.06, places=6)
+        self.assertEqual(result['basis']['requested_method'], HEAT_LOSS_METHOD_INTEGRATED_KT)
+        self.assertEqual(result['basis']['effective_method'], DEFAULT_HEAT_LOSS_METHOD)
+        self.assertTrue(result['basis']['warnings'])
+
     def test_calculate_accessory_adders_returns_named_rule_evidence(self):
         adders = calculate_accessory_adders(make_line(), 60.3)
 
@@ -36,6 +91,8 @@ class HeatLossEvidenceTests(SimpleTestCase):
 
         self.assertAlmostEqual(result['pipe_size_mm'], pipe_size_mm, places=6)
         self.assertAlmostEqual(result['conductivity'], 0.05, places=6)
+        self.assertEqual(result['conductivity_basis']['effective_method'], DEFAULT_HEAT_LOSS_METHOD)
+        self.assertEqual(result['conductivity_basis']['rule_set'], CONDUCTIVITY_BASIS_MEAN_TEMPERATURE)
         self.assertAlmostEqual(result['wind_correction'], 1.0, places=6)
         self.assertAlmostEqual(result['base_heat_loss'], expected_base_heat_loss, places=6)
         self.assertAlmostEqual(result['design_heat_loss'], expected_base_heat_loss * 1.25, places=6)
@@ -71,6 +128,10 @@ class HeatLossEvidencePersistenceTests(TestCase):
                     'heat_loss_sf': 1.25,
                     'pipe_size_mm': 60.3,
                     'conductivity': 0.05,
+                    'conductivity_basis': {
+                        'requested_method': DEFAULT_HEAT_LOSS_METHOD,
+                        'effective_method': DEFAULT_HEAT_LOSS_METHOD,
+                    },
                     'wind_correction': 1.0,
                     'accessory_adders': {
                         'valve': 1.1,
@@ -96,5 +157,32 @@ class HeatLossEvidencePersistenceTests(TestCase):
         self.assertEqual(result.heat_loss_sf, 1.25)
         self.assertEqual(result.pipe_size_mm, 60.3)
         self.assertEqual(result.conductivity, 0.05)
+        self.assertEqual(result.conductivity_basis['effective_method'], DEFAULT_HEAT_LOSS_METHOD)
         self.assertEqual(result.wind_correction, 1.0)
         self.assertEqual(result.accessory_adders['total'], 3.6)
+
+
+class VendorCatalogueRetrievalTests(TestCase):
+    def test_fetch_vendor_data_matches_selected_vendor_case_insensitively(self):
+        ElecEHT_Vendor.objects.create(
+            V_UID='KRZ_SR',
+            Vendor='Krus-Zapad',
+            Tracer_Family='Self Regulating',
+            Voltage=230.0,
+        )
+
+        result = fetch_vendor_data('KRUS-Zapad', 240.0)
+
+        self.assertEqual(result['V_UID'].tolist(), ['KRZ_SR'])
+
+    def test_fetch_vendor_data_does_not_apply_voltage_lower_bound_in_database(self):
+        ElecEHT_Vendor.objects.create(
+            V_UID='SST_230',
+            Vendor='SST',
+            Tracer_Family='Self Regulating',
+            Voltage=230.0,
+        )
+
+        result = fetch_vendor_data('SST', 240.0)
+
+        self.assertEqual(result['V_UID'].tolist(), ['SST_230'])
