@@ -73,10 +73,10 @@ Use layered calculation boundaries:
 - [x] SR-10: Rejection reasons
   - Persist structured reasons when no SR tracer is selected or when options
     are rejected.
-- [ ] SR-11: Reporting alignment
+- [x] SR-11: Reporting alignment
   - Update result tab, exports, BOQ labels, and SLD metadata to reflect
     corrected calculation fields.
-- [ ] SR-12: Regression sweep
+- [x] SR-12: Regression sweep
   - Run and update import, heat loss, selection, power distribution,
     persistence, BOQ, cable schedule, and SLD tests after the SR fixes.
 
@@ -212,3 +212,15 @@ Use layered calculation boundaries:
   output, or no spiral-factor match remain persisted in `HeatLoss` with a
   status and machine-readable reason instead of silently disappearing after heat
   loss.
+- 2026-05-16: SR-11 complete. Result tab and result Excel now distinguish
+  design heat loss from base heat loss, show heat-loss safety factor and
+  conductivity method evidence, label starting/operating current as
+  per-circuit values, and label ordered SR tracer length as including the
+  termination installation allowance. SR selection diagnostics are visible in
+  the result tab and exported as a separate worksheet. BOQ tracer descriptions
+  now state the ordered SR length basis, and SLD tracer nodes carry
+  `sr_calculation` metadata for heat-loss, current, and tracer-length basis.
+- 2026-05-16: SR-12 complete. Ran the full `eht` Django suite after the SR
+  reporting pass. Import, heat loss, selection, power distribution,
+  persistence, result/BOQ/cable schedule, SLD payload, SLD topology, and SLD PDF
+  coverage are green with 158 passing tests.

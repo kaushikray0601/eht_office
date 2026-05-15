@@ -3749,7 +3749,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertIn('p1_results.xlsx', response['Content-Disposition'])
 
         workbook = load_workbook(BytesIO(response.content))
-        self.assertEqual(workbook.sheetnames, ['Line Results', 'Power Distribution', 'Alternate Tracers'])
+        self.assertEqual(workbook.sheetnames, ['Line Results', 'Selection Diagnostics', 'Power Distribution', 'Alternate Tracers'])
 
         line_rows = list(workbook['Line Results'].iter_rows(values_only=True))
         branch_rows = list(workbook['Power Distribution'].iter_rows(values_only=True))

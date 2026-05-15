@@ -2,7 +2,9 @@ from django.core.exceptions import ValidationError
 
 from .models import (
     AlternateTracer,
+    HeatLoss,
     HeatTracingInput,
+    ProcessLineCalculation,
     ProjectData,
     SelectedTracer,
     TracerSelectionOverride,
@@ -29,6 +31,42 @@ def _tracer_option_payload(tracer, option_rank=None):
     }
     if option_rank is not None:
         payload['option_rank'] = option_rank
+    return payload
+
+
+def _heat_loss_payload(heat_loss):
+    if not heat_loss:
+        return {}
+    basis = heat_loss.conductivity_basis or {}
+    return {
+        'design_heat_loss': _rounded_or_blank(heat_loss.design_heat_loss),
+        'base_heat_loss': _rounded_or_blank(heat_loss.base_heat_loss),
+        'heat_loss_sf': _rounded_or_blank(heat_loss.heat_loss_sf),
+        'conductivity': _rounded_or_blank(heat_loss.conductivity),
+        'conductivity_method': basis.get('effective_method_label') or basis.get('effective_method') or '',
+        'conductivity_rule_set': basis.get('rule_set') or '',
+        'wind_correction': _rounded_or_blank(heat_loss.wind_correction),
+        'accessory_tracer_adders_m': _rounded_or_blank(heat_loss.tracer_adder),
+        'selection_status': heat_loss.selection_status,
+        'selection_rejection_reasons': heat_loss.selection_rejection_reasons or [],
+    }
+
+
+def _calculation_payload(calculation, selected):
+    if not calculation:
+        return {}
+    payload = {
+        'breaker_size': _rounded_or_blank(calculation.breaker_size),
+        'total_circuits': calculation.total_circuits,
+        'starting_current_per_circuit': _rounded_or_blank(calculation.starting_current),
+        'operating_current_per_circuit': _rounded_or_blank(calculation.operating_current),
+        'current_basis': 'per_circuit',
+        'total_connected_load_w': _rounded_or_blank(calculation.total_power_consumption),
+        'ordered_tracer_length_m': _rounded_or_blank(calculation.total_tracer_length),
+        'tracer_length_basis': 'ordered_length_includes_termination_allowance',
+    }
+    if selected:
+        payload['heated_tracer_length_excluding_termination_m'] = _rounded_or_blank(selected.tracer_with_margin)
     return payload
 
 
@@ -72,6 +110,14 @@ def apply_tracer_selection_to_payload(project_id, payload):
         str(tracer.line_id): tracer
         for tracer in SelectedTracer.objects.filter(line_id__in=line_uids)
     }
+    heat_loss_by_line_uid = {
+        str(heat_loss.line_id): heat_loss
+        for heat_loss in HeatLoss.objects.filter(line_id__in=line_uids)
+    }
+    calculation_by_line_uid = {
+        str(calculation.line_id): calculation
+        for calculation in ProcessLineCalculation.objects.filter(line_id__in=line_uids)
+    }
     alternate_by_line_uid = {}
     for alternate in AlternateTracer.objects.filter(line_id__in=line_uids).order_by('line_id', 'option_rank'):
         alternate_by_line_uid.setdefault(str(alternate.line_id), []).append(alternate)
@@ -93,6 +139,8 @@ def apply_tracer_selection_to_payload(project_id, payload):
         selected_payload = _tracer_option_payload(active_option, active_option.option_rank) if active_option else (
             _tracer_option_payload(selected) if selected else {}
         )
+        calculation = calculation_by_line_uid.get(line_uid)
+        heat_loss = heat_loss_by_line_uid.get(line_uid)
         metadata = dict(node.get('metadata') or {})
         metadata['tracer_selection'] = {
             'selected': selected_payload,
@@ -106,6 +154,10 @@ def apply_tracer_selection_to_payload(project_id, payload):
             'override_active': bool(active_option),
             'override_id': override.id if active_option else None,
             'override_remarks': override.remarks if active_option else '',
+        }
+        metadata['sr_calculation'] = {
+            'heat_loss': _heat_loss_payload(heat_loss),
+            'electrical': _calculation_payload(calculation, selected),
         }
         node['metadata'] = metadata
     return payload

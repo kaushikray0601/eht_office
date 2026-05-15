@@ -47,7 +47,7 @@ BOQ_ITEM_METADATA = {
     'JB1PH': {'description': '1-Phase Junction Box', 'unit': 'EA'},
     'CCMCB-3PHJB': {'description': 'Cable from MCB to 3-Phase Junction Box', 'unit': 'm'},
     'CC3PHJB-1PHJB': {'description': 'Cable from 3-Phase Junction Box to 1-Phase Junction Box', 'unit': 'm'},
-    'TRACER': {'description': 'Heating Tracer', 'unit': 'm'},
+    'TRACER': {'description': 'Ordered SR heating tracer length (incl. termination allowance)', 'unit': 'm'},
     'ENDTRM': {'description': 'End Termination Kit', 'unit': 'EA'},
     'ISOLATOR_1PH': {'description': '1-Phase Isolator', 'unit': 'EA'},
     'ISOLATOR_3PH': {'description': '3-Phase Isolator', 'unit': 'EA'},

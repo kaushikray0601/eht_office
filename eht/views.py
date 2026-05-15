@@ -35,6 +35,7 @@ from .models import (
     AlternateTracer,
     BOQ,
     DEFAULT_PROJECT_ID,
+    HeatLoss,
     HeatTracingInput,
     ManagedProject,
     PowerDistributionBranch,
@@ -328,6 +329,7 @@ def _build_result_workspace_data(project_id):
         ProcessLineCalculation.objects.filter(line__proj_id=project_id)
         .select_related(
             'line',
+            'line__heat_loss_result',
             'line__selected_tracer_result',
             'line__power_distribution_result',
         )
@@ -343,6 +345,12 @@ def _build_result_workspace_data(project_id):
         )
         .order_by('line__line_id')
     )
+    selection_issue_rows = [
+        _selection_issue_payload(heat_loss)
+        for heat_loss in HeatLoss.objects.filter(line__proj_id=project_id, selection_status='rejected')
+        .select_related('line')
+        .order_by('line__line_id')
+    ]
     sld_payload = build_project_sld_payload(project_id)
     sld_meta = sld_payload.get('meta') or {}
     allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
@@ -383,6 +391,9 @@ def _build_result_workspace_data(project_id):
         line_results.append({
             'calculation': calculation,
             'line': line,
+            'heat_loss': getattr(line, 'heat_loss_result', None),
+            'heat_loss_basis_label': _heat_loss_basis_label(getattr(line, 'heat_loss_result', None)),
+            'heat_loss_rule_set': _heat_loss_rule_set(getattr(line, 'heat_loss_result', None)),
             'selected_tracer': getattr(line, 'selected_tracer_result', None),
             'alternate_tracers': list(line.alternate_tracer_results.all()),
             'tracer_override': tracer_override,
@@ -397,6 +408,7 @@ def _build_result_workspace_data(project_id):
         'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
         'branch_count': len(branch_rows),
         'tracer_override_count': len(active_tracer_overrides),
+        'selection_issue_count': len(selection_issue_rows),
     }
     summary = apply_active_summary_overrides(
         project_id,
@@ -406,8 +418,48 @@ def _build_result_workspace_data(project_id):
     )
     return {
         'line_results': line_results,
+        'selection_issue_rows': selection_issue_rows,
         'branch_rows': branch_rows,
         'summary': summary,
+    }
+
+
+def _first_selection_rejection(heat_loss):
+    if not heat_loss:
+        return {}
+    reasons = heat_loss.selection_rejection_reasons or []
+    if reasons and isinstance(reasons[0], dict):
+        return reasons[0]
+    return {}
+
+
+def _heat_loss_basis(heat_loss):
+    if not heat_loss:
+        return {}
+    return heat_loss.conductivity_basis or {}
+
+
+def _heat_loss_basis_label(heat_loss):
+    basis = _heat_loss_basis(heat_loss)
+    return basis.get('effective_method_label') or basis.get('effective_method') or ''
+
+
+def _heat_loss_rule_set(heat_loss):
+    basis = _heat_loss_basis(heat_loss)
+    return basis.get('rule_set') or ''
+
+
+def _selection_issue_payload(heat_loss):
+    reason = _first_selection_rejection(heat_loss)
+    return {
+        'line': heat_loss.line,
+        'heat_loss': heat_loss,
+        'status': heat_loss.selection_status or 'rejected',
+        'reason_code': reason.get('code') or '',
+        'reason_message': reason.get('message') or '',
+        'reason_details': reason.get('details') or {},
+        'basis_label': _heat_loss_basis_label(heat_loss),
+        'rule_set': _heat_loss_rule_set(heat_loss),
     }
 
 
@@ -429,25 +481,29 @@ def result_view(request):
     context = _get_project_workspace_context(request, project_id)
     line_results = []
     branch_rows = []
+    selection_issue_rows = []
     summary = {
         'calculated_lines': 0,
         'total_circuits': 0,
         'total_power_kw': 0,
         'total_tracer_length': 0,
         'branch_count': 0,
+        'selection_issue_count': 0,
     }
 
     if project_id and context['project_setup']:
         result_data = _build_result_workspace_data(project_id)
         line_results = result_data['line_results']
+        selection_issue_rows = result_data['selection_issue_rows']
         branch_rows = result_data['branch_rows']
         summary = result_data['summary']
 
     context.update({
         'line_results': line_results,
+        'selection_issue_rows': selection_issue_rows,
         'branch_rows': branch_rows,
         'result_summary': summary,
-        'has_results': bool(line_results),
+        'has_results': bool(line_results or selection_issue_rows),
     })
     return render(request, 'eht/partials/result_tab.html', context)
 
@@ -1439,14 +1495,16 @@ def result_export_view(request):
         return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
 
     result_data = _build_result_workspace_data(project_id)
-    if not result_data['line_results']:
+    if not result_data['line_results'] and not result_data['selection_issue_rows']:
         return JsonResponse({'error': 'No stored calculation results are available for this project yet.'}, status=400)
 
     line_rows = []
     alternate_rows = []
+    selection_rows = []
     for item in result_data['line_results']:
         calculation = item['calculation']
         line = item['line']
+        heat_loss = item.get('heat_loss')
         selected_tracer = item['selected_tracer']
         tracer_override = item.get('tracer_override')
         tracer_override_alternate = item.get('tracer_override_alternate')
@@ -1457,7 +1515,15 @@ def result_export_view(request):
             'Line Size': calculation.line_size,
             'Line Length': calculation.line_length,
             'Operating Temp': calculation.operating_temp,
-            'Heat Loss': calculation.heat_loss,
+            'Design Heat Loss (W/m)': heat_loss.design_heat_loss if heat_loss else calculation.heat_loss,
+            'Base Heat Loss before SF (W/m)': heat_loss.base_heat_loss if heat_loss else '',
+            'Heat Loss Safety Factor': heat_loss.heat_loss_sf if heat_loss else '',
+            'Conductivity Method': item.get('heat_loss_basis_label') or '',
+            'Conductivity Rule Set': item.get('heat_loss_rule_set') or '',
+            'Conductivity (W/m.K)': heat_loss.conductivity if heat_loss else '',
+            'Wind Correction Factor': heat_loss.wind_correction if heat_loss else '',
+            'Accessory Tracer Adders (m)': heat_loss.tracer_adder if heat_loss else '',
+            'SR Selection Status': heat_loss.selection_status if heat_loss else '',
             'Selected Tracer': calculation.selected_tracer,
             'Tracer Family': getattr(selected_tracer, 'tracer_family', ''),
             'SLD Tracer Override': tracer_override.selected_v_uid if tracer_override else '',
@@ -1470,10 +1536,15 @@ def result_export_view(request):
             'Spiral Factor': calculation.spiral_factor,
             'Breaker Size': calculation.breaker_size,
             'Total Circuits': calculation.total_circuits,
-            'Starting Current': calculation.starting_current,
-            'Operating Current': calculation.operating_current,
-            'Total Power Consumption': calculation.total_power_consumption,
-            'Total Tracer Length': calculation.total_tracer_length,
+            'Starting Current / Circuit (A)': calculation.starting_current,
+            'Operating Current / Circuit (A)': calculation.operating_current,
+            'Current Basis': 'Per circuit',
+            'Total Connected Load (W)': calculation.total_power_consumption,
+            'Ordered SR Tracer Length incl. Termination Allowance (m)': calculation.total_tracer_length,
+            'Heated Tracer Length excl. Termination Allowance (m)': (
+                selected_tracer.tracer_with_margin if selected_tracer else ''
+            ),
+            'Tracer Length Basis': 'Ordered length includes SR termination installation allowance',
             'Pipe Size mm': calculation.pipe_size_mm,
         })
         for alternate in item['alternate_tracers']:
@@ -1485,9 +1556,30 @@ def result_export_view(request):
                 'Tracer Family': alternate.tracer_family,
                 'Power Output': alternate.power_output,
                 'Spiral Factor': alternate.spiral_factor,
-                'Tracer Length': alternate.tracer_length,
-                'Tracer With Margin': alternate.tracer_with_margin,
+                'Heated Tracer Length before Design Margin (m)': alternate.tracer_length,
+                'Heated Tracer Length with Design Margin excl. Termination (m)': alternate.tracer_with_margin,
             })
+
+    for item in result_data['selection_issue_rows']:
+        heat_loss = item['heat_loss']
+        line = item['line']
+        selection_rows.append({
+            'Project ID': project_id,
+            'Line ID': line.line_id if line else '',
+            'Service Type': line.service_type if line else '',
+            'Selection Status': item['status'],
+            'Reason Code': item['reason_code'],
+            'Reason Message': item['reason_message'],
+            'Reason Details': json.dumps(item['reason_details'], default=str),
+            'Design Heat Loss (W/m)': heat_loss.design_heat_loss,
+            'Base Heat Loss before SF (W/m)': heat_loss.base_heat_loss,
+            'Heat Loss Safety Factor': heat_loss.heat_loss_sf,
+            'Conductivity Method': item['basis_label'],
+            'Conductivity Rule Set': item['rule_set'],
+            'Conductivity (W/m.K)': heat_loss.conductivity,
+            'Wind Correction Factor': heat_loss.wind_correction,
+            'Accessory Tracer Adders (m)': heat_loss.tracer_adder,
+        })
 
     branch_rows = [
         {
@@ -1509,6 +1601,7 @@ def result_export_view(request):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         pd.DataFrame(line_rows).to_excel(writer, sheet_name='Line Results', index=False)
+        pd.DataFrame(selection_rows).to_excel(writer, sheet_name='Selection Diagnostics', index=False)
         pd.DataFrame(branch_rows).to_excel(writer, sheet_name='Power Distribution', index=False)
         pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
 
