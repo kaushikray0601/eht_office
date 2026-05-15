@@ -70,7 +70,7 @@ Use layered calculation boundaries:
 - [x] SR-09: Termination margin semantics
   - Decide and implement whether termination margin is heated cable length,
     installation allowance, or cold-tail allowance for SR.
-- [ ] SR-10: Rejection reasons
+- [x] SR-10: Rejection reasons
   - Persist structured reasons when no SR tracer is selected or when options
     are rejected.
 - [ ] SR-11: Reporting alignment
@@ -198,3 +198,17 @@ Use layered calculation boundaries:
   heat-delivery length, current, and breaker sizing. The calculation payload now
   carries heated tracer length, termination allowance length, and the semantic
   basis for review/reporting.
+- 2026-05-15: Upload-time vendor persistence bug fix. The calculation pipeline
+  was honoring the saved `ProjectData.vendor`, but the workspace upload AJAX
+  sent only `file` and `project_id`. If a user changed the vendor dropdown and
+  uploaded before pressing Save, the visible vendor was ignored and the old
+  saved vendor, commonly Thermon, was used. Upload now sends the visible project
+  setup fields, and `calculate_view` validates/saves them before clearing input
+  data or running calculations.
+- 2026-05-15: SR-10 complete. SR tracer selection now records structured
+  rejection evidence on the heat-loss result under rule set
+  `SR_SELECTION_REJECTION_REASON_V1`. Lines rejected for no vendor rows, no SR
+  suitability match, no voltage-compatible nominal class, no positive power
+  output, or no spiral-factor match remain persisted in `HeatLoss` with a
+  status and machine-readable reason instead of silently disappearing after heat
+  loss.

@@ -18,6 +18,7 @@ IEC_GAS_GROUP_RANK = {'IIA': 1, 'IIB': 2, 'IIC': 3}
 ROMAN_ZONE_RANK = {'I': '1', 'II': '2'}
 SR_NOMINAL_VOLTAGE_RULE_SET = 'SR_NOMINAL_VOLTAGE_CLASS_V1'
 SR_NOMINAL_VOLTAGE_DEVIATION_LIMIT = 0.10
+SR_REJECTION_RULE_SET = 'SR_SELECTION_REJECTION_REASON_V1'
 
 
 def _is_blank(value):
@@ -223,6 +224,21 @@ def filter_sr_catalogue_suitability(vendor_data, line, project_settings):
     return tracers.copy()
 
 
+def _record_selection_rejection(heat_loss, code, message, details=None):
+    heat_loss['selection_status'] = 'rejected'
+    heat_loss['selection_rejection_reasons'] = [{
+        'rule_set': SR_REJECTION_RULE_SET,
+        'code': code,
+        'message': message,
+        'details': details or {},
+    }]
+
+
+def _record_selection_success(heat_loss):
+    heat_loss['selection_status'] = 'selected'
+    heat_loss['selection_rejection_reasons'] = []
+
+
 def get_tracer_options(heat_loss, line, project_settings, vendor_data):
     """
     Selects the optimal heating tracer from the vendor database.
@@ -239,6 +255,11 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
     try:
         if vendor_data.empty or 'Voltage_Float' not in vendor_data:
             logging.warning(f"No vendor catalogue rows available, UID: {line['uid']}")
+            _record_selection_rejection(
+                heat_loss,
+                'NO_VENDOR_CATALOGUE_ROWS',
+                'No catalogue rows were available for the selected vendor.',
+            )
             return {}, []
 
         system_voltage = project_settings['voltage']
@@ -252,11 +273,23 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         available_tracers = filter_sr_catalogue_suitability(vendor_data, line, project_settings)
         if available_tracers.empty:
             logging.warning(f"No SR tracers satisfy catalogue suitability limits, UID: {line['uid']}")
+            _record_selection_rejection(
+                heat_loss,
+                'NO_SR_CATALOGUE_SUITABILITY',
+                'No SR catalogue rows satisfied family, temperature, area, gas group, and T-rating suitability limits.',
+                {'catalogue_rows': len(vendor_data.index)},
+            )
             return {}, []
 
         available_tracers = filter_sr_catalogue_voltage_compatibility(available_tracers, system_voltage)
         if available_tracers.empty:
             logging.warning(f"No SR tracers satisfy catalogue voltage compatibility limits, UID: {line['uid']}")
+            _record_selection_rejection(
+                heat_loss,
+                'NO_SR_CATALOGUE_VOLTAGE_COMPATIBILITY',
+                'No SR catalogue rows satisfied the nominal voltage compatibility rule.',
+                {'system_voltage': system_voltage},
+            )
             return {}, []
         
         scenario_columns = available_tracers['Voltage_Float'].apply(
@@ -297,6 +330,12 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         valid_tracers = available_tracers[available_tracers['Power_Output_Heat_Delivery'] > 0].copy()
         if valid_tracers.empty:
             logging.warning(f"No valid tracers with required power output, UID: {line['uid']}")
+            _record_selection_rejection(
+                heat_loss,
+                'NO_POSITIVE_POWER_OUTPUT',
+                'No voltage-corrected SR rows had positive heat-delivery power at maintain temperature.',
+                {'candidate_rows': len(available_tracers.index), 'maint_temp': maint_temp},
+            )
             return {}, []
             
         # Size heat delivery at low voltage; nominal and high-voltage scenarios are used separately.
@@ -311,6 +350,17 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
             
         if valid_tracers.empty:
             logging.warning(f"No valid tracers found within spiral factor limits, UID: {line['uid']}")
+            _record_selection_rejection(
+                heat_loss,
+                'NO_SPIRAL_FACTOR_MATCH',
+                'No SR rows satisfied the configured spiral factor limits.',
+                {
+                    'candidate_rows': len(available_tracers.index),
+                    'min_spiral_factor': min_spiral_factor,
+                    'max_spiral_factor': max_spiral_factor,
+                    'spiral_wrap_allowed': spiral_allowed,
+                },
+            )
             return  {}, []
 
         # Calculate total required tracer length
@@ -327,11 +377,18 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         # Select best tracer in dictionary and store alternatives in list
         best_tracer = valid_tracers.iloc[0].to_dict()   
         alternative_tracers = valid_tracers.iloc[1:].to_dict('records') if len(valid_tracers) > 1 else []
+        _record_selection_success(heat_loss)
 
         return best_tracer, alternative_tracers
                 
     except Exception as e:
         logging.error(f"Error selecting tracer for UID {line['uid']}: {str(e)}")
+        _record_selection_rejection(
+            heat_loss,
+            'TRACER_SELECTION_ERROR',
+            'Unexpected error while selecting SR tracer.',
+            {'error': str(e)},
+        )
         return {}, []
     
 

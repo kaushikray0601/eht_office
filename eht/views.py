@@ -176,6 +176,8 @@ def calculate_view(request, project_id=None):
             return JsonResponse({'error': 'Project ID is required before uploading input data.'}, status=400)
 
         try:
+            _save_project_setup_from_upload(request, project_id)
+
             # Step 1: Sanitize the file
             sanitize_started = perf_counter()
             valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
@@ -1684,6 +1686,33 @@ def handle_project_data(request, project_id=None):
         form.save()
         messages.success(request, "Project data saved successfully.")
     return form
+
+
+def _format_form_errors(form):
+    errors = []
+    for field_name, field_errors in form.errors.items():
+        label = form.fields[field_name].label if field_name in form.fields else field_name
+        for error in field_errors:
+            errors.append(f"{label}: {error}")
+    return "; ".join(errors)
+
+
+def _save_project_setup_from_upload(request, project_id):
+    setup_fields = set(ProjectDataForm.Meta.fields)
+    if not any(field in request.POST for field in setup_fields if field != 'proj_id'):
+        return None
+
+    post_data = request.POST.copy()
+    selected_project_id = post_data.get('proj_id') or project_id
+    if selected_project_id != project_id:
+        raise ValidationError("Uploaded project setup does not match the selected project.")
+    post_data['proj_id'] = project_id
+
+    instance = ProjectData.objects.filter(proj_id=project_id).first() or ProjectData(proj_id=project_id)
+    form = ProjectDataForm(post_data, instance=instance, user=getattr(request, 'user', None))
+    if not form.is_valid():
+        raise ValidationError(f"Project setup could not be saved before calculation. {_format_form_errors(form)}")
+    return form.save()
 
 
 #  Logic for userAtempt and limit invalid attempts.

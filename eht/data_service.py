@@ -299,6 +299,8 @@ def store_calculated_results(project_id, aggregated_results):
             conductivity_basis=normalized_item.get('conductivity_basis', {}),
             wind_correction=normalized_item.get('wind_correction', 1),
             accessory_adders=normalized_item.get('accessory_adders', {}),
+            selection_status=normalized_item.get('selection_status', ''),
+            selection_rejection_reasons=normalized_item.get('selection_rejection_reasons', []),
             tracer_adder=normalized_item['tracer_adder'],
         ))
     if heat_loss_rows:

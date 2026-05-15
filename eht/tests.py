@@ -552,8 +552,9 @@ class TracerSelectionTests(SimpleTestCase):
         return pd.DataFrame([{**base_row, **row} for row in rows])
 
     def test_get_tracer_options_returns_best_and_sorted_alternatives(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0}
         best_tracer, alternatives = get_tracer_options(
-            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            heat_loss,
             make_line(),
             make_project_settings(),
             make_tracer_vendor_data(),
@@ -562,10 +563,13 @@ class TracerSelectionTests(SimpleTestCase):
         self.assertEqual(best_tracer['V_UID'], 'T1')
         self.assertAlmostEqual(best_tracer['Tracer_With_Margin'], 11.88, places=2)
         self.assertEqual([item['V_UID'] for item in alternatives], ['T2', 'T3'])
+        self.assertEqual(heat_loss['selection_status'], 'selected')
+        self.assertEqual(heat_loss['selection_rejection_reasons'], [])
 
     def test_get_tracer_options_rejects_spiral_wrap_candidates_when_not_allowed(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0}
         best_tracer, alternatives = get_tracer_options(
-            {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0},
+            heat_loss,
             make_line(),
             make_project_settings(spiral_wrap_allowed=False),
             make_tracer_vendor_data().iloc[1:].copy(),
@@ -573,6 +577,8 @@ class TracerSelectionTests(SimpleTestCase):
 
         self.assertEqual(best_tracer, {})
         self.assertEqual(alternatives, [])
+        self.assertEqual(heat_loss['selection_status'], 'rejected')
+        self.assertEqual(heat_loss['selection_rejection_reasons'][0]['code'], 'NO_SPIRAL_FACTOR_MATCH')
 
     def test_get_tracer_options_filters_catalogue_temperature_limits_and_family(self):
         vendor_data = self._catalogue(
@@ -4503,6 +4509,81 @@ class CalculateViewHardeningTests(TransactionTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(HeatTracingInput.objects.get(proj_id='p1').status, 'confirmed')
+
+    def test_calculate_view_saves_visible_project_setup_before_running_calculation(self):
+        valid_rows = [{
+            'XLID': 1,
+            'Line_ID': 'LINE-NEW',
+            'Service_Type': 'EP',
+            'Line_Size': 2.0,
+            'Line_Length': 11.0,
+            'Ins_Mat_Type': 'Mineral Wool',
+            'Insul_Thick': 50.0,
+            'Maint_T': 120.0,
+            'Oper_T': 100.0,
+            'Design_T': 140.0,
+            'IsDeleted': False,
+            'PID_No': '',
+            'Area': '',
+            'Train': '',
+            'Valve_Qty': 0,
+            'Flange_Qty': 0,
+            'Support_Qty': 0,
+            'Pipe_Mat_Class': '',
+            'Emergency_Supply': False,
+            'Discipline': '',
+            'Remarks': '',
+        }]
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        ManagedProject.objects.get(proj_id='p1').assigned_users.add(self.user)
+        payload = make_project_form_payload(proj_id='p1', vendor='SST', voltage='240.00')
+        payload.update({'project_id': 'p1', 'file': upload})
+
+        def fake_run_project_calculations(project_id):
+            self.assertEqual(ProjectData.objects.get(proj_id=project_id).vendor, 'SST')
+            return ({'heat_loss': []}, {'heat_loss': 0, 'selected_tracers': 0, 'alternative_tracers': 0, 'power_distribution': 0, 'boq_lines': 0, 'consolidated_boq_items': 0, 'tracer_power_param': 0})
+
+        with patch('eht.views.sanitize_file', return_value=(valid_rows, [], '')), patch(
+            'eht.views.run_project_calculations',
+            side_effect=fake_run_project_calculations,
+        ):
+            response = self.client.post(reverse('calculate_view'), payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProjectData.objects.get(proj_id='p1').vendor, 'SST')
+
+    def test_calculate_view_rejects_mismatched_visible_project_setup(self):
+        existing_line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-EXISTING',
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        payload = make_project_form_payload(proj_id='p2', vendor='SST')
+        payload.update({'project_id': 'p1', 'file': upload})
+
+        response = self.client.post(reverse('calculate_view'), payload)
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('does not match', response.json()['error'])
+        self.assertTrue(HeatTracingInput.objects.filter(pk=existing_line.pk).exists())
+        self.assertEqual(ProjectData.objects.get(proj_id='p1').vendor, 'CHR')
 
     def test_confirm_valid_data_rejects_requests_when_no_rows_are_pending(self):
         line = self.create_pending_line(status='confirmed')

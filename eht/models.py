@@ -262,6 +262,8 @@ class HeatLoss(models.Model):
     conductivity_basis = models.JSONField(default=dict, blank=True)
     wind_correction = models.FloatField(default=1)
     accessory_adders = models.JSONField(default=dict, blank=True)
+    selection_status = models.CharField(max_length=30, default='', blank=True)
+    selection_rejection_reasons = models.JSONField(default=list, blank=True)
     tracer_adder = models.FloatField()
 
     class Meta:

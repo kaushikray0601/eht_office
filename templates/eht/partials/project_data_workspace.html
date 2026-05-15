@@ -177,8 +177,16 @@
     $('#upload_input').off('change.projectUpload').on('change.projectUpload', function () {
         let projectId = $('#id_proj_id').val();
         let formData = new FormData();
+        const projectForm = document.getElementById('project-data-form');
+        if (projectForm) {
+            const setupData = new FormData(projectForm);
+            setupData.forEach(function (value, key) {
+                formData.append(key, value);
+            });
+        }
         formData.append('file', this.files[0]);
-        formData.append('project_id', projectId);
+        formData.set('project_id', projectId);
+        formData.set('proj_id', projectId);
         setCalculationProgress(true, "Calculation in progress...");
 
         $.ajax({

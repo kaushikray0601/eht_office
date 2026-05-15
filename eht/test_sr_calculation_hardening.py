@@ -139,6 +139,14 @@ class HeatLossEvidencePersistenceTests(TestCase):
                         'flange': 0.3,
                         'total': 3.6,
                     },
+                    'selection_status': 'rejected',
+                    'selection_rejection_reasons': [
+                        {
+                            'rule_set': 'SR_SELECTION_REJECTION_REASON_V1',
+                            'code': 'NO_SPIRAL_FACTOR_MATCH',
+                            'message': 'No SR rows satisfied the configured spiral factor limits.',
+                        },
+                    ],
                     'tracer_adder': 3.6,
                 },
             ],
@@ -160,6 +168,8 @@ class HeatLossEvidencePersistenceTests(TestCase):
         self.assertEqual(result.conductivity_basis['effective_method'], DEFAULT_HEAT_LOSS_METHOD)
         self.assertEqual(result.wind_correction, 1.0)
         self.assertEqual(result.accessory_adders['total'], 3.6)
+        self.assertEqual(result.selection_status, 'rejected')
+        self.assertEqual(result.selection_rejection_reasons[0]['code'], 'NO_SPIRAL_FACTOR_MATCH')
 
 
 class VendorCatalogueRetrievalTests(TestCase):
