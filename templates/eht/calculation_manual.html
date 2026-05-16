@@ -1,0 +1,292 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>EHT Design Guide | eTrace</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <link href="{% static 'css/manual_guide.css' %}" rel="stylesheet">
+</head>
+<body id="top" class="manual-page">
+    <nav class="manual-nav" aria-label="Guide navigation">
+        <div class="manual-nav-left">
+            <a class="manual-brand" href="{% url 'base' %}">
+                <span class="eTrace">e<span>Trace</span></span>
+            </a>
+            <span class="manual-nav-label">Engineering Guide</span>
+        </div>
+        <div class="manual-nav-actions">
+            <a href="{% url 'base' %}" class="manual-nav-link"><i class="bi bi-grid-1x2"></i> Workspace</a>
+            <a href="#guide-search" class="manual-nav-link"><i class="bi bi-search"></i> Search</a>
+            <a href="#detailed-flow" class="manual-nav-link"><i class="bi bi-diagram-3"></i> Flow Chart</a>
+            <a href="#manual-reader" class="manual-nav-link"><i class="bi bi-book"></i> Manual</a>
+            <button type="button" class="manual-nav-link manual-print-action" data-print-guide><i class="bi bi-printer"></i> Print / PDF</button>
+        </div>
+    </nav>
+
+    <main class="manual-shell">
+        <section class="manual-hero manual-panel">
+            <div class="manual-hero-copy">
+                <p class="manual-kicker">EHT design documentation</p>
+                <h1>EHT Design Guide &amp; Calculation Manual</h1>
+                <p class="manual-lede">
+                    A technical guide for the calculation workflow: project design basis, input validation,
+                    heat-loss evidence, cable technology selection, electrical sizing, diagnostics, reports,
+                    SLD output, and the future MI and 3D model integration path.
+                </p>
+                <div class="manual-hero-actions">
+                    <a href="#manual-reader" class="manual-primary-action">
+                        <i class="bi bi-journal-text"></i>
+                        Read Manual
+                    </a>
+                    <a href="#formula-reference" class="manual-secondary-action">
+                        <i class="bi bi-calculator"></i>
+                        Calculation Basis
+                    </a>
+                </div>
+            </div>
+            <figure class="manual-hero-visual">
+                <img src="{% static 'img/calculation-workspace-preview.svg' %}" alt="Engineering workspace preview for the EHT calculation module">
+                <figcaption>Workspace preview: project basis, calculation results, diagnostics, schedules, BOQ, and SLD review.</figcaption>
+            </figure>
+        </section>
+
+        <section id="guide-search" class="manual-panel manual-utility-panel" aria-label="Manual search and print tools">
+            <div>
+                <p class="manual-kicker">Reader tools</p>
+                <h2>Search the guide or create a print-ready PDF.</h2>
+            </div>
+            <form class="manual-search" role="search" data-guide-search>
+                <label for="manual-search-input">Search manual</label>
+                <div class="manual-search-row">
+                    <input id="manual-search-input" type="search" placeholder="Search heat loss, diagnostics, SLD, cold cable..." autocomplete="off">
+                    <button type="submit"><i class="bi bi-search"></i> Search</button>
+                    <button type="button" data-clear-search>Clear</button>
+                </div>
+                <p class="manual-search-status" data-search-status>Search covers guide cards, flow sections, and the rendered manual.</p>
+                <div class="manual-search-results" data-search-results aria-live="polite"></div>
+            </form>
+            <button type="button" class="manual-print-card" data-print-guide>
+                <i class="bi bi-filetype-pdf"></i>
+                <span>
+                    <strong>Print / Save as PDF</strong>
+                    Browser print opens with a cleaner guide layout for users who prefer hard-copy review.
+                </span>
+            </button>
+        </section>
+
+        <section class="manual-basis-grid" aria-label="Guide scope">
+            <article>
+                <i class="bi bi-diagram-2"></i>
+                <h2>System Workflow</h2>
+                <p>Project setup, line input, calculation evidence, selection diagnostics, and deliverables stay connected as one engineering chain.</p>
+            </article>
+            <article>
+                <i class="bi bi-lightning-charge"></i>
+                <h2>SR Today, MI Next</h2>
+                <p>The current implemented cable technology is SR. MI cable will be developed as a separate calculation module with its own design basis.</p>
+            </article>
+            <article>
+                <i class="bi bi-cpu"></i>
+                <h2>Assisted Engineering</h2>
+                <p>The guide is structured for future contextual help, intelligent checks, and reviewer prompts without hiding the calculation basis.</p>
+            </article>
+            <article>
+                <i class="bi bi-box"></i>
+                <h2>3D Integration Path</h2>
+                <p>The IDF viewer is treated as the starting point for model-aware EHT review, not as a separate visual experiment.</p>
+            </article>
+        </section>
+
+        <section id="formula-reference" class="manual-panel manual-formula-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Calculation basis</p>
+                    <h2>Formula reference and calculation evidence trail.</h2>
+                </div>
+                <p class="manual-section-note">These guide cards summarize the active SR calculation basis; the detailed assumptions and limitations remain in the manual below.</p>
+            </div>
+            <div class="manual-formula-grid">
+                <article>
+                    <h3>Mean Insulation Temperature</h3>
+                    <p class="math-line">T<sub>mean</sub> = (T<sub>maint</sub> + T<sub>amb,min</sub>) / 2</p>
+                    <p>Default conductivity basis for the current calculation release.</p>
+                </article>
+                <article>
+                    <h3>Conductivity Polynomial</h3>
+                    <p class="math-line">k = A · T<sup>2</sup> + B · T + C</p>
+                    <p>Evaluates insulation conductivity using stored material coefficients.</p>
+                </article>
+                <article>
+                    <h3>Base Heat Loss</h3>
+                    <p class="math-line">q<sub>base</sub> = 2πk(T<sub>maint</sub> - T<sub>amb,min</sub>) / ln((2t + D) / D)</p>
+                    <p>Calculated before heat-loss safety factor and final design heat loss.</p>
+                </article>
+                <article>
+                    <h3>Spiral Factor</h3>
+                    <p class="math-line">SF<sub>spiral</sub> = Q<sub>design</sub> / P<sub>low-voltage</sub></p>
+                    <p>Used to check whether a candidate tracer can satisfy heat delivery limits.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="manual-panel manual-engineering-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Heat-transfer physics</p>
+                    <h2>What the current heat-loss engine represents.</h2>
+                </div>
+                <p class="manual-section-note">The present release is intentionally transparent about implemented physics and future model depth.</p>
+            </div>
+            <div class="manual-engineering-grid">
+                <article>
+                    <span>01</span>
+                    <h3>Conduction Through Insulation</h3>
+                    <p>The implemented base model evaluates heat flow through cylindrical insulation using pipe outside diameter, insulation thickness, maintain temperature, minimum ambient temperature, and insulation conductivity.</p>
+                </article>
+                <article>
+                    <span>02</span>
+                    <h3>Conductivity Basis</h3>
+                    <p>The active default evaluates conductivity at mean insulation temperature. Placeholder methods remain visible for future standard/vendor tables and integrated k(T) calculation.</p>
+                </article>
+                <article>
+                    <span>03</span>
+                    <h3>External Effects</h3>
+                    <p>Wind correction is included as a practical project factor. Full convection, radiation, emissivity, jacket material, and solar/environmental effects are future model extensions.</p>
+                </article>
+                <article>
+                    <span>04</span>
+                    <h3>Review Evidence</h3>
+                    <p>The result package distinguishes base heat loss, heat-loss safety factor, and design heat loss so reviewers can see what was calculated and what was added as design margin.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="manual-panel manual-standards-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Standards alignment</p>
+                    <h2>IEEE and IEC controls are treated as engineering checkpoints.</h2>
+                </div>
+                <p class="manual-section-note">The software supports traceability and review; it does not replace project-specific code compliance, listed equipment, or responsible engineer approval.</p>
+            </div>
+            <div class="manual-standards-grid">
+                <article>
+                    <h3>IEEE 515 / IEEE 515.1</h3>
+                    <p>Industrial and commercial trace-heating design logic is supported through explicit electrical and thermal design basis fields, catalogue qualification checks, circuit sizing evidence, and maintenance-friendly deliverables.</p>
+                </article>
+                <article>
+                    <h3>IEC/IEEE 62395</h3>
+                    <p>Industrial and commercial system-design guidance is reflected by traceable inputs, heating-device selection records, termination-aware cable quantities, and output packages suitable for review and maintenance.</p>
+                </article>
+                <article>
+                    <h3>IEC/IEEE 60079-30-1</h3>
+                    <p>For explosive atmospheres, catalogue suitability checks include hazardous-area classification, temperature class, gas-group compatibility, exposure limits, and declared manufacturer limits where data exists.</p>
+                </article>
+                <article>
+                    <h3>IEC 60079-14</h3>
+                    <p>Installation design and selection controls are supported through area classification data, equipment selection evidence, documentation trail, and review notes for hazardous-area projects.</p>
+                </article>
+            </div>
+        </section>
+
+        <section class="manual-panel manual-sld-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">SLD and power topology</p>
+                    <h2>Electrical output is treated as a topology workflow, not a static drawing.</h2>
+                </div>
+                <p class="manual-section-note">The guide prepares users for calculation-backed SLD review, topology edits, cable schedules, and future model-aware navigation.</p>
+            </div>
+            <div class="manual-sld-grid">
+                <article>
+                    <i class="bi bi-bezier2"></i>
+                    <h3>Generated SLD Baseline</h3>
+                    <p>Each calculated line produces topology data for circuits, protective devices, junction boxes, branches, heat-tracing feeders, and downstream connections.</p>
+                </article>
+                <article>
+                    <i class="bi bi-intersect"></i>
+                    <h3>Combine and Split</h3>
+                    <p>Users can review combine-feeder and split-circuit operations with recalculated breaker recommendations and topology audit records before applying changes.</p>
+                </article>
+                <article>
+                    <i class="bi bi-plug"></i>
+                    <h3>Cold Cable Engineering</h3>
+                    <p>Cold cable and feeder quantities are driven by the active topology, circuit count, junction-box structure, and cable schedule assumptions, rather than a disconnected estimate.</p>
+                </article>
+                <article>
+                    <i class="bi bi-boxes"></i>
+                    <h3>Model Integration Path</h3>
+                    <p>The IDF viewer becomes the bridge to 3D review: line focus, component identity, routing context, and future spatial checks can connect back to calculation evidence.</p>
+                </article>
+            </div>
+        </section>
+
+        <section id="visual-map" class="manual-panel manual-visual-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Workflow overview</p>
+                    <h2>From design basis to issue-ready calculation package.</h2>
+                </div>
+                <a class="manual-inline-action" href="#detailed-flow">
+                    View detailed flow chart
+                    <i class="bi bi-arrow-down-right"></i>
+                </a>
+            </div>
+            <a class="manual-flow-preview" href="#detailed-flow" aria-label="Open detailed EHT calculation flow chart">
+                <img class="manual-wide-image" src="{% static 'img/calculation-flow-map.svg' %}" alt="Overview diagram of the EHT calculation workflow">
+                <span><i class="bi bi-search"></i> Open detailed flow chart</span>
+            </a>
+        </section>
+
+        <section id="detailed-flow" class="manual-panel manual-visual-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Detailed flow chart</p>
+                    <h2>Calculation control points, evidence records, and review paths.</h2>
+                </div>
+                <a class="manual-inline-action" href="#manual-reader">
+                    Continue to manual
+                    <i class="bi bi-arrow-down"></i>
+                </a>
+            </div>
+            <img class="manual-wide-image" src="{% static 'img/calculation-detailed-flow.svg' %}" alt="Detailed flow chart for the EHT calculation module">
+        </section>
+
+        <section class="manual-panel manual-review-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Issue readiness</p>
+                    <h2>Review the calculation as an engineering deliverable.</h2>
+                </div>
+                <p class="manual-section-note">The page should help users verify, not merely admire, the output package.</p>
+            </div>
+            <img class="manual-wide-image" src="{% static 'img/calculation-review-board.svg' %}" alt="Engineering checklist for reviewing calculation output">
+        </section>
+
+        <section id="manual-reader" class="manual-reader-shell">
+            <aside class="manual-toc">
+                <div class="manual-toc-card">
+                    <p class="manual-kicker">Contents</p>
+                    <h2>Manual</h2>
+                    <nav aria-label="Manual table of contents">
+                        {% for item in manual_toc %}
+                            <a class="toc-level-{{ item.level }}" href="#{{ item.id }}">{{ item.title }}</a>
+                        {% endfor %}
+                    </nav>
+                </div>
+            </aside>
+            <article class="manual-article">
+                {{ manual_html }}
+            </article>
+        </section>
+    </main>
+
+    <a class="manual-floating-top" href="#top" aria-label="Back to top">
+        <i class="bi bi-arrow-up"></i>
+    </a>
+    <script src="{% static 'js/manual_guide.js' %}"></script>
+</body>
+</html>

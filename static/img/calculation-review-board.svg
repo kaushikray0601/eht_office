@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="560" viewBox="0 0 1180 560" role="img" aria-labelledby="title desc">
+  <title id="title">Engineering calculation review checklist</title>
+  <desc id="desc">A professional checklist for reviewing heat loss evidence, cable selection, electrical sizing, deliverables, and diagnostics before issuing calculation results.</desc>
+  <defs>
+    <style>
+      .title { font: 800 17px Inter, Arial, sans-serif; fill: #132331; }
+      .body { font: 13px Inter, Arial, sans-serif; fill: #5c6b78; }
+      .small { font: 800 12px Inter, Arial, sans-serif; fill: #315f72; }
+    </style>
+  </defs>
+  <rect width="1180" height="560" rx="8" fill="#f6f8fa"/>
+  <text x="48" y="58" font-family="Inter, Arial, sans-serif" font-size="27" font-weight="800" fill="#132331">Engineering review checklist</text>
+  <text x="48" y="88" font-family="Inter, Arial, sans-serif" font-size="14" fill="#5c6b78">Use the helper as an issue-readiness guide: verify basis, evidence, diagnostics, and deliverables before relying on exported results.</text>
+
+  <g transform="translate(48 126)">
+    <rect width="250" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect width="250" height="30" rx="8" fill="#f6f0df"/>
+    <text x="18" y="21" class="small">HEAT-LOSS BASIS</text>
+    <text x="18" y="62" class="title">Evidence is complete</text>
+    <text x="18" y="91" class="body">Base heat loss, safety factor,</text>
+    <text x="18" y="112" class="body">conductivity method, wind factor,</text>
+    <text x="18" y="133" class="body">and units are visible.</text>
+  </g>
+
+  <g transform="translate(330 126)">
+    <rect width="250" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect width="250" height="30" rx="8" fill="#edf4f5"/>
+    <text x="18" y="21" class="small">CABLE SELECTION</text>
+    <text x="18" y="62" class="title">Catalogue logic is traceable</text>
+    <text x="18" y="91" class="body">Vendor, voltage class, suitability,</text>
+    <text x="18" y="112" class="body">power output, and spiral factor</text>
+    <text x="18" y="133" class="body">are checked together.</text>
+  </g>
+
+  <g transform="translate(612 126)">
+    <rect width="250" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect width="250" height="30" rx="8" fill="#eef2f5"/>
+    <text x="18" y="21" class="small">ELECTRICAL SIZING</text>
+    <text x="18" y="62" class="title">Currents are interpreted correctly</text>
+    <text x="18" y="91" class="body">Low voltage checks heat delivery;</text>
+    <text x="18" y="112" class="body">high voltage checks current and</text>
+    <text x="18" y="133" class="body">breaker loading.</text>
+  </g>
+
+  <g transform="translate(894 126)">
+    <rect width="238" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect width="238" height="30" rx="8" fill="#f3efef"/>
+    <text x="18" y="21" class="small">DIAGNOSTICS</text>
+    <text x="18" y="62" class="title">Failures remain visible</text>
+    <text x="18" y="91" class="body">Rejected selections carry reason</text>
+    <text x="18" y="112" class="body">codes and action hints instead of</text>
+    <text x="18" y="133" class="body">disappearing silently.</text>
+  </g>
+
+  <g transform="translate(48 320)">
+    <rect width="1084" height="172" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="28" y="28" width="58" height="58" rx="8" fill="#edf7ef" stroke="#b7d8c0"/>
+    <path d="M42 58l14 14 30-34" stroke="#287145" stroke-width="7" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+    <text x="112" y="52" class="title">Before issue, the reviewer should confirm:</text>
+    <g class="body">
+      <text x="112" y="88">1. Project setup values match the intended design basis and selected vendor catalogue.</text>
+      <text x="112" y="115">2. No SR Selection Diagnostics remain unresolved, or each diagnostic has been technically accepted.</text>
+      <text x="112" y="142">3. Result, BOQ, cable schedule, and SLD outputs are reviewed together as one calculation package.</text>
+    </g>
+  </g>
+</svg>

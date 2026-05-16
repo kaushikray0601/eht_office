@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="980" viewBox="0 0 1280 980" role="img" aria-labelledby="title desc">
+  <title id="title">Detailed EHT calculation engineering map</title>
+  <desc id="desc">A mind-map style engineering flow diagram showing the EHT calculation core connected to project basis, heat-transfer physics, cable technology modules, standards checks, SLD topology, diagnostics, reports, cold cable engineering, and 3D model integration.</desc>
+  <defs>
+    <radialGradient id="core" cx="50%" cy="42%" r="70%">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e8f3f6"/>
+    </radialGradient>
+    <linearGradient id="paper" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#f8fafb"/>
+      <stop offset="1" stop-color="#eef3f6"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="14" stdDeviation="13" flood-color="#1f3140" flood-opacity=".13"/>
+    </filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M1 1l8 4-8 4z" fill="#315f72"/>
+    </marker>
+    <style>
+      .small { font: 800 12px Inter, Arial, sans-serif; fill: #315f72; }
+      .nodeTitle { font: 800 16px Inter, Arial, sans-serif; fill: #132331; }
+      .body { font: 12.5px Inter, Arial, sans-serif; fill: #5c6b78; }
+      .note { font: 800 12px Inter, Arial, sans-serif; fill: #8a6415; }
+    </style>
+  </defs>
+
+  <rect width="1280" height="980" rx="8" fill="url(#paper)"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="52" y="58" font-size="28" font-weight="800" fill="#132331">Detailed EHT calculation engineering map</text>
+    <text x="52" y="88" font-size="14" fill="#5c6b78">A map of control points, evidence records, topology operations, standards checkpoints, and future model-aware review.</text>
+  </g>
+
+  <g stroke="#315f72" stroke-width="2.2" fill="none" opacity=".7" marker-end="url(#arrow)">
+    <path d="M640 455C502 370 348 252 228 172"/>
+    <path d="M640 455C458 438 290 410 160 360"/>
+    <path d="M640 455C510 542 344 620 180 640"/>
+    <path d="M640 455C610 630 560 748 480 844"/>
+    <path d="M640 455C675 632 730 748 820 846"/>
+    <path d="M640 455C772 544 922 620 1100 634"/>
+    <path d="M640 455C826 432 988 390 1120 324"/>
+    <path d="M640 455C770 356 910 244 1052 176"/>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <circle cx="640" cy="455" r="132" fill="url(#core)" stroke="#9eb8c4" stroke-width="2"/>
+    <circle cx="640" cy="455" r="94" fill="#ffffff" stroke="#d3e0e6"/>
+    <text x="640" y="420" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="800" fill="#315f72">CALCULATION CORE</text>
+    <text x="640" y="452" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#132331">EHT Design</text>
+    <text x="640" y="482" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#5c6b78">thermal evidence + cable selection</text>
+    <text x="640" y="503" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#5c6b78">electrical sizing + deliverables</text>
+  </g>
+
+  <g filter="url(#softShadow)">
+    <g transform="translate(76 126)">
+      <rect width="310" height="140" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="310" height="34" rx="10" fill="#e3f2fd"/>
+      <text x="18" y="23" class="small">PROJECT BASIS</text>
+      <text x="18" y="64" class="nodeTitle">Set the design envelope</text>
+      <text x="18" y="91" class="body">Vendor, cable family, voltage class,</text>
+      <text x="18" y="112" class="body">temperature basis, hazardous area,</text>
+      <text x="18" y="133" class="body">breaker limits and project margins.</text>
+    </g>
+
+    <g transform="translate(76 320)">
+      <rect width="310" height="148" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="310" height="34" rx="10" fill="#edf7ef"/>
+      <text x="18" y="23" class="small" fill="#287145">INPUT GATE</text>
+      <text x="18" y="64" class="nodeTitle">Validate before calculation</text>
+      <text x="18" y="91" class="body">Uploaded lines are confirmed before use.</text>
+      <text x="18" y="112" class="body">Rejected rows remain outside the</text>
+      <text x="18" y="133" class="body">calculation package until corrected.</text>
+    </g>
+
+    <g transform="translate(76 598)">
+      <rect width="340" height="158" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="340" height="34" rx="10" fill="#f6f0df"/>
+      <text x="18" y="23" class="small">HEAT-TRANSFER PHYSICS</text>
+      <text x="18" y="64" class="nodeTitle">Conduction model with evidence</text>
+      <text x="18" y="91" class="body">Pipe OD, insulation thickness, k(T),</text>
+      <text x="18" y="112" class="body">maintain temperature, ambient, wind</text>
+      <text x="18" y="133" class="body">correction and heat-loss safety factor.</text>
+    </g>
+
+    <g transform="translate(396 798)">
+      <rect width="338" height="130" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="338" height="34" rx="10" fill="#edf4f5"/>
+      <text x="18" y="23" class="small">CABLE TECHNOLOGY</text>
+      <text x="18" y="64" class="nodeTitle">SR now, MI as a separate module</text>
+      <text x="18" y="91" class="body">SR checks catalogue suitability, voltage,</text>
+      <text x="18" y="112" class="body">power output and spiral factor. MI branches here.</text>
+    </g>
+
+    <g transform="translate(784 798)">
+      <rect width="340" height="130" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="340" height="34" rx="10" fill="#f3efef"/>
+      <text x="18" y="23" class="small">DIAGNOSTICS</text>
+      <text x="18" y="64" class="nodeTitle">Do not hide failed selections</text>
+      <text x="18" y="91" class="body">Rejected lines carry reason codes, heat-loss</text>
+      <text x="18" y="112" class="body">evidence and clear reviewer action paths.</text>
+    </g>
+
+    <g transform="translate(864 590)">
+      <rect width="340" height="166" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="340" height="34" rx="10" fill="#eef2f5"/>
+      <text x="18" y="23" class="small">SLD + COLD CABLE</text>
+      <text x="18" y="64" class="nodeTitle">Topology is part of calculation</text>
+      <text x="18" y="91" class="body">Generated SLD baseline, combine feeders,</text>
+      <text x="18" y="112" class="body">split circuits, JB moves, breaker updates,</text>
+      <text x="18" y="133" class="body">cold cable quantities and cable schedule rows</text>
+      <text x="18" y="154" class="body">stay tied to the active topology.</text>
+    </g>
+
+    <g transform="translate(864 288)">
+      <rect width="340" height="158" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="340" height="34" rx="10" fill="#f8fbfc"/>
+      <text x="18" y="23" class="small">STANDARDS CHECKPOINTS</text>
+      <text x="18" y="64" class="nodeTitle">IEEE / IEC traceability</text>
+      <text x="18" y="91" class="body">Design basis, catalogue suitability, area</text>
+      <text x="18" y="112" class="body">classification, temperature class, voltage,</text>
+      <text x="18" y="133" class="body">current and documentation checks are explicit.</text>
+    </g>
+
+    <g transform="translate(894 126)">
+      <rect width="310" height="140" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="310" height="34" rx="10" fill="#eef3f6"/>
+      <text x="18" y="23" class="small">DELIVERABLES + 3D</text>
+      <text x="18" y="64" class="nodeTitle">Issue package and model review</text>
+      <text x="18" y="91" class="body">Results, BOQ, cable schedule, SLD,</text>
+      <text x="18" y="112" class="body">exports, reviewer notes and IDF viewer</text>
+      <text x="18" y="133" class="body">integration path.</text>
+    </g>
+  </g>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <rect x="480" y="612" width="320" height="92" rx="10" fill="#fffaf0" stroke="#d9c38d"/>
+    <text x="500" y="642" class="note">Control philosophy</text>
+    <text x="500" y="668" class="body">Every output should answer: what input produced it,</text>
+    <text x="500" y="689" class="body">what rule checked it, and what evidence proves it?</text>
+  </g>
+</svg>

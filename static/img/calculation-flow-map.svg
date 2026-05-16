@@ -1,0 +1,94 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="460" viewBox="0 0 1280 460" role="img" aria-labelledby="title desc">
+  <title id="title">EHT calculation workflow overview</title>
+  <desc id="desc">Overview of the EHT calculation workflow from design basis through calculation, diagnostics, deliverables, and future MI and 3D integration.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2 2l8 4-8 4z" fill="#315f72"/>
+    </marker>
+    <filter id="shadow" x="-16%" y="-16%" width="132%" height="132%">
+      <feDropShadow dx="0" dy="8" stdDeviation="8" flood-color="#1f3140" flood-opacity=".12"/>
+    </filter>
+  </defs>
+  <rect width="1280" height="460" rx="8" fill="#f6f8fa"/>
+  <g font-family="Inter, Arial, sans-serif">
+    <text x="48" y="58" font-size="26" font-weight="800" fill="#132331">EHT calculation workflow overview</text>
+    <text x="48" y="86" font-size="14" fill="#5c6b78">A controlled engineering chain: design basis, validated line data, calculation evidence, cable technology module, electrical sizing, and issue deliverables.</text>
+  </g>
+
+  <g font-family="Inter, Arial, sans-serif" filter="url(#shadow)">
+    <g transform="translate(48 142)">
+      <rect width="180" height="120" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="180" height="28" rx="8" fill="#e3f2fd"/>
+      <text x="16" y="20" font-size="12" font-weight="800" fill="#315f72">01 DESIGN BASIS</text>
+      <text x="16" y="58" font-size="15" font-weight="800" fill="#132331">Project Setup</text>
+      <text x="16" y="82" font-size="12" fill="#5c6b78">Vendor, voltage, area</text>
+      <text x="16" y="101" font-size="12" fill="#5c6b78">method, limits, factors</text>
+    </g>
+
+    <g transform="translate(262 142)">
+      <rect width="180" height="120" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="180" height="28" rx="8" fill="#edf7ef"/>
+      <text x="16" y="20" font-size="12" font-weight="800" fill="#287145">02 INPUT GATE</text>
+      <text x="16" y="58" font-size="15" font-weight="800" fill="#132331">Line Validation</text>
+      <text x="16" y="82" font-size="12" fill="#5c6b78">Upload, confirm, reject</text>
+      <text x="16" y="101" font-size="12" fill="#5c6b78">incomplete input rows</text>
+    </g>
+
+    <g transform="translate(476 142)">
+      <rect width="180" height="120" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="180" height="28" rx="8" fill="#f6f0df"/>
+      <text x="16" y="20" font-size="12" font-weight="800" fill="#8a6415">03 HEAT LOSS</text>
+      <text x="16" y="58" font-size="15" font-weight="800" fill="#132331">Evidence Engine</text>
+      <text x="16" y="82" font-size="12" fill="#5c6b78">Pipe OD, k, wind, SF</text>
+      <text x="16" y="101" font-size="12" fill="#5c6b78">base and design values</text>
+    </g>
+
+    <g transform="translate(690 142)">
+      <rect width="180" height="120" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="180" height="28" rx="8" fill="#edf4f5"/>
+      <text x="16" y="20" font-size="12" font-weight="800" fill="#24746b">04 CABLE MODULE</text>
+      <text x="16" y="58" font-size="15" font-weight="800" fill="#132331">SR Selection</text>
+      <text x="16" y="82" font-size="12" fill="#5c6b78">Catalogue suitability</text>
+      <text x="16" y="101" font-size="12" fill="#5c6b78">voltage and spiral checks</text>
+    </g>
+
+    <g transform="translate(904 142)">
+      <rect width="180" height="120" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="180" height="28" rx="8" fill="#eef2f5"/>
+      <text x="16" y="20" font-size="12" font-weight="800" fill="#526070">05 ELECTRICAL</text>
+      <text x="16" y="58" font-size="15" font-weight="800" fill="#132331">Circuit Sizing</text>
+      <text x="16" y="82" font-size="12" fill="#5c6b78">Load, current, circuits</text>
+      <text x="16" y="101" font-size="12" fill="#5c6b78">breaker and ordered length</text>
+    </g>
+
+    <g transform="translate(1118 142)">
+      <rect width="114" height="120" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+      <rect width="114" height="28" rx="8" fill="#f3efef"/>
+      <text x="14" y="20" font-size="12" font-weight="800" fill="#8a4c43">06 OUTPUTS</text>
+      <text x="14" y="58" font-size="15" font-weight="800" fill="#132331">Issue</text>
+      <text x="14" y="82" font-size="12" fill="#5c6b78">Results</text>
+      <text x="14" y="101" font-size="12" fill="#5c6b78">BOQ, SLD</text>
+    </g>
+  </g>
+
+  <g stroke="#315f72" stroke-width="2.2" fill="none" marker-end="url(#arrow)">
+    <path d="M232 202h22"/>
+    <path d="M446 202h22"/>
+    <path d="M660 202h22"/>
+    <path d="M874 202h22"/>
+    <path d="M1088 202h22"/>
+  </g>
+
+  <g font-family="Inter, Arial, sans-serif">
+    <path d="M565 280c0 52 58 70 128 70h180c65 0 120-18 138-70" fill="none" stroke="#a44235" stroke-width="2.5" stroke-dasharray="7 7"/>
+    <rect x="510" y="352" width="560" height="46" rx="8" fill="#fff7f4" stroke="#e0b8b1"/>
+    <text x="532" y="381" font-size="14" font-weight="800" fill="#a44235">Diagnostics lane:</text>
+    <text x="650" y="381" font-size="14" fill="#5c6b78">failed lines stay visible with reason codes and reviewer action.</text>
+
+    <rect x="690" y="288" width="180" height="40" rx="8" fill="#f8fbfc" stroke="#c7d4dc"/>
+    <text x="710" y="314" font-size="13" font-weight="800" fill="#315f72">MI module will branch here</text>
+
+    <rect x="1118" y="288" width="114" height="40" rx="8" fill="#f8fbfc" stroke="#c7d4dc"/>
+    <text x="1135" y="313" font-size="13" font-weight="800" fill="#315f72">3D review</text>
+  </g>
+</svg>

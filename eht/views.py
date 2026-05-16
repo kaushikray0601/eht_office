@@ -3,6 +3,7 @@ import logging
 import os
 from collections import Counter
 from io import BytesIO
+from pathlib import Path
 from time import perf_counter
 
 import pandas as pd
@@ -14,6 +15,7 @@ from django.db import transaction
 from django.db.models import Prefetch
 from django.http import FileResponse, Http404, HttpResponse, JsonResponse
 from django.shortcuts import redirect, render
+from django.utils.safestring import mark_safe
 from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.timezone import now, timedelta
@@ -31,6 +33,7 @@ from .cable_schedule import (
 )
 from .forms import ProjectDataForm
 from .data_service import clear_project_workspace_data
+from .manual_renderer import render_markdown_manual
 from .models import (
     AlternateTracer,
     BOQ,
@@ -140,6 +143,24 @@ def _timed_json_response(payload, *, status=200, context_label='response'):
 def index(request):
     context = {'key1': 'value1','key2': 'value2' }
     return render (request, 'eht/home.html', context)
+
+
+def calculation_manual_view(request):
+    manual_path = Path(settings.BASE_DIR) / 'NOTES' / 'CALCULATION_MODULE_USER_MANUAL.md'
+    try:
+        manual_source = manual_path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        manual_source = (
+            '# Calculation Module User Manual\n\n'
+            'The calculation module manual has not been generated yet.'
+        )
+    rendered = render_markdown_manual(manual_source)
+    return render(request, 'eht/calculation_manual.html', {
+        'manual_html': mark_safe(rendered.html),
+        'manual_toc': rendered.toc,
+        'manual_section_count': len([item for item in rendered.toc if item['level'] == 2]),
+        'manual_path': manual_path,
+    })
 
 
 # --------------Create project data--------------------------------------------------

@@ -4,6 +4,7 @@ from . import views
 # app_name = "eht"
 urlpatterns = [  
     path('', views.index, name ='index'),
+    path('calculation-manual/', views.calculation_manual_view, name='calculation_manual_view'),
     path('create-project-data/', views.create_project_data, name='create_project_data'),   
     path('edit-project-data/<str:project_id>/', views.update_project_data, name='update_project_data'),
     # path('upload-input-file/', views.upload_input, name='upload_input_file'),
