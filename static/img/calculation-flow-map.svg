@@ -81,9 +81,9 @@
 
   <g font-family="Inter, Arial, sans-serif">
     <path d="M565 280c0 52 58 70 128 70h180c65 0 120-18 138-70" fill="none" stroke="#a44235" stroke-width="2.5" stroke-dasharray="7 7"/>
-    <rect x="510" y="352" width="560" height="46" rx="8" fill="#fff7f4" stroke="#e0b8b1"/>
-    <text x="532" y="381" font-size="14" font-weight="800" fill="#a44235">Diagnostics lane:</text>
-    <text x="650" y="381" font-size="14" fill="#5c6b78">failed lines stay visible with reason codes and reviewer action.</text>
+    <rect x="510" y="348" width="560" height="58" rx="8" fill="#fff7f4" stroke="#e0b8b1"/>
+    <text x="532" y="373" font-size="14" font-weight="800" fill="#a44235">Diagnostics lane</text>
+    <text x="532" y="394" font-size="13" fill="#5c6b78">Failed lines stay visible with reason codes and reviewer action.</text>
 
     <rect x="690" y="288" width="180" height="40" rx="8" fill="#f8fbfc" stroke="#c7d4dc"/>
     <text x="710" y="314" font-size="13" font-weight="800" fill="#315f72">MI module will branch here</text>

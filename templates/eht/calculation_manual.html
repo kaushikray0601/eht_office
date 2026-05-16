@@ -231,28 +231,31 @@
                     <h2>From design basis to issue-ready calculation package.</h2>
                 </div>
                 <a class="manual-inline-action" href="#detailed-flow">
-                    View detailed flow chart
+                    Open engineering deep dive
                     <i class="bi bi-arrow-down-right"></i>
                 </a>
             </div>
             <a class="manual-flow-preview" href="#detailed-flow" aria-label="Open detailed EHT calculation flow chart">
                 <img class="manual-wide-image" src="{% static 'img/calculation-flow-map.svg' %}" alt="Overview diagram of the EHT calculation workflow">
-                <span><i class="bi bi-search"></i> Open detailed flow chart</span>
+                <span><i class="bi bi-search"></i> Open engineering deep dive</span>
             </a>
         </section>
 
-        <section id="detailed-flow" class="manual-panel manual-visual-section">
-            <div class="manual-section-heading">
-                <div>
-                    <p class="manual-kicker">Detailed flow chart</p>
-                    <h2>Calculation control points, evidence records, and review paths.</h2>
-                </div>
-                <a class="manual-inline-action" href="#manual-reader">
-                    Continue to manual
-                    <i class="bi bi-arrow-down"></i>
-                </a>
-            </div>
-            <img class="manual-wide-image" src="{% static 'img/calculation-detailed-flow.svg' %}" alt="Detailed flow chart for the EHT calculation module">
+        <section id="detailed-flow" class="manual-panel manual-deep-dive-section">
+            <details class="manual-deep-dive">
+                <summary>
+                    <span>
+                        <span class="manual-kicker">Engineering deep dive</span>
+                        <strong>Open the swim-lane calculation flow for reviewers and power users.</strong>
+                    </span>
+                    <i class="bi bi-chevron-down"></i>
+                </summary>
+                <p class="manual-deep-dive-intro">
+                    This lane view is intentionally optional. It shows where the calculation branches, what evidence is stored,
+                    and how failed lines move into diagnostics instead of disappearing from the issue package.
+                </p>
+                <img class="manual-wide-image manual-swimlane-image" src="{% static 'img/calculation-detailed-flow.svg' %}" alt="Swim-lane engineering flow for the EHT calculation module">
+            </details>
         </section>
 
         <section class="manual-panel manual-review-section">

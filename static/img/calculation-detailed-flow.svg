@@ -1,140 +1,234 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="980" viewBox="0 0 1280 980" role="img" aria-labelledby="title desc">
-  <title id="title">Detailed EHT calculation engineering map</title>
-  <desc id="desc">A mind-map style engineering flow diagram showing the EHT calculation core connected to project basis, heat-transfer physics, cable technology modules, standards checks, SLD topology, diagnostics, reports, cold cable engineering, and 3D model integration.</desc>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" role="img" aria-labelledby="title desc">
+  <title id="title">EHT calculation swim-lane deep dive</title>
+  <desc id="desc">A swim-lane flow chart showing project basis, input validation, thermal calculation, SR cable selection, electrical sizing, SLD topology, diagnostics, and deliverables.</desc>
   <defs>
-    <radialGradient id="core" cx="50%" cy="42%" r="70%">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#e8f3f6"/>
-    </radialGradient>
-    <linearGradient id="paper" x1="0" x2="1" y1="0" y2="1">
-      <stop offset="0" stop-color="#f8fafb"/>
-      <stop offset="1" stop-color="#eef3f6"/>
-    </linearGradient>
-    <filter id="softShadow" x="-20%" y="-20%" width="140%" height="140%">
-      <feDropShadow dx="0" dy="14" stdDeviation="13" flood-color="#1f3140" flood-opacity=".13"/>
-    </filter>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
-      <path d="M1 1l8 4-8 4z" fill="#315f72"/>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2 2l8 4-8 4z" fill="#315f72"/>
+    </marker>
+    <marker id="rejectArrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto">
+      <path d="M2 2l8 4-8 4z" fill="#a44235"/>
     </marker>
     <style>
-      .small { font: 800 12px Inter, Arial, sans-serif; fill: #315f72; }
-      .nodeTitle { font: 800 16px Inter, Arial, sans-serif; fill: #132331; }
-      .body { font: 12.5px Inter, Arial, sans-serif; fill: #5c6b78; }
-      .note { font: 800 12px Inter, Arial, sans-serif; fill: #8a6415; }
+      .lane { font: 800 12px Inter, Arial, sans-serif; fill: #315f72; }
+      .node { font: 800 13px Inter, Arial, sans-serif; fill: #132331; }
+      .body { font: 12px Inter, Arial, sans-serif; fill: #5c6b78; }
+      .decision { font: 800 12px Inter, Arial, sans-serif; fill: #66470d; }
+      .reject { font: 800 12px Inter, Arial, sans-serif; fill: #a44235; }
     </style>
   </defs>
 
-  <rect width="1280" height="980" rx="8" fill="url(#paper)"/>
-  <g font-family="Inter, Arial, sans-serif">
-    <text x="52" y="58" font-size="28" font-weight="800" fill="#132331">Detailed EHT calculation engineering map</text>
-    <text x="52" y="88" font-size="14" fill="#5c6b78">A map of control points, evidence records, topology operations, standards checkpoints, and future model-aware review.</text>
-  </g>
+  <rect width="1280" height="720" rx="8" fill="#f6f8fa"/>
+  <text x="36" y="42" font-family="Inter, Arial, sans-serif" font-size="24" font-weight="850" fill="#132331">EHT calculation swim-lane deep dive</text>
+  <text x="36" y="68" font-family="Inter, Arial, sans-serif" font-size="13" fill="#5c6b78">For reviewers: where the calculation branches, which evidence is stored, and which outputs must be reviewed together.</text>
 
-  <g stroke="#315f72" stroke-width="2.2" fill="none" opacity=".7" marker-end="url(#arrow)">
-    <path d="M640 455C502 370 348 252 228 172"/>
-    <path d="M640 455C458 438 290 410 160 360"/>
-    <path d="M640 455C510 542 344 620 180 640"/>
-    <path d="M640 455C610 630 560 748 480 844"/>
-    <path d="M640 455C675 632 730 748 820 846"/>
-    <path d="M640 455C772 544 922 620 1100 634"/>
-    <path d="M640 455C826 432 988 390 1120 324"/>
-    <path d="M640 455C770 356 910 244 1052 176"/>
-  </g>
-
-  <g filter="url(#softShadow)">
-    <circle cx="640" cy="455" r="132" fill="url(#core)" stroke="#9eb8c4" stroke-width="2"/>
-    <circle cx="640" cy="455" r="94" fill="#ffffff" stroke="#d3e0e6"/>
-    <text x="640" y="420" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="14" font-weight="800" fill="#315f72">CALCULATION CORE</text>
-    <text x="640" y="452" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="25" font-weight="850" fill="#132331">EHT Design</text>
-    <text x="640" y="482" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#5c6b78">thermal evidence + cable selection</text>
-    <text x="640" y="503" text-anchor="middle" font-family="Inter, Arial, sans-serif" font-size="13" fill="#5c6b78">electrical sizing + deliverables</text>
-  </g>
-
-  <g filter="url(#softShadow)">
-    <g transform="translate(76 126)">
-      <rect width="310" height="140" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="310" height="34" rx="10" fill="#e3f2fd"/>
-      <text x="18" y="23" class="small">PROJECT BASIS</text>
-      <text x="18" y="64" class="nodeTitle">Set the design envelope</text>
-      <text x="18" y="91" class="body">Vendor, cable family, voltage class,</text>
-      <text x="18" y="112" class="body">temperature basis, hazardous area,</text>
-      <text x="18" y="133" class="body">breaker limits and project margins.</text>
+  <g>
+    <rect x="36" y="96" width="1208" height="74" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="36" y="96" width="148" height="74" rx="8" fill="#e3f2fd"/>
+    <text x="56" y="128" class="lane">PROJECT</text>
+    <text x="56" y="148" class="lane">BASIS</text>
+    <g transform="translate(216 112)">
+      <rect width="150" height="42" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Setup fields</text>
+      <text x="14" y="34" class="body">vendor, voltage, area</text>
     </g>
-
-    <g transform="translate(76 320)">
-      <rect width="310" height="148" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="310" height="34" rx="10" fill="#edf7ef"/>
-      <text x="18" y="23" class="small" fill="#287145">INPUT GATE</text>
-      <text x="18" y="64" class="nodeTitle">Validate before calculation</text>
-      <text x="18" y="91" class="body">Uploaded lines are confirmed before use.</text>
-      <text x="18" y="112" class="body">Rejected rows remain outside the</text>
-      <text x="18" y="133" class="body">calculation package until corrected.</text>
+    <g transform="translate(414 112)">
+      <rect width="170" height="42" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Calculation basis</text>
+      <text x="14" y="34" class="body">k method, SF, wind</text>
     </g>
-
-    <g transform="translate(76 598)">
-      <rect width="340" height="158" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="340" height="34" rx="10" fill="#f6f0df"/>
-      <text x="18" y="23" class="small">HEAT-TRANSFER PHYSICS</text>
-      <text x="18" y="64" class="nodeTitle">Conduction model with evidence</text>
-      <text x="18" y="91" class="body">Pipe OD, insulation thickness, k(T),</text>
-      <text x="18" y="112" class="body">maintain temperature, ambient, wind</text>
-      <text x="18" y="133" class="body">correction and heat-loss safety factor.</text>
-    </g>
-
-    <g transform="translate(396 798)">
-      <rect width="338" height="130" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="338" height="34" rx="10" fill="#edf4f5"/>
-      <text x="18" y="23" class="small">CABLE TECHNOLOGY</text>
-      <text x="18" y="64" class="nodeTitle">SR now, MI as a separate module</text>
-      <text x="18" y="91" class="body">SR checks catalogue suitability, voltage,</text>
-      <text x="18" y="112" class="body">power output and spiral factor. MI branches here.</text>
-    </g>
-
-    <g transform="translate(784 798)">
-      <rect width="340" height="130" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="340" height="34" rx="10" fill="#f3efef"/>
-      <text x="18" y="23" class="small">DIAGNOSTICS</text>
-      <text x="18" y="64" class="nodeTitle">Do not hide failed selections</text>
-      <text x="18" y="91" class="body">Rejected lines carry reason codes, heat-loss</text>
-      <text x="18" y="112" class="body">evidence and clear reviewer action paths.</text>
-    </g>
-
-    <g transform="translate(864 590)">
-      <rect width="340" height="166" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="340" height="34" rx="10" fill="#eef2f5"/>
-      <text x="18" y="23" class="small">SLD + COLD CABLE</text>
-      <text x="18" y="64" class="nodeTitle">Topology is part of calculation</text>
-      <text x="18" y="91" class="body">Generated SLD baseline, combine feeders,</text>
-      <text x="18" y="112" class="body">split circuits, JB moves, breaker updates,</text>
-      <text x="18" y="133" class="body">cold cable quantities and cable schedule rows</text>
-      <text x="18" y="154" class="body">stay tied to the active topology.</text>
-    </g>
-
-    <g transform="translate(864 288)">
-      <rect width="340" height="158" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="340" height="34" rx="10" fill="#f8fbfc"/>
-      <text x="18" y="23" class="small">STANDARDS CHECKPOINTS</text>
-      <text x="18" y="64" class="nodeTitle">IEEE / IEC traceability</text>
-      <text x="18" y="91" class="body">Design basis, catalogue suitability, area</text>
-      <text x="18" y="112" class="body">classification, temperature class, voltage,</text>
-      <text x="18" y="133" class="body">current and documentation checks are explicit.</text>
-    </g>
-
-    <g transform="translate(894 126)">
-      <rect width="310" height="140" rx="10" fill="#ffffff" stroke="#c7d4dc"/>
-      <rect width="310" height="34" rx="10" fill="#eef3f6"/>
-      <text x="18" y="23" class="small">DELIVERABLES + 3D</text>
-      <text x="18" y="64" class="nodeTitle">Issue package and model review</text>
-      <text x="18" y="91" class="body">Results, BOQ, cable schedule, SLD,</text>
-      <text x="18" y="112" class="body">exports, reviewer notes and IDF viewer</text>
-      <text x="18" y="133" class="body">integration path.</text>
+    <g transform="translate(632 112)">
+      <rect width="170" height="42" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Electrical limits</text>
+      <text x="14" y="34" class="body">CB size/loading, margin</text>
     </g>
   </g>
 
-  <g font-family="Inter, Arial, sans-serif">
-    <rect x="480" y="612" width="320" height="92" rx="10" fill="#fffaf0" stroke="#d9c38d"/>
-    <text x="500" y="642" class="note">Control philosophy</text>
-    <text x="500" y="668" class="body">Every output should answer: what input produced it,</text>
-    <text x="500" y="689" class="body">what rule checked it, and what evidence proves it?</text>
+  <g>
+    <rect x="36" y="186" width="1208" height="74" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="36" y="186" width="148" height="74" rx="8" fill="#edf7ef"/>
+    <text x="56" y="218" class="lane">INPUT</text>
+    <text x="56" y="238" class="lane">GATE</text>
+    <g transform="translate(216 202)">
+      <rect width="150" height="42" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Uploaded line</text>
+      <text x="14" y="34" class="body">pipe, insulation, duty</text>
+    </g>
+    <g transform="translate(414 202)">
+      <path d="M86 0l86 21-86 21L0 21z" fill="#fffaf0" stroke="#d9c38d"/>
+      <text x="86" y="18" text-anchor="middle" class="decision">confirmed?</text>
+      <text x="86" y="34" text-anchor="middle" class="body">yes enters calc</text>
+    </g>
+    <g transform="translate(634 202)">
+      <rect width="168" height="42" rx="8" fill="#fff7f4" stroke="#e0b8b1"/>
+      <text x="14" y="18" class="reject">Input reject</text>
+      <text x="14" y="34" class="body">fix before calculate</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="36" y="276" width="1208" height="94" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="36" y="276" width="148" height="94" rx="8" fill="#f6f0df"/>
+    <text x="56" y="314" class="lane">THERMAL</text>
+    <text x="56" y="334" class="lane">ENGINE</text>
+    <g transform="translate(216 294)">
+      <rect width="150" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Geometry</text>
+      <text x="14" y="36" class="body">OD lookup/fallback</text>
+      <text x="14" y="52" class="body">insulation thickness</text>
+    </g>
+    <g transform="translate(414 294)">
+      <rect width="170" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Conductivity</text>
+      <text x="14" y="36" class="body">mean T active</text>
+      <text x="14" y="52" class="body">future k(T) branch</text>
+    </g>
+    <g transform="translate(632 294)">
+      <rect width="170" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Heat-loss evidence</text>
+      <text x="14" y="36" class="body">base q, wind factor</text>
+      <text x="14" y="52" class="body">design q = base x SF</text>
+    </g>
+    <g transform="translate(850 294)">
+      <path d="M84 0l84 29-84 29L0 29z" fill="#fffaf0" stroke="#d9c38d"/>
+      <text x="84" y="25" text-anchor="middle" class="decision">evidence</text>
+      <text x="84" y="42" text-anchor="middle" class="decision">available?</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="36" y="386" width="1208" height="96" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="36" y="386" width="148" height="96" rx="8" fill="#edf4f5"/>
+    <text x="56" y="424" class="lane">CABLE</text>
+    <text x="56" y="444" class="lane">SELECTION</text>
+    <g transform="translate(216 406)">
+      <rect width="150" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Vendor rows</text>
+      <text x="14" y="36" class="body">selected catalogue</text>
+      <text x="14" y="52" class="body">case-insensitive match</text>
+    </g>
+    <g transform="translate(414 406)">
+      <rect width="170" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Suitability filters</text>
+      <text x="14" y="36" class="body">temperature, area, gas</text>
+      <text x="14" y="52" class="body">blank legacy fields soft</text>
+    </g>
+    <g transform="translate(632 406)">
+      <rect width="170" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Voltage scenarios</text>
+      <text x="14" y="36" class="body">low: heat delivery</text>
+      <text x="14" y="52" class="body">high: current sizing</text>
+    </g>
+    <g transform="translate(850 406)">
+      <path d="M84 0l84 29-84 29L0 29z" fill="#fffaf0" stroke="#d9c38d"/>
+      <text x="84" y="25" text-anchor="middle" class="decision">spiral factor</text>
+      <text x="84" y="42" text-anchor="middle" class="decision">within limits?</text>
+    </g>
+    <g transform="translate(1060 406)">
+      <rect width="150" height="58" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Selected SR</text>
+      <text x="14" y="36" class="body">best candidate</text>
+      <text x="14" y="52" class="body">alternates stored</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="36" y="498" width="1208" height="92" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="36" y="498" width="148" height="92" rx="8" fill="#eef2f5"/>
+    <text x="56" y="534" class="lane">ELECTRICAL</text>
+    <text x="56" y="554" class="lane">+ SLD</text>
+    <g transform="translate(216 516)">
+      <rect width="150" height="56" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Line currents</text>
+      <text x="14" y="36" class="body">operating + max</text>
+      <text x="14" y="52" class="body">per-circuit output</text>
+    </g>
+    <g transform="translate(414 516)">
+      <rect width="170" height="56" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Circuit count</text>
+      <text x="14" y="36" class="body">CB loading factor</text>
+      <text x="14" y="52" class="body">standard breaker pick</text>
+    </g>
+    <g transform="translate(632 516)">
+      <rect width="170" height="56" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Topology baseline</text>
+      <text x="14" y="36" class="body">MCB, JB, branch IDs</text>
+      <text x="14" y="52" class="body">stable component tags</text>
+    </g>
+    <g transform="translate(850 516)">
+      <rect width="170" height="56" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Manual edits</text>
+      <text x="14" y="36" class="body">combine, split, move JB</text>
+      <text x="14" y="52" class="body">review required on drift</text>
+    </g>
+  </g>
+
+  <g>
+    <rect x="36" y="606" width="1208" height="72" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
+    <rect x="36" y="606" width="148" height="72" rx="8" fill="#f3efef"/>
+    <text x="56" y="637" class="lane">OUTPUT</text>
+    <text x="56" y="657" class="lane">PACKAGE</text>
+    <g transform="translate(216 622)">
+      <rect width="150" height="40" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Results</text>
+      <text x="14" y="34" class="body">basis + selected cable</text>
+    </g>
+    <g transform="translate(414 622)">
+      <rect width="170" height="40" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">BOQ + schedule</text>
+      <text x="14" y="34" class="body">active topology aware</text>
+    </g>
+    <g transform="translate(632 622)">
+      <rect width="170" height="40" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">SLD export</text>
+      <text x="14" y="34" class="body">layout + validation</text>
+    </g>
+    <g transform="translate(850 622)">
+      <rect width="170" height="40" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">Cold cable</text>
+      <text x="14" y="34" class="body">feeder/JB assumptions</text>
+    </g>
+    <g transform="translate(1060 622)">
+      <rect width="150" height="40" rx="8" fill="#f8fbfc" stroke="#d8e0e7"/>
+      <text x="14" y="18" class="node">3D path</text>
+      <text x="14" y="34" class="body">IDF line focus later</text>
+    </g>
+  </g>
+
+  <g stroke="#315f72" stroke-width="2.1" fill="none" marker-end="url(#arrow)">
+    <path d="M366 133h38"/>
+    <path d="M584 133h38"/>
+    <path d="M291 170v25"/>
+    <path d="M366 223h36"/>
+    <path d="M501 260v27"/>
+    <path d="M584 323h38"/>
+    <path d="M802 323h38"/>
+    <path d="M934 370v29"/>
+    <path d="M366 435h38"/>
+    <path d="M584 435h38"/>
+    <path d="M802 435h38"/>
+    <path d="M1018 435h32"/>
+    <path d="M1135 464v151"/>
+    <path d="M366 544h38"/>
+    <path d="M584 544h38"/>
+    <path d="M802 544h38"/>
+    <path d="M935 590v25"/>
+    <path d="M366 642h38"/>
+    <path d="M584 642h38"/>
+    <path d="M802 642h38"/>
+    <path d="M1020 642h30"/>
+  </g>
+
+  <g stroke="#a44235" stroke-width="2" fill="none" stroke-dasharray="6 5" marker-end="url(#rejectArrow)">
+    <path d="M500 223h124"/>
+    <path d="M934 323c130 0 144 52 144 83"/>
+    <path d="M934 435c0 86 132 62 132 20"/>
+  </g>
+
+  <g transform="translate(1032 284)">
+    <rect width="190" height="84" rx="8" fill="#fff7f4" stroke="#e0b8b1"/>
+    <text x="14" y="22" class="reject">Diagnostics lane</text>
+    <text x="14" y="44" class="body">NO_VENDOR_CATALOGUE_ROWS</text>
+    <text x="14" y="60" class="body">NO_SR_CATALOGUE_SUITABILITY</text>
+    <text x="14" y="76" class="body">NO_SPIRAL_FACTOR_MATCH</text>
   </g>
 </svg>

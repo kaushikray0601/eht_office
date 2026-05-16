@@ -3,7 +3,7 @@
   <desc id="desc">A professional checklist for reviewing heat loss evidence, cable selection, electrical sizing, deliverables, and diagnostics before issuing calculation results.</desc>
   <defs>
     <style>
-      .title { font: 800 17px Inter, Arial, sans-serif; fill: #132331; }
+      .title { font: 800 16px Inter, Arial, sans-serif; fill: #132331; }
       .body { font: 13px Inter, Arial, sans-serif; fill: #5c6b78; }
       .small { font: 800 12px Inter, Arial, sans-serif; fill: #315f72; }
     </style>
@@ -26,30 +26,33 @@
     <rect width="250" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
     <rect width="250" height="30" rx="8" fill="#edf4f5"/>
     <text x="18" y="21" class="small">CABLE SELECTION</text>
-    <text x="18" y="62" class="title">Catalogue logic is traceable</text>
-    <text x="18" y="91" class="body">Vendor, voltage class, suitability,</text>
-    <text x="18" y="112" class="body">power output, and spiral factor</text>
-    <text x="18" y="133" class="body">are checked together.</text>
+    <text x="18" y="58" class="title">Catalogue logic</text>
+    <text x="18" y="78" class="title">is traceable</text>
+    <text x="18" y="104" class="body">Vendor, voltage class, suitability,</text>
+    <text x="18" y="124" class="body">power output, and spiral factor</text>
+    <text x="18" y="144" class="body">are checked together.</text>
   </g>
 
   <g transform="translate(612 126)">
     <rect width="250" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
     <rect width="250" height="30" rx="8" fill="#eef2f5"/>
     <text x="18" y="21" class="small">ELECTRICAL SIZING</text>
-    <text x="18" y="62" class="title">Currents are interpreted correctly</text>
-    <text x="18" y="91" class="body">Low voltage checks heat delivery;</text>
-    <text x="18" y="112" class="body">high voltage checks current and</text>
-    <text x="18" y="133" class="body">breaker loading.</text>
+    <text x="18" y="58" class="title">Currents are interpreted</text>
+    <text x="18" y="78" class="title">correctly</text>
+    <text x="18" y="104" class="body">Low voltage checks heat delivery;</text>
+    <text x="18" y="124" class="body">high voltage checks current and</text>
+    <text x="18" y="144" class="body">breaker loading.</text>
   </g>
 
   <g transform="translate(894 126)">
     <rect width="238" height="152" rx="8" fill="#ffffff" stroke="#c7d4dc"/>
     <rect width="238" height="30" rx="8" fill="#f3efef"/>
     <text x="18" y="21" class="small">DIAGNOSTICS</text>
-    <text x="18" y="62" class="title">Failures remain visible</text>
-    <text x="18" y="91" class="body">Rejected selections carry reason</text>
-    <text x="18" y="112" class="body">codes and action hints instead of</text>
-    <text x="18" y="133" class="body">disappearing silently.</text>
+    <text x="18" y="58" class="title">Failures remain</text>
+    <text x="18" y="78" class="title">visible</text>
+    <text x="18" y="104" class="body">Rejected selections carry reason</text>
+    <text x="18" y="124" class="body">codes and action hints instead of</text>
+    <text x="18" y="144" class="body">disappearing silently.</text>
   </g>
 
   <g transform="translate(48 320)">

@@ -603,6 +603,68 @@ button.manual-nav-link {
     border-radius: 8px;
 }
 
+.manual-deep-dive-section {
+    margin-top: 18px;
+    padding: 0;
+    overflow: hidden;
+}
+
+.manual-deep-dive summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+    padding: 20px 24px;
+    cursor: pointer;
+    list-style: none;
+}
+
+.manual-deep-dive summary::-webkit-details-marker {
+    display: none;
+}
+
+.manual-deep-dive summary strong {
+    display: block;
+    margin-top: 4px;
+    color: var(--ink);
+    font-size: clamp(20px, 2.4vw, 28px);
+    line-height: 1.18;
+    font-weight: 850;
+    letter-spacing: 0;
+}
+
+.manual-deep-dive summary i {
+    display: grid;
+    flex: 0 0 auto;
+    width: 36px;
+    height: 36px;
+    place-items: center;
+    color: #ffffff;
+    background: var(--steel);
+    border-radius: 8px;
+    transition: transform .2s ease;
+}
+
+.manual-deep-dive[open] summary i {
+    transform: rotate(180deg);
+}
+
+.manual-deep-dive-intro {
+    max-width: 880px;
+    margin: 0;
+    padding: 0 24px 16px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.58;
+}
+
+.manual-swimlane-image {
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 0;
+}
+
 .manual-reader-shell {
     display: grid;
     grid-template-columns: 280px minmax(0, 1fr);

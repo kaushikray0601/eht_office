@@ -18,6 +18,8 @@ class CalculationManualGuideTests(TestCase):
         self.assertContains(response, 'Heat-transfer physics')
         self.assertContains(response, 'IEEE and IEC controls')
         self.assertContains(response, 'Cold Cable Engineering')
+        self.assertContains(response, 'Engineering deep dive')
+        self.assertContains(response, 'Open the swim-lane calculation flow')
         self.assertContains(response, 'Formula reference and calculation evidence trail')
         self.assertContains(response, 'T<sub>mean</sub>')
         self.assertContains(response, 'T<sup>2</sup>')
