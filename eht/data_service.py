@@ -21,6 +21,7 @@ from .models import (
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
+    SelectedMIHeater,
     SelectedTracer,
 )
 
@@ -57,6 +58,9 @@ BOQ_ITEM_METADATA = {
     'Caution_Label': {'description': 'Caution Label', 'unit': 'EA'},
     'Aluminium_Adhesive_Tape': {'description': 'Aluminium Adhesive Tape', 'unit': 'm'},
     'Pipe_Strap': {'description': 'Pipe Strap', 'unit': 'EA'},
+    'MI_HEATER_SET': {'description': 'MI factory heating cable set', 'unit': 'EA'},
+    'MI_HEATED_LENGTH': {'description': 'MI heated cable length', 'unit': 'm'},
+    'MI_COLD_LEAD_LENGTH': {'description': 'MI cold lead length', 'unit': 'm'},
 }
 
 TRACER_FIELD_MAPPING = {
@@ -102,6 +106,38 @@ def _transform_tracer_item(item):
         model_field: normalized_item[source_field]
         for source_field, model_field in TRACER_FIELD_MAPPING.items()
         if source_field in normalized_item
+    }
+
+
+def _transform_mi_heater_item(item):
+    normalized_item = _normalize_payload(item)
+    rejection_reasons = normalized_item.get('selection_rejection_reasons')
+    if rejection_reasons is None:
+        rejection_reasons = normalized_item.get('mi_selection_rejection_reasons', [])
+    selection_status = normalized_item.get('selection_status') or normalized_item.get('mi_selection_status', '')
+    if not selection_status:
+        selection_status = 'selected' if normalized_item.get('heater_id') else ('rejected' if rejection_reasons else '')
+
+    # The selector returns catalogue primary keys plus calculated snapshot values.
+    # Storing both keeps future reports stable even if catalogue rows are corrected.
+    return {
+        'heater_id': normalized_item.get('heater_id') or None,
+        'cold_lead_option_id': normalized_item.get('cold_lead_option_id') or None,
+        'selection_status': selection_status,
+        'selection_rejection_reasons': rejection_reasons,
+        'heated_length_m': normalized_item.get('heated_length_m', 0),
+        'cold_lead_option_code': normalized_item.get('cold_lead_option_code', ''),
+        'cold_lead_length_m': normalized_item.get('cold_lead_length_m', 0),
+        'heater_resistance_ohms': normalized_item.get('heater_resistance_ohms', 0),
+        'cold_lead_resistance_total_ohms': normalized_item.get('cold_lead_resistance_total_ohms', 0),
+        'power_nominal_w': normalized_item.get('power_nominal_w', 0),
+        'power_density_w_m': normalized_item.get('power_density_w_m', 0),
+        'current_nominal_a': normalized_item.get('current_nominal_a', 0),
+        'current_cold_start_a': normalized_item.get('current_cold_start_a', 0),
+        'max_sheath_temp_published_c': normalized_item.get('max_sheath_temp_published_c'),
+        'project_t_class_limit_c': normalized_item.get('project_t_class_limit_c', 0),
+        't_class_verdict': normalized_item.get('t_class_verdict', 'review'),
+        'selection_basis': normalized_item.get('selection_basis', {}),
     }
 
 
@@ -211,6 +247,7 @@ def clear_project_workspace_data(project_id):
     if project_line_ids:
         derived_rows += HeatLoss.objects.filter(line_id__in=project_line_ids).count()
         derived_rows += SelectedTracer.objects.filter(line_id__in=project_line_ids).count()
+        derived_rows += SelectedMIHeater.objects.filter(line_id__in=project_line_ids).count()
         derived_rows += AlternateTracer.objects.filter(line_id__in=project_line_ids).count()
         derived_rows += PowerDistribution.objects.filter(line_id__in=project_line_ids).count()
         derived_rows += PowerDistributionBranch.objects.filter(distribution_id__in=project_line_uid_strings).count()
@@ -269,6 +306,7 @@ def store_calculated_results(project_id, aggregated_results):
 
     HeatLoss.objects.filter(line_id__in=project_line_ids).delete()
     SelectedTracer.objects.filter(line_id__in=project_line_ids).delete()
+    SelectedMIHeater.objects.filter(line_id__in=project_line_ids).delete()
     AlternateTracer.objects.filter(line_id__in=project_line_ids).delete()
     PowerDistribution.objects.filter(line_id__in=project_line_ids).delete()
     ProcessLineCalculation.objects.filter(line_id__in=project_line_ids).delete()
@@ -316,6 +354,16 @@ def store_calculated_results(project_id, aggregated_results):
         selected_tracer_rows.append(SelectedTracer(line=line, **transformed_item))
     if selected_tracer_rows:
         SelectedTracer.objects.bulk_create(selected_tracer_rows, batch_size=500)
+
+    selected_mi_heater_rows = []
+    for item in aggregated_results.get('selected_mi_heaters', []):
+        normalized_item = _normalize_payload(item)
+        line = project_lines.get(str(normalized_item['uid']))
+        if not line:
+            continue
+        selected_mi_heater_rows.append(SelectedMIHeater(line=line, **_transform_mi_heater_item(normalized_item)))
+    if selected_mi_heater_rows:
+        SelectedMIHeater.objects.bulk_create(selected_mi_heater_rows, batch_size=500)
     
     alternate_rank_by_line = {}
     alternate_tracer_rows = []
@@ -406,6 +454,8 @@ def store_calculated_results(project_id, aggregated_results):
             continue
         heat_loss = heat_loss_lookup.get(uid, {})
         selected_tracer = selected_tracer_lookup.get(uid, {})
+        selected_tracer_name = selected_tracer.get('V_UID') or normalized_item.get('selected_tracer', '')
+        spiral_factor = selected_tracer.get('Spiral_Factor', normalized_item.get('spiral_factor', 0))
         process_line_calc_rows.append(ProcessLineCalculation(
             uid=uid,
             line=line,
@@ -413,7 +463,7 @@ def store_calculated_results(project_id, aggregated_results):
             line_length=_to_builtin(line.line_length),
             operating_temp=_to_builtin(line.oper_temp),
             heat_loss=heat_loss.get('heat_loss', 0),
-            selected_tracer=selected_tracer.get('V_UID', ''),
+            selected_tracer=selected_tracer_name,
             breaker_size=normalized_item.get('breaker_size', 0),
             total_circuits=normalized_item.get('no_of_circuits', 0),
             starting_current=normalized_item.get('max_current', 0),
@@ -421,8 +471,8 @@ def store_calculated_results(project_id, aggregated_results):
             total_power_consumption=normalized_item.get('operating_load', 0),
             total_tracer_length=normalized_item.get('total_tracer_length', 0),
             pipe_size_mm=normalized_item.get('pipe_size_mm', 0),
-            spiral_factor=selected_tracer.get('Spiral_Factor', 0),
-            remarks='',
+            spiral_factor=spiral_factor,
+            remarks=normalized_item.get('calculation_basis', ''),
         ))
     if process_line_calc_rows:
         ProcessLineCalculation.objects.bulk_create(process_line_calc_rows, batch_size=500)

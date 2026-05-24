@@ -70,6 +70,13 @@
                     {{ result_summary.selection_issue_count }} line{{ result_summary.selection_issue_count|pluralize }} reached heat-loss calculation but did not receive a selectable SR tracer. Review the selection diagnostics before issuing results.
                 </div>
             {% endif %}
+            {% if result_summary.mi_result_count %}
+                <div class="alert alert-info">
+                    {{ result_summary.mi_result_count }} MI tracer record{{ result_summary.mi_result_count|pluralize }} stored:
+                    {{ result_summary.mi_fallback_count }} automatic fallback{{ result_summary.mi_fallback_count|pluralize }} and
+                    {{ result_summary.mi_alternative_count }} available alternative{{ result_summary.mi_alternative_count|pluralize }} for SLD review.
+                </div>
+            {% endif %}
 
             {% if line_results %}
             <div class="workspace-section mb-4">
@@ -102,31 +109,54 @@
                             <th data-field="load" data-sortable="true">Total Load</th>
                             <th data-field="tracer-length" data-sortable="true">Ordered SR Len.</th>
                             <th data-field="alternates">Alternates</th>
+                            <th data-field="mi-option" data-sortable="true">MI Option</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for item in line_results %}
-                            <tr>
+                            <tr{% if item.result_mode == 'mi_only' %} class="table-light"{% endif %}>
                                 <td>
                                     <div class="fw-semibold">{{ item.line.line_id }}</div>
                                     <div class="small text-muted">
                                         {{ item.line.service_type }} |
-                                        {{ item.calculation.line_size|floatformat:2 }}" x
-                                        {{ item.calculation.line_length|floatformat:2 }} m
+                                        {% if item.calculation %}
+                                            {{ item.calculation.line_size|floatformat:2 }}" x
+                                            {{ item.calculation.line_length|floatformat:2 }} m
+                                        {% else %}
+                                            {{ item.line.line_size|floatformat:2 }}" x
+                                            {{ item.line.line_length|floatformat:2 }} m
+                                        {% endif %}
                                     </div>
                                 </td>
                                 <td>
-                                    <div>{{ item.calculation.heat_loss|floatformat:2 }} W/m</div>
+                                    <div>
+                                        {% if item.heat_loss %}
+                                            {{ item.heat_loss.design_heat_loss|floatformat:2 }} W/m
+                                        {% elif item.calculation %}
+                                            {{ item.calculation.heat_loss|floatformat:2 }} W/m
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </div>
                                     {% if item.heat_loss %}
                                         <div class="small text-muted">Base {{ item.heat_loss.base_heat_loss|floatformat:2 }} x SF {{ item.heat_loss.heat_loss_sf|floatformat:2 }}</div>
                                         <div class="small text-muted">{{ item.heat_loss_basis_label|default:"-" }}</div>
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <div class="fw-semibold">{{ item.calculation.selected_tracer }}</div>
-                                    <div class="small text-muted">
-                                        {{ item.selected_tracer.tracer_family|default:"-" }}
-                                    </div>
+                                    {% if item.calculation %}
+                                        <div class="fw-semibold">{{ item.calculation.selected_tracer }}</div>
+                                        <div class="small text-muted">
+                                            {% if item.selected_mi_heater and item.selected_mi_heater.selection_status == 'selected' %}
+                                                MI
+                                            {% else %}
+                                                {{ item.selected_tracer.tracer_family|default:"-" }}
+                                            {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <div class="fw-semibold">MI fallback selected</div>
+                                        <div class="small text-muted">SR calculation not available</div>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if item.tracer_override %}
@@ -145,20 +175,40 @@
                                         <span class="text-muted small">Generated</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ item.calculation.spiral_factor|floatformat:2 }}</td>
-                                <td>{{ item.calculation.breaker_size|floatformat:0 }} A</td>
+                                <td>{% if item.calculation %}{{ item.calculation.spiral_factor|floatformat:2 }}{% else %}-{% endif %}</td>
+                                <td>{% if item.calculation %}{{ item.calculation.breaker_size|floatformat:0 }} A{% else %}-{% endif %}</td>
                                 <td>
-                                    {{ item.calculation.total_circuits }}
-                                    <div class="small text-muted">{{ item.branch_count }} branch{{ item.branch_count|pluralize }}</div>
+                                    {% if item.calculation %}
+                                        {{ item.calculation.total_circuits }}
+                                        <div class="small text-muted">{{ item.branch_count }} branch{{ item.branch_count|pluralize }}</div>
+                                    {% else %}
+                                        -
+                                    {% endif %}
                                 </td>
                                 <td>
-                                    <div>Op/ckt {{ item.calculation.operating_current|floatformat:2 }} A</div>
-                                    <div class="small text-muted">Start/ckt {{ item.calculation.starting_current|floatformat:2 }} A</div>
+                                    {% if item.calculation %}
+                                        <div>Op/ckt {{ item.calculation.operating_current|floatformat:2 }} A</div>
+                                        <div class="small text-muted">Start/ckt {{ item.calculation.starting_current|floatformat:2 }} A</div>
+                                    {% else %}
+                                        <div>Nom {{ item.selected_mi_heater.current_nominal_a|floatformat:2 }} A</div>
+                                        <div class="small text-muted">MI load distribution pending</div>
+                                    {% endif %}
                                 </td>
-                                <td>{{ item.calculation.total_power_consumption|floatformat:2 }} W</td>
+                                <td>{% if item.calculation %}{{ item.calculation.total_power_consumption|floatformat:2 }} W{% else %}{{ item.selected_mi_heater.power_nominal_w|floatformat:2 }} W{% endif %}</td>
                                 <td>
-                                    <div>{{ item.calculation.total_tracer_length|floatformat:2 }} m</div>
-                                    <div class="small text-muted">Includes termination allowance</div>
+                                    {% if item.calculation %}
+                                        <div>{{ item.calculation.total_tracer_length|floatformat:2 }} m</div>
+                                        <div class="small text-muted">
+                                            {% if item.selected_mi_heater and item.selected_mi_heater.selection_status == 'selected' %}
+                                                MI heated length
+                                            {% else %}
+                                                Includes termination allowance
+                                            {% endif %}
+                                        </div>
+                                    {% else %}
+                                        <div>{{ item.selected_mi_heater.heated_length_m|floatformat:2 }} m</div>
+                                        <div class="small text-muted">MI heated length</div>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if item.alternate_tracers %}
@@ -168,6 +218,87 @@
                                     {% else %}
                                         <span class="text-muted small">None</span>
                                     {% endif %}
+                                </td>
+                                <td>
+                                    {% if item.selected_mi_heater %}
+                                        <div><span class="badge text-bg-info">{{ item.selected_mi_heater.selection_status }}</span></div>
+                                        <div class="small text-muted">
+                                            {% if item.selected_mi_heater.heater %}
+                                                {{ item.selected_mi_heater.heater.part_number }}
+                                            {% else %}
+                                                No MI heater selected
+                                            {% endif %}
+                                        </div>
+                                        <div class="small text-muted">{{ item.selected_mi_heater.power_density_w_m|floatformat:2 }} W/m</div>
+                                    {% else %}
+                                        <span class="text-muted small">None</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if mi_result_rows %}
+            <div class="workspace-section mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">MI Selection Records</h6>
+                    <span class="text-muted small">{{ mi_result_rows|length }} line{{ mi_result_rows|length|pluralize }}</span>
+                </div>
+                <table
+                    class="table table-striped table-hover align-middle"
+                    data-toggle="table"
+                    data-classes="table table-striped table-hover align-middle"
+                    data-search="true"
+                    data-pagination="true"
+                    data-page-size="5"
+                    data-page-list="[5, 10, 25, 50, 100, all]"
+                    data-show-columns="true"
+                    data-sort-name="line"
+                >
+                    <thead class="table-light">
+                        <tr>
+                            <th data-field="line" data-sortable="true">Line</th>
+                            <th data-field="status" data-sortable="true">Status</th>
+                            <th data-field="heater" data-sortable="true">Heater</th>
+                            <th data-field="power" data-sortable="true">Power</th>
+                            <th data-field="current" data-sortable="true">Current</th>
+                            <th data-field="tclass" data-sortable="true">T-Class</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for mi in mi_result_rows %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ mi.line.line_id }}</div>
+                                    <div class="small text-muted">{{ mi.line.service_type }}</div>
+                                </td>
+                                <td>
+                                    <span class="badge {% if mi.selection_status == 'selected' %}text-bg-success{% elif mi.selection_status == 'available_alternative' %}text-bg-info{% else %}text-bg-warning text-dark{% endif %}">
+                                        {{ mi.selection_status|default:"review" }}
+                                    </span>
+                                    {% if mi.selection_basis.selection_mode %}
+                                        <div class="small text-muted">{{ mi.selection_basis.selection_mode }}</div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div class="fw-semibold">{% if mi.heater %}{{ mi.heater.part_number }}{% else %}-{% endif %}</div>
+                                    <div class="small text-muted">Cold lead {{ mi.cold_lead_option_code|default:"-" }}</div>
+                                    <div class="small text-muted">{{ mi.heated_length_m|floatformat:2 }} m heated</div>
+                                </td>
+                                <td>
+                                    <div>{{ mi.power_density_w_m|floatformat:2 }} W/m</div>
+                                    <div class="small text-muted">{{ mi.power_nominal_w|floatformat:2 }} W total</div>
+                                </td>
+                                <td>
+                                    <div>Nom {{ mi.current_nominal_a|floatformat:2 }} A</div>
+                                    <div class="small text-muted">Cold {{ mi.current_cold_start_a|floatformat:2 }} A</div>
+                                </td>
+                                <td>
+                                    <div>{{ mi.t_class_verdict|default:"review" }}</div>
+                                    <div class="small text-muted">Sheath {{ mi.max_sheath_temp_published_c|floatformat:0 }}°C / limit {{ mi.project_t_class_limit_c|floatformat:0 }}°C</div>
                                 </td>
                             </tr>
                         {% endfor %}

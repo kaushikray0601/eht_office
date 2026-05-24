@@ -15,6 +15,22 @@ ALLOW_SPIRAL_WRAP = [(True, 'Allowed'), (False, 'Not Allowed')]
 SELECT_RTD_THERMOSTAT = [('RI', 'RTD-Inline'), ('RO', 'RTD-Offline'), ('TI', 'Thermostat-Inline'), ('TO', 'Thermostat-Offline')]
 CHOICE_LOCAL_ISOLATOR = [('bothSides', 'Both Sides'), ('outgoingOnly', 'Outgoing Only'), ('incomingOnly', 'Incoming Only'), ('noIsolator', 'No Isolator')]
 LOCAL_ISOLATOR_REQUIREMENT = [('required', 'Required'), ('not_required', 'Not Required')]
+PHASE_CHOICES = [('1PH', 'Single Phase')]
+TEMPERATURE_CLASS_CHOICES = [
+    ('', 'Not specified'),
+    ('T1', 'T1'),
+    ('T2', 'T2'),
+    ('T3', 'T3'),
+    ('T4', 'T4'),
+    ('T5', 'T5'),
+    ('T6', 'T6'),
+]
+GAS_GROUP_CHOICES = [
+    ('', 'Not specified'),
+    ('IIA', 'IIA'),
+    ('IIB', 'IIB'),
+    ('IIC', 'IIC'),
+]
 DEFAULT_PROJECT_ID = 'default_project'
 
 
@@ -147,6 +163,7 @@ class HeatTracingInput(models.Model):
     design_temp = models.DecimalField(max_digits=5, decimal_places=2)  # Design Temperature
 
     # Additional fields
+    phase = models.CharField(max_length=10, choices=PHASE_CHOICES, default='1PH', blank=True)  # MI MVP is single-phase only.
     emergency_supply = models.BooleanField(default=False)  # Emergency Power Supply Requirement
     discipline = models.CharField(max_length=20, blank=True, null=True)  # Responsible Discipline
     remarks = models.TextField(blank=True, null=True)  # Additional remarks  
@@ -552,13 +569,26 @@ class ProcessLineCalculation(models.Model):
 # ------ MI CABLE MODELS -----------------------------------------------------------
 
 class MICableFamily(models.Model):
+    """Catalogue-level MI product family limits.
+
+    MI data is safety-sensitive. `is_validated` stays false until the row has
+    been checked against a real vendor document recorded in `source_document`.
+    """
     vendor = models.CharField(max_length=30, choices=SELECT_VENDOR)
     family_name = models.CharField(max_length=50) # e.g., 'MIQ', 'XMI-A'
     alloy_type = models.CharField(max_length=50) # e.g., 'Alloy 825', 'Stainless Steel'
     max_voltage = models.FloatField(default=600.0)
     max_sheath_temp_c = models.FloatField() # e.g., 600.0
     max_maintain_temp_c = models.FloatField() # e.g., 500.0
+    max_exposure_temp_c = models.FloatField(default=0.0) # Used to reject line design temperatures above vendor limits.
     max_watt_density_w_m = models.FloatField() # e.g., 250.0 W/m limit
+    min_circuit_length_m = models.FloatField(default=0.0)
+    max_circuit_length_m = models.FloatField(default=0.0)
+    temp_class_rating = models.CharField(max_length=10, choices=TEMPERATURE_CLASS_CHOICES, blank=True, default='')
+    gas_group = models.CharField(max_length=10, choices=GAS_GROUP_CHOICES, blank=True, default='')
+    zone_approval = models.CharField(max_length=60, blank=True, default='')
+    source_document = models.CharField(max_length=200, blank=True, default='')
+    is_validated = models.BooleanField(default=False)
 
     class Meta:
         unique_together = ('vendor', 'family_name')
@@ -568,17 +598,38 @@ class MICableFamily(models.Model):
         return f"{self.get_vendor_display()} {self.family_name}"
 
 class MICableHeater(models.Model):
+    """Specific MI heater resistance code within a family."""
     family = models.ForeignKey(MICableFamily, on_delete=models.CASCADE, related_name='heaters')
     part_number = models.CharField(max_length=100, unique=True) # e.g., '61XMI2100' or 'MIQ-2500'
     conductors = models.IntegerField(default=1) # 1 for Single Core, 2 for Dual Core
-    base_resistance_ohms_km = models.FloatField() # Ohms per km at 20°C
-    max_ampacity = models.FloatField() # e.g., 60A
+    resistance_ohms_m = models.FloatField() # Ohms per metre at catalogue reference temperature, usually 20°C.
+    max_current_a = models.FloatField() # Catalogue maximum heater current.
+    cold_lead_resistance_ohms_m = models.FloatField(default=0.0)
+    cold_lead_max_ampacity_a = models.FloatField(default=0.0)
+    sheath_material = models.CharField(max_length=50, blank=True, default='')
+    conductor_material = models.CharField(max_length=50, blank=True, default='')
 
     class Meta:
-        ordering = ['base_resistance_ohms_km']
+        ordering = ['resistance_ohms_m']
 
     def __str__(self):
-        return f"{self.part_number} ({self.base_resistance_ohms_km} ohms/km)"
+        return f"{self.part_number} ({self.resistance_ohms_m} ohms/m)"
+
+
+class MIColdLeadOption(models.Model):
+    """Selectable MI cold-lead length tied to a heater resistance code."""
+    heater = models.ForeignKey(MICableHeater, on_delete=models.CASCADE, related_name='cold_lead_options')
+    option_code = models.CharField(max_length=20)
+    length_m = models.FloatField()
+
+    class Meta:
+        ordering = ['heater', 'length_m', 'option_code']
+        constraints = [
+            models.UniqueConstraint(fields=['heater', 'option_code'], name='unique_mi_cold_lead_option_per_heater'),
+        ]
+
+    def __str__(self):
+        return f"{self.heater.part_number} {self.option_code} ({self.length_m} m)"
 
 class MIAlloyTempFactor(models.Model):
     alloy_type = models.CharField(max_length=50)
@@ -591,6 +642,52 @@ class MIAlloyTempFactor(models.Model):
 
     def __str__(self):
         return f"{self.alloy_type} at {self.temperature_c}°C: {self.resistance_multiplier}x"
+
+
+class SelectedMIHeater(models.Model):
+    """Persisted MI selection snapshot for one process line.
+
+    The result stores both catalogue references and calculated snapshot values
+    so reports remain traceable even if catalogue rows are later revised. Rejected
+    MI selections also use this table, with blank catalogue references and the
+    reason payload kept beside the line for review.
+    """
+    T_CLASS_VERDICTS = [
+        ('pass', 'Pass'),
+        ('fail', 'Fail'),
+        ('review', 'Review Required'),
+    ]
+
+    line = models.OneToOneField(
+        HeatTracingInput,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='selected_mi_heater_result',
+    )
+    heater = models.ForeignKey(MICableHeater, on_delete=models.SET_NULL, null=True, blank=True)
+    cold_lead_option = models.ForeignKey(MIColdLeadOption, on_delete=models.SET_NULL, null=True, blank=True)
+    selection_status = models.CharField(max_length=30, default='', blank=True)
+    selection_rejection_reasons = models.JSONField(default=list, blank=True)
+
+    heated_length_m = models.FloatField(default=0.0)
+    cold_lead_option_code = models.CharField(max_length=20, blank=True, default='')
+    cold_lead_length_m = models.FloatField(default=0.0)
+
+    heater_resistance_ohms = models.FloatField(default=0.0)
+    cold_lead_resistance_total_ohms = models.FloatField(default=0.0)
+    power_nominal_w = models.FloatField(default=0.0)
+    power_density_w_m = models.FloatField(default=0.0)
+    current_nominal_a = models.FloatField(default=0.0)
+    current_cold_start_a = models.FloatField(default=0.0)
+
+    max_sheath_temp_published_c = models.FloatField(null=True, blank=True)
+    project_t_class_limit_c = models.FloatField(default=0.0)
+    t_class_verdict = models.CharField(max_length=20, choices=T_CLASS_VERDICTS, default='review')
+    selection_basis = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        ordering = ['line']
 
 
 # ######################### OLD Models for reference #####################################

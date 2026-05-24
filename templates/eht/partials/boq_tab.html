@@ -45,6 +45,9 @@
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Ordered SR Tracer</div>
                         <div class="h4 mb-0">{{ boq_summary.tracer_total|floatformat:2 }} <small class="text-muted">m</small></div>
+                        {% if boq_summary.mi_heater_set_total %}
+                            <div class="small text-muted">MI {{ boq_summary.mi_heater_set_total|floatformat:0 }} set{{ boq_summary.mi_heater_set_total|pluralize }} / {{ boq_summary.mi_heated_length_total|floatformat:2 }} m</div>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
@@ -123,6 +126,7 @@
                             <th data-field="service-type" data-sortable="true">Service Type</th>
                             <th data-field="item-count" data-sortable="true">Items</th>
                             <th data-field="tracer-quantity" data-sortable="true">Ordered SR Qty</th>
+                            <th data-field="mi-quantity" data-sortable="true">MI Qty</th>
                             <th data-field="action">Review</th>
                         </tr>
                     </thead>
@@ -133,6 +137,13 @@
                                 <td>{{ group.line.service_type }}</td>
                                 <td>{{ group.item_count }}</td>
                                 <td>{{ group.tracer_quantity|floatformat:2 }} m</td>
+                                <td>
+                                    {% if group.mi_heater_sets %}
+                                        {{ group.mi_heater_sets|floatformat:0 }} set / {{ group.mi_heated_length|floatformat:2 }} m
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
                                 <td>
                                     <button type="button" class="btn btn-sm btn-outline-primary boq-line-quick-view" data-line-id="{{ group.line.line_id }}">
                                         Show BOQ

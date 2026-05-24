@@ -196,7 +196,7 @@ class SRReportingAlignmentTests(TestCase):
         workbook = load_workbook(BytesIO(response.content))
         self.assertEqual(
             workbook.sheetnames,
-            ['Line Results', 'Selection Diagnostics', 'Power Distribution', 'Alternate Tracers'],
+            ['Line Results', 'Selection Diagnostics', 'Power Distribution', 'Alternate Tracers', 'MI Selection'],
         )
 
         line_header = next(workbook['Line Results'].iter_rows(values_only=True))

@@ -44,6 +44,7 @@ from .models import (
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
+    SelectedMIHeater,
     SLDTopologyEdit,
     TracerSelectionOverride,
     UserAttempt,
@@ -352,6 +353,7 @@ def _build_result_workspace_data(project_id):
             'line',
             'line__heat_loss_result',
             'line__selected_tracer_result',
+            'line__selected_mi_heater_result',
             'line__power_distribution_result',
         )
         .prefetch_related(
@@ -372,6 +374,16 @@ def _build_result_workspace_data(project_id):
         .select_related('line')
         .order_by('line__line_id')
     ]
+    mi_result_rows = list(
+        SelectedMIHeater.objects.filter(line__proj_id=project_id)
+        .select_related('line', 'heater', 'cold_lead_option')
+        .order_by('line__line_id')
+    )
+    mi_by_line_uid = {
+        str(mi_result.line_id): mi_result
+        for mi_result in mi_result_rows
+        if mi_result.line_id
+    }
     sld_payload = build_project_sld_payload(project_id)
     sld_meta = sld_payload.get('meta') or {}
     allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
@@ -401,8 +413,10 @@ def _build_result_workspace_data(project_id):
     }
 
     line_results = []
+    calculation_line_uids = set()
     for calculation in calculations:
         line = calculation.line
+        calculation_line_uids.add(str(line.uid))
         tracer_override = active_tracer_overrides.get(str(line.uid))
         override_alternate = (
             override_alternates.get((str(line.uid), tracer_override.selected_v_uid))
@@ -410,26 +424,51 @@ def _build_result_workspace_data(project_id):
             else None
         )
         line_results.append({
+            'result_mode': 'sr_calculated',
             'calculation': calculation,
             'line': line,
             'heat_loss': getattr(line, 'heat_loss_result', None),
             'heat_loss_basis_label': _heat_loss_basis_label(getattr(line, 'heat_loss_result', None)),
             'heat_loss_rule_set': _heat_loss_rule_set(getattr(line, 'heat_loss_result', None)),
             'selected_tracer': getattr(line, 'selected_tracer_result', None),
+            'selected_mi_heater': mi_by_line_uid.get(str(line.uid)),
             'alternate_tracers': list(line.alternate_tracer_results.all()),
             'tracer_override': tracer_override,
             'tracer_override_alternate': override_alternate,
             'branch_count': len(getattr(line.power_distribution_result, 'branches').all()) if hasattr(line, 'power_distribution_result') else 0,
         })
+    for mi_result in mi_result_rows:
+        line = mi_result.line
+        if str(line.uid) in calculation_line_uids:
+            continue
+        tracer_override = active_tracer_overrides.get(str(line.uid))
+        line_results.append({
+            'result_mode': 'mi_only',
+            'calculation': None,
+            'line': line,
+            'heat_loss': getattr(line, 'heat_loss_result', None),
+            'heat_loss_basis_label': _heat_loss_basis_label(getattr(line, 'heat_loss_result', None)),
+            'heat_loss_rule_set': _heat_loss_rule_set(getattr(line, 'heat_loss_result', None)),
+            'selected_tracer': None,
+            'selected_mi_heater': mi_result,
+            'alternate_tracers': [],
+            'tracer_override': tracer_override,
+            'tracer_override_alternate': None,
+            'branch_count': 0,
+        })
+    line_results.sort(key=lambda item: item['line'].line_id)
 
     summary = {
         'calculated_lines': len(line_results),
-        'total_circuits': sum(item['calculation'].total_circuits for item in line_results),
-        'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results) / 1000 if line_results else 0,
-        'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results),
+        'total_circuits': sum(item['calculation'].total_circuits for item in line_results if item['calculation']),
+        'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results if item['calculation']) / 1000 if line_results else 0,
+        'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results if item['calculation']),
         'branch_count': len(branch_rows),
         'tracer_override_count': len(active_tracer_overrides),
         'selection_issue_count': len(selection_issue_rows),
+        'mi_result_count': len(mi_result_rows),
+        'mi_fallback_count': sum(1 for item in mi_result_rows if item.selection_status == 'selected'),
+        'mi_alternative_count': sum(1 for item in mi_result_rows if item.selection_status == 'available_alternative'),
     }
     summary = apply_active_summary_overrides(
         project_id,
@@ -440,6 +479,7 @@ def _build_result_workspace_data(project_id):
     return {
         'line_results': line_results,
         'selection_issue_rows': selection_issue_rows,
+        'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
         'summary': summary,
     }
@@ -503,6 +543,7 @@ def result_view(request):
     line_results = []
     branch_rows = []
     selection_issue_rows = []
+    mi_result_rows = []
     summary = {
         'calculated_lines': 0,
         'total_circuits': 0,
@@ -510,21 +551,26 @@ def result_view(request):
         'total_tracer_length': 0,
         'branch_count': 0,
         'selection_issue_count': 0,
+        'mi_result_count': 0,
+        'mi_fallback_count': 0,
+        'mi_alternative_count': 0,
     }
 
     if project_id and context['project_setup']:
         result_data = _build_result_workspace_data(project_id)
         line_results = result_data['line_results']
         selection_issue_rows = result_data['selection_issue_rows']
+        mi_result_rows = result_data['mi_result_rows']
         branch_rows = result_data['branch_rows']
         summary = result_data['summary']
 
     context.update({
         'line_results': line_results,
         'selection_issue_rows': selection_issue_rows,
+        'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
         'result_summary': summary,
-        'has_results': bool(line_results or selection_issue_rows),
+        'has_results': bool(line_results or selection_issue_rows or mi_result_rows),
     })
     return render(request, 'eht/partials/result_tab.html', context)
 
@@ -688,12 +734,22 @@ def _build_boq_workspace_data(project_id):
             (entry.quantity for entry in group['items'] if entry.item_code == 'TRACER'),
             0,
         )
+        mi_heater_sets = next(
+            (entry.quantity for entry in group['items'] if entry.item_code == 'MI_HEATER_SET'),
+            0,
+        )
+        mi_heated_length = next(
+            (entry.quantity for entry in group['items'] if entry.item_code == 'MI_HEATED_LENGTH'),
+            0,
+        )
         line_groups.append({
             'line_id': line_id,
             'line': group['line'],
             'items': group['items'],
             'item_count': len(group['items']),
             'tracer_quantity': tracer_quantity,
+            'mi_heater_sets': mi_heater_sets,
+            'mi_heated_length': mi_heated_length,
         })
 
     line_groups.sort(key=lambda group: group['line'].line_id if group['line'] else '')
@@ -705,6 +761,8 @@ def _build_boq_workspace_data(project_id):
         'consolidated_item_count': len(consolidated_items),
         'line_group_count': len(line_groups),
         'tracer_total': consolidated_lookup.get('TRACER', 0),
+        'mi_heater_set_total': consolidated_lookup.get('MI_HEATER_SET', 0),
+        'mi_heated_length_total': consolidated_lookup.get('MI_HEATED_LENGTH', 0),
         'mcb_total': consolidated_lookup.get('MCB', 0),
         'junction_box_total': consolidated_lookup.get('JB3PH', 0) + consolidated_lookup.get('JB1PH', 0),
     }
@@ -1516,11 +1574,12 @@ def result_export_view(request):
         return JsonResponse({'error': 'Project setup has not been saved for this project yet.'}, status=400)
 
     result_data = _build_result_workspace_data(project_id)
-    if not result_data['line_results'] and not result_data['selection_issue_rows']:
+    if not result_data['line_results'] and not result_data['selection_issue_rows'] and not result_data['mi_result_rows']:
         return JsonResponse({'error': 'No stored calculation results are available for this project yet.'}, status=400)
 
     line_rows = []
     alternate_rows = []
+    mi_rows = []
     selection_rows = []
     for item in result_data['line_results']:
         calculation = item['calculation']
@@ -1533,10 +1592,10 @@ def result_export_view(request):
             'Project ID': project_id,
             'Line ID': line.line_id,
             'Service Type': line.service_type,
-            'Line Size': calculation.line_size,
-            'Line Length': calculation.line_length,
-            'Operating Temp': calculation.operating_temp,
-            'Design Heat Loss (W/m)': heat_loss.design_heat_loss if heat_loss else calculation.heat_loss,
+            'Line Size': calculation.line_size if calculation else line.line_size,
+            'Line Length': calculation.line_length if calculation else line.line_length,
+            'Operating Temp': calculation.operating_temp if calculation else line.oper_temp,
+            'Design Heat Loss (W/m)': heat_loss.design_heat_loss if heat_loss else (calculation.heat_loss if calculation else ''),
             'Base Heat Loss before SF (W/m)': heat_loss.base_heat_loss if heat_loss else '',
             'Heat Loss Safety Factor': heat_loss.heat_loss_sf if heat_loss else '',
             'Conductivity Method': item.get('heat_loss_basis_label') or '',
@@ -1545,28 +1604,38 @@ def result_export_view(request):
             'Wind Correction Factor': heat_loss.wind_correction if heat_loss else '',
             'Accessory Tracer Adders (m)': heat_loss.tracer_adder if heat_loss else '',
             'SR Selection Status': heat_loss.selection_status if heat_loss else '',
-            'Selected Tracer': calculation.selected_tracer,
+            'Selected Tracer': calculation.selected_tracer if calculation else 'MI fallback selected',
             'Tracer Family': getattr(selected_tracer, 'tracer_family', ''),
             'SLD Tracer Override': tracer_override.selected_v_uid if tracer_override else '',
-            'SLD Override Family': getattr(tracer_override_alternate, 'tracer_family', ''),
+            'SLD Override Family': (
+                'MI'
+                if tracer_override and str(tracer_override.selected_v_uid or '').startswith('MI:')
+                else getattr(tracer_override_alternate, 'tracer_family', '')
+            ),
             'SLD Override Review Status': (
                 'Review-only: load/BOQ/cable sizing not recalculated from override'
                 if tracer_override
                 else ''
             ),
-            'Spiral Factor': calculation.spiral_factor,
-            'Breaker Size': calculation.breaker_size,
-            'Total Circuits': calculation.total_circuits,
-            'Starting Current / Circuit (A)': calculation.starting_current,
-            'Operating Current / Circuit (A)': calculation.operating_current,
+            'Spiral Factor': calculation.spiral_factor if calculation else '',
+            'Breaker Size': calculation.breaker_size if calculation else '',
+            'Total Circuits': calculation.total_circuits if calculation else '',
+            'Starting Current / Circuit (A)': calculation.starting_current if calculation else '',
+            'Operating Current / Circuit (A)': calculation.operating_current if calculation else '',
             'Current Basis': 'Per circuit',
-            'Total Connected Load (W)': calculation.total_power_consumption,
-            'Ordered SR Tracer Length incl. Termination Allowance (m)': calculation.total_tracer_length,
+            'Total Connected Load (W)': calculation.total_power_consumption if calculation else '',
+            'Ordered SR Tracer Length incl. Termination Allowance (m)': calculation.total_tracer_length if calculation else '',
             'Heated Tracer Length excl. Termination Allowance (m)': (
                 selected_tracer.tracer_with_margin if selected_tracer else ''
             ),
             'Tracer Length Basis': 'Ordered length includes SR termination installation allowance',
-            'Pipe Size mm': calculation.pipe_size_mm,
+            'Pipe Size mm': calculation.pipe_size_mm if calculation else '',
+            'MI Candidate Status': item.get('selected_mi_heater').selection_status if item.get('selected_mi_heater') else '',
+            'MI Heater Part Number': (
+                item.get('selected_mi_heater').heater.part_number
+                if item.get('selected_mi_heater') and item.get('selected_mi_heater').heater
+                else ''
+            ),
         })
         for alternate in item['alternate_tracers']:
             alternate_rows.append({
@@ -1580,6 +1649,28 @@ def result_export_view(request):
                 'Heated Tracer Length before Design Margin (m)': alternate.tracer_length,
                 'Heated Tracer Length with Design Margin excl. Termination (m)': alternate.tracer_with_margin,
             })
+
+    for mi_result in result_data['mi_result_rows']:
+        basis = mi_result.selection_basis or {}
+        line = mi_result.line
+        mi_rows.append({
+            'Project ID': project_id,
+            'Line ID': line.line_id if line else '',
+            'Service Type': line.service_type if line else '',
+            'MI Selection Status': mi_result.selection_status,
+            'Selection Mode': basis.get('selection_mode', ''),
+            'Heater Part Number': mi_result.heater.part_number if mi_result.heater else '',
+            'Cold Lead Option': mi_result.cold_lead_option_code,
+            'Heated Length (m)': mi_result.heated_length_m,
+            'Nominal Power (W)': mi_result.power_nominal_w,
+            'Power Density (W/m)': mi_result.power_density_w_m,
+            'Nominal Current (A)': mi_result.current_nominal_a,
+            'Cold Start Current (A)': mi_result.current_cold_start_a,
+            'Published Sheath Temp (°C)': mi_result.max_sheath_temp_published_c,
+            'Project T-Class Limit (°C)': mi_result.project_t_class_limit_c,
+            'T-Class Verdict': mi_result.t_class_verdict,
+            'Rejection Reasons': json.dumps(mi_result.selection_rejection_reasons or [], default=str),
+        })
 
     for item in result_data['selection_issue_rows']:
         heat_loss = item['heat_loss']
@@ -1625,6 +1716,7 @@ def result_export_view(request):
         pd.DataFrame(selection_rows).to_excel(writer, sheet_name='Selection Diagnostics', index=False)
         pd.DataFrame(branch_rows).to_excel(writer, sheet_name='Power Distribution', index=False)
         pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
+        pd.DataFrame(mi_rows).to_excel(writer, sheet_name='MI Selection', index=False)
 
     output.seek(0)
     response = HttpResponse(

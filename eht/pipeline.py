@@ -30,6 +30,7 @@ def summarize_calculation_result(calculation_result):
     return {
         'heat_loss': len(calculation_result.get('heat_loss', [])),
         'selected_tracers': len(calculation_result.get('selected_tracers', [])),
+        'selected_mi_heaters': len(calculation_result.get('selected_mi_heaters', [])),
         'alternative_tracers': len(calculation_result.get('alternative_tracers', [])),
         'power_distribution': len(calculation_result.get('power_distribution', [])),
         'boq_lines': len(calculation_result.get('boq_per_line', {})),

@@ -91,7 +91,6 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['heat_loss_method'].widget.attrs.update({'title': (
             'Mean temperature is active by default. Table, integrated k(T), and fixed-basis methods are placeholders for future releases.'
         )})
-
         for name, field in self.fields.items():
             self._apply_bootstrap_widget_classes(name, field)
 

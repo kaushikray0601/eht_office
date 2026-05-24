@@ -1533,6 +1533,11 @@
             const alternatives = metadata.tracer_selection.alternatives || [];
             rows.push(['Tracer UID', selectedTracer.v_uid || '-']);
             rows.push(['Tracer Family', selectedTracer.tracer_family || '-']);
+            if (selectedTracer.option_kind === 'MI') {
+                rows.push(['MI Heater', selectedTracer.heater_part_number || '-']);
+                rows.push(['Cold Lead', selectedTracer.cold_lead_option_code || '-']);
+                rows.push(['T-Class', selectedTracer.t_class_verdict || '-']);
+            }
             rows.push(['Power Output', selectedTracer.power_output !== undefined && selectedTracer.power_output !== '' ? `${selectedTracer.power_output} W/m` : '-']);
             rows.push(['Spiral Factor', selectedTracer.spiral_factor !== undefined && selectedTracer.spiral_factor !== '' ? selectedTracer.spiral_factor : '-']);
             rows.push(['Tracer Length', selectedTracer.tracer_length !== undefined && selectedTracer.tracer_length !== '' ? `${selectedTracer.tracer_length} m` : '-']);
@@ -1570,9 +1575,12 @@
         const optionChoices = [
             { v_uid: generatedTracer.v_uid, label: `${generatedTracer.v_uid || 'Generated'} (generated)` },
         ].concat(alternatives.map(function (item) {
+            const label = item.option_kind === 'MI'
+                ? `${item.v_uid || '-'} | MI | ${item.heater_part_number || '-'} | ${item.power_output || '-'} W/m`
+                : `${item.v_uid || '-'} | ${item.tracer_family || '-'} | ${item.power_output || '-'} W/m`;
             return {
                 v_uid: item.v_uid,
-                label: `${item.v_uid || '-'} | ${item.tracer_family || '-'} | ${item.power_output || '-'} W/m`,
+                label: label,
             };
         })).filter(function (item) {
             return item.v_uid;
@@ -1586,7 +1594,7 @@
                     <td>${escapeHtml(item.option_rank || '-')}</td>
                     <td>${escapeHtml(item.v_uid || '-')}</td>
                     <td>${escapeHtml(item.tracer_family || '-')}</td>
-                    <td>${escapeHtml(item.power_output !== undefined && item.power_output !== '' ? item.power_output : '-')}</td>
+                    <td>${escapeHtml(item.option_kind === 'MI' ? (item.heater_part_number || '-') : (item.power_output !== undefined && item.power_output !== '' ? item.power_output : '-'))}</td>
                     <td>${escapeHtml(item.spiral_factor !== undefined && item.spiral_factor !== '' ? item.spiral_factor : '-')}</td>
                     <td>${escapeHtml(item.tracer_with_margin !== undefined && item.tracer_with_margin !== '' ? item.tracer_with_margin : '-')}</td>
                 </tr>
@@ -1600,7 +1608,7 @@
                             <th>Rank</th>
                             <th>UID</th>
                             <th>Family</th>
-                            <th>W/m</th>
+                            <th>W/m / Heater</th>
                             <th>Spiral</th>
                             <th>Length</th>
                         </tr>

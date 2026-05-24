@@ -6,6 +6,7 @@ from .models import (
     HeatTracingInput,
     ProcessLineCalculation,
     ProjectData,
+    SelectedMIHeater,
     SelectedTracer,
     TracerSelectionOverride,
 )
@@ -28,6 +29,34 @@ def _tracer_option_payload(tracer, option_rank=None):
         'spiral_factor': _rounded_or_blank(tracer.spiral_factor),
         'tracer_length': _rounded_or_blank(tracer.tracer_length),
         'tracer_with_margin': _rounded_or_blank(tracer.tracer_with_margin),
+    }
+    if option_rank is not None:
+        payload['option_rank'] = option_rank
+    return payload
+
+
+def _mi_option_uid(mi_result):
+    heater = mi_result.heater
+    part_number = heater.part_number if heater else ''
+    return f"MI:{part_number}:{mi_result.cold_lead_option_code}"
+
+
+def _mi_option_payload(mi_result, option_rank=None):
+    heater = mi_result.heater
+    payload = {
+        'v_uid': _mi_option_uid(mi_result),
+        'tracer_family': 'MI',
+        'power_output': _rounded_or_blank(mi_result.power_density_w_m),
+        'spiral_factor': '',
+        'tracer_length': _rounded_or_blank(mi_result.heated_length_m),
+        'tracer_with_margin': _rounded_or_blank(mi_result.heated_length_m),
+        'option_kind': 'MI',
+        'heater_part_number': heater.part_number if heater else '',
+        'cold_lead_option_code': mi_result.cold_lead_option_code,
+        'current_nominal_a': _rounded_or_blank(mi_result.current_nominal_a),
+        'current_cold_start_a': _rounded_or_blank(mi_result.current_cold_start_a),
+        't_class_verdict': mi_result.t_class_verdict,
+        'selection_status': mi_result.selection_status,
     }
     if option_rank is not None:
         payload['option_rank'] = option_rank
@@ -121,6 +150,13 @@ def apply_tracer_selection_to_payload(project_id, payload):
     alternate_by_line_uid = {}
     for alternate in AlternateTracer.objects.filter(line_id__in=line_uids).order_by('line_id', 'option_rank'):
         alternate_by_line_uid.setdefault(str(alternate.line_id), []).append(alternate)
+    mi_by_line_uid = {
+        str(mi_result.line_id): mi_result
+        for mi_result in SelectedMIHeater.objects.filter(
+            line_id__in=line_uids,
+            selection_status__in=['available_alternative', 'selected'],
+        ).select_related('heater', 'cold_lead_option')
+    }
     overrides = _active_overrides(project_id, line_uids)
 
     for node in payload.get('nodes', []):
@@ -129,14 +165,21 @@ def apply_tracer_selection_to_payload(project_id, payload):
         line_uid = _source_line_uid(node)
         selected = selected_by_line_uid.get(line_uid)
         alternatives = alternate_by_line_uid.get(line_uid, [])
+        mi_result = mi_by_line_uid.get(line_uid)
+        alternative_payloads = [
+            _tracer_option_payload(alternate, alternate.option_rank)
+            for alternate in alternatives
+        ]
+        if mi_result and mi_result.selection_status == 'available_alternative':
+            alternative_payloads.append(_mi_option_payload(mi_result, len(alternative_payloads) + 1))
         override = overrides.get(line_uid)
-        active_option = None
+        active_payload = None
         if override:
-            active_option = next(
-                (option for option in alternatives if option.v_uid == override.selected_v_uid),
+            active_payload = next(
+                (option for option in alternative_payloads if option.get('v_uid') == override.selected_v_uid),
                 None,
             )
-        selected_payload = _tracer_option_payload(active_option, active_option.option_rank) if active_option else (
+        selected_payload = active_payload or (
             _tracer_option_payload(selected) if selected else {}
         )
         calculation = calculation_by_line_uid.get(line_uid)
@@ -145,15 +188,12 @@ def apply_tracer_selection_to_payload(project_id, payload):
         metadata['tracer_selection'] = {
             'selected': selected_payload,
             'generated_selected': _tracer_option_payload(selected) if selected else {},
-            'alternatives': [
-                _tracer_option_payload(alternate, alternate.option_rank)
-                for alternate in alternatives
-            ],
-            'alternate_count': len(alternatives),
-            'override_supported': bool(alternatives),
-            'override_active': bool(active_option),
-            'override_id': override.id if active_option else None,
-            'override_remarks': override.remarks if active_option else '',
+            'alternatives': alternative_payloads,
+            'alternate_count': len(alternative_payloads),
+            'override_supported': bool(alternative_payloads),
+            'override_active': bool(active_payload),
+            'override_id': override.id if active_payload else None,
+            'override_remarks': override.remarks if active_payload else '',
         }
         metadata['sr_calculation'] = {
             'heat_loss': _heat_loss_payload(heat_loss),
@@ -187,6 +227,35 @@ def save_tracer_override(project_id, node, *, selected_v_uid='', remarks='', use
     if generated and selected_uid == generated.v_uid:
         reset_tracer_override(project_id, line_uid)
         return None
+
+    if selected_uid.startswith('MI:'):
+        try:
+            _prefix, heater_part_number, cold_lead_option_code = selected_uid.split(':', 2)
+        except ValueError:
+            raise ValidationError('Selected MI tracer option is not valid.')
+        mi_result = SelectedMIHeater.objects.filter(
+            line=line,
+            heater__part_number=heater_part_number,
+            cold_lead_option_code=cold_lead_option_code,
+            selection_status='available_alternative',
+        ).first()
+        if mi_result is None:
+            raise ValidationError('Selected MI tracer must be one of the calculated MI alternate options for this line.')
+        override, _created = TracerSelectionOverride.objects.update_or_create(
+            project=project,
+            line=line,
+            defaults={
+                'selected_v_uid': selected_uid,
+                'selected_option_rank': None,
+                'remarks': str(remarks or '').strip(),
+                'is_active': True,
+                'updated_by': user if getattr(user, 'is_authenticated', False) else None,
+            },
+        )
+        if override.created_by_id is None and getattr(user, 'is_authenticated', False):
+            override.created_by = user
+            override.save(update_fields=['created_by'])
+        return override
 
     alternate = AlternateTracer.objects.filter(line=line, v_uid=selected_uid).order_by('option_rank').first()
     if alternate is None:

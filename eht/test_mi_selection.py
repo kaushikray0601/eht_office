@@ -1,0 +1,282 @@
+from django.test import TestCase
+
+from eht.calculations.mi_selection import get_mi_heater_options
+from eht.models import HeatTracingInput, MIAlloyTempFactor, MICableFamily, MICableHeater, MIColdLeadOption
+
+
+def make_heat_loss(**overrides):
+    values = {
+        'uid': 1,
+        'heat_loss': 20.0,
+        'design_heat_loss': 20.0,
+        'tracer_adder': 0.0,
+    }
+    values.update(overrides)
+    return values
+
+
+def make_line(**overrides):
+    values = {
+        'uid': 1,
+        'line_id': 'LINE-MI-001',
+        'proj_id': 'p1',
+        'service_type': 'EP',
+        'line_size': 2.0,
+        'line_length': 100.0,
+        'ins_mat_type': 'Mineral Wool',
+        'insul_thick': 50.0,
+        'maint_temp': 120.0,
+        'oper_temp': 100.0,
+        'design_temp': 160.0,
+        'phase': '1PH',
+        'status': 'confirmed',
+    }
+    values.update(overrides)
+    return HeatTracingInput.objects.create(**values)
+
+
+def make_project_settings(**overrides):
+    values = {
+        'proj_id': 'p1',
+        'vendor': 'THR',
+        'voltage': 230.0,
+        'voltage_var_factor': 0.0,
+        'allowablevdrop': 5.0,
+        'area_class': 'Zone 1, IIC',
+        'gas_group': '',
+        'temp_class': 'T3',
+    }
+    values.update(overrides)
+    return values
+
+
+def make_family(**overrides):
+    values = {
+        'vendor': 'THR',
+        'family_name': 'MIQ',
+        'alloy_type': 'Alloy 825',
+        'max_voltage': 600.0,
+        'max_sheath_temp_c': 180.0,
+        'max_maintain_temp_c': 500.0,
+        'max_exposure_temp_c': 600.0,
+        'max_watt_density_w_m': 80.0,
+        'min_circuit_length_m': 1.0,
+        'max_circuit_length_m': 250.0,
+        'temp_class_rating': 'T3',
+        'gas_group': 'IIC',
+        'zone_approval': 'Zone 1',
+        'source_document': 'Test-only vendor example',
+        'is_validated': True,
+    }
+    values.update(overrides)
+    return MICableFamily.objects.create(**values)
+
+
+def make_heater(family=None, **overrides):
+    values = {
+        'family': family or make_family(),
+        'part_number': 'MIQ-R001',
+        'conductors': 1,
+        'resistance_ohms_m': 0.1,
+        'max_current_a': 60.0,
+        'cold_lead_resistance_ohms_m': 0.0,
+        'cold_lead_max_ampacity_a': 60.0,
+        'sheath_material': 'Alloy 825',
+        'conductor_material': 'Nickel Chromium',
+    }
+    values.update(overrides)
+    return MICableHeater.objects.create(**values)
+
+
+def make_cold_lead(heater=None, **overrides):
+    values = {
+        'heater': heater or make_heater(),
+        'option_code': 'CL-2M',
+        'length_m': 2.0,
+    }
+    values.update(overrides)
+    return MIColdLeadOption.objects.create(**values)
+
+
+class MISelectionDiagnosticsTests(TestCase):
+    def test_empty_catalogue_returns_validated_catalogue_diagnostic(self):
+        heat_loss = make_heat_loss()
+        line = make_line()
+
+        selected, alternatives = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(selected, {})
+        self.assertEqual(alternatives, [])
+        self.assertEqual(heat_loss['mi_selection_status'], 'rejected')
+        self.assertEqual(
+            heat_loss['mi_selection_rejection_reasons'][0]['code'],
+            'NO_VALIDATED_MI_CATALOGUE_DATA',
+        )
+
+    def test_unvalidated_family_is_never_selectable(self):
+        family = make_family(is_validated=False)
+        heater = make_heater(family=family)
+        make_cold_lead(heater=heater)
+        heat_loss = make_heat_loss()
+        line = make_line()
+
+        selected, _ = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(selected, {})
+        self.assertEqual(
+            heat_loss['mi_selection_rejection_reasons'][0]['code'],
+            'NO_VALIDATED_MI_CATALOGUE_DATA',
+        )
+
+    def test_unsupported_phase_is_rejected_before_catalogue_lookup(self):
+        heat_loss = make_heat_loss()
+        line = make_line(phase='3PH')
+
+        selected, _ = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(selected, {})
+        self.assertEqual(heat_loss['mi_selection_rejection_reasons'][0]['code'], 'UNSUPPORTED_PHASE')
+
+    def test_family_exposure_limit_rejects_candidate(self):
+        family = make_family(max_exposure_temp_c=150.0)
+        heater = make_heater(family=family)
+        make_cold_lead(heater=heater)
+        heat_loss = make_heat_loss()
+        line = make_line(design_temp=160.0)
+
+        selected, _ = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(selected, {})
+        rejection = heat_loss['mi_selection_rejection_reasons'][0]
+        self.assertEqual(rejection['code'], 'NO_MI_CANDIDATE_MATCH')
+        self.assertEqual(
+            rejection['details']['family_rejections'][0]['reasons'],
+            ['EXPOSURE_TEMP_EXCEEDS_FAMILY_LIMIT'],
+        )
+
+
+class MISelectionCandidateTests(TestCase):
+    def test_selects_feasible_single_phase_heater_and_records_cold_lead_drop(self):
+        family = make_family()
+        heater = make_heater(
+            family=family,
+            resistance_ohms_m=0.1,
+            cold_lead_resistance_ohms_m=0.02,
+        )
+        cold_lead = make_cold_lead(heater=heater, length_m=2.0)
+        heat_loss = make_heat_loss(design_heat_loss=20.0, tracer_adder=5.0)
+        line = make_line(line_length=100.0)
+
+        selected, alternatives = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(alternatives, [])
+        self.assertEqual(heat_loss['mi_selection_status'], 'selected')
+        self.assertEqual(selected['heater_part_number'], heater.part_number)
+        self.assertEqual(selected['cold_lead_option_id'], cold_lead.id)
+        self.assertAlmostEqual(selected['heated_length_m'], 105.0)
+        self.assertAlmostEqual(selected['heater_resistance_ohms'], 10.5)
+        self.assertAlmostEqual(selected['cold_lead_resistance_total_ohms'], 0.04)
+        self.assertGreater(selected['power_density_w_m'], 20.0)
+        self.assertGreater(selected['cold_lead_voltage_drop_percent'], 0.0)
+        self.assertEqual(selected['t_class_verdict'], 'pass')
+        resistance_basis = selected['selection_basis']['resistance_temperature_basis']
+        self.assertEqual(resistance_basis['factor_rows'], 0)
+        self.assertEqual(resistance_basis['maintain_multiplier'], 1.0)
+
+    def test_uses_alloy_temperature_factor_for_maintain_and_startup_resistance(self):
+        family = make_family(alloy_type='Alloy 825')
+        heater = make_heater(
+            family=family,
+            resistance_ohms_m=0.1,
+            cold_lead_resistance_ohms_m=0.0,
+        )
+        make_cold_lead(heater=heater, length_m=2.0)
+        MIAlloyTempFactor.objects.create(
+            alloy_type='Alloy 825',
+            temperature_c=20.0,
+            resistance_multiplier=1.0,
+        )
+        MIAlloyTempFactor.objects.create(
+            alloy_type='Alloy 825',
+            temperature_c=120.0,
+            resistance_multiplier=1.1,
+        )
+        heat_loss = make_heat_loss(design_heat_loss=20.0)
+        line = make_line(line_length=100.0, maint_temp=120.0)
+
+        selected, _alternatives = get_mi_heater_options(
+            heat_loss,
+            line,
+            make_project_settings(startup_t=20.0),
+        )
+
+        self.assertEqual(selected['heater_part_number'], heater.part_number)
+        self.assertAlmostEqual(selected['heater_base_resistance_ohms'], 10.0)
+        self.assertAlmostEqual(selected['heater_resistance_ohms'], 11.0)
+        self.assertAlmostEqual(selected['heater_startup_resistance_ohms'], 10.0)
+        self.assertAlmostEqual(selected['current_nominal_a'], 230.0 / 11.0)
+        self.assertAlmostEqual(selected['current_cold_start_a'], 23.0)
+        resistance_basis = selected['selection_basis']['resistance_temperature_basis']
+        self.assertEqual(resistance_basis['factor_rows'], 2)
+        self.assertEqual(resistance_basis['maintain_method'], 'nearest_high_endpoint')
+        self.assertEqual(resistance_basis['startup_method'], 'nearest_low_endpoint')
+
+    def test_cold_lead_ampacity_failure_rejects_candidate(self):
+        family = make_family()
+        heater = make_heater(
+            family=family,
+            resistance_ohms_m=0.1,
+            cold_lead_max_ampacity_a=1.0,
+        )
+        make_cold_lead(heater=heater)
+        heat_loss = make_heat_loss(design_heat_loss=20.0)
+        line = make_line(line_length=100.0)
+
+        selected, _ = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(selected, {})
+        rejection = heat_loss['mi_selection_rejection_reasons'][0]
+        self.assertEqual(rejection['code'], 'NO_MI_CANDIDATE_MATCH')
+        self.assertIn(
+            'EXCEEDS_COLD_LEAD_AMPACITY',
+            rejection['details']['candidate_rejections'][0]['rejection_reasons'],
+        )
+
+    def test_t_class_failure_rejects_candidate(self):
+        family = make_family(max_sheath_temp_c=180.0, temp_class_rating='T4')
+        heater = make_heater(family=family, resistance_ohms_m=0.1)
+        make_cold_lead(heater=heater)
+        heat_loss = make_heat_loss(design_heat_loss=20.0)
+        line = make_line(line_length=100.0)
+
+        selected, _ = get_mi_heater_options(heat_loss, line, make_project_settings(temp_class='T4'))
+
+        self.assertEqual(selected, {})
+        rejection = heat_loss['mi_selection_rejection_reasons'][0]
+        self.assertEqual(rejection['code'], 'NO_MI_CANDIDATE_MATCH')
+        self.assertIn(
+            'FAILS_T_CLASS_SHEATH_TEMPERATURE',
+            rejection['details']['candidate_rejections'][0]['rejection_reasons'],
+        )
+
+    def test_returns_alternatives_sorted_by_closest_low_voltage_heat_delivery(self):
+        family = make_family(max_watt_density_w_m=200.0)
+        high_output = make_heater(
+            family=family,
+            part_number='MIQ-HIGH',
+            resistance_ohms_m=0.05,
+        )
+        closer_output = make_heater(
+            family=family,
+            part_number='MIQ-CLOSE',
+            resistance_ohms_m=0.1,
+        )
+        make_cold_lead(heater=high_output)
+        make_cold_lead(heater=closer_output)
+        heat_loss = make_heat_loss(design_heat_loss=20.0)
+        line = make_line(line_length=100.0)
+
+        selected, alternatives = get_mi_heater_options(heat_loss, line, make_project_settings())
+
+        self.assertEqual(selected['heater_part_number'], 'MIQ-CLOSE')
+        self.assertEqual([item['heater_part_number'] for item in alternatives], ['MIQ-HIGH'])

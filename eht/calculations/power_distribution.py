@@ -6,6 +6,7 @@ from eht.calculations.tag_management import ProjectTagFactory, build_connection
 
 SR_PER_CIRCUIT_BREAKER_RULE_SET = 'SR_PER_CIRCUIT_BREAKER_SIZING_V1'
 SR_TERMINATION_MARGIN_RULE_SET = 'SR_TERMINATION_MARGIN_INSTALLATION_ALLOWANCE_V1'
+MI_SINGLE_HEATER_BREAKER_RULE_SET = 'MI_SINGLE_HEATER_BREAKER_SIZING_MVP_V1'
 BREAKER_SIZES = [2, 4, 6, 10, 16, 20, 25, 32, 40]
 
 
@@ -123,6 +124,75 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
         }
     except Exception as e:
         logging.error(f"Error in power parameter computation for UID {line['uid']}: {str(e)}")
+        return None
+
+
+def _pipe_size_mm(line, asme_data):
+    outer_dia_mm = asme_data.loc[asme_data['Nominal_Pipe_Size'] == float(line['line_size']), 'Outside_Diameter_mm']
+    return outer_dia_mm.iloc[0] if not outer_dia_mm.empty else 25.206 * float(line['line_size']) + 9.4852
+
+
+def compute_mi_power_params(line, project_settings, asme_data, selected_mi_heater):
+    """Build panel-loading parameters for one selected MI heater set.
+
+    Pass 7 intentionally treats one selected MI heater as one electrical
+    circuit. Splitting one MI line into multiple heater sets needs a separate
+    catalogue/optimization pass, so this function never invents extra circuits.
+    """
+    try:
+        voltage = float(project_settings['voltage'])
+        max_cb_size = float(project_settings['max_cb_size'])
+        restricted_loading_factor = float(project_settings['restrict_cb_current']) / 100.0
+        if restricted_loading_factor <= 0:
+            raise ValueError("Maximum breaker loading restriction must be positive.")
+
+        line_operating_current = float(selected_mi_heater.get('current_nominal_a') or 0.0)
+        line_maximum_current = float(selected_mi_heater.get('current_cold_start_a') or line_operating_current)
+        required_breaker_current = line_maximum_current / restricted_loading_factor
+        breaker_size = _select_breaker_size(required_breaker_current, max_cb_size)
+        operating_load = float(selected_mi_heater.get('power_nominal_w') or (line_operating_current * voltage))
+        heated_length_m = float(selected_mi_heater.get('heated_length_m') or line.get('line_length') or 0.0)
+
+        return {
+            'uid': line['uid'],
+            'line_id': line.get('line_id', str(line['uid'])),
+            'project_id': project_settings.get('proj_id'),
+            'calculation_basis': 'MI_SINGLE_HEATER_MVP',
+            'selected_tracer': selected_mi_heater.get('heater_part_number', 'MI heater'),
+            'tracer_family': 'MI',
+            'no_of_circuits': 1,
+            'breaker_size': breaker_size,
+            'operating_current': line_operating_current,
+            'max_current': line_maximum_current,
+            'line_operating_current': line_operating_current,
+            'line_max_current': line_maximum_current,
+            'per_circuit_operating_current': line_operating_current,
+            'per_circuit_max_current': line_maximum_current,
+            'operating_load': operating_load,
+            'total_tracer_length': heated_length_m,
+            'heated_tracer_length': heated_length_m,
+            'termination_margin_length': 0.0,
+            'termination_margin_per_circuit_m': 0.0,
+            'termination_margin_basis': {
+                'rule_set': 'MI_FACTORY_TERMINATION_LENGTH_BASIS_MVP_V1',
+                'semantics': 'factory_terminated_mi_heater_set_no_sr_field_termination_allowance',
+            },
+            'breaker_sizing': {
+                'rule_set': MI_SINGLE_HEATER_BREAKER_RULE_SET,
+                'max_cb_size': max_cb_size,
+                'restricted_loading_factor': restricted_loading_factor,
+                'allowed_current_per_circuit': max_cb_size * restricted_loading_factor,
+                'required_breaker_current': required_breaker_current,
+                'single_heater_set': True,
+            },
+            'voltage_scenarios': {
+                'operating_voltage': voltage,
+                'max_current_voltage': voltage * (1.0 + max(float(project_settings.get('voltage_var_factor') or 0.0), 0.0) / 100.0),
+            },
+            'pipe_size_mm': _pipe_size_mm(line, asme_data),
+        }
+    except Exception as e:
+        logging.error(f"Error in MI power parameter computation for UID {line['uid']}: {str(e)}")
         return None
 
 def _upstream_connection_chain(components):

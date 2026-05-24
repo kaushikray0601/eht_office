@@ -16,7 +16,7 @@ from openpyxl import load_workbook
 from eht.cal import orchestrate_calculations
 from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
-from eht.calculations.power_distribution import compute_power_distribution, compute_power_params
+from eht.calculations.power_distribution import compute_mi_power_params, compute_power_distribution, compute_power_params
 from eht.calculations.tag_management import ProjectTagFactory
 from eht.calculations.tracer_selection import (
     calculate_voltage_scenarios,
@@ -38,12 +38,16 @@ from eht.models import (
     HeatTracingInput,
     ManagedProject,
     MAX_CB_SIZE,
+    MICableFamily,
+    MICableHeater,
+    MIColdLeadOption,
     PowerDistribution,
     PowerDistributionBranch,
     ProcessLineCalculation,
     ProjectData,
     SLDNodeLayout,
     SLDTopologyEdit,
+    SelectedMIHeater,
     SelectedTracer,
     TracerSelectionOverride,
     is_default_project_id,
@@ -451,6 +455,61 @@ def make_rich_sld_project_snapshot(project_id='p1', line_ids=None):
     return created_lines
 
 
+def make_mi_selection_result(line, status='available_alternative'):
+    family = MICableFamily.objects.create(
+        vendor='CHR',
+        family_name=f'MIQ-{line.uid}',
+        alloy_type='Alloy 825',
+        max_voltage=600.0,
+        max_sheath_temp_c=180.0,
+        max_maintain_temp_c=500.0,
+        max_exposure_temp_c=600.0,
+        max_watt_density_w_m=80.0,
+        min_circuit_length_m=1.0,
+        max_circuit_length_m=250.0,
+        temp_class_rating='T3',
+        gas_group='IIC',
+        zone_approval='Zone 1',
+        source_document='Test-only vendor document',
+        is_validated=True,
+    )
+    heater = MICableHeater.objects.create(
+        family=family,
+        part_number=f'MIQ-R{line.uid}',
+        conductors=1,
+        resistance_ohms_m=0.1,
+        max_current_a=60.0,
+        cold_lead_resistance_ohms_m=0.02,
+        cold_lead_max_ampacity_a=60.0,
+        sheath_material='Alloy 825',
+        conductor_material='Nickel Chromium',
+    )
+    cold_lead = MIColdLeadOption.objects.create(
+        heater=heater,
+        option_code='CL-2M',
+        length_m=2.0,
+    )
+    return SelectedMIHeater.objects.create(
+        line=line,
+        heater=heater,
+        cold_lead_option=cold_lead,
+        selection_status=status,
+        cold_lead_option_code='CL-2M',
+        cold_lead_length_m=2.0,
+        heated_length_m=105.0,
+        heater_resistance_ohms=10.5,
+        cold_lead_resistance_total_ohms=0.04,
+        power_nominal_w=5284.8,
+        power_density_w_m=50.33,
+        current_nominal_a=21.82,
+        current_cold_start_a=21.82,
+        max_sheath_temp_published_c=180.0,
+        project_t_class_limit_c=200.0,
+        t_class_verdict='pass',
+        selection_basis={'selection_mode': 'available_alternative'},
+    )
+
+
 def seed_reference_data():
     ElecEHT_ThermalConductivity.objects.create(
         Ins_Mat_Type='Mineral Wool',
@@ -742,6 +801,36 @@ class TracerSelectionTests(SimpleTestCase):
 
 
 class PowerDistributionCalculationTests(SimpleTestCase):
+    def test_compute_mi_power_params_sizes_single_heater_set(self):
+        selected_mi_heater = {
+            'heater_part_number': 'MIQ-R001',
+            'heated_length_m': 105.0,
+            'cold_lead_length_m': 2.0,
+            'current_nominal_a': 4.5,
+            'current_cold_start_a': 5.0,
+            'power_nominal_w': 1035.0,
+        }
+
+        power_params = compute_mi_power_params(
+            make_line(),
+            make_project_settings(),
+            make_asme_table(),
+            selected_mi_heater,
+        )
+
+        self.assertEqual(power_params['calculation_basis'], 'MI_SINGLE_HEATER_MVP')
+        self.assertEqual(power_params['selected_tracer'], 'MIQ-R001')
+        self.assertEqual(power_params['no_of_circuits'], 1)
+        self.assertEqual(power_params['breaker_size'], 10)
+        self.assertEqual(power_params['operating_current'], 4.5)
+        self.assertEqual(power_params['max_current'], 5.0)
+        self.assertEqual(power_params['operating_load'], 1035.0)
+        self.assertEqual(power_params['total_tracer_length'], 105.0)
+        self.assertEqual(
+            power_params['termination_margin_basis']['semantics'],
+            'factory_terminated_mi_heater_set_no_sr_field_termination_allowance',
+        )
+
     def test_compute_power_params_and_distribution_for_two_circuits(self):
         selected_tracer = {
             'Tracer_With_Margin': 20.0,
@@ -1588,6 +1677,21 @@ class SldPayloadTests(TestCase):
         self.assertEqual(tracer_selection['alternatives'][0]['v_uid'], 'V-ALT-001')
         self.assertEqual(tracer_selection['alternatives'][0]['option_rank'], 1)
         self.assertEqual(tracer_selection['alternatives'][0]['tracer_family'], 'SR-ALT')
+
+    def test_build_project_sld_payload_adds_mi_alternative_metadata(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+        mi_result = make_mi_selection_result(line)
+        expected_uid = f'MI:{mi_result.heater.part_number}:{mi_result.cold_lead_option_code}'
+
+        payload = build_project_sld_payload('p1')
+        tracer_node = next(node for node in payload['nodes'] if node['component_type'] == 'Tracer')
+        tracer_selection = tracer_node['metadata']['tracer_selection']
+
+        self.assertTrue(tracer_selection['override_supported'])
+        self.assertEqual(tracer_selection['alternate_count'], 1)
+        self.assertEqual(tracer_selection['alternatives'][0]['v_uid'], expected_uid)
+        self.assertEqual(tracer_selection['alternatives'][0]['tracer_family'], 'MI')
+        self.assertEqual(tracer_selection['alternatives'][0]['heater_part_number'], mi_result.heater.part_number)
 
     def test_build_project_sld_payload_applies_tracer_override_metadata(self):
         line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
@@ -3749,7 +3853,13 @@ class ResultAndBoqViewTests(TestCase):
         self.assertIn('p1_results.xlsx', response['Content-Disposition'])
 
         workbook = load_workbook(BytesIO(response.content))
-        self.assertEqual(workbook.sheetnames, ['Line Results', 'Selection Diagnostics', 'Power Distribution', 'Alternate Tracers'])
+        self.assertEqual(workbook.sheetnames, [
+            'Line Results',
+            'Selection Diagnostics',
+            'Power Distribution',
+            'Alternate Tracers',
+            'MI Selection',
+        ])
 
         line_rows = list(workbook['Line Results'].iter_rows(values_only=True))
         branch_rows = list(workbook['Power Distribution'].iter_rows(values_only=True))
@@ -3758,6 +3868,53 @@ class ResultAndBoqViewTests(TestCase):
         self.assertTrue(any(row[1] == line.line_id for row in line_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in branch_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in alternate_rows[1:]))
+
+    def test_result_view_and_export_surface_mi_selection_records(self):
+        line = make_calculated_project_snapshot()
+        mi_result = make_mi_selection_result(line)
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'MI Selection Records')
+        self.assertContains(response, mi_result.heater.part_number)
+        self.assertContains(response, 'available_alternative')
+
+        export_response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(export_response.status_code, 200)
+        workbook = load_workbook(BytesIO(export_response.content))
+        self.assertIn('MI Selection', workbook.sheetnames)
+        rows = list(workbook['MI Selection'].iter_rows(values_only=True))
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Line ID')], line.line_id)
+        self.assertEqual(data[header.index('MI Selection Status')], 'available_alternative')
+        self.assertEqual(data[header.index('Heater Part Number')], mi_result.heater.part_number)
+
+    def test_result_view_includes_mi_fallback_line_without_sr_calculation(self):
+        make_project_record(proj_id='p1')
+        line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-MI-ONLY',
+            service_type='EP',
+            line_size=3.0,
+            line_length=25.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=320.0,
+            oper_temp=330.0,
+            design_temp=360.0,
+            status='confirmed',
+        )
+        make_mi_selection_result(line, status='selected')
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'LINE-MI-ONLY')
+        self.assertContains(response, 'MI fallback selected')
+        self.assertContains(response, 'MI load distribution pending')
 
     def test_result_export_marks_sld_tracer_override_review_only(self):
         line = make_calculated_project_snapshot()
@@ -4105,6 +4262,82 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(reset_response.status_code, 200)
         self.assertFalse(TracerSelectionOverride.objects.get(project_id='p1', line=line).is_active)
+
+    def test_sld_tracer_override_save_accepts_mi_available_alternative(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+        mi_result = make_mi_selection_result(line)
+        expected_uid = f'MI:{mi_result.heater.part_number}:{mi_result.cold_lead_option_code}'
+        payload = build_project_sld_payload('p1')
+        tracer_node = next(node for node in payload['nodes'] if node['component_type'] == 'Tracer')
+
+        save_response = self.client.post(
+            reverse('sld_tracer_override_save_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_id': tracer_node['component_id'],
+                'selected_v_uid': expected_uid,
+                'remarks': 'Use MI for this line after engineering review.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        override = TracerSelectionOverride.objects.get(project_id='p1', line=line, is_active=True)
+        self.assertEqual(override.selected_v_uid, expected_uid)
+        adjusted_payload = build_project_sld_payload('p1')
+        adjusted_node = next(node for node in adjusted_payload['nodes'] if node['component_id'] == tracer_node['component_id'])
+        tracer_selection = adjusted_node['metadata']['tracer_selection']
+        self.assertEqual(tracer_selection['selected']['v_uid'], expected_uid)
+        self.assertEqual(tracer_selection['selected']['tracer_family'], 'MI')
+        self.assertTrue(tracer_selection['override_active'])
+
+    def test_sld_mi_tracer_override_survives_mi_result_recalculation(self):
+        line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
+        mi_result = make_mi_selection_result(line)
+        expected_uid = f'MI:{mi_result.heater.part_number}:{mi_result.cold_lead_option_code}'
+        payload = build_project_sld_payload('p1')
+        tracer_node = next(node for node in payload['nodes'] if node['component_type'] == 'Tracer')
+        self.client.post(
+            reverse('sld_tracer_override_save_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_id': tracer_node['component_id'],
+                'selected_v_uid': expected_uid,
+            }),
+            content_type='application/json',
+        )
+        old_result_id = mi_result.id
+        heater = mi_result.heater
+        cold_lead = mi_result.cold_lead_option
+        mi_result.delete()
+        refreshed_result = SelectedMIHeater.objects.create(
+            line=line,
+            heater=heater,
+            cold_lead_option=cold_lead,
+            selection_status='available_alternative',
+            cold_lead_option_code=cold_lead.option_code,
+            cold_lead_length_m=cold_lead.length_m,
+            heated_length_m=106.0,
+            heater_resistance_ohms=10.6,
+            cold_lead_resistance_total_ohms=0.04,
+            power_nominal_w=5235.8,
+            power_density_w_m=49.39,
+            current_nominal_a=21.54,
+            current_cold_start_a=21.54,
+            max_sheath_temp_published_c=180.0,
+            project_t_class_limit_c=200.0,
+            t_class_verdict='pass',
+            selection_basis={'selection_mode': 'available_alternative'},
+        )
+
+        adjusted_payload = build_project_sld_payload('p1')
+        adjusted_node = next(node for node in adjusted_payload['nodes'] if node['component_id'] == tracer_node['component_id'])
+        tracer_selection = adjusted_node['metadata']['tracer_selection']
+
+        self.assertNotEqual(refreshed_result.id, old_result_id)
+        self.assertEqual(tracer_selection['selected']['v_uid'], expected_uid)
+        self.assertTrue(tracer_selection['override_active'])
+        self.assertEqual(tracer_selection['selected']['power_output'], 49.39)
 
     def test_sld_payload_view_returns_json_graph_payload(self):
         make_calculated_project_snapshot()
