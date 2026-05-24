@@ -6,6 +6,7 @@ document and set is_validated=True manually via Django admin before the engine w
 Run:
     python manage.py populate_mi_catalogue
     python manage.py populate_mi_catalogue --vendor THR
+    python manage.py populate_mi_catalogue --update
     python manage.py populate_mi_catalogue --dry-run
 
 Sources:
@@ -31,7 +32,7 @@ logger = logging.getLogger(__name__)
 THERMON_MIQ_HEATERS = [
     # (part_number, conductors, resistance_ohms_m, max_current_a)
     # Source: TEP0020-MIQ-Spec.pdf resistance table
-    # Conductor: Ni-Cr alloy wire, TCR ≈ 0.085–0.090 ×10⁻³/K (not in current schema)
+    # Conductor: Ni-Cr alloy wire, TCR ≈ 0.085–0.090 ×10⁻³/K
     # Cold leads: 4 ft (1.219 m) or 7 ft (2.134 m) standard
     ('MIQ-11EOH-2S', 2, 36.10,  3.0),
     ('MIQ-11E2H-2S', 2, 18.00,  4.5),
@@ -69,7 +70,7 @@ NVENT_XMIA_HEATERS = [
     # (part_number, conductors, resistance_ohms_m, max_current_a)
     # Source: Raychem-DS-DOC2210-HAX-EN-1704 (HAx = XMI-A family)
     # part_number uses nVent HAx catalogue codes for XMI-A62 (600V dual conductor)
-    # TCR values are per-code but not in current schema:
+    # TCR values are per-code:
     #   A/F suffix → 0.085–0.090 ×10⁻³/K (Ni-Cr)
     #   B suffix   → 0.040 ×10⁻³/K (Balco)
     #   T suffix   → 0.10–0.18 ×10⁻³/K (Nichrome)
@@ -156,6 +157,46 @@ CHROMALOX_MI_COLD_LEADS = [
     # R ≈ 5.21 mΩ/m at 20°C, ampacity ~20A per NEC 310 60°C column
     ('CL-4FT', 1.219),
 ]
+
+
+# ---------------------------------------------------------------------------
+# Heater conductor / resistance-temperature basis
+# ---------------------------------------------------------------------------
+
+THERMON_MIQ_CONDUCTOR_MATERIAL = 'Nickel-Chromium'
+THERMON_MIQ_TCR_PER_DEGREE_C = 0.000088
+
+NVENT_CONDUCTOR_BASIS_BY_PREFIX = {
+    'HAF': ('Nickel-Chromium', 0.000088),
+    'HAA': ('Nickel-Chromium', 0.000085),
+    'HAQ': ('Nickel Alloy Q', 0.000500),
+    'HAP': ('Nickel Alloy P', 0.001300),
+    'HAC': ('Alloy 825 Conductor', 0.003900),
+}
+
+
+def _chromalox_conductor_basis(part_number):
+    code = int(part_number.rstrip('B'))
+    if code in {506, 508} or 103 <= code <= 115:
+        return 'Alloy 825 Conductor', 0.003930
+    if 200 <= code <= 210:
+        return 'Nickel Alloy Q', 0.000500
+    if 310 <= code <= 410:
+        return 'Nichrome T', 0.000180
+    return 'Nickel-Chromium', 0.000100
+
+
+def heater_conductor_basis(vendor, part_number):
+    """Return the conductor material and TCR for the published heater code."""
+    if vendor == 'THR':
+        return THERMON_MIQ_CONDUCTOR_MATERIAL, THERMON_MIQ_TCR_PER_DEGREE_C
+    if vendor == 'nVN':
+        for prefix, basis in NVENT_CONDUCTOR_BASIS_BY_PREFIX.items():
+            if part_number.startswith(prefix):
+                return basis
+    if vendor == 'CHR':
+        return _chromalox_conductor_basis(part_number)
+    return '', 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -247,13 +288,22 @@ class Command(BaseCommand):
             default=False,
             help='Print what would be created without writing to the database.',
         )
+        parser.add_argument(
+            '--update',
+            action='store_true',
+            default=False,
+            help='Update existing MI family, heater, and cold-lead catalogue rows from this command data.',
+        )
 
     def handle(self, *args, **options):
         target_vendor = options['vendor']
         dry_run = options['dry_run']
+        update_existing = options['update']
 
         if dry_run:
             self.stdout.write(self.style.WARNING('DRY RUN — no database writes.'))
+        if update_existing:
+            self.stdout.write(self.style.WARNING('UPDATE mode — existing catalogue rows will be refreshed.'))
 
         families_to_load = [
             f for f in FAMILIES
@@ -272,7 +322,12 @@ class Command(BaseCommand):
             if dry_run:
                 self.stdout.write(f'  [DRY] Family: {vendor} {family_name}')
                 for part_number, conductors, resistance, max_current in family_data['heaters']:
-                    self.stdout.write(f'        Heater: {part_number} ({resistance} Ω/m, {max_current} A)')
+                    conductor_material, tcr_per_degree_c = heater_conductor_basis(vendor, part_number)
+                    self.stdout.write(
+                        f'        Heater: {part_number} '
+                        f'({resistance} Ω/m, {max_current} A, '
+                        f'{conductor_material}, TCR={tcr_per_degree_c})'
+                    )
                     for option_code, length_m in family_data['cold_leads']:
                         self.stdout.write(f'          Cold lead: {option_code} {length_m} m')
                 total_families += 1
@@ -285,33 +340,48 @@ class Command(BaseCommand):
                 family_name=family_name,
                 defaults=family_defaults,
             )
+            if update_existing and not family_created:
+                for field, value in family_defaults.items():
+                    if field != 'is_validated':
+                        setattr(family, field, value)
+                family.save()
             total_families += 1
 
-            action = 'Created' if family_created else 'Exists'
+            action = 'Created' if family_created else ('Updated' if update_existing else 'Exists')
             self.stdout.write(f'  {action}: {vendor} {family_name} (id={family.pk})')
 
             for part_number, conductors, resistance_ohms_m, max_current_a in family_data['heaters']:
+                conductor_material, tcr_per_degree_c = heater_conductor_basis(vendor, part_number)
+                heater_defaults = {
+                    'family': family,
+                    'conductors': conductors,
+                    'resistance_ohms_m': resistance_ohms_m,
+                    'max_current_a': max_current_a,
+                    'cold_lead_resistance_ohms_m': 0.0,
+                    'cold_lead_max_ampacity_a': 0.0,
+                    'sheath_material': family_data['alloy_type'],
+                    'conductor_material': conductor_material,
+                    'tcr_per_degree_c': tcr_per_degree_c,
+                }
                 heater, heater_created = MICableHeater.objects.get_or_create(
                     part_number=part_number,
-                    defaults={
-                        'family': family,
-                        'conductors': conductors,
-                        'resistance_ohms_m': resistance_ohms_m,
-                        'max_current_a': max_current_a,
-                        'cold_lead_resistance_ohms_m': 0.0,
-                        'cold_lead_max_ampacity_a': 0.0,
-                        'sheath_material': family_data['alloy_type'],
-                        'conductor_material': '',
-                    },
+                    defaults=heater_defaults,
                 )
+                if update_existing and not heater_created:
+                    for field, value in heater_defaults.items():
+                        setattr(heater, field, value)
+                    heater.save()
                 total_heaters += 1
 
                 for option_code, length_m in family_data['cold_leads']:
-                    _cl, cl_created = MIColdLeadOption.objects.get_or_create(
+                    cold_lead, cl_created = MIColdLeadOption.objects.get_or_create(
                         heater=heater,
                         option_code=option_code,
                         defaults={'length_m': length_m},
                     )
+                    if update_existing and not cl_created:
+                        cold_lead.length_m = length_m
+                        cold_lead.save()
                     total_cold_leads += 1
 
         if dry_run:

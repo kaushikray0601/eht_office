@@ -368,12 +368,6 @@ def _build_result_workspace_data(project_id):
         )
         .order_by('line__line_id')
     )
-    selection_issue_rows = [
-        _selection_issue_payload(heat_loss)
-        for heat_loss in HeatLoss.objects.filter(line__proj_id=project_id, selection_status='rejected')
-        .select_related('line')
-        .order_by('line__line_id')
-    ]
     mi_result_rows = list(
         SelectedMIHeater.objects.filter(line__proj_id=project_id)
         .select_related('line', 'heater', 'cold_lead_option')
@@ -384,6 +378,18 @@ def _build_result_workspace_data(project_id):
         for mi_result in mi_result_rows
         if mi_result.line_id
     }
+    selected_mi_line_uids = {
+        str(mi_result.line_id)
+        for mi_result in mi_result_rows
+        if mi_result.line_id and mi_result.selection_status == 'selected'
+    }
+    selection_issue_rows = [
+        _selection_issue_payload(heat_loss)
+        for heat_loss in HeatLoss.objects.filter(line__proj_id=project_id, selection_status='rejected')
+        .select_related('line')
+        .order_by('line__line_id')
+        if str(heat_loss.line_id) not in selected_mi_line_uids
+    ]
     sld_payload = build_project_sld_payload(project_id)
     sld_meta = sld_payload.get('meta') or {}
     allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
@@ -438,8 +444,11 @@ def _build_result_workspace_data(project_id):
             'branch_count': len(getattr(line.power_distribution_result, 'branches').all()) if hasattr(line, 'power_distribution_result') else 0,
         })
     for mi_result in mi_result_rows:
+        mi_result.review_summary = _mi_result_review_summary(mi_result)
         line = mi_result.line
         if str(line.uid) in calculation_line_uids:
+            continue
+        if mi_result.selection_status != 'selected':
             continue
         tracer_override = active_tracer_overrides.get(str(line.uid))
         line_results.append({
@@ -458,17 +467,47 @@ def _build_result_workspace_data(project_id):
         })
     line_results.sort(key=lambda item: item['line'].line_id)
 
+    sr_result_count = sum(1 for item in line_results if not _is_selected_mi_result(item.get('selected_mi_heater')))
+    mi_selected_count = sum(1 for item in line_results if _is_selected_mi_result(item.get('selected_mi_heater')))
+    sr_connected_load_w = sum(
+        item['calculation'].total_power_consumption
+        for item in line_results
+        if item['calculation'] and not _is_selected_mi_result(item.get('selected_mi_heater'))
+    )
+    mi_connected_load_w = sum(
+        _selected_mi_power_w(item)
+        for item in line_results
+        if _is_selected_mi_result(item.get('selected_mi_heater'))
+    )
+    sr_tracer_length_m = sum(
+        item['calculation'].total_tracer_length
+        for item in line_results
+        if item['calculation'] and not _is_selected_mi_result(item.get('selected_mi_heater'))
+    )
+    mi_heated_length_m = sum(
+        _selected_mi_heated_length_m(item)
+        for item in line_results
+        if _is_selected_mi_result(item.get('selected_mi_heater'))
+    )
+
     summary = {
         'calculated_lines': len(line_results),
         'total_circuits': sum(item['calculation'].total_circuits for item in line_results if item['calculation']),
-        'total_power_kw': sum(item['calculation'].total_power_consumption for item in line_results if item['calculation']) / 1000 if line_results else 0,
-        'total_tracer_length': sum(item['calculation'].total_tracer_length for item in line_results if item['calculation']),
+        'total_power_kw': (sr_connected_load_w + mi_connected_load_w) / 1000 if line_results else 0,
+        'total_tracer_length': sr_tracer_length_m + mi_heated_length_m,
+        'sr_result_count': sr_result_count,
+        'mi_selected_count': mi_selected_count,
+        'sr_connected_load_kw': sr_connected_load_w / 1000,
+        'mi_connected_load_kw': mi_connected_load_w / 1000,
+        'sr_tracer_length': sr_tracer_length_m,
+        'mi_heated_length': mi_heated_length_m,
         'branch_count': len(branch_rows),
         'tracer_override_count': len(active_tracer_overrides),
         'selection_issue_count': len(selection_issue_rows),
         'mi_result_count': len(mi_result_rows),
         'mi_fallback_count': sum(1 for item in mi_result_rows if item.selection_status == 'selected'),
         'mi_alternative_count': sum(1 for item in mi_result_rows if item.selection_status == 'available_alternative'),
+        'mi_rejected_count': sum(1 for item in mi_result_rows if item.selection_status == 'rejected'),
     }
     summary = apply_active_summary_overrides(
         project_id,
@@ -482,6 +521,104 @@ def _build_result_workspace_data(project_id):
         'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
         'summary': summary,
+    }
+
+
+def _is_selected_mi_result(mi_result):
+    return bool(mi_result and mi_result.selection_status == 'selected')
+
+
+def _selected_mi_power_w(item):
+    mi_result = item.get('selected_mi_heater')
+    if mi_result and mi_result.power_nominal_w:
+        return mi_result.power_nominal_w
+    calculation = item.get('calculation')
+    if calculation:
+        return calculation.total_power_consumption
+    return 0
+
+
+def _selected_mi_heated_length_m(item):
+    mi_result = item.get('selected_mi_heater')
+    if mi_result and mi_result.heated_length_m:
+        return mi_result.heated_length_m
+    calculation = item.get('calculation')
+    if calculation:
+        return calculation.total_tracer_length
+    return 0
+
+
+def _line_heater_type(item):
+    return 'MI' if _is_selected_mi_result(item.get('selected_mi_heater')) else 'SR'
+
+
+def _line_heating_cable_length_m(item):
+    if _line_heater_type(item) == 'MI':
+        return _selected_mi_heated_length_m(item)
+    calculation = item.get('calculation')
+    return calculation.total_tracer_length if calculation else 0
+
+
+def _line_heating_length_basis(item):
+    if _line_heater_type(item) == 'MI':
+        return 'MI heated length excludes cold leads and factory terminations'
+    return 'Ordered SR length includes termination installation allowance'
+
+
+MI_REJECTION_ACTION_HINTS = {
+    'NO_VALIDATED_MI_CATALOGUE_DATA': (
+        'Validate reviewed MI catalogue rows for the selected vendor, then rerun the calculation.'
+    ),
+    'NO_MI_CANDIDATE_MATCH': (
+        'Review MI family limits, heater resistance codes, cold-lead options, voltage, breaker loading, and line length; then rerun the calculation.'
+    ),
+    'UNSUPPORTED_PHASE': 'Use a single-phase MI heater set for the MVP path or defer the line to the later multi-heater/three-phase MI module.',
+    'MI_SELECTION_ERROR': 'Review the error details, correct the catalogue/input data, and rerun the calculation.',
+}
+
+
+def _first_reason_payload(reasons):
+    if reasons and isinstance(reasons[0], dict):
+        return reasons[0]
+    return {}
+
+
+def _mi_rejection_evidence_text(code, details):
+    if code == 'NO_VALIDATED_MI_CATALOGUE_DATA':
+        catalogue_rows = details.get('catalogue_rows')
+        vendor = details.get('vendor') or 'selected vendor'
+        if catalogue_rows:
+            return f'{catalogue_rows} MI family row(s) exist for {vendor}, but none are marked as validated.'
+        return f'No MI catalogue family rows were found for {vendor}.'
+    if code == 'NO_MI_CANDIDATE_MATCH':
+        rejected_count = details.get('rejected_candidate_count')
+        family_rejections = details.get('family_rejections') or []
+        if rejected_count:
+            return f'{rejected_count} heater/cold-lead candidate(s) were rejected after catalogue and electrical checks.'
+        if family_rejections:
+            return f'{len(family_rejections)} family record(s) were rejected before heater evaluation.'
+    return ''
+
+
+def _mi_result_review_summary(mi_result):
+    if mi_result.selection_status != 'rejected':
+        return {
+            'code': '',
+            'message': '',
+            'evidence': '',
+            'action': '',
+        }
+    reason = _first_reason_payload(mi_result.selection_rejection_reasons or [])
+    code = reason.get('code') or 'MI_SELECTION_REJECTED'
+    details = reason.get('details') or {}
+    return {
+        'code': code,
+        'message': reason.get('message') or 'MI heater selection did not produce an acceptable candidate.',
+        'evidence': _mi_rejection_evidence_text(code, details),
+        'action': MI_REJECTION_ACTION_HINTS.get(
+            code,
+            'Review the MI selection diagnostic details and rerun the calculation after correcting catalogue or input data.',
+        ),
     }
 
 
@@ -1588,9 +1725,13 @@ def result_export_view(request):
         selected_tracer = item['selected_tracer']
         tracer_override = item.get('tracer_override')
         tracer_override_alternate = item.get('tracer_override_alternate')
+        heater_type = _line_heater_type(item)
+        heating_cable_length = _line_heating_cable_length_m(item)
+        heating_length_basis = _line_heating_length_basis(item)
         line_rows.append({
             'Project ID': project_id,
             'Line ID': line.line_id,
+            'Heating Cable Type': heater_type,
             'Service Type': line.service_type,
             'Line Size': calculation.line_size if calculation else line.line_size,
             'Line Length': calculation.line_length if calculation else line.line_length,
@@ -1624,16 +1765,33 @@ def result_export_view(request):
             'Operating Current / Circuit (A)': calculation.operating_current if calculation else '',
             'Current Basis': 'Per circuit',
             'Total Connected Load (W)': calculation.total_power_consumption if calculation else '',
-            'Ordered SR Tracer Length incl. Termination Allowance (m)': calculation.total_tracer_length if calculation else '',
+            'Heating Cable Length (m)': heating_cable_length,
+            'Heating Cable Length Basis': heating_length_basis,
+            'Ordered SR Tracer Length incl. Termination Allowance (m)': (
+                heating_cable_length if heater_type == 'SR' and calculation else ''
+            ),
+            'MI Heated Length excl. Cold Leads (m)': (
+                heating_cable_length if heater_type == 'MI' else ''
+            ),
             'Heated Tracer Length excl. Termination Allowance (m)': (
                 selected_tracer.tracer_with_margin if selected_tracer else ''
             ),
-            'Tracer Length Basis': 'Ordered length includes SR termination installation allowance',
+            'Tracer Length Basis': heating_length_basis,
             'Pipe Size mm': calculation.pipe_size_mm if calculation else '',
             'MI Candidate Status': item.get('selected_mi_heater').selection_status if item.get('selected_mi_heater') else '',
             'MI Heater Part Number': (
                 item.get('selected_mi_heater').heater.part_number
                 if item.get('selected_mi_heater') and item.get('selected_mi_heater').heater
+                else ''
+            ),
+            'MI Cold Lead Option': (
+                item.get('selected_mi_heater').cold_lead_option_code
+                if item.get('selected_mi_heater')
+                else ''
+            ),
+            'MI Cold Lead Length (m)': (
+                item.get('selected_mi_heater').cold_lead_length_m
+                if item.get('selected_mi_heater')
                 else ''
             ),
         })
@@ -1653,12 +1811,17 @@ def result_export_view(request):
     for mi_result in result_data['mi_result_rows']:
         basis = mi_result.selection_basis or {}
         line = mi_result.line
+        review_summary = getattr(mi_result, 'review_summary', None) or _mi_result_review_summary(mi_result)
         mi_rows.append({
             'Project ID': project_id,
             'Line ID': line.line_id if line else '',
             'Service Type': line.service_type if line else '',
             'MI Selection Status': mi_result.selection_status,
             'Selection Mode': basis.get('selection_mode', ''),
+            'Rejection Code': review_summary.get('code', ''),
+            'Rejection Message': review_summary.get('message', ''),
+            'Diagnostic Evidence': review_summary.get('evidence', ''),
+            'Next Action': review_summary.get('action', ''),
             'Heater Part Number': mi_result.heater.part_number if mi_result.heater else '',
             'Cold Lead Option': mi_result.cold_lead_option_code,
             'Heated Length (m)': mi_result.heated_length_m,

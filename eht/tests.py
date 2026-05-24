@@ -388,6 +388,158 @@ def make_calculated_project_snapshot(project_id='p1'):
     return line
 
 
+def make_mi_calculated_project_snapshot(project_id='p1'):
+    make_project_record(proj_id=project_id)
+    line = HeatTracingInput.objects.create(
+        proj_id=project_id,
+        line_id='LINE-MI-001',
+        service_type='EP',
+        line_size=2.0,
+        line_length=18.0,
+        ins_mat_type='Mineral Wool',
+        insul_thick=50.0,
+        maint_temp=260.0,
+        oper_temp=280.0,
+        design_temp=320.0,
+        status='confirmed',
+    )
+    seeded_mi_result = make_mi_selection_result(line, status='selected')
+    heater = seeded_mi_result.heater
+    cold_lead = seeded_mi_result.cold_lead_option
+
+    aggregated_results = {
+        'heat_loss': [
+            {
+                'uid': line.uid,
+                'heat_loss': 42.0,
+                'design_heat_loss': 42.0,
+                'tracer_adder': 0.0,
+                'selection_status': 'rejected',
+                'selection_rejection_reasons': [{
+                    'code': 'SR_TEMPERATURE_LIMIT_EXCEEDED',
+                    'message': 'SR temperature limit exceeded; automatic MI fallback selected.',
+                }],
+            },
+        ],
+        'selected_mi_heaters': [
+            {
+                'uid': line.uid,
+                'heater_id': heater.id,
+                'cold_lead_option_id': cold_lead.id,
+                'selection_status': 'selected',
+                'heater_part_number': heater.part_number,
+                'cold_lead_option_code': cold_lead.option_code,
+                'heated_length_m': 18.0,
+                'cold_lead_length_m': cold_lead.length_m,
+                'heater_resistance_ohms': 1.8,
+                'cold_lead_resistance_total_ohms': 0.04,
+                'power_nominal_w': 5284.8,
+                'power_density_w_m': 293.6,
+                'current_nominal_a': 21.82,
+                'current_cold_start_a': 21.82,
+                'selection_basis': {'selection_mode': 'automatic_temperature_fallback'},
+            },
+        ],
+        'power_distribution': [
+            {
+                'uid': line.uid,
+                'total_circuits': 1,
+                'branches': [
+                    {
+                        'type': '1phJB',
+                        'circuit_count': 1,
+                        'connected_to': 'Tracer',
+                        'cable_length_db_to_jb': 30.0,
+                        'cable_length_jb_to_jb': None,
+                        'tagged_components': {
+                            'MCB': 'MCB_001',
+                            'Downstream': [{'Tracer': 'Tracer_001'}],
+                        },
+                    },
+                ],
+            },
+        ],
+        'boq_per_line': {
+            line.uid: {
+                'MCB': 1,
+                'JB1PH': 1,
+                'MI_HEATER_SET': 1,
+                'MI_HEATED_LENGTH': 18.0,
+                'MI_COLD_LEAD_LENGTH': cold_lead.length_m,
+            },
+        },
+        'consolidated_boq': {
+            'MCB': 1,
+            'JB1PH': 1,
+            'MI_HEATER_SET': 1,
+            'MI_HEATED_LENGTH': 18.0,
+            'MI_COLD_LEAD_LENGTH': cold_lead.length_m,
+        },
+        'tracer_power_param': [
+            {
+                'uid': line.uid,
+                'calculation_basis': 'MI_SINGLE_HEATER_MVP',
+                'selected_tracer': heater.part_number,
+                'breaker_size': 32,
+                'no_of_circuits': 1,
+                'max_current': 21.82,
+                'operating_current': 21.82,
+                'operating_load': 5284.8,
+                'total_tracer_length': 18.0,
+                'pipe_size_mm': 60.3,
+            },
+        ],
+    }
+    store_calculated_results(project_id, aggregated_results)
+    return line
+
+
+def make_mi_rejected_project_snapshot(project_id='p1'):
+    make_project_record(proj_id=project_id, vendor='THR')
+    line = HeatTracingInput.objects.create(
+        proj_id=project_id,
+        line_id='LINE-MI-REJECTED',
+        service_type='EP',
+        line_size=30.0,
+        line_length=70.95,
+        ins_mat_type='MO',
+        insul_thick=50.0,
+        maint_temp=45.0,
+        oper_temp=45.0,
+        design_temp=350.0,
+        status='confirmed',
+    )
+    store_calculated_results(project_id, {
+        'heat_loss': [
+            {
+                'uid': line.uid,
+                'heat_loss': 42.0,
+                'design_heat_loss': 42.0,
+                'tracer_adder': 0.0,
+                'selection_status': 'rejected',
+                'selection_rejection_reasons': [{
+                    'code': 'SR_TEMPERATURE_LIMIT_EXCEEDED',
+                    'message': 'SR catalogue temperature limit exceeded.',
+                }],
+            },
+        ],
+        'selected_mi_heaters': [
+            {
+                'uid': line.uid,
+                'mi_selection_status': 'rejected',
+                'mi_selection_rejection_reasons': [{
+                    'rule_set': 'MI_SELECTION_REJECTION_REASON_V1',
+                    'code': 'NO_VALIDATED_MI_CATALOGUE_DATA',
+                    'message': 'No validated MI catalogue rows are available for the selected vendor.',
+                    'details': {'vendor': 'THR', 'catalogue_rows': 3},
+                }],
+                'selection_basis': {'selection_mode': 'automatic_temperature_fallback'},
+            },
+        ],
+    })
+    return line
+
+
 def make_rich_sld_project_snapshot(project_id='p1', line_ids=None):
     line_ids = line_ids or ['LINE-001']
     make_project_record(proj_id=project_id)
@@ -3915,6 +4067,65 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'LINE-MI-ONLY')
         self.assertContains(response, 'MI fallback selected')
         self.assertContains(response, 'MI load distribution pending')
+
+    def test_result_view_summarizes_mi_fallback_as_selected_output_not_unresolved_sr_failure(self):
+        line = make_mi_calculated_project_snapshot()
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'SR 0 /')
+        self.assertContains(response, 'MI 1')
+        self.assertContains(response, 'Auto fallback')
+        self.assertContains(response, 'Cold lead 2.00 m')
+        self.assertNotContains(response, 'did not receive a selectable SR tracer')
+
+    def test_result_view_explains_rejected_mi_fallback_without_zero_design_values(self):
+        line = make_mi_rejected_project_snapshot()
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'triggered MI fallback but did not receive a selected MI heater')
+        self.assertContains(response, 'NO_VALIDATED_MI_CATALOGUE_DATA')
+        self.assertContains(response, '3 MI family row(s) exist for THR, but none are marked as validated')
+        self.assertContains(response, 'Validate reviewed MI catalogue rows for the selected vendor')
+        self.assertNotContains(response, '0.00 W/m')
+        self.assertNotContains(response, '0.00 W total')
+
+    def test_result_export_identifies_mi_fallback_heater_type_and_lengths(self):
+        line = make_mi_calculated_project_snapshot()
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Line Results'].iter_rows(values_only=True))
+        header = rows[0]
+        data = next(row for row in rows[1:] if row[header.index('Line ID')] == line.line_id)
+        self.assertEqual(data[header.index('Heating Cable Type')], 'MI')
+        self.assertEqual(data[header.index('Selected Tracer')], f'MIQ-R{line.uid}')
+        self.assertEqual(data[header.index('MI Heated Length excl. Cold Leads (m)')], 18.0)
+        self.assertEqual(data[header.index('MI Cold Lead Length (m)')], 2.0)
+        self.assertIn('MI heated length excludes cold leads', data[header.index('Heating Cable Length Basis')])
+
+    def test_result_export_explains_rejected_mi_fallback_next_action(self):
+        line = make_mi_rejected_project_snapshot()
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['MI Selection'].iter_rows(values_only=True))
+        header = rows[0]
+        data = next(row for row in rows[1:] if row[header.index('Line ID')] == line.line_id)
+        self.assertEqual(data[header.index('MI Selection Status')], 'rejected')
+        self.assertEqual(data[header.index('Rejection Code')], 'NO_VALIDATED_MI_CATALOGUE_DATA')
+        self.assertIn('No validated MI catalogue rows', data[header.index('Rejection Message')])
+        self.assertIn('none are marked as validated', data[header.index('Diagnostic Evidence')])
+        self.assertIn('Validate reviewed MI catalogue rows', data[header.index('Next Action')])
 
     def test_result_export_marks_sld_tracer_override_review_only(self):
         line = make_calculated_project_snapshot()

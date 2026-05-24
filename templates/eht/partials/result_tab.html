@@ -31,8 +31,12 @@
             <div class="row g-3 mb-4">
                 <div class="col-md-6 col-xl-3">
                     <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Calculated Lines</div>
+                        <div class="workspace-metric-label">Result Lines</div>
                         <div class="h4 mb-0">{{ result_summary.calculated_lines }}</div>
+                        <div class="small text-muted">
+                            SR {{ result_summary.sr_result_count|default:0 }} /
+                            MI {{ result_summary.mi_selected_count|default:0 }}
+                        </div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
@@ -45,12 +49,20 @@
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Connected Load</div>
                         <div class="h4 mb-0">{{ result_summary.total_power_kw|floatformat:2 }} <small class="text-muted">kW</small></div>
+                        <div class="small text-muted">
+                            SR {{ result_summary.sr_connected_load_kw|default:0|floatformat:2 }} /
+                            MI {{ result_summary.mi_connected_load_kw|default:0|floatformat:2 }} kW
+                        </div>
                     </div>
                 </div>
                 <div class="col-md-6 col-xl-3">
                     <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Ordered SR Length</div>
+                        <div class="workspace-metric-label">Heating Cable Length</div>
                         <div class="h4 mb-0">{{ result_summary.total_tracer_length|floatformat:2 }} <small class="text-muted">m</small></div>
+                        <div class="small text-muted">
+                            SR {{ result_summary.sr_tracer_length|default:0|floatformat:2 }} /
+                            MI {{ result_summary.mi_heated_length|default:0|floatformat:2 }} m
+                        </div>
                     </div>
                 </div>
             </div>
@@ -77,6 +89,11 @@
                     {{ result_summary.mi_alternative_count }} available alternative{{ result_summary.mi_alternative_count|pluralize }} for SLD review.
                 </div>
             {% endif %}
+            {% if result_summary.mi_rejected_count %}
+                <div class="alert alert-warning">
+                    {{ result_summary.mi_rejected_count }} high-temperature line{{ result_summary.mi_rejected_count|pluralize }} triggered MI fallback but did not receive a selected MI heater. Review the MI Selection Records for the reason and next action.
+                </div>
+            {% endif %}
 
             {% if line_results %}
             <div class="workspace-section mb-4">
@@ -99,6 +116,7 @@
                     <thead class="table-light">
                         <tr>
                             <th data-field="line" data-sortable="true">Line</th>
+                            <th data-field="heater-type" data-sortable="true">Type</th>
                             <th data-field="heat-loss" data-sortable="true">Design Heat Loss</th>
                             <th data-field="selected-tracer" data-sortable="true">Selected Tracer</th>
                             <th data-field="tracer-override" data-sortable="true">Tracer Override</th>
@@ -107,7 +125,7 @@
                             <th data-field="circuits" data-sortable="true">Circuits</th>
                             <th data-field="current" data-sortable="true">Current / Ckt</th>
                             <th data-field="load" data-sortable="true">Total Load</th>
-                            <th data-field="tracer-length" data-sortable="true">Ordered SR Len.</th>
+                            <th data-field="tracer-length" data-sortable="true">Heating Cable Len.</th>
                             <th data-field="alternates">Alternates</th>
                             <th data-field="mi-option" data-sortable="true">MI Option</th>
                         </tr>
@@ -127,6 +145,17 @@
                                             {{ item.line.line_length|floatformat:2 }} m
                                         {% endif %}
                                     </div>
+                                </td>
+                                <td>
+                                    {% if item.selected_mi_heater and item.selected_mi_heater.selection_status == 'selected' %}
+                                        <span class="badge text-bg-info">MI</span>
+                                        <div class="small text-muted">Auto fallback</div>
+                                    {% else %}
+                                        <span class="badge text-bg-success">SR</span>
+                                        {% if item.selected_mi_heater and item.selected_mi_heater.selection_status == 'available_alternative' %}
+                                            <div class="small text-muted">MI option ready</div>
+                                        {% endif %}
+                                    {% endif %}
                                 </td>
                                 <td>
                                     <div>
@@ -155,7 +184,13 @@
                                         </div>
                                     {% else %}
                                         <div class="fw-semibold">MI fallback selected</div>
-                                        <div class="small text-muted">SR calculation not available</div>
+                                        <div class="small text-muted">
+                                            {% if item.selected_mi_heater and item.selected_mi_heater.heater %}
+                                                {{ item.selected_mi_heater.heater.part_number }}
+                                            {% else %}
+                                                SR temperature limit exceeded
+                                            {% endif %}
+                                        </div>
                                     {% endif %}
                                 </td>
                                 <td>
@@ -208,6 +243,9 @@
                                     {% else %}
                                         <div>{{ item.selected_mi_heater.heated_length_m|floatformat:2 }} m</div>
                                         <div class="small text-muted">MI heated length</div>
+                                    {% endif %}
+                                    {% if item.selected_mi_heater and item.selected_mi_heater.selection_status == 'selected' %}
+                                        <div class="small text-muted">Cold lead {{ item.selected_mi_heater.cold_lead_length_m|floatformat:2 }} m</div>
                                     {% endif %}
                                 </td>
                                 <td>
@@ -283,23 +321,36 @@
                                         <div class="small text-muted">{{ mi.selection_basis.selection_mode }}</div>
                                     {% endif %}
                                 </td>
-                                <td>
-                                    <div class="fw-semibold">{% if mi.heater %}{{ mi.heater.part_number }}{% else %}-{% endif %}</div>
-                                    <div class="small text-muted">Cold lead {{ mi.cold_lead_option_code|default:"-" }}</div>
-                                    <div class="small text-muted">{{ mi.heated_length_m|floatformat:2 }} m heated</div>
-                                </td>
-                                <td>
-                                    <div>{{ mi.power_density_w_m|floatformat:2 }} W/m</div>
-                                    <div class="small text-muted">{{ mi.power_nominal_w|floatformat:2 }} W total</div>
-                                </td>
-                                <td>
-                                    <div>Nom {{ mi.current_nominal_a|floatformat:2 }} A</div>
-                                    <div class="small text-muted">Cold {{ mi.current_cold_start_a|floatformat:2 }} A</div>
-                                </td>
-                                <td>
-                                    <div>{{ mi.t_class_verdict|default:"review" }}</div>
-                                    <div class="small text-muted">Sheath {{ mi.max_sheath_temp_published_c|floatformat:0 }}°C / limit {{ mi.project_t_class_limit_c|floatformat:0 }}°C</div>
-                                </td>
+                                {% if mi.selection_status == 'rejected' %}
+                                    <td colspan="4">
+                                        <div class="fw-semibold">{{ mi.review_summary.message }}</div>
+                                        {% if mi.review_summary.code %}
+                                            <div class="small text-muted">Code: {{ mi.review_summary.code }}</div>
+                                        {% endif %}
+                                        {% if mi.review_summary.evidence %}
+                                            <div class="small text-muted">{{ mi.review_summary.evidence }}</div>
+                                        {% endif %}
+                                        <div class="small text-warning">{{ mi.review_summary.action }}</div>
+                                    </td>
+                                {% else %}
+                                    <td>
+                                        <div class="fw-semibold">{% if mi.heater %}{{ mi.heater.part_number }}{% else %}-{% endif %}</div>
+                                        <div class="small text-muted">Cold lead {{ mi.cold_lead_option_code|default:"-" }}</div>
+                                        <div class="small text-muted">{{ mi.heated_length_m|floatformat:2 }} m heated</div>
+                                    </td>
+                                    <td>
+                                        <div>{{ mi.power_density_w_m|floatformat:2 }} W/m</div>
+                                        <div class="small text-muted">{{ mi.power_nominal_w|floatformat:2 }} W total</div>
+                                    </td>
+                                    <td>
+                                        <div>Nom {{ mi.current_nominal_a|floatformat:2 }} A</div>
+                                        <div class="small text-muted">Cold {{ mi.current_cold_start_a|floatformat:2 }} A</div>
+                                    </td>
+                                    <td>
+                                        <div>{{ mi.t_class_verdict|default:"review" }}</div>
+                                        <div class="small text-muted">Sheath {{ mi.max_sheath_temp_published_c|floatformat:0 }}°C / limit {{ mi.project_t_class_limit_c|floatformat:0 }}°C</div>
+                                    </td>
+                                {% endif %}
                             </tr>
                         {% endfor %}
                     </tbody>

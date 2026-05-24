@@ -43,8 +43,9 @@
                 </div>
                 <div class="col-md-6 col-xl-3">
                     <div class="workspace-metric-card h-100">
-                        <div class="workspace-metric-label">Ordered SR Tracer</div>
+                        <div class="workspace-metric-label">Heating Cable BOQ</div>
                         <div class="h4 mb-0">{{ boq_summary.tracer_total|floatformat:2 }} <small class="text-muted">m</small></div>
+                        <div class="small text-muted">Ordered SR tracer</div>
                         {% if boq_summary.mi_heater_set_total %}
                             <div class="small text-muted">MI {{ boq_summary.mi_heater_set_total|floatformat:0 }} set{{ boq_summary.mi_heater_set_total|pluralize }} / {{ boq_summary.mi_heated_length_total|floatformat:2 }} m</div>
                         {% endif %}
@@ -125,7 +126,7 @@
                             <th data-field="line-id" data-sortable="true">Line ID</th>
                             <th data-field="service-type" data-sortable="true">Service Type</th>
                             <th data-field="item-count" data-sortable="true">Items</th>
-                            <th data-field="tracer-quantity" data-sortable="true">Ordered SR Qty</th>
+                            <th data-field="tracer-quantity" data-sortable="true">SR Qty</th>
                             <th data-field="mi-quantity" data-sortable="true">MI Qty</th>
                             <th data-field="action">Review</th>
                         </tr>

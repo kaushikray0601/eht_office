@@ -603,6 +603,7 @@ class MICableHeater(models.Model):
     part_number = models.CharField(max_length=100, unique=True) # e.g., '61XMI2100' or 'MIQ-2500'
     conductors = models.IntegerField(default=1) # 1 for Single Core, 2 for Dual Core
     resistance_ohms_m = models.FloatField() # Ohms per metre at catalogue reference temperature, usually 20°C.
+    tcr_per_degree_c = models.FloatField(default=0.0) # Linear resistance coefficient per °C, keyed to conductor alloy.
     max_current_a = models.FloatField() # Catalogue maximum heater current.
     cold_lead_resistance_ohms_m = models.FloatField(default=0.0)
     cold_lead_max_ampacity_a = models.FloatField(default=0.0)

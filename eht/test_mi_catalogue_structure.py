@@ -1,3 +1,5 @@
+from io import StringIO
+
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, transaction
@@ -108,6 +110,11 @@ class MICatalogueStructureTests(TestCase):
         self.assertAlmostEqual(heater.cold_lead_resistance_ohms_m, 0.003)
         self.assertAlmostEqual(heater.cold_lead_max_ampacity_a, 18.0)
 
+    def test_mi_heater_stores_conductor_tcr_for_resistance_temperature_correction(self):
+        heater = make_mi_heater(tcr_per_degree_c=0.00085)
+
+        self.assertAlmostEqual(heater.tcr_per_degree_c, 0.00085)
+
     def test_cold_lead_option_is_linked_to_heater_not_family(self):
         heater = make_mi_heater()
         option = MIColdLeadOption.objects.create(
@@ -141,6 +148,55 @@ class MICatalogueStructureTests(TestCase):
 
         self.assertIn('Alloy 825 at 200.0', str(factor))
         self.assertIn('1.02x', str(factor))
+
+    def test_populate_mi_catalogue_creates_conductor_material_and_tcr_values(self):
+        call_command('populate_mi_catalogue', stdout=StringIO())
+
+        thermon = MICableHeater.objects.get(part_number='MIQ-11EOH-2S')
+        nvent_high_tcr = MICableHeater.objects.get(part_number='HAC2N0.036K')
+        chromalox_nichrome = MICableHeater.objects.get(part_number='410B')
+        chromalox_alloy_825 = MICableHeater.objects.get(part_number='115B')
+
+        self.assertEqual(thermon.conductor_material, 'Nickel-Chromium')
+        self.assertAlmostEqual(thermon.tcr_per_degree_c, 0.000088)
+        self.assertEqual(nvent_high_tcr.conductor_material, 'Alloy 825 Conductor')
+        self.assertAlmostEqual(nvent_high_tcr.tcr_per_degree_c, 0.003900)
+        self.assertEqual(chromalox_nichrome.conductor_material, 'Nichrome T')
+        self.assertAlmostEqual(chromalox_nichrome.tcr_per_degree_c, 0.000180)
+        self.assertEqual(chromalox_alloy_825.conductor_material, 'Alloy 825 Conductor')
+        self.assertAlmostEqual(chromalox_alloy_825.tcr_per_degree_c, 0.003930)
+        self.assertFalse(MICableFamily.objects.filter(is_validated=True).exists())
+
+    def test_populate_mi_catalogue_update_repairs_existing_blank_tcr_rows_without_unvalidating_family(self):
+        family = make_mi_family(
+            vendor='THR',
+            family_name='MIQ',
+            source_document='Old local note',
+            is_validated=True,
+        )
+        heater = make_mi_heater(
+            family=family,
+            part_number='MIQ-11EOH-2S',
+            conductor_material='',
+            tcr_per_degree_c=0.0,
+            resistance_ohms_m=99.0,
+        )
+
+        call_command('populate_mi_catalogue', vendor='THR', update=True, stdout=StringIO())
+
+        family.refresh_from_db()
+        heater.refresh_from_db()
+        self.assertTrue(family.is_validated)
+        self.assertEqual(family.source_document, 'TEP0020-MIQ-Spec.pdf')
+        self.assertAlmostEqual(heater.resistance_ohms_m, 36.10)
+        self.assertEqual(heater.conductor_material, 'Nickel-Chromium')
+        self.assertAlmostEqual(heater.tcr_per_degree_c, 0.000088)
+        self.assertTrue(
+            MIColdLeadOption.objects.filter(heater=heater, option_code='CL-4FT', length_m=1.219).exists()
+        )
+        self.assertTrue(
+            MIColdLeadOption.objects.filter(heater=heater, option_code='CL-7FT', length_m=2.134).exists()
+        )
 
 
 class SelectedMIHeaterStructureTests(TestCase):

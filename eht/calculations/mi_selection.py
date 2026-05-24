@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 MI_REJECTION_RULE_SET = 'MI_SELECTION_REJECTION_REASON_V1'
 MI_SELECTION_RULE_SET = 'MI_SINGLE_PHASE_SELECTION_MVP_V1'
 MI_RESISTANCE_TEMPERATURE_RULE_SET = 'MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1'
+MI_RESISTANCE_REFERENCE_TEMPERATURE_C = 20.0
 T_CLASS_LIMIT_C = {
     'T1': 450.0,
     'T2': 300.0,
@@ -77,18 +78,18 @@ def _query_families(project_settings, families=None):
 
 
 def _temperature_factor_lookup(families):
-    alloy_types = {
-        family.alloy_type
-        for family in families
-        if family.alloy_type
-    }
-    factors_by_alloy = {}
-    if not alloy_types:
-        return factors_by_alloy
+    conductor_materials = set()
+    for family in families:
+        for heater in family.heaters.all():
+            if heater.conductor_material:
+                conductor_materials.add(heater.conductor_material)
+    factors_by_material = {}
+    if not conductor_materials:
+        return factors_by_material
 
-    for factor in MIAlloyTempFactor.objects.filter(alloy_type__in=alloy_types).order_by('alloy_type', 'temperature_c'):
-        factors_by_alloy.setdefault(factor.alloy_type, []).append(factor)
-    return factors_by_alloy
+    for factor in MIAlloyTempFactor.objects.filter(alloy_type__in=conductor_materials).order_by('alloy_type', 'temperature_c'):
+        factors_by_material.setdefault(factor.alloy_type, []).append(factor)
+    return factors_by_material
 
 
 def _interpolate_resistance_multiplier(factors, target_temperature_c):
@@ -115,18 +116,61 @@ def _interpolate_resistance_multiplier(factors, target_temperature_c):
     return 1.0, 'default_no_matching_temperature'
 
 
-def _resistance_temperature_basis(family, line, project_settings, factors_by_alloy):
-    factors = factors_by_alloy.get(family.alloy_type, [])
+def _linear_tcr_multiplier(tcr_per_degree_c, target_temperature_c):
+    return 1.0 + float(tcr_per_degree_c) * (float(target_temperature_c) - MI_RESISTANCE_REFERENCE_TEMPERATURE_C)
+
+
+def _resistance_multiplier_for_temperature(heater, factors, target_temperature_c):
+    if heater.tcr_per_degree_c:
+        multiplier = _linear_tcr_multiplier(heater.tcr_per_degree_c, target_temperature_c)
+        return multiplier, 'linear_tcr_per_degree_c'
+    return _interpolate_resistance_multiplier(factors, target_temperature_c)
+
+
+def _cold_start_temperature_basis(project_settings, maintain_temp_c):
+    # Conservative worst-case: lowest of startup_t and min_amb_t gives lowest conductor
+    # resistance at energisation, which produces the highest cold-start current.
+    # Both values may be absent (pure unit tests), in which case fall back to maintain temp.
+    candidates = []
+    for key in ('startup_t', 'min_amb_t'):
+        raw = project_settings.get(key)
+        if raw is not None:
+            candidates.append((key, float(raw)))
+    if not candidates:
+        return {
+            'selection_rule': 'fallback_to_maintain_temperature',
+            'selected_source': 'maintain_temp',
+            'selected_temperature_c': maintain_temp_c,
+            'candidate_temperatures_c': {},
+        }
+
+    selected_source, selected_temperature_c = min(candidates, key=lambda item: item[1])
+    return {
+        'selection_rule': 'minimum_of_startup_t_and_min_amb_t',
+        'selected_source': selected_source,
+        'selected_temperature_c': selected_temperature_c,
+        'candidate_temperatures_c': {key: value for key, value in candidates},
+    }
+
+
+def _resistance_temperature_basis(family, heater, line, project_settings, factors_by_material):
+    factors = factors_by_material.get(heater.conductor_material, [])
     maintain_temp_c = _float_value(line, 'maint_temp')
-    startup_temp_c = float(project_settings.get('startup_t') or maintain_temp_c)
-    maintain_multiplier, maintain_method = _interpolate_resistance_multiplier(factors, maintain_temp_c)
-    startup_multiplier, startup_method = _interpolate_resistance_multiplier(factors, startup_temp_c)
+    cold_start_basis = _cold_start_temperature_basis(project_settings, maintain_temp_c)
+    startup_temp_c = cold_start_basis['selected_temperature_c']
+    maintain_multiplier, maintain_method = _resistance_multiplier_for_temperature(heater, factors, maintain_temp_c)
+    startup_multiplier, startup_method = _resistance_multiplier_for_temperature(heater, factors, startup_temp_c)
     return {
         'rule_set': MI_RESISTANCE_TEMPERATURE_RULE_SET,
-        'alloy_type': family.alloy_type,
+        'sheath_alloy_type': family.alloy_type,
+        'conductor_material': heater.conductor_material,
+        'reference_temperature_c': MI_RESISTANCE_REFERENCE_TEMPERATURE_C,
+        'tcr_per_degree_c': float(heater.tcr_per_degree_c or 0.0),
+        'factor_lookup_key': heater.conductor_material,
         'factor_rows': len(factors),
         'maintain_temp_c': maintain_temp_c,
         'startup_temp_c': startup_temp_c,
+        'cold_start_temperature_basis': cold_start_basis,
         'maintain_multiplier': maintain_multiplier,
         'startup_multiplier': startup_multiplier,
         'maintain_method': maintain_method,
@@ -172,12 +216,12 @@ def _is_family_suitable(family, line, project_settings, heated_length_m):
     return reasons
 
 
-def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, heater, cold_lead, factors_by_alloy=None):
+def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, heater, cold_lead, factors_by_material=None):
     heated_length_m = _heated_length_m(heat_loss, line)
     if heated_length_m <= 0:
         return None, ['NON_POSITIVE_HEATED_LENGTH']
 
-    resistance_basis = _resistance_temperature_basis(family, line, project_settings, factors_by_alloy or {})
+    resistance_basis = _resistance_temperature_basis(family, heater, line, project_settings, factors_by_material or {})
     heater_base_resistance_ohms = float(heater.resistance_ohms_m) * heated_length_m
     heater_resistance_ohms = heater_base_resistance_ohms * resistance_basis['maintain_multiplier']
     heater_startup_resistance_ohms = heater_base_resistance_ohms * resistance_basis['startup_multiplier']
@@ -220,12 +264,13 @@ def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, 
     t_class_limit_c = _t_class_limit(project_settings)
     t_class_verdict = 'review'
     if t_class_limit_c <= 0 or not family.max_sheath_temp_c:
-        reasons.append('MISSING_T_CLASS_EVIDENCE')
-    elif float(family.max_sheath_temp_c) <= t_class_limit_c:
-        t_class_verdict = 'pass'
+        t_class_review_reason = 'MISSING_T_CLASS_EVIDENCE'
     else:
-        t_class_verdict = 'fail'
-        reasons.append('FAILS_T_CLASS_SHEATH_TEMPERATURE')
+        # Published maximum sheath temperature is a cable survival/rating limit,
+        # not the calculated installed surface temperature for this circuit.
+        # Keep MI T-class as an explicit engineering review item until a future
+        # pass adds a real sheath-temperature calculation basis.
+        t_class_review_reason = 'DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED'
 
     candidate = {
         'rule_set': MI_SELECTION_RULE_SET,
@@ -264,6 +309,7 @@ def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, 
             'max_cb_size': max_cb_size,
             'restricted_loading_factor': restricted_loading_factor,
             'allowed_current_per_circuit': allowed_current_per_circuit,
+            't_class_review_reason': t_class_review_reason,
             'resistance_temperature_basis': resistance_basis,
         },
         'rejection_reasons': reasons,
@@ -314,7 +360,7 @@ def get_mi_heater_options(heat_loss, line, project_settings, families=None):
             if family.vendor == project_settings.get('vendor')
         ]
         validated_families = [family for family in vendor_families if family.is_validated]
-        factors_by_alloy = _temperature_factor_lookup(validated_families)
+        factors_by_material = _temperature_factor_lookup(validated_families)
 
         if not validated_families:
             _record_mi_rejection(
@@ -364,7 +410,7 @@ def get_mi_heater_options(heat_loss, line, project_settings, families=None):
                         family,
                         heater,
                         cold_lead,
-                        factors_by_alloy=factors_by_alloy,
+                        factors_by_material=factors_by_material,
                     )
                     if candidate is None:
                         rejected_candidates.append({
