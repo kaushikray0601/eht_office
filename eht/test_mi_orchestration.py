@@ -200,8 +200,12 @@ class MIOrchestrationBoundaryTests(TestCase):
     def test_non_temperature_sr_rejection_does_not_trigger_mi_fallback(self):
         result = orchestrate_calculations(
             process_lines=make_process_lines(),
-            vendor_data=make_vendor_data(C_Coeff=100.0),
-            project_settings=make_project_settings(),
+            vendor_data=make_vendor_data(C_Coeff=1.0),
+            project_settings=make_project_settings(
+                spiral_factor=1.0,
+                spiral_wrap_allowed=False,
+                sr_max_parallel_runs=1,
+            ),
             asme_b36_table=make_asme_table(),
             thermal_cond_data=make_thermal_table(),
         )

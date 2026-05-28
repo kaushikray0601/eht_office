@@ -686,16 +686,42 @@ def _heat_loss_rule_set(heat_loss):
 
 def _selection_issue_payload(heat_loss):
     reason = _first_selection_rejection(heat_loss)
+    reason_details = reason.get('details') or {}
     return {
         'line': heat_loss.line,
         'heat_loss': heat_loss,
         'status': heat_loss.selection_status or 'rejected',
         'reason_code': reason.get('code') or '',
         'reason_message': reason.get('message') or '',
-        'reason_details': reason.get('details') or {},
+        'reason_details': reason_details,
+        'reason_evidence': _sr_selection_rejection_evidence_text(reason.get('code') or '', reason_details),
         'basis_label': _heat_loss_basis_label(heat_loss),
         'rule_set': _heat_loss_rule_set(heat_loss),
     }
+
+
+def _sr_selection_rejection_evidence_text(code, details):
+    if code == 'NO_SPIRAL_FACTOR_MATCH':
+        attempted = details.get('attempted_run_counts') or []
+        attempted_label = ', '.join(str(item) for item in attempted) if attempted else details.get('sr_parallel_run_cap', '')
+        best_uid = details.get('best_candidate_v_uid') or 'best available candidate'
+        best_duty = details.get('best_per_run_duty_ratio_at_max_runs')
+        max_delivery = details.get('max_heat_delivery_at_run_cap_w_m')
+        pieces = []
+        if attempted_label:
+            pieces.append(f"Attempted SR straight run counts: {attempted_label}.")
+        if best_duty not in (None, ''):
+            pieces.append(f"Best per-run duty at cap: {float(best_duty):.2f} using {best_uid}.")
+        if max_delivery not in (None, ''):
+            pieces.append(f"Max heat delivery at cap: {float(max_delivery):.2f} W/m.")
+        return ' '.join(pieces)
+    if code == 'NO_SR_CATALOGUE_SUITABILITY':
+        return 'Catalogue rows were rejected before heat-duty sizing by family, temperature, area, gas group, or T-rating checks.'
+    if code == 'NO_SR_CATALOGUE_VOLTAGE_COMPATIBILITY':
+        return f"System voltage checked: {details.get('system_voltage', '-') } V."
+    if code == 'NO_POSITIVE_POWER_OUTPUT':
+        return f"Candidate rows checked at maintain temperature: {details.get('candidate_rows', '-') }."
+    return ''
 
 
 def _branch_value(branch, path, default=''):
@@ -1801,6 +1827,7 @@ def result_export_view(request):
                 else ''
             ),
             'Spiral Factor': calculation.spiral_factor if calculation else '',
+            'SR Duty Ratio': calculation.spiral_factor if calculation else '',
             'SR Parallel Run Count': calculation.sr_parallel_run_count if calculation else '',
             'SR Parallel Run Basis': calculation.sr_parallel_run_basis if calculation else '',
             'SR Constructability Warning': calculation.sr_constructability_warning if calculation else '',
@@ -1851,6 +1878,7 @@ def result_export_view(request):
                 'Tracer Family': alternate.tracer_family,
                 'Power Output': alternate.power_output,
                 'Spiral Factor': alternate.spiral_factor,
+                'SR Duty Ratio': alternate.spiral_factor,
                 'SR Parallel Run Count': alternate.sr_parallel_run_count,
                 'SR Parallel Run Basis': alternate.sr_parallel_run_basis,
                 'SR Constructability Warning': alternate.sr_constructability_warning,
@@ -1898,6 +1926,7 @@ def result_export_view(request):
             'Selection Status': item['status'],
             'Reason Code': item['reason_code'],
             'Reason Message': item['reason_message'],
+            'Reason Evidence': item.get('reason_evidence', ''),
             'Reason Details': json.dumps(item['reason_details'], default=str),
             'Design Heat Loss (W/m)': heat_loss.design_heat_loss,
             'Base Heat Loss before SF (W/m)': heat_loss.base_heat_loss,

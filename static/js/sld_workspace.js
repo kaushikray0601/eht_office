@@ -1542,7 +1542,7 @@
             ['Path Links', pathLinkCount],
         ];
         Object.keys(metadata).sort().forEach(function (key) {
-            if (key === 'tracer_selection') {
+            if (key === 'tracer_selection' || key === 'sr_calculation') {
                 return;
             }
             const value = metadata[key];
@@ -1554,6 +1554,7 @@
         if (node.component_type === 'Tracer' && metadata.tracer_selection) {
             const selectedTracer = metadata.tracer_selection.selected || {};
             const alternatives = metadata.tracer_selection.alternatives || [];
+            const srElectrical = (metadata.sr_calculation || {}).electrical || {};
             rows.push(['Tracer UID', selectedTracer.v_uid || '-']);
             rows.push(['Tracer Family', selectedTracer.tracer_family || '-']);
             if (selectedTracer.option_kind === 'MI') {
@@ -1562,9 +1563,20 @@
                 rows.push(['T-Class', selectedTracer.t_class_verdict || '-']);
             }
             rows.push(['Power Output', selectedTracer.power_output !== undefined && selectedTracer.power_output !== '' ? `${selectedTracer.power_output} W/m` : '-']);
-            rows.push(['Spiral Factor', selectedTracer.spiral_factor !== undefined && selectedTracer.spiral_factor !== '' ? selectedTracer.spiral_factor : '-']);
+            rows.push(['SR Duty Ratio', selectedTracer.spiral_factor !== undefined && selectedTracer.spiral_factor !== '' ? selectedTracer.spiral_factor : '-']);
+            rows.push(['SR Runs', selectedTracer.sr_parallel_run_count || srElectrical.sr_parallel_run_count || '-']);
+            rows.push(['SR Run Basis', selectedTracer.sr_parallel_run_basis || srElectrical.sr_parallel_run_basis || '-']);
+            rows.push(['Op Current / Ckt', srElectrical.operating_current_per_circuit !== undefined && srElectrical.operating_current_per_circuit !== '' ? `${srElectrical.operating_current_per_circuit} A` : '-']);
+            rows.push(['Start Current / Ckt', srElectrical.starting_current_per_circuit !== undefined && srElectrical.starting_current_per_circuit !== '' ? `${srElectrical.starting_current_per_circuit} A` : '-']);
+            rows.push(['Line Op Current', srElectrical.line_operating_current !== undefined && srElectrical.line_operating_current !== '' ? `${srElectrical.line_operating_current} A` : '-']);
+            rows.push(['Line Start Current', srElectrical.line_starting_current !== undefined && srElectrical.line_starting_current !== '' ? `${srElectrical.line_starting_current} A` : '-']);
+            rows.push(['Total Load', srElectrical.total_connected_load_w !== undefined && srElectrical.total_connected_load_w !== '' ? `${srElectrical.total_connected_load_w} W` : '-']);
             rows.push(['Tracer Length', selectedTracer.tracer_length !== undefined && selectedTracer.tracer_length !== '' ? `${selectedTracer.tracer_length} m` : '-']);
             rows.push(['With Margin', selectedTracer.tracer_with_margin !== undefined && selectedTracer.tracer_with_margin !== '' ? `${selectedTracer.tracer_with_margin} m` : '-']);
+            const constructabilityWarning = selectedTracer.sr_constructability_warning || srElectrical.sr_constructability_warning || '';
+            if (constructabilityWarning) {
+                rows.push(['Constructability', constructabilityWarning]);
+            }
             rows.push(['Alternate Options', alternatives.length ? alternatives.map(function (item) { return item.v_uid; }).join(', ') : '-']);
         }
         return rows;
@@ -1600,7 +1612,7 @@
         ].concat(alternatives.map(function (item) {
             const label = item.option_kind === 'MI'
                 ? `${item.v_uid || '-'} | MI | ${item.heater_part_number || '-'} | ${item.power_output || '-'} W/m`
-                : `${item.v_uid || '-'} | ${item.tracer_family || '-'} | ${item.power_output || '-'} W/m`;
+                : `${item.v_uid || '-'} | ${item.tracer_family || '-'} | ${item.power_output || '-'} W/m | runs ${item.sr_parallel_run_count || 1}`;
             return {
                 v_uid: item.v_uid,
                 label: label,
@@ -1619,6 +1631,7 @@
                     <td>${escapeHtml(item.tracer_family || '-')}</td>
                     <td>${escapeHtml(item.option_kind === 'MI' ? (item.heater_part_number || '-') : (item.power_output !== undefined && item.power_output !== '' ? item.power_output : '-'))}</td>
                     <td>${escapeHtml(item.spiral_factor !== undefined && item.spiral_factor !== '' ? item.spiral_factor : '-')}</td>
+                    <td>${escapeHtml(item.sr_parallel_run_count || (item.option_kind === 'MI' ? '-' : 1))}</td>
                     <td>${escapeHtml(item.tracer_with_margin !== undefined && item.tracer_with_margin !== '' ? item.tracer_with_margin : '-')}</td>
                 </tr>
             `;
@@ -1632,7 +1645,8 @@
                             <th>UID</th>
                             <th>Family</th>
                             <th>W/m / Heater</th>
-                            <th>Spiral</th>
+                            <th>Duty</th>
+                            <th>Runs</th>
                             <th>Length</th>
                         </tr>
                     </thead>

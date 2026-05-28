@@ -796,6 +796,25 @@ class TracerSelectionTests(SimpleTestCase):
         self.assertEqual(best_tracer['SR_Constructability_Warning'], '')
         self.assertEqual(alternatives, [])
 
+    def test_get_tracer_options_allows_straight_sr_overdesign_without_lower_duty_gate(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 15.94, 'tracer_adder': 0.0}
+
+        best_tracer, alternatives = get_tracer_options(
+            heat_loss,
+            make_line(line_size=2.0, line_length=46.7, maint_temp=40.0, oper_temp=40.0, design_temp=120.0),
+            make_project_settings(spiral_factor=1.0, spiral_wrap_allowed=False, sr_max_parallel_runs=4),
+            self._catalogue(
+                {'V_UID': 'UNDERPOWERED', 'C_Coeff': 15.33},
+                {'V_UID': 'LOWEST_ACCEPTABLE', 'C_Coeff': 23.02},
+                {'V_UID': 'HIGHER_OUTPUT', 'C_Coeff': 30.75},
+            ),
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'LOWEST_ACCEPTABLE')
+        self.assertEqual(best_tracer['SR_Parallel_Run_Count'], 1)
+        self.assertAlmostEqual(best_tracer['Spiral_Factor'], 15.94 / 23.02, places=6)
+        self.assertEqual([item['V_UID'] for item in alternatives[:2]], ['HIGHER_OUTPUT', 'UNDERPOWERED'])
+
     def test_get_tracer_options_flags_small_pipe_parallel_run_constructability(self):
         heat_loss = {'uid': 'L1', 'heat_loss': 120.0, 'tracer_adder': 0.0}
 
@@ -814,14 +833,18 @@ class TracerSelectionTests(SimpleTestCase):
         best_tracer, alternatives = get_tracer_options(
             heat_loss,
             make_line(),
-            make_project_settings(spiral_wrap_allowed=False),
+            make_project_settings(spiral_wrap_allowed=False, sr_max_parallel_runs=1),
             make_tracer_vendor_data().iloc[1:].copy(),
         )
 
         self.assertEqual(best_tracer, {})
         self.assertEqual(alternatives, [])
         self.assertEqual(heat_loss['selection_status'], 'rejected')
-        self.assertEqual(heat_loss['selection_rejection_reasons'][0]['code'], 'NO_SPIRAL_FACTOR_MATCH')
+        rejection = heat_loss['selection_rejection_reasons'][0]
+        self.assertEqual(rejection['code'], 'NO_SPIRAL_FACTOR_MATCH')
+        self.assertEqual(rejection['details']['attempted_run_counts'], [1])
+        self.assertEqual(rejection['details']['best_candidate_v_uid'], 'T2')
+        self.assertGreater(rejection['details']['best_per_run_duty_ratio_at_max_runs'], 1.0)
 
     def test_get_tracer_options_filters_catalogue_temperature_limits_and_family(self):
         vendor_data = self._catalogue(

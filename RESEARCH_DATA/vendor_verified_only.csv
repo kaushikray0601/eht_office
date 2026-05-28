@@ -1,0 +1,31 @@
+V_UID,Vendor,Tracer_Family,Tracer_Model,Tracer_Cat_No,Voltage,Zone,Gas_Group,T_Rating,A_Coeff,B_Coeff,C_Coeff,Maint_T,Max_Op_T,Min_Installation_T,Max_Exp_T_On,Max_Exp_T_Off,Power_at_Startup_T,Ohm_per_km,Res_corrFactor_Mica
+Thermon^HTSX^HTSX-20-2,Thermon,Self Regulating,HTSX,HTSX 20-2,240.0,"Zone1, Zone2",NA,"T1,T2",0,0,0,150.0,150.0,-60.0,250.0,204.0,100.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-10,Eltherm,Self Regulating,ELSR-H,ELSR-H-10,230.0,"Zone1, Zone2",IIC,T4,0,0,0,150.0,150.0,-40.0,210.0,260.0,10.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-15,Eltherm,Self Regulating,ELSR-H,ELSR-H-15,230.0,"Zone1, Zone2",IIC,T4,0,0,0,150.0,150.0,-40.0,210.0,260.0,15.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-20,Eltherm,Self Regulating,ELSR-H,ELSR-H-20,230.0,"Zone1, Zone2",IIC,T4,0,0,0,150.0,150.0,-40.0,210.0,260.0,20.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-30,Eltherm,Self Regulating,ELSR-H,ELSR-H-30,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,30.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-45,Eltherm,Self Regulating,ELSR-H,ELSR-H-45,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,45.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-60,Eltherm,Self Regulating,ELSR-H,ELSR-H-60,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,60.0,0.0,0.0
+Eltherm^ELSR-H^ELSR-H-75,Eltherm,Self Regulating,ELSR-H,ELSR-H-75,230.0,"Zone1, Zone2",IIC,T2,0,0,0,150.0,150.0,-40.0,210.0,260.0,75.0,0.0,0.0
+Eltherm^ELSR-H+^ELSR-H+15,Eltherm,Self Regulating,ELSR-H+,ELSR-H+15,230.0,"Zone1, Zone2",IIC,T5,0,0,0,150.0,150.0,-40.0,210.0,260.0,15.0,0.0,0.0
+Eltherm^ELSR-H+^ELSR-H+30,Eltherm,Self Regulating,ELSR-H+,ELSR-H+30,230.0,"Zone1, Zone2",IIC,T4,0,0,0,150.0,150.0,-40.0,210.0,260.0,30.0,0.0,0.0
+Eltherm^ELSR-H+^ELSR-H+45,Eltherm,Self Regulating,ELSR-H+,ELSR-H+45,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,45.0,0.0,0.0
+Eltherm^ELSR-H+^ELSR-H+60,Eltherm,Self Regulating,ELSR-H+,ELSR-H+60,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,60.0,0.0,0.0
+Eltherm^ELSR-H+^ELSR-H+75,Eltherm,Self Regulating,ELSR-H+,ELSR-H+75,230.0,"Zone1, Zone2",IIC,T2,0,0,0,150.0,150.0,-40.0,210.0,260.0,75.0,0.0,0.0
+Eltherm^ELSR-SH^ELSR-SH-15,Eltherm,Self Regulating,ELSR-SH,ELSR-SH-15,230.0,"Zone1, Zone2",IIC,T5,0,0,0,150.0,150.0,-40.0,210.0,260.0,15.0,0.0,0.0
+Eltherm^ELSR-SH^ELSR-SH-35,Eltherm,Self Regulating,ELSR-SH,ELSR-SH-35,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,35.0,0.0,0.0
+Eltherm^ELSR-SH^ELSR-SH-45,Eltherm,Self Regulating,ELSR-SH,ELSR-SH-45,230.0,"Zone1, Zone2",IIC,T3,0,0,0,150.0,150.0,-40.0,210.0,260.0,45.0,0.0,0.0
+Eltherm^ELSR-SH^ELSR-SH-75,Eltherm,Self Regulating,ELSR-SH,ELSR-SH-75,230.0,"Zone1, Zone2",IIC,T2,0,0,0,150.0,150.0,-40.0,210.0,260.0,75.0,0.0,0.0
+Eltherm^ELSR-SH^ELSR-SH-90,Eltherm,Self Regulating,ELSR-SH,ELSR-SH-90,230.0,"Zone1, Zone2",IIC,T2,0,0,0,150.0,150.0,-40.0,210.0,260.0,90.0,0.0,0.0
+Chromalox^SRL^SRL-8-2CT,Chromalox,Self Regulating,SRL,SRL-8-2CT,240.0,"Zone1, Zone2","Class I Div.2, Gr. A, B, C, D",T1,0,0,0,65.0,65.0,-50.0,140.0,150.0,40.0,0.0,0.0
+Chromalox^SRL^SRL-10-2CT,Chromalox,Self Regulating,SRL,SRL-10-2CT,240.0,"Zone1, Zone2","Class I Div.2, Gr. A, B, C, D",T1,0,0,0,65.0,65.0,-50.0,140.0,150.0,50.0,0.0,0.0
+Heat Trace^Freezstop^FSR-10,Heat Trace,Self Regulating,Freezstop Regular,HT-FSR-10,230.0,"Zone1, Zone2",IIB,"T1,T2,T3",0,0,0,85.0,85.0,-40.0,140.0,200.0,10.0,0.0,0.0
+Heat Trace^Freezstop^FSR-17,Heat Trace,Self Regulating,Freezstop Regular,HT-FSR-17,230.0,"Zone1, Zone2",IIB,"T1,T2,T3",0,0,0,85.0,85.0,-40.0,140.0,200.0,17.0,0.0,0.0
+Heat Trace^Freezstop^FSR-25,Heat Trace,Self Regulating,Freezstop Regular,HT-FSR-25,230.0,"Zone1, Zone2",IIB,"T1,T2,T3",0,0,0,85.0,85.0,-40.0,140.0,200.0,25.0,0.0,0.0
+Heat Trace^Freezstop^FSR-31,Heat Trace,Self Regulating,Freezstop Regular,HT-FSR-31,230.0,"Zone1, Zone2",IIB,"T1,T2,T3",0,0,0,85.0,85.0,-40.0,140.0,200.0,31.0,0.0,0.0
+Heat Trace^Freezstop^FSR-40,Heat Trace,Self Regulating,Freezstop Regular,HT-FSR-40,230.0,"Zone1, Zone2",IIB,"T1,T2,T3",0,0,0,85.0,85.0,-40.0,140.0,200.0,40.0,0.0,0.0
+Pentair^WinterGard^WG-H612-1,Pentair,Self Regulating,WinterGard Wet,PR-H612,120.0,"Zone1, Zone2",NA,NA,0,0,0,65.0,65.0,-40.0,140.0,180.0,6.0,0.0,0.0
+Pentair^WinterGard^WG-H622-2,Pentair,Self Regulating,WinterGard Wet,PR-H622,240.0,"Zone1, Zone2",NA,NA,0,0,0,65.0,65.0,-40.0,140.0,180.0,6.0,0.0,0.0
+SST^BTX^BTX-80,SST,Self Regulating,BTX,BTX-80,230.0,"Zone1, Zone2",NA,NA,0,0,0,120.0,120.0,-40.0,190.0,200.0,80.0,0.0,0.0
+SST^BTX^BTX-95,SST,Self Regulating,BTX,BTX-95,230.0,"Zone1, Zone2",NA,NA,0,0,0,120.0,120.0,-40.0,190.0,200.0,95.0,0.0,0.0
+nVent^QTV^QTV-2-12,nVent,Self Regulating,QTV,QTV-2-12,240.0,"Zone1, Zone2",IIC,T4,0,0,0,110.0,110.0,-40.0,225.0,240.0,12.0,0.0,0.0

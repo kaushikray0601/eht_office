@@ -135,7 +135,7 @@
                             <th data-field="heat-loss" data-sortable="true">Design Heat Loss</th>
                             <th data-field="selected-tracer" data-sortable="true">Selected Tracer</th>
                             <th data-field="tracer-override" data-sortable="true">Tracer Override</th>
-                            <th data-field="spiral" data-sortable="true">Spiral</th>
+                            <th data-field="sr-duty" data-sortable="true">SR Duty / Runs</th>
                             <th data-field="breaker" data-sortable="true">Breaker</th>
                             <th data-field="circuits" data-sortable="true">Circuits</th>
                             <th data-field="current" data-sortable="true">Current / Ckt</th>
@@ -195,9 +195,7 @@
                                                 MI | Sets {{ item.selected_mi_heater.selection_basis.heater_set_count|default:1 }}
                                             {% else %}
                                                 {{ item.selected_tracer.tracer_family|default:"-" }}
-                                                {% if item.calculation.sr_parallel_run_count|default:1 > 1 %}
-                                                    | SR runs {{ item.calculation.sr_parallel_run_count }}
-                                                {% endif %}
+                                                | SR runs {{ item.calculation.sr_parallel_run_count|default:1 }}
                                             {% endif %}
                                         </div>
                                         {% if item.calculation.sr_constructability_warning %}
@@ -233,10 +231,8 @@
                                 </td>
                                 <td>
                                     {% if item.calculation %}
-                                        {{ item.calculation.spiral_factor|floatformat:2 }}
-                                        {% if item.calculation.sr_parallel_run_count|default:1 > 1 %}
-                                            <div class="small text-muted">{{ item.calculation.sr_parallel_run_count }} straight runs</div>
-                                        {% endif %}
+                                        <div>{{ item.calculation.spiral_factor|floatformat:2 }}</div>
+                                        <div class="small text-muted">{{ item.calculation.sr_parallel_run_count|default:1 }} straight run{{ item.calculation.sr_parallel_run_count|default:1|pluralize }}</div>
                                     {% else %}
                                         -
                                     {% endif %}
@@ -439,6 +435,9 @@
                                 <td>
                                     <div class="fw-semibold">{{ issue.reason_code|default:"-" }}</div>
                                     <div class="small text-muted">{{ issue.reason_message|default:"-" }}</div>
+                                    {% if issue.reason_evidence %}
+                                        <div class="small text-muted">{{ issue.reason_evidence }}</div>
+                                    {% endif %}
                                 </td>
                             </tr>
                         {% endfor %}

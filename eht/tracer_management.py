@@ -105,6 +105,12 @@ def _calculation_payload(calculation, selected):
         'starting_current_per_circuit': _rounded_or_blank(calculation.starting_current),
         'operating_current_per_circuit': _rounded_or_blank(calculation.operating_current),
         'current_basis': 'per_circuit',
+        'line_starting_current': _rounded_or_blank(
+            float(calculation.starting_current) * max(int(calculation.total_circuits or 1), 1)
+        ),
+        'line_operating_current': _rounded_or_blank(
+            float(calculation.operating_current) * max(int(calculation.total_circuits or 1), 1)
+        ),
         'total_connected_load_w': _rounded_or_blank(calculation.total_power_consumption),
         'ordered_tracer_length_m': _rounded_or_blank(calculation.total_tracer_length),
         'tracer_length_basis': 'ordered_length_includes_termination_allowance',

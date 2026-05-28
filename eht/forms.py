@@ -103,6 +103,8 @@ class ProjectDataForm(forms.ModelForm):
         )
         self.fields['sr_parallel_run_basis'].required = False
         self.fields['sr_max_parallel_runs'].required = False
+        self.fields['sr_max_parallel_runs'].choices = [(value, str(value)) for value in range(1, 5)]
+        self.fields['sr_max_parallel_runs'].widget = forms.Select(choices=self.fields['sr_max_parallel_runs'].choices)
         for name, field in self.fields.items():
             self._apply_bootstrap_widget_classes(name, field)
 

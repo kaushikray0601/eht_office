@@ -509,9 +509,9 @@ project cap, currently no more than 4:
 
 `Per-Run Duty Ratio = Spiral Factor / SR Parallel Run Count`
 
-The module requires this per-run duty ratio to be at least 0.8 and not greater
-than the project Allowed Spiral Factor. If spiral wrap is not allowed, the
-per-run duty ratio must not exceed 1.0.
+The module requires this per-run duty ratio to be not greater than the project
+Allowed Spiral Factor. If spiral wrap is not allowed, the per-run duty ratio
+must not exceed 1.0.
 
 For straight tracing, the ordered heated length is not shortened when duty
 ratio is below 1.0. One selected run still means one full heated route. Two,
@@ -520,7 +520,9 @@ The project records constructability warnings when the selected run count
 exceeds the pipe-size guided preference.
 
 If no candidate row satisfies the spiral factor limits, the line appears in SR
-Selection Diagnostics with reason code `NO_SPIRAL_FACTOR_MATCH`.
+Selection Diagnostics with reason code `NO_SPIRAL_FACTOR_MATCH`. The diagnostic
+row records the attempted straight-run counts, the best catalogue candidate at
+the configured run cap, and the maximum heat delivery available at that cap.
 
 ### 9.5 Selected Tracer and Alternate Tracers
 
@@ -532,6 +534,11 @@ After filtering and sizing, candidate tracers are ranked by:
 
 The first row becomes the generated selected tracer. Remaining valid rows are
 stored as alternate tracers.
+
+The result page and SLD inspector label the selected value as SR duty ratio /
+runs instead of treating every value as a spiral instruction. This is deliberate:
+for the current straight-run basis, a duty ratio below 1.0 does not shorten the
+installed cable; it only indicates heat-delivery margin for a full straight run.
 
 Alternate tracer rows are available for review and SLD tracer override
 workflows. However, selecting an alternate in the SLD is currently review-only.

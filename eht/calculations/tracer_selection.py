@@ -278,6 +278,42 @@ def _sr_constructability_warning(run_count, run_limits, line):
     )
 
 
+def _sr_heat_duty_rejection_details(candidate_tracers, heat_loss, run_limits):
+    details = {
+        'candidate_rows': len(candidate_tracers.index),
+        'sr_parallel_run_cap': run_limits['absolute_cap'],
+        'attempted_run_counts': list(range(1, run_limits['absolute_cap'] + 1)),
+        'required_heat_loss_w_m': float(heat_loss.get('heat_loss') or 0),
+    }
+    if candidate_tracers.empty or 'Power_Output_Heat_Delivery' not in candidate_tracers:
+        return details
+
+    candidates = candidate_tracers[candidate_tracers['Power_Output_Heat_Delivery'] > 0].copy()
+    if candidates.empty:
+        return details
+
+    candidates['Single_Run_Duty_Ratio'] = (
+        details['required_heat_loss_w_m'] / candidates['Power_Output_Heat_Delivery']
+    )
+    candidates['Best_Per_Run_Duty_Ratio'] = (
+        candidates['Single_Run_Duty_Ratio'] / run_limits['absolute_cap']
+    )
+    best_candidate = candidates.sort_values(
+        by=['Best_Per_Run_Duty_Ratio', 'Power_Output_Heat_Delivery'],
+        ascending=[True, False],
+    ).iloc[0]
+    details.update({
+        'best_candidate_v_uid': best_candidate.get('V_UID', ''),
+        'best_candidate_power_output_w_m': float(best_candidate.get('Power_Output_Heat_Delivery') or 0),
+        'best_single_run_duty_ratio': float(best_candidate.get('Single_Run_Duty_Ratio') or 0),
+        'best_per_run_duty_ratio_at_max_runs': float(best_candidate.get('Best_Per_Run_Duty_Ratio') or 0),
+        'max_heat_delivery_at_run_cap_w_m': float(
+            best_candidate.get('Power_Output_Heat_Delivery') or 0
+        ) * run_limits['absolute_cap'],
+    })
+    return details
+
+
 def get_tracer_options(heat_loss, line, project_settings, vendor_data):
     """
     Selects the optimal heating tracer from the vendor database.
@@ -306,7 +342,6 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         tracer_length_margin = project_settings['margin_on_tracer_lengths'] / 100
         spiral_allowed = project_settings['spiral_wrap_allowed']
         max_spiral_factor = project_settings['spiral_factor']
-        min_spiral_factor = 0.8  # Hardcoded lower limit to prevent unrealistic spiral factors
         run_limits = _sr_run_limits(line, project_settings)
         
 
@@ -377,6 +412,7 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
                 {'candidate_rows': len(available_tracers.index), 'maint_temp': maint_temp},
             )
             return {}, []
+        heat_duty_diagnostic_candidates = valid_tracers.copy()
             
         # Size heat delivery at low voltage; nominal and high-voltage scenarios are used separately.
         # Spiral_Factor is retained as a heat-duty ratio. For straight runs, cable
@@ -392,9 +428,10 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
             valid_tracers['Single_Run_Duty_Ratio'] / valid_tracers['SR_Parallel_Run_Count']
         )
 
-        # Validate spiral factor within project constraints
+        # Validate the required heat-duty ratio against the project upper limit.
+        # There is intentionally no lower rejection gate for straight tracing:
+        # a stronger cable remains a full straight run, not a fractional length.
         valid_tracers = valid_tracers[(valid_tracers['Spiral_Factor'] <= max_spiral_factor) & 
-                                      (valid_tracers['Spiral_Factor'] >= min_spiral_factor) & 
                                       (spiral_allowed or (valid_tracers['Spiral_Factor'] <= 1.0))                                    ]
             
         if valid_tracers.empty:
@@ -404,14 +441,22 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
                 'NO_SPIRAL_FACTOR_MATCH',
                 'No SR rows satisfied the configured spiral factor limits.',
                 {
-                    'candidate_rows': len(available_tracers.index),
-                    'min_spiral_factor': min_spiral_factor,
+                    **_sr_heat_duty_rejection_details(
+                        heat_duty_diagnostic_candidates,
+                        heat_loss,
+                        run_limits,
+                    ),
                     'max_spiral_factor': max_spiral_factor,
                     'spiral_wrap_allowed': spiral_allowed,
-                    'sr_parallel_run_cap': run_limits['absolute_cap'],
                 },
             )
             return  {}, []
+
+        # Keep the simplest acceptable run count for each catalogue row.
+        valid_tracers = valid_tracers.sort_values(
+            by=['V_UID', 'SR_Parallel_Run_Count'],
+            ascending=[True, True],
+        ).drop_duplicates(subset=['V_UID'], keep='first')
 
         # Calculate total required tracer length
         eqv_pipe_length = float(line['line_length'])

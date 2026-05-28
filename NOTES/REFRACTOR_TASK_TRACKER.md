@@ -333,3 +333,9 @@ Progress notes:
   vendor curve interpolation to replace fitted A/B/C coefficients as the
   primary catalogue basis, grouped SR feeder optimization, and project-specific
   hard constructability limits.
+- SR/MI closure polish before cold-cable module: clarified SR result wording so
+  the result table and SLD inspector show duty ratio, SR run count, per-circuit
+  current, line current, and constructability warning without exposing bulky
+  JSON evidence. `NO_SPIRAL_FACTOR_MATCH` diagnostics now include attempted run
+  counts and best available heat-duty evidence, so heat-duty failures are
+  reviewable before the cold-cable sizing module consumes circuit outputs.
