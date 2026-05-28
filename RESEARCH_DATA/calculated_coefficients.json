@@ -1,0 +1,486 @@
+{
+  "generated": "2026-05-28T20:49:02.227750",
+  "method": "PTC polynomial fitting",
+  "results": [
+    {
+      "v_uid": "Thermon^HTSX^HTSX-20-2",
+      "vendor": "Thermon",
+      "model": "HTSX",
+      "power_ref_at_10c": 100.0,
+      "A_Coeff": 0.0004792728191900275,
+      "B_Coeff": -0.2614642072284994,
+      "C_Coeff": 102.76223351855234,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-10",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 10.0,
+      "A_Coeff": 4.792728191900242e-05,
+      "B_Coeff": -0.026146420722849895,
+      "C_Coeff": 10.276223351855236,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-15",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 15.0,
+      "A_Coeff": 7.189092287850416e-05,
+      "B_Coeff": -0.03921963108427488,
+      "C_Coeff": 15.414335027782851,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-20",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 20.0,
+      "A_Coeff": 9.585456383800484e-05,
+      "B_Coeff": -0.05229284144569979,
+      "C_Coeff": 20.552446703710473,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-30",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 30.0,
+      "A_Coeff": 0.00014378184575700832,
+      "B_Coeff": -0.07843926216854975,
+      "C_Coeff": 30.828670055565702,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-45",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 45.0,
+      "A_Coeff": 0.00021567276863551172,
+      "B_Coeff": -0.11765889325282461,
+      "C_Coeff": 46.24300508334856,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-60",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 60.0,
+      "A_Coeff": 0.00028756369151401663,
+      "B_Coeff": -0.1568785243370995,
+      "C_Coeff": 61.657340111131404,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H^ELSR-H-75",
+      "vendor": "Eltherm",
+      "model": "ELSR-H",
+      "power_ref_at_10c": 75.0,
+      "A_Coeff": 0.0003594546143925203,
+      "B_Coeff": -0.19609815542137435,
+      "C_Coeff": 77.07167513891426,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H+^ELSR-H+15",
+      "vendor": "Eltherm",
+      "model": "ELSR-H+",
+      "power_ref_at_10c": 15.0,
+      "A_Coeff": 7.189092287850416e-05,
+      "B_Coeff": -0.03921963108427488,
+      "C_Coeff": 15.414335027782851,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H+^ELSR-H+30",
+      "vendor": "Eltherm",
+      "model": "ELSR-H+",
+      "power_ref_at_10c": 30.0,
+      "A_Coeff": 0.00014378184575700832,
+      "B_Coeff": -0.07843926216854975,
+      "C_Coeff": 30.828670055565702,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H+^ELSR-H+45",
+      "vendor": "Eltherm",
+      "model": "ELSR-H+",
+      "power_ref_at_10c": 45.0,
+      "A_Coeff": 0.00021567276863551172,
+      "B_Coeff": -0.11765889325282461,
+      "C_Coeff": 46.24300508334856,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H+^ELSR-H+60",
+      "vendor": "Eltherm",
+      "model": "ELSR-H+",
+      "power_ref_at_10c": 60.0,
+      "A_Coeff": 0.00028756369151401663,
+      "B_Coeff": -0.1568785243370995,
+      "C_Coeff": 61.657340111131404,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-H+^ELSR-H+75",
+      "vendor": "Eltherm",
+      "model": "ELSR-H+",
+      "power_ref_at_10c": 75.0,
+      "A_Coeff": 0.0003594546143925203,
+      "B_Coeff": -0.19609815542137435,
+      "C_Coeff": 77.07167513891426,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-SH^ELSR-SH-15",
+      "vendor": "Eltherm",
+      "model": "ELSR-SH",
+      "power_ref_at_10c": 15.0,
+      "A_Coeff": 7.189092287850416e-05,
+      "B_Coeff": -0.03921963108427488,
+      "C_Coeff": 15.414335027782851,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-SH^ELSR-SH-35",
+      "vendor": "Eltherm",
+      "model": "ELSR-SH",
+      "power_ref_at_10c": 35.0,
+      "A_Coeff": 0.00016774548671650788,
+      "B_Coeff": -0.09151247252997458,
+      "C_Coeff": 35.96678173149333,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-SH^ELSR-SH-45",
+      "vendor": "Eltherm",
+      "model": "ELSR-SH",
+      "power_ref_at_10c": 45.0,
+      "A_Coeff": 0.00021567276863551172,
+      "B_Coeff": -0.11765889325282461,
+      "C_Coeff": 46.24300508334856,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-SH^ELSR-SH-75",
+      "vendor": "Eltherm",
+      "model": "ELSR-SH",
+      "power_ref_at_10c": 75.0,
+      "A_Coeff": 0.0003594546143925203,
+      "B_Coeff": -0.19609815542137435,
+      "C_Coeff": 77.07167513891426,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Eltherm^ELSR-SH^ELSR-SH-90",
+      "vendor": "Eltherm",
+      "model": "ELSR-SH",
+      "power_ref_at_10c": 90.0,
+      "A_Coeff": 0.00043134553727102343,
+      "B_Coeff": -0.23531778650564922,
+      "C_Coeff": 92.48601016669711,
+      "R_squared": 0.9997752662088293,
+      "temperature_range": "-40.0-150.0",
+      "notes": [
+        "Fitted to 10 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Chromalox^SRL^SRL-8-2CT",
+      "vendor": "Chromalox",
+      "model": "SRL",
+      "power_ref_at_10c": 40.0,
+      "A_Coeff": 0.0002427131124677201,
+      "B_Coeff": -0.10641319967916489,
+      "C_Coeff": 41.045358294636515,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Chromalox^SRL^SRL-10-2CT",
+      "vendor": "Chromalox",
+      "model": "SRL",
+      "power_ref_at_10c": 50.0,
+      "A_Coeff": 0.0003033913905846509,
+      "B_Coeff": -0.13301649959895642,
+      "C_Coeff": 51.306697868295664,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Heat Trace^Freezstop^FSR-10",
+      "vendor": "Heat Trace",
+      "model": "Freezstop Regular",
+      "power_ref_at_10c": 10.0,
+      "A_Coeff": 6.067827811693002e-05,
+      "B_Coeff": -0.026603299919791223,
+      "C_Coeff": 10.261339573659129,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Heat Trace^Freezstop^FSR-17",
+      "vendor": "Heat Trace",
+      "model": "Freezstop Regular",
+      "power_ref_at_10c": 17.0,
+      "A_Coeff": 0.00010315307279878304,
+      "B_Coeff": -0.04522560986364516,
+      "C_Coeff": 17.44427727522052,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Heat Trace^Freezstop^FSR-25",
+      "vendor": "Heat Trace",
+      "model": "Freezstop Regular",
+      "power_ref_at_10c": 25.0,
+      "A_Coeff": 0.00015169569529232545,
+      "B_Coeff": -0.06650824979947821,
+      "C_Coeff": 25.653348934147832,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Heat Trace^Freezstop^FSR-31",
+      "vendor": "Heat Trace",
+      "model": "Freezstop Regular",
+      "power_ref_at_10c": 31.0,
+      "A_Coeff": 0.00018810266216248226,
+      "B_Coeff": -0.08247022975135278,
+      "C_Coeff": 31.810152678343297,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Heat Trace^Freezstop^FSR-40",
+      "vendor": "Heat Trace",
+      "model": "Freezstop Regular",
+      "power_ref_at_10c": 40.0,
+      "A_Coeff": 0.0002427131124677201,
+      "B_Coeff": -0.10641319967916489,
+      "C_Coeff": 41.045358294636515,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Pentair^WinterGard^WG-H612-1",
+      "vendor": "Pentair",
+      "model": "WinterGard Wet",
+      "power_ref_at_10c": 6.0,
+      "A_Coeff": 3.6406966870156336e-05,
+      "B_Coeff": -0.015961979951874705,
+      "C_Coeff": 6.1568037441954795,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "Pentair^WinterGard^WG-H622-2",
+      "vendor": "Pentair",
+      "model": "WinterGard Wet",
+      "power_ref_at_10c": 6.0,
+      "A_Coeff": 3.6406966870156336e-05,
+      "B_Coeff": -0.015961979951874705,
+      "C_Coeff": 6.1568037441954795,
+      "R_squared": 0.999961048161882,
+      "temperature_range": "-40.0-75.0",
+      "notes": [
+        "Fitted to 7 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "SST^BTX^BTX-80",
+      "vendor": "SST",
+      "model": "BTX",
+      "power_ref_at_10c": 80.0,
+      "A_Coeff": 0.00042160971488431487,
+      "B_Coeff": -0.21134977646729178,
+      "C_Coeff": 82.16007302640939,
+      "R_squared": 0.999880637816088,
+      "temperature_range": "-40.0-120.0",
+      "notes": [
+        "Fitted to 9 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "SST^BTX^BTX-95",
+      "vendor": "SST",
+      "model": "BTX",
+      "power_ref_at_10c": 95.0,
+      "A_Coeff": 0.0005006615364251293,
+      "B_Coeff": -0.25097785955490964,
+      "C_Coeff": 97.56508671886117,
+      "R_squared": 0.999880637816088,
+      "temperature_range": "-40.0-120.0",
+      "notes": [
+        "Fitted to 9 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    },
+    {
+      "v_uid": "nVent^QTV^QTV-2-12",
+      "vendor": "nVent",
+      "model": "QTV",
+      "power_ref_at_10c": 12.0,
+      "A_Coeff": 6.324145723264698e-05,
+      "B_Coeff": -0.03170246647009381,
+      "C_Coeff": 12.32401095396141,
+      "R_squared": 0.999880637816088,
+      "temperature_range": "-40.0-120.0",
+      "notes": [
+        "Fitted to 9 temperature points",
+        "Using PTC model: P(T) = P_ref / (1 + 0.0025(T - 10.0))"
+      ],
+      "success": true
+    }
+  ]
+}

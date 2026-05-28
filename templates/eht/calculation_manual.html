@@ -104,7 +104,7 @@
             <div class="manual-section-heading">
                 <div>
                     <p class="manual-kicker">Current release state</p>
-                    <h2>SR production path with bounded MI fallback.</h2>
+                    <h2>SR straight-run path with bounded MI fallback.</h2>
                 </div>
                 <p class="manual-section-note">This status board is intentionally plain: it separates implemented behavior from assumptions and deferred engineering work.</p>
             </div>
@@ -112,17 +112,17 @@
                 <article>
                     <span>01</span>
                     <h3>Implemented Now</h3>
-                    <p>SR remains the default. High-temperature lines can automatically fall back to validated MI heater sets, including identical multi-set MI output with independent protection per set.</p>
+                    <p>SR remains the default. Straight SR tracing can now use up to four parallel runs before rejection, with duty ratio, run count, and constructability evidence carried into results and SLD review.</p>
                 </article>
                 <article>
                     <span>02</span>
-                    <h3>MI Review Basis</h3>
-                    <p>MI records carry catalogue validation, TCR correction, cold-lead option, per-set current, T-class review status, BOQ quantities, and SLD metadata.</p>
+                    <h3>MI Fallback Basis</h3>
+                    <p>High-temperature lines can automatically fall back to validated MI heater sets, including identical multi-set MI output with independent protection per heater set.</p>
                 </article>
                 <article>
                     <span>03</span>
                     <h3>Not Yet Claimed</h3>
-                    <p>The MVP does not yet claim vendor-tool benchmark agreement, calculated MI sheath temperature, physical JB terminal capacity, panel coordination, or voltage-drop compliance.</p>
+                    <p>The MVP does not yet claim SR vendor-curve interpolation, vendor-tool benchmark agreement, calculated MI sheath temperature, physical JB capacity, panel coordination, or voltage-drop compliance.</p>
                 </article>
                 <article>
                     <span>04</span>
@@ -157,9 +157,9 @@
                     <p>Calculated before heat-loss safety factor and final design heat loss.</p>
                 </article>
                 <article>
-                    <h3>Spiral Factor</h3>
-                    <p class="math-line">SF<sub>spiral</sub> = Q<sub>design</sub> / P<sub>low-voltage</sub></p>
-                    <p>Used to check whether a candidate tracer can satisfy heat delivery limits.</p>
+                    <h3>SR Duty Ratio</h3>
+                    <p class="math-line">F<sub>duty</sub> = Q<sub>design</sub> / (P<sub>low-voltage</sub> · N<sub>SR</sub>)</p>
+                    <p>Checks whether one or more straight SR runs can satisfy heat delivery without treating duty ratio as fractional installed length.</p>
                 </article>
             </div>
         </section>

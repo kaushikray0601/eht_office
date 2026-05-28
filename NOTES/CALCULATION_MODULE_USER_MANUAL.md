@@ -51,6 +51,10 @@ The current SR calculation module includes:
 - Conduction-based heat-loss calculation with insulation conductivity evidence.
 - Heat-loss safety factor application.
 - SR vendor catalogue filtering and tracer selection.
+- Straight-run SR parallel selection up to the configured project cap, currently
+  no more than four runs.
+- Pipe-size guided constructability warnings for small-bore parallel SR
+  arrangements.
 - Voltage scenario handling for low-voltage heat delivery, nominal display, and
   high-voltage current checks.
 - Per-circuit current and breaker sizing.
@@ -74,6 +78,7 @@ The current SR calculation module does not yet include:
 - Full external convection and radiation heat-transfer calculation.
 - Integrated k(T) insulation conductivity solver.
 - Vendor or standard heat-loss table interpolation.
+- SR vendor curve-point interpolation as the primary power-output basis.
 - Multi-layer insulation thermal resistance.
 - Recalculation of load, BOQ, or cable size from manual SLD tracer overrides.
 - Three-phase MI star/delta circuiting.
@@ -544,6 +549,51 @@ Alternate tracer rows are available for review and SLD tracer override
 workflows. However, selecting an alternate in the SLD is currently review-only.
 It does not recalculate load, BOQ, cable schedule, or breaker sizing.
 
+### 9.6 Recent SR Straight-Run Closure Basis
+
+The current SR selector reflects a shift away from spiral-first design. The
+project setup still contains the legacy Allowed Spiral Factor field because
+some projects may permit spiral installation, but the intended default basis is
+straight tracing with Allowed Spiral Factor set to 1.0.
+
+The selector now evaluates SR heat delivery in this order:
+
+1. Filter catalogue rows by family, temperature, hazardous-area, gas group,
+   temperature class, and voltage compatibility.
+2. Calculate low-voltage heat-delivery power from the stored vendor polynomial.
+3. Try straight SR run counts from 1 up to the project cap.
+4. Reject a candidate only when the per-run duty ratio exceeds the allowed
+   limit or, where spiral wrap is disabled, exceeds 1.0.
+5. Keep the simplest acceptable run count for each catalogue row.
+6. Rank valid candidates by run count, ordered cable length, and power fit.
+
+There is no lower duty-ratio rejection for straight tracing. A duty ratio of
+0.70 does not mean 70 percent of a cable is installed. It means one full
+straight run has heat-delivery margin at the checked condition.
+
+The Max. SR parallel runs field is intentionally limited in the project setup
+UI to values 1 through 4. Server-side validation also enforces this range in
+case a browser payload is modified manually.
+
+### 9.7 SR Result, Export, and SLD Review Labels
+
+Recent result labels avoid presenting every SR duty calculation as a spiral
+instruction:
+
+- The result page shows SR Duty / Runs.
+- Result export includes both Spiral Factor and SR Duty Ratio for backward
+  readability while making the active interpretation clear.
+- Selected SR rows show SR parallel run count and constructability warnings.
+- The SLD tracer inspector shows selected tracer UID, SR duty ratio, SR run
+  count, SR run basis, current per circuit, line current, total load, and
+  constructability warning.
+- Selection diagnostics for `NO_SPIRAL_FACTOR_MATCH` include attempted run
+  counts, best available catalogue candidate, best per-run duty at the run cap,
+  and maximum heat delivery at the run cap.
+
+This makes SR calculation results reviewable before the cold-cable module uses
+the circuit count, current, and SLD topology as its input basis.
+
 ## 10. Circuit Current and Breaker Sizing
 
 The current electrical model calculates line-level currents first, then splits
@@ -572,6 +622,12 @@ For multiple straight SR runs in the current MVP, each physical SR run is
 treated as independently protected. Therefore two straight SR runs create two
 one-circuit branches, three straight runs create three branches, and so on.
 This is a conservative design basis for fault isolation and review clarity.
+
+This SR multi-run topology intentionally mirrors the clarity of the MI
+multi-set topology. It does not yet optimize grouped feeders or shared upstream
+field junction boxes. Those optimizations belong with the cold-cable sizing,
+voltage-drop, and panel-coordination module because they depend on cable size,
+route length, voltage drop, and protective-device coordination.
 
 ### 10.3 Breaker Size
 
@@ -759,7 +815,7 @@ The per-line table includes:
 - Selected tracer.
 - Heating cable type, normally SR or MI.
 - Tracer override status, if an SLD override exists.
-- Spiral factor.
+- SR duty ratio and SR straight-run count.
 - Breaker size.
 - Circuit count.
 - Operating and starting current per circuit.
@@ -785,6 +841,7 @@ The diagnostics table shows:
 - Selection status.
 - Primary rejection reason code.
 - Primary rejection message.
+- Reason evidence, including attempted SR run counts for heat-duty failures.
 
 This table is intended to prevent rejected lines from being missed.
 
@@ -991,12 +1048,18 @@ Reason code: `NO_SPIRAL_FACTOR_MATCH`
 
 Meaning:
 
-Candidate SR rows could not satisfy the configured spiral factor limits.
+Candidate SR rows could not satisfy the configured duty-ratio/run-count limits.
+For straight tracing, this usually means even the configured run count could not
+meet the required heat duty, or the project allowed duty/spiral limit is more
+restrictive than the available catalogue candidates.
 
 User actions:
 
 - Confirm that spiral wrap is allowed if project practice permits it.
 - Review Allowed Spiral Factor.
+- Review Max. SR parallel runs and the SR parallel run basis.
+- Review the diagnostic evidence showing attempted run counts and the best
+  available candidate at the configured run cap.
 - Review heat-loss safety factor.
 - Consider a higher-output tracer family if technically acceptable.
 - Review insulation thickness and heat-loss basis.
@@ -1032,7 +1095,8 @@ Before issuing a calculation package, review the following:
 9. MI Selection Records are reviewed where MI fallback is triggered.
 10. Design heat loss and base heat loss are reasonable.
 11. Selected tracer or MI heater family is acceptable for the service.
-12. Spiral factor is within installation practice for SR lines.
+12. SR duty ratio, straight-run count, and any constructability warning are
+    acceptable for the line size and installation practice.
 13. Current values are understood as per-circuit or per-heater-set values.
 14. Ordered SR length is understood to include termination allowance.
 15. MI heated length is understood to exclude cold leads.
@@ -1060,6 +1124,10 @@ MI automatic fallback, but users should understand these limitations:
 - Multi-layer insulation is not yet modeled.
 - Vendor catalogue completeness affects selection. A vendor dropdown value does
   not guarantee the required SR rows exist in the database.
+- SR power output is still primarily evaluated from stored A/B/C polynomial
+  coefficients in the existing catalogue. These coefficients are a fitted
+  engineering representation of vendor curves, not values normally published as
+  A/B/C constants by vendors. Table-based SR curve interpolation is deferred.
 - Blank vendor catalogue suitability fields are treated as non-blocking. This
   avoids false rejection of legacy catalogue rows, but users should curate
   catalogue data carefully for final design use.
