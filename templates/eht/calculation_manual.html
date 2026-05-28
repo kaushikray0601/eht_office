@@ -86,7 +86,7 @@
             <article>
                 <i class="bi bi-lightning-charge"></i>
                 <h2>SR With MI Fallback</h2>
-                <p>SR remains the default cable path. Validated MI catalogue data is used automatically when SR temperature limits are exceeded.</p>
+                <p>SR remains the default cable path, now with straight parallel runs before rejection. Validated MI catalogue data is used automatically when SR temperature limits are exceeded.</p>
             </article>
             <article>
                 <i class="bi bi-cpu"></i>
@@ -236,7 +236,7 @@
                 <article>
                     <i class="bi bi-bezier2"></i>
                     <h3>Generated SLD Baseline</h3>
-                    <p>Each calculated line produces topology data for circuits, protective devices, junction boxes, branches, heat-tracing feeders, and downstream connections.</p>
+                    <p>Each calculated line produces topology data for circuits, protective devices, junction boxes, branches, heat-tracing feeders, and downstream connections. SR multi-run and MI multi-set outputs are represented as independent protected branches.</p>
                 </article>
                 <article>
                     <i class="bi bi-intersect"></i>
@@ -246,7 +246,7 @@
                 <article>
                     <i class="bi bi-plug"></i>
                     <h3>Cold Cable Engineering</h3>
-                    <p>Cold cable and feeder quantities are driven by the active topology, circuit count, junction-box structure, and cable schedule assumptions, rather than a disconnected estimate.</p>
+                    <p>Cold cable and feeder quantities will use the active topology, circuit count, current, junction-box structure, and cable schedule assumptions, rather than a disconnected estimate.</p>
                 </article>
                 <article>
                     <i class="bi bi-boxes"></i>
@@ -271,6 +271,38 @@
                 <img class="manual-wide-image" src="{% static 'img/calculation-flow-map.svg' %}" alt="Overview diagram of the EHT calculation workflow">
                 <span><i class="bi bi-search"></i> Open engineering deep dive</span>
             </a>
+        </section>
+
+        <section class="manual-panel manual-engineering-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Recent engineering updates</p>
+                    <h2>What changed in the SR/MI closeout passes.</h2>
+                </div>
+                <p class="manual-section-note">These notes capture the latest behavior users will see in results, exports, diagnostics, and the SLD inspector.</p>
+            </div>
+            <div class="manual-engineering-grid">
+                <article>
+                    <span>SR</span>
+                    <h3>Straight Parallel Runs</h3>
+                    <p>SR selection now tries one to four straight runs, subject to the project cap. Pipe-size guidance creates review warnings for tight small-bore arrangements instead of hiding viable selections.</p>
+                </article>
+                <article>
+                    <span>MI</span>
+                    <h3>Temperature Fallback</h3>
+                    <p>MI remains automatic only when SR temperature suitability is exceeded. Selected MI output includes heater-set count, power, current, cold-lead data, and review-only T-class evidence.</p>
+                </article>
+                <article>
+                    <span>SLD</span>
+                    <h3>Inspector Evidence</h3>
+                    <p>Tracer nodes now expose the selected model, SR duty ratio, run count, per-circuit current, line current, total load, and constructability warning where applicable.</p>
+                </article>
+                <article>
+                    <span>Next</span>
+                    <h3>Cold Cable Dependency</h3>
+                    <p>Grouped feeders, voltage-drop optimization, cable size, panel loading, and JB terminal capacity are intentionally deferred to the cold-cable module.</p>
+                </article>
+            </div>
         </section>
 
         <section id="detailed-flow" class="manual-panel manual-deep-dive-section">

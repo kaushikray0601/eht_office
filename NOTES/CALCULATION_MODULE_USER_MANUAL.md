@@ -496,23 +496,23 @@ This separation is important because SR cable must deliver enough heat at low
 voltage, while maximum current and breaker sizing should be checked at the
 high-voltage condition.
 
-### 9.4 Power Output and Spiral Factor
+### 9.4 Power Output and SR Duty Ratio
 
 For each candidate tracer, the module calculates power output at the maintain
 temperature using the vendor polynomial:
 
-`Power = A*Maint_T^2 + B*Maint_T + C`
+`Power = A*Maint_T² + B*Maint_T + C`
 
 The heat-delivery power is voltage-corrected using the low-voltage scenario.
 
-Required spiral factor is calculated from:
+The legacy single-run heat-duty factor is calculated from:
 
-`Spiral Factor = Design Heat Loss / Low-Voltage Heat-Delivery Power`
+`Duty Factor = Design Heat Loss / Low-Voltage Heat-Delivery Power`
 
 For SR parallel tracing, the module tries straight run counts from 1 to the
 project cap, currently no more than 4:
 
-`Per-Run Duty Ratio = Spiral Factor / SR Parallel Run Count`
+`Per-Run Duty Ratio = Duty Factor / SR Parallel Run Count`
 
 The module requires this per-run duty ratio to be not greater than the project
 Allowed Spiral Factor. If spiral wrap is not allowed, the per-run duty ratio
@@ -577,8 +577,8 @@ case a browser payload is modified manually.
 
 ### 9.7 SR Result, Export, and SLD Review Labels
 
-Recent result labels avoid presenting every SR duty calculation as a spiral
-instruction:
+Recent result labels avoid presenting every SR duty calculation as a physical
+spiral instruction:
 
 - The result page shows SR Duty / Runs.
 - Result export includes both Spiral Factor and SR Duty Ratio for backward
@@ -587,6 +587,8 @@ instruction:
 - The SLD tracer inspector shows selected tracer UID, SR duty ratio, SR run
   count, SR run basis, current per circuit, line current, total load, and
   constructability warning.
+- SLD tracer nodes display the selected tracer model/UID rather than the
+  generic label "Heat Tracing Cable".
 - Selection diagnostics for `NO_SPIRAL_FACTOR_MATCH` include attempted run
   counts, best available catalogue candidate, best per-run duty at the run cap,
   and maximum heat delivery at the run cap.
@@ -628,6 +630,11 @@ multi-set topology. It does not yet optimize grouped feeders or shared upstream
 field junction boxes. Those optimizations belong with the cold-cable sizing,
 voltage-drop, and panel-coordination module because they depend on cable size,
 route length, voltage drop, and protective-device coordination.
+
+For SR parallel runs, the current values shown in the SLD inspector distinguish
+between per-circuit current and total line current. This distinction is
+important before the cold-cable module is developed because each straight run
+may become a separate protected feeder path.
 
 ### 10.3 Breaker Size
 
@@ -1296,12 +1303,88 @@ check:
 9. Panel loading/coordination is reviewed manually.
 10. BOQ quantities are checked before procurement use.
 
-## 23. Pending Activities and Phase Assignment
+## 23. SR Pass 19 Straight-Run Closure Record
+
+This section records the SR closeout basis after the recent SR parallel-run
+passes. It is included because it changes how users should read SR results,
+diagnostics, and SLD topology.
+
+### 23.1 Current Implemented Status
+
+The current implemented SR status is:
+
+- SR remains the default heating cable technology.
+- Project setup defaults to straight tracing with Allowed Spiral Factor set to
+  1.0.
+- The Max. SR parallel runs field is limited to values 1 through 4 in the user
+  interface and server-side validation.
+- The selector tries one straight run first, then two, three, and four where
+  permitted by the project cap.
+- The pipe-size guided setting creates constructability warnings for small-bore
+  lines when the selected run count exceeds the preferred value.
+- A low duty ratio is no longer treated as a rejection condition. One selected
+  straight run still means one full installed trace.
+- Selected SR rows persist SR run count, duty ratio, run basis, per-run tracer
+  length, and constructability warning.
+- SR parallel runs are represented as independent protected branches in the SLD
+  and power-distribution payload.
+- The result tab, Excel export, SLD inspector, and diagnostic table expose SR
+  duty/run evidence.
+- `NO_SPIRAL_FACTOR_MATCH` diagnostics now include attempted run counts and the
+  best available catalogue evidence at the configured run cap.
+
+### 23.2 Design Assumptions Made During SR Parallel-Run Passes
+
+| Area | Current assumption |
+| --- | --- |
+| Installation basis | Straight tracing is preferred. Spiral installation remains possible only when the project intentionally permits it. |
+| Maximum run count | The MVP supports up to four parallel SR runs. |
+| Small-bore guidance | Pipe-size guidance is a review warning, not a hard rejection, because unusual projects may intentionally accept tighter arrangements. |
+| Protection | Each straight SR run is modeled as independently protected for review clarity and fault isolation. |
+| Duty ratio | Duty ratio is heat-delivery evidence, not a command to install fractional cable length. |
+| Catalogue power basis | Existing SR power output still uses fitted A/B/C catalogue coefficients. |
+| Future SR data basis | Vendor curve-point interpolation is preferred for future hardening, with A/B/C retained as compatibility fallback. |
+| Feeder grouping | Upstream grouping and shared field-junction-box optimization are deferred to cold-cable engineering. |
+
+### 23.3 Known Limitations Specific to SR Parallel Runs
+
+Known SR limitations after Pass 19 are:
+
+- Parallel SR runs are electrically represented as independent protected
+  branches. The MVP does not yet optimize grouped feeders or shared upstream
+  distribution.
+- Physical installation space around small-bore pipe is not calculated.
+  Pipe-size guidance is a warning only.
+- The selected SR run count does not yet drive a detailed RTD/control-zone
+  model.
+- SR alternate override remains review-only and does not recalculate BOQ,
+  breaker size, current, or cable schedule.
+- SR power output is still based on fitted polynomial coefficients rather than
+  vendor-published curve-point interpolation.
+- Vendor-specific accessory allowances are not yet modeled.
+
+### 23.4 What Must Be Reviewed Before Issuing SR Parallel-Run Results
+
+Before issuing a calculation package containing multiple SR runs, the reviewer
+should check:
+
+1. Straight-run count is physically installable on the pipe size.
+2. Constructability warnings are resolved or accepted by project engineering.
+3. The selected SR model is acceptable for the temperature, area, gas group,
+   and project voltage.
+4. Per-circuit current and total line current are both understood.
+5. Independent breaker-per-run topology is acceptable for the project stage.
+6. Future cold-cable sizing will revisit feeder grouping, voltage drop, and
+   panel loading.
+7. BOQ quantity is understood as full straight-run cable length, including
+   termination allowance.
+
+## 24. Pending Activities and Phase Assignment
 
 The following backlog separates MVP-closeout items from future commercial
 product development.
 
-### 23.1 Priority P0 - Before External Issue of MI Results
+### 24.1 Priority P0 - Before External Issue of MI Results
 
 | Activity | Reason | Status |
 | --- | --- | --- |
@@ -1311,7 +1394,7 @@ product development.
 | Review physical JB/cold-lead capacity manually | Current schema cannot calculate terminal/gland capacity | Manual review required |
 | Review cold-cable voltage drop and panel loading manually | Next module not yet built | Manual review required |
 
-### 23.2 Priority P1 - Next Calculation Module
+### 24.2 Priority P1 - Next Calculation Module
 
 | Activity | Reason | Target phase |
 | --- | --- | --- |
@@ -1320,8 +1403,9 @@ product development.
 | Panel/load coordination summary | Needed for upstream electrical review | Next module |
 | Physical JB/cold-lead capacity data model | Needed before hard terminal-capacity gates can be honest | Next module / early follow-up |
 | Consume active SLD topology in cable sizing | Manual topology edits must affect cable quantities and sizing | Next module |
+| Consume SR/MI independent branch topology | Cold-cable sizing must respect the stabilized branch/circuit model | Next module |
 
-### 23.3 Priority P2 - MI Engineering Enhancements
+### 24.3 Priority P2 - MI Engineering Enhancements
 
 | Activity | Reason | Target phase |
 | --- | --- | --- |
@@ -1333,7 +1417,17 @@ product development.
 | Three-phase MI star/delta and star-point topology | Needed for advanced MI arrangements | MI phase 2+ |
 | Recalculate from MI SLD override | Convert review-only MI override into active design input | MI/SRD refinement |
 
-### 23.4 Priority P3 - Commercial Product Development
+### 24.4 Priority P2 - SR Engineering Enhancements
+
+| Activity | Reason | Target phase |
+| --- | --- | --- |
+| SR vendor curve-point interpolation | Replace fitted A/B/C as the primary SR power-output basis where source curve points exist | SR refinement |
+| Keep A/B/C polynomial as fallback | Preserve compatibility with existing catalogue rows during transition | SR refinement |
+| Vendor-specific accessory adders | Improve valve/flange/support heat-tracing quantity evidence | SR refinement |
+| SR control zoning | Needed for long lines or lines with meaningful temperature variation | SR phase 2 |
+| Recalculate from SR SLD override | Convert review-only alternate tracer choice into active design input | SR refinement |
+
+### 24.5 Priority P3 - Commercial Product Development
 
 | Activity | Reason | Target phase |
 | --- | --- | --- |
@@ -1344,7 +1438,7 @@ product development.
 | 3D model/cable-routing integration | Connect IDF/PCF/IFC/NWD context to design review and routing | Platform expansion |
 | Advanced heat-transfer models | Add convection/radiation, integrated k(T), and multilayer insulation | Calculation expansion |
 
-## 24. Glossary
+## 25. Glossary
 
 | Term | Meaning |
 | --- | --- |
@@ -1356,7 +1450,9 @@ product development.
 | Design heat loss | Heat loss after applying heat-loss safety factor. Used for tracer selection. |
 | Heat-loss safety factor | Project factor applied to base heat loss. |
 | Conductivity method | Basis used to evaluate insulation conductivity. |
-| Spiral factor | Ratio of required heat loss to available tracer heat output. |
+| Spiral factor | Legacy project limit used to compare required heat against available SR heat delivery. In the straight-run workflow it is read as an allowed duty limit unless spiral installation is explicitly permitted. |
+| SR duty ratio | Required heat loss divided by available low-voltage SR heat delivery after considering the selected SR run count. |
+| SR parallel run | Additional full-length straight SR trace installed along the same process line, currently modeled as an independently protected branch. |
 | Heated tracer length | Tracer length used for heat delivery, including design length margin but excluding termination allowance. |
 | Ordered SR length | Total SR cable quantity including termination allowance. |
 | Termination allowance | Installation allowance added per circuit, excluded from heat delivery and current. |
