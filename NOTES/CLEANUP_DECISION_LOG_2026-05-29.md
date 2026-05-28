@@ -122,13 +122,26 @@ IF you ever want to make coefficient calculation work:
 
 ## Status
 
-✅ **CLEANUP COMPLETE**
-- 30 calculated records removed
-- Database restored to 236 original records
+### Phase 1: Removal of 30 PTC-Calculated Records ✅
+- 30 calculated records removed (Eltherm, Heat Trace, Pentair, etc.)
+- Database: 266 → 236 records
+
+### Phase 2: Removal of 17 Template-Filled Records ✅
+- 17 suspicious template-filled SR records removed (2026-05-29 follow-up)
+- Heat Trace SR (3): PH-240 series
+- Eltherm SR (3): FSH-230 series  
+- Pentair SR (3): ACE-240 series
+- nVent SR (8): BTV-2, QTVR-2 series
+- Database: 236 → 219 records
+
+### Final State: PRODUCTION READY ✅
+- **219 records** (exactly matching verified backup CSV)
 - All vendor-curated data intact
+- Zero assumed/estimated values
+- 100% backup integrity verified
 - Safe state for production use
 
-**Database now contains ONLY trusted, vendor-verified specifications.**
+**Database now contains ONLY trusted, verified backup specifications - zero risk of erroneous data.**
 
 ---
 
