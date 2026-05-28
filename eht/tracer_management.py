@@ -16,7 +16,7 @@ def _rounded_or_blank(value):
     if value in (None, ''):
         return ''
     try:
-        return round(float(value), 3)
+        return round(float(value), 2)
     except (TypeError, ValueError):
         return value
 
@@ -61,6 +61,17 @@ def _mi_option_payload(mi_result, option_rank=None):
     if option_rank is not None:
         payload['option_rank'] = option_rank
     return payload
+
+
+def _tracer_display_label(selected_payload, mi_result=None):
+    if selected_payload.get('option_kind') == 'MI':
+        return selected_payload.get('heater_part_number') or selected_payload.get('v_uid') or 'MI tracer'
+    if selected_payload.get('v_uid'):
+        return selected_payload['v_uid']
+    if mi_result and mi_result.selection_status == 'selected':
+        heater = mi_result.heater
+        return heater.part_number if heater else 'MI tracer'
+    return ''
 
 
 def _heat_loss_payload(heat_loss):
@@ -180,7 +191,9 @@ def apply_tracer_selection_to_payload(project_id, payload):
                 None,
             )
         selected_payload = active_payload or (
-            _tracer_option_payload(selected) if selected else {}
+            _mi_option_payload(mi_result) if mi_result and mi_result.selection_status == 'selected'
+            else _tracer_option_payload(selected) if selected
+            else {}
         )
         calculation = calculation_by_line_uid.get(line_uid)
         heat_loss = heat_loss_by_line_uid.get(line_uid)
@@ -200,6 +213,10 @@ def apply_tracer_selection_to_payload(project_id, payload):
             'electrical': _calculation_payload(calculation, selected),
         }
         node['metadata'] = metadata
+        display_label = _tracer_display_label(selected_payload, mi_result=mi_result)
+        if display_label:
+            node['display_name'] = display_label
+            node['label'] = display_label
     return payload
 
 

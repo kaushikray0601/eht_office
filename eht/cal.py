@@ -134,9 +134,10 @@ def _append_mi_electrical_outputs(aggregated_results, line, project_settings, as
         pipe_size_mm=power_params["pipe_size_mm"],
         is_process_temp_controlled=line["service_type"] == "EP",
     )
-    boq["MI_HEATER_SET"] = 1
-    boq["MI_HEATED_LENGTH"] = power_params["heated_tracer_length"]
-    boq["MI_COLD_LEAD_LENGTH"] = float(mi_result.get("cold_lead_length_m") or 0.0)
+    heater_set_count = int(mi_result.get("heater_set_count") or power_params.get("heater_set_count") or 1)
+    boq["MI_HEATER_SET"] = heater_set_count
+    boq["MI_HEATED_LENGTH"] = power_params.get("total_heated_tracer_length", power_params["heated_tracer_length"])
+    boq["MI_COLD_LEAD_LENGTH"] = float(mi_result.get("cold_lead_length_m") or 0.0) * heater_set_count
 
     line_uid = line["uid"]
     aggregated_results["boq_per_line"][line_uid] = boq

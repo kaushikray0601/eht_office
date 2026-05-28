@@ -7,6 +7,7 @@ from eht.calculations.tag_management import ProjectTagFactory, build_connection
 SR_PER_CIRCUIT_BREAKER_RULE_SET = 'SR_PER_CIRCUIT_BREAKER_SIZING_V1'
 SR_TERMINATION_MARGIN_RULE_SET = 'SR_TERMINATION_MARGIN_INSTALLATION_ALLOWANCE_V1'
 MI_SINGLE_HEATER_BREAKER_RULE_SET = 'MI_SINGLE_HEATER_BREAKER_SIZING_MVP_V1'
+MI_MULTI_HEATER_BREAKER_RULE_SET = 'MI_MULTI_HEATER_SET_BREAKER_SIZING_MVP_V1'
 BREAKER_SIZES = [2, 4, 6, 10, 16, 20, 25, 32, 40]
 
 
@@ -133,12 +134,7 @@ def _pipe_size_mm(line, asme_data):
 
 
 def compute_mi_power_params(line, project_settings, asme_data, selected_mi_heater):
-    """Build panel-loading parameters for one selected MI heater set.
-
-    Pass 7 intentionally treats one selected MI heater as one electrical
-    circuit. Splitting one MI line into multiple heater sets needs a separate
-    catalogue/optimization pass, so this function never invents extra circuits.
-    """
+    """Build panel-loading parameters for selected MI heater set(s)."""
     try:
         voltage = float(project_settings['voltage'])
         max_cb_size = float(project_settings['max_cb_size'])
@@ -146,31 +142,37 @@ def compute_mi_power_params(line, project_settings, asme_data, selected_mi_heate
         if restricted_loading_factor <= 0:
             raise ValueError("Maximum breaker loading restriction must be positive.")
 
-        line_operating_current = float(selected_mi_heater.get('current_nominal_a') or 0.0)
-        line_maximum_current = float(selected_mi_heater.get('current_cold_start_a') or line_operating_current)
-        required_breaker_current = line_maximum_current / restricted_loading_factor
+        heater_set_count = max(1, int(selected_mi_heater.get('heater_set_count') or 1))
+        per_set_operating_current = float(selected_mi_heater.get('current_nominal_a') or 0.0)
+        per_set_maximum_current = float(selected_mi_heater.get('current_cold_start_a') or per_set_operating_current)
+        line_operating_current = per_set_operating_current * heater_set_count
+        line_maximum_current = per_set_maximum_current * heater_set_count
+        required_breaker_current = per_set_maximum_current / restricted_loading_factor
         breaker_size = _select_breaker_size(required_breaker_current, max_cb_size)
         operating_load = float(selected_mi_heater.get('power_nominal_w') or (line_operating_current * voltage))
         heated_length_m = float(selected_mi_heater.get('heated_length_m') or line.get('line_length') or 0.0)
+        total_heated_length_m = heated_length_m * heater_set_count
 
         return {
             'uid': line['uid'],
             'line_id': line.get('line_id', str(line['uid'])),
             'project_id': project_settings.get('proj_id'),
-            'calculation_basis': 'MI_SINGLE_HEATER_MVP',
+            'calculation_basis': 'MI_MULTI_HEATER_SET_MVP' if heater_set_count > 1 else 'MI_SINGLE_HEATER_MVP',
             'selected_tracer': selected_mi_heater.get('heater_part_number', 'MI heater'),
             'tracer_family': 'MI',
-            'no_of_circuits': 1,
+            'heater_set_count': heater_set_count,
+            'no_of_circuits': heater_set_count,
             'breaker_size': breaker_size,
-            'operating_current': line_operating_current,
-            'max_current': line_maximum_current,
+            'operating_current': per_set_operating_current,
+            'max_current': per_set_maximum_current,
             'line_operating_current': line_operating_current,
             'line_max_current': line_maximum_current,
-            'per_circuit_operating_current': line_operating_current,
-            'per_circuit_max_current': line_maximum_current,
+            'per_circuit_operating_current': per_set_operating_current,
+            'per_circuit_max_current': per_set_maximum_current,
             'operating_load': operating_load,
-            'total_tracer_length': heated_length_m,
+            'total_tracer_length': total_heated_length_m,
             'heated_tracer_length': heated_length_m,
+            'total_heated_tracer_length': total_heated_length_m,
             'termination_margin_length': 0.0,
             'termination_margin_per_circuit_m': 0.0,
             'termination_margin_basis': {
@@ -178,12 +180,13 @@ def compute_mi_power_params(line, project_settings, asme_data, selected_mi_heate
                 'semantics': 'factory_terminated_mi_heater_set_no_sr_field_termination_allowance',
             },
             'breaker_sizing': {
-                'rule_set': MI_SINGLE_HEATER_BREAKER_RULE_SET,
+                'rule_set': MI_MULTI_HEATER_BREAKER_RULE_SET if heater_set_count > 1 else MI_SINGLE_HEATER_BREAKER_RULE_SET,
                 'max_cb_size': max_cb_size,
                 'restricted_loading_factor': restricted_loading_factor,
                 'allowed_current_per_circuit': max_cb_size * restricted_loading_factor,
                 'required_breaker_current': required_breaker_current,
-                'single_heater_set': True,
+                'single_heater_set': heater_set_count == 1,
+                'heater_set_count': heater_set_count,
             },
             'voltage_scenarios': {
                 'operating_voltage': voltage,
@@ -198,6 +201,25 @@ def compute_mi_power_params(line, project_settings, asme_data, selected_mi_heate
 def _upstream_connection_chain(components):
     chain = [component for component in components if component]
     return [build_connection(chain[index], chain[index + 1]) for index in range(len(chain) - 1)]
+
+
+def _mi_heater_set_metadata(power_params, heater_set_index):
+    if power_params.get('tracer_family') != 'MI':
+        return {}
+
+    heater_set_count = int(power_params.get('heater_set_count') or power_params.get('no_of_circuits') or 1)
+    return {
+        'heating_cable_type': 'MI',
+        'mi_group_id': f"{power_params.get('project_id') or 'project'}:{power_params.get('uid')}:MI:{power_params.get('selected_tracer')}",
+        'mi_heater_part_number': power_params.get('selected_tracer'),
+        'mi_heater_set_index': heater_set_index,
+        'mi_heater_set_count': heater_set_count,
+        'mi_independent_protection': True,
+        'per_set_operating_current': power_params.get('operating_current'),
+        'per_set_max_current': power_params.get('max_current'),
+        'line_operating_current': power_params.get('line_operating_current'),
+        'line_max_current': power_params.get('line_max_current'),
+    }
 
 
 def compute_power_distribution(power_params, project_settings, tag_factory=None):
@@ -226,11 +248,12 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
     line_uid = power_params["uid"]
     line_id = power_params.get("line_id", str(line_uid))
     branch_index = 0
+    mi_independent_sets = power_params.get('tracer_family') == 'MI'
 
     # Process circuits in batches of 3
     while remaining_circuits > 0:
         branch_index += 1
-        circuits_in_this_batch = min(3, remaining_circuits)
+        circuits_in_this_batch = 1 if mi_independent_sets else min(3, remaining_circuits)
         remaining_circuits -= circuits_in_this_batch
 
         branch_type = "3phJB" if circuits_in_this_batch > 1 else "1phJB"
@@ -239,6 +262,7 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
             else "2x 1phJB" if circuits_in_this_batch == 2
             else "Tracer"
         )
+        mi_metadata = _mi_heater_set_metadata(power_params, branch_index)
 
         tagged_components = {
             "schema_version": 1,
@@ -246,6 +270,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
             "Downstream": [],
             "connections": [],
         }
+        if mi_metadata:
+            tagged_components["heating_cable_type"] = "MI"
+            tagged_components["mi_group_id"] = mi_metadata["mi_group_id"]
+            tagged_components["mi_heater_set_index"] = mi_metadata["mi_heater_set_index"]
+            tagged_components["mi_heater_set_count"] = mi_metadata["mi_heater_set_count"]
 
         mcb_component = tag_factory.create_component(
             "MCB",
@@ -261,6 +290,7 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 "line_operating_current": power_params.get("line_operating_current"),
                 "breaker_sizing": power_params.get("breaker_sizing", {}),
                 "branch_type": branch_type,
+                **mi_metadata,
             },
         )
         tagged_components["MCB"] = mcb_component["display_tag"]
@@ -285,6 +315,7 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 metadata={
                     "length_m": project_settings["ckt_ln"],
                     "cable_role": "MCB_TO_JB3PH",
+                    **mi_metadata,
                 },
             )
             tagged_components["Cable4C"] = cable4c_component["display_tag"]
@@ -298,7 +329,7 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                     line_id=line_id,
                     branch_index=branch_index,
                     sequence_index=3,
-                    metadata={"location": "incoming"},
+                    metadata={"location": "incoming", **mi_metadata},
                 )
                 tagged_components["Isolator3PH"] = isolator_3ph_component["display_tag"]
                 tagged_components["component_details"]["Isolator3PH"] = isolator_3ph_component
@@ -311,7 +342,7 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 line_id=line_id,
                 branch_index=branch_index,
                 sequence_index=4,
-                metadata={"circuit_count": circuits_in_this_batch},
+                metadata={"circuit_count": circuits_in_this_batch, **mi_metadata},
             )
             tagged_components["JB3PH"] = jb3ph_component["display_tag"]
             tagged_components["component_details"]["JB3PH"] = jb3ph_component
@@ -342,6 +373,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
             downstream_components = []
 
             if isolator_setting in ['bothSides', 'outgoingOnly']:
+                downstream_metadata = (
+                    {**mi_metadata, "mi_heater_set_index": branch_index}
+                    if mi_metadata
+                    else {}
+                )
                 isolator_1ph_component = tag_factory.create_component(
                     "Isolator1PH",
                     line_uid=line_uid,
@@ -349,7 +385,7 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                     branch_index=branch_index,
                     sequence_index=5,
                     circuit_index=circuit_index,
-                    metadata={"location": "outgoing"},
+                    metadata={"location": "outgoing", **downstream_metadata},
                 )
                 downstream["Isolator1PH"] = isolator_1ph_component["display_tag"]
                 downstream_details["Isolator1PH"] = isolator_1ph_component
@@ -365,6 +401,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 metadata={
                     "length_m": cable_length_to_jb,
                     "cable_role": "JB_TO_1PHJB" if branch_type == "3phJB" else "MCB_TO_1PHJB",
+                    **(
+                        {**mi_metadata, "mi_heater_set_index": branch_index}
+                        if mi_metadata
+                        else {}
+                    ),
                 },
             )
             downstream["Cable3C"] = cable3c_component["display_tag"]
@@ -378,7 +419,14 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 branch_index=branch_index,
                 sequence_index=7,
                 circuit_index=circuit_index,
-                metadata={"branch_type": branch_type},
+                metadata={
+                    "branch_type": branch_type,
+                    **(
+                        {**mi_metadata, "mi_heater_set_index": branch_index}
+                        if mi_metadata
+                        else {}
+                    ),
+                },
             )
             downstream["JB1PH"] = jb1ph_component["display_tag"]
             downstream_details["JB1PH"] = jb1ph_component
@@ -391,6 +439,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 branch_index=branch_index,
                 sequence_index=8,
                 circuit_index=circuit_index,
+                metadata=(
+                    {**mi_metadata, "mi_heater_set_index": branch_index}
+                    if mi_metadata
+                    else None
+                ),
             )
             downstream["Tracer"] = tracer_component["display_tag"]
             downstream_details["Tracer"] = tracer_component
@@ -403,6 +456,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
                 branch_index=branch_index,
                 sequence_index=9,
                 circuit_index=circuit_index,
+                metadata=(
+                    {**mi_metadata, "mi_heater_set_index": branch_index}
+                    if mi_metadata
+                    else None
+                ),
             )
             downstream["EndTermination"] = end_term_component["display_tag"]
             downstream_details["EndTermination"] = end_term_component

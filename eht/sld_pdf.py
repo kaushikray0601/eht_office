@@ -129,7 +129,9 @@ def _body_label(node):
     if component_type == 'JB1PH':
         return '1PH JB'
     if component_type == 'Tracer':
-        return 'Heat Tracing Cable'
+        tracer_selection = metadata.get('tracer_selection') or {}
+        selected = tracer_selection.get('selected') or {}
+        return selected.get('heater_part_number') or selected.get('v_uid') or node.get('display_name') or 'Heat Trace'
     if component_type == 'EndTermination':
         return 'End Termination'
     return node.get('display_name') or component_type or ''

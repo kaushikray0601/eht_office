@@ -530,3 +530,148 @@ Implemented:
 Observed manual-test implication:
 
 - If MI catalogue rows exist but are not marked `is_validated=True`, automatic MI fallback correctly rejects the line. The user should now see that the blocker is catalogue validation, not a mysterious zero-output design.
+
+## Pass 16 Catalogue Readiness and MVP Activation
+
+Pass 16 focuses on the user-facing MVP path: uploaded high-temperature line-list rows should be able to produce selected MI output when reviewed catalogue data is present.
+
+Implemented:
+
+- Added MI catalogue readiness checks in code. The readiness gate blocks validation when essential MVP data is missing: source document, family limits, heater rows, heater resistance/current, conductor material, TCR, cold-lead options, or cold-lead length.
+- Kept known engineering refinements as warnings rather than MVP blockers: cold-lead resistance and ampacity remain unavailable in the current schema/data shape and are explicitly logged for later passes.
+- Added `mi_catalogue_readiness` management command. It reports ready/blocked MI families and can mark readiness-passing families as validated only when called with `--mark-validated --confirm-reviewed`.
+- Registered MI catalogue and MI result models in Django admin so a project/admin user can inspect families, heaters, cold-lead options, alloy factors, and selected MI snapshots.
+- Added admin actions to mark readiness-passing MI families validated, and to mark families not validated again if a catalogue issue is found.
+- Ran `populate_mi_catalogue --update` against the working database through Django shell. The working DB now has 3 MI families, 72 heaters, 177 cold-lead options, populated conductor material, and populated TCR values.
+- Ran readiness activation against the working DB. Thermon MIQ, nVent XMI-A62, and Chromalox MI-825B are now `is_validated=True`.
+
+Working DB smoke result:
+
+- A representative high-temperature line similar to the manual upload shape can now select MI heaters for all three loaded vendors.
+- Example Thermon result for a 70.95 m line at 350°C design temperature and 40 W/m heat loss: selected `MIQ-31E2H-2S`, about 42.62 W/m, about 13.15 A nominal.
+
+Deferred refinements logged:
+
+- Add per-cold-lead ampacity and resistance to `MIColdLeadOption`.
+- Add per-heater maximum heated length.
+- Add vendor worked-example benchmark tests.
+- Decide whether `MIAlloyTempFactor` should remain as a curve-table fallback or be removed after linear TCR proves sufficient.
+
+## Pass 16 User-Facing Multi-Set MI Output Fix
+
+The first real high-temperature upload test exposed an important MVP gap. The catalogue was populated, validated, and wired correctly, but the selector was only considering one MI heater set per line. For the tested 30-inch lines, a single heater set could not satisfy both heat delivery and per-circuit current loading. Higher-output single sets exceeded the allowed current; lower-current sets under-delivered heat.
+
+Implemented:
+
+- Added bounded identical multi-set MI selection for the MVP. If one validated heater/cold-lead option passes all non-heat checks but under-delivers heat, the selector can choose multiple identical factory heater sets up to `MAX_MI_HEATER_SETS_MVP`.
+- Kept electrical protection per heater set. The project breaker loading check is still applied to each set/circuit, not to the combined line current.
+- Kept family watt-density checking per heater set. Aggregate line heat delivery is now represented by `heater_set_count × per-set output`, not incorrectly rejected against a per-cable watt-density rating.
+- Updated MI power distribution so multiple MI heater sets become multiple generated circuits and feed the existing branch/SLD/BOQ path.
+- Updated BOQ and result export to show MI heater set count and total heated MI length.
+- Updated result-page labels to show MI set count and per-set current basis.
+
+Working DB smoke result:
+
+- The uploaded sample lines `1__1-PS-A` and `2__1-PS-B` now select Thermon `MIQ-31E4H-2S`.
+- Each line uses 3 heater sets / 3 circuits.
+- Cold-start current remains below the project 20 A per-circuit loading limit for the 25 A breaker at 80% loading.
+
+Deferred refinements remain:
+
+- Optimize mixed MI heater combinations instead of only identical heater sets.
+- Add three-phase MI/circuiting logic.
+- Promote SLD MI override choices into recalculated output instead of review-only annotation.
+- Add vendor worked-example validation once externally checked examples are available.
+
+## Pass 17 Independent MI Heater-Set Protection
+
+Pass 17 closes the power-distribution gap identified after Pass 16. Multi-set MI selection remains an identical-heater-set MVP, but the generated electrical topology no longer groups those sets under an SR-style shared 3PH branch.
+
+Implemented:
+
+- `compute_power_distribution()` now treats MI heater sets as independently protected branches. For `heater_set_count = N`, it emits `N` one-circuit `1phJB` branches instead of one grouped `3phJB` branch.
+- Each MI branch has its own generated MCB path. Breaker sizing remains based on per-set cold-start current and project loading restriction.
+- MI branch/component metadata now carries:
+  - `heating_cable_type = MI`
+  - `mi_group_id`
+  - `mi_heater_part_number`
+  - `mi_heater_set_index`
+  - `mi_heater_set_count`
+  - `mi_independent_protection = True`
+  - per-set and total line current evidence
+- The SLD payload now receives technically accurate MI topology: separate MCB nodes for each heater set, no generated 3PH-JB grouping for multi-set MI.
+- BOQ and cable-schedule derivation benefit from the corrected branch shape: multi-set MI now counts one MCB/JB1PH/end termination per heater set.
+
+Working DB smoke result after recalculating `p1`:
+
+- `1__1-PS-A` selects Thermon `MIQ-31E4H-2S`, 3 heater sets, 3 independent `1phJB` branches, 3 MCBs.
+- `2__1-PS-B` selects Thermon `MIQ-31E4H-2S`, 3 heater sets, 3 independent `1phJB` branches, 3 MCBs.
+
+Deferred:
+
+- Visual grouping/bracketing of related MI set branches in the SLD canvas.
+- Line zoning with zone-specific length, control sensor, and alarm behavior.
+- Grouped control/RTD philosophy over multiple independently protected MI branches.
+- Mixed heater optimization remains intentionally deferred.
+
+## Pass 18 MI MVP Closeout Basis
+
+Pass 18 is a convergence pass, not another expansion of MI architecture.
+
+The accepted MVP basis is:
+
+- SR remains the default technology path.
+- MI is triggered automatically only when SR catalogue temperature limits are
+  exceeded for a line.
+- Validated MI catalogue rows are mandatory. The selector will not use
+  unvalidated MI family data.
+- A selected MI heater is treated as a factory heater set with a selected cold
+  lead option.
+- If one heater set cannot deliver the required heat within per-set breaker and
+  watt-density limits, the MVP may select multiple identical heater sets.
+- Each MI heater set is independently protected. A multi-set MI selection
+  therefore becomes multiple one-circuit branches, each with its own MCB path.
+- The SLD displays the selected MI heater part number and the branch metadata
+  carries MI group/set evidence.
+- Result/export wording describes MI current as per heater set and separates MI
+  heated length from cold-lead length.
+
+The following statements are deliberately not claimed:
+
+- The MI output is not yet benchmarked against an approved vendor design
+  program output.
+- The `review` T-class verdict is not a calculated sheath-temperature approval.
+- Remaining energized heater sets after one trip are continuity evidence, not a
+  guaranteed N-1 thermal design unless a future design basis explicitly sizes
+  for that condition.
+- The current SLD topology represents independent electrical protection. It
+  does not yet optimize the physical consolidation of MI cold leads into shared
+  junction boxes.
+- Physical JB terminal capacity, gland count, cold-cable sizing, panel
+  coordination, and voltage-drop optimization are deferred to later modules.
+
+Research-note triage:
+
+- Claude's Pass 17/18 research supports the independent-protection direction,
+  and that direction is accepted.
+- The research wording that says the current architecture is "production-grade"
+  or "matches all vendor tools exactly" is too strong for our documentation
+  until real worked examples are checked.
+- Cold-lead terminal capacity is a real engineering consideration, but the
+  current `MIColdLeadOption` model stores length only. It would be technically
+  misleading to add a hard terminal-capacity gate before conductor count,
+  terminal count, gland count, and JB capacity data are modeled.
+
+Pass 18 user-facing output now records these assumptions on the result page and
+in the Excel export so reviewers can see what the MVP has calculated and what
+still requires engineering review.
+
+Next module handoff:
+
+- The next major calculation module should be cold cable sizing and voltage
+  drop optimization.
+- That module should consume the stabilized SR/MI power-distribution and SLD
+  topology rather than re-derive heater loads from scratch.
+- Physical JB consolidation and terminal-capacity checks should be designed
+  together with cold cable/JB engineering rather than bolted onto MI selection
+  as isolated flags.

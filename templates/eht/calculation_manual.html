@@ -33,8 +33,8 @@
                 <h1>EHT Design Guide &amp; Calculation Manual</h1>
                 <p class="manual-lede">
                     A technical guide for the calculation workflow: project design basis, input validation,
-                    heat-loss evidence, cable technology selection, electrical sizing, diagnostics, reports,
-                    SLD output, and the future MI and 3D model integration path.
+                    heat-loss evidence, SR selection, automatic MI fallback, electrical sizing, diagnostics,
+                    reports, SLD output, and the model-aware engineering roadmap.
                 </p>
                 <div class="manual-hero-actions">
                     <a href="#manual-reader" class="manual-primary-action">
@@ -85,8 +85,8 @@
             </article>
             <article>
                 <i class="bi bi-lightning-charge"></i>
-                <h2>SR Today, MI Next</h2>
-                <p>The current implemented cable technology is SR. MI cable will be developed as a separate calculation module with its own design basis.</p>
+                <h2>SR With MI Fallback</h2>
+                <p>SR remains the default cable path. Validated MI catalogue data is used automatically when SR temperature limits are exceeded.</p>
             </article>
             <article>
                 <i class="bi bi-cpu"></i>
@@ -100,13 +100,45 @@
             </article>
         </section>
 
+        <section class="manual-panel manual-engineering-section">
+            <div class="manual-section-heading">
+                <div>
+                    <p class="manual-kicker">Current release state</p>
+                    <h2>SR production path with bounded MI fallback.</h2>
+                </div>
+                <p class="manual-section-note">This status board is intentionally plain: it separates implemented behavior from assumptions and deferred engineering work.</p>
+            </div>
+            <div class="manual-engineering-grid">
+                <article>
+                    <span>01</span>
+                    <h3>Implemented Now</h3>
+                    <p>SR remains the default. High-temperature lines can automatically fall back to validated MI heater sets, including identical multi-set MI output with independent protection per set.</p>
+                </article>
+                <article>
+                    <span>02</span>
+                    <h3>MI Review Basis</h3>
+                    <p>MI records carry catalogue validation, TCR correction, cold-lead option, per-set current, T-class review status, BOQ quantities, and SLD metadata.</p>
+                </article>
+                <article>
+                    <span>03</span>
+                    <h3>Not Yet Claimed</h3>
+                    <p>The MVP does not yet claim vendor-tool benchmark agreement, calculated MI sheath temperature, physical JB terminal capacity, panel coordination, or voltage-drop compliance.</p>
+                </article>
+                <article>
+                    <span>04</span>
+                    <h3>Next Module</h3>
+                    <p>Cold cable sizing and voltage-drop optimization are the next major calculation module because they consume the stabilized SR/MI topology and connected-load evidence.</p>
+                </article>
+            </div>
+        </section>
+
         <section id="formula-reference" class="manual-panel manual-formula-section">
             <div class="manual-section-heading">
                 <div>
                     <p class="manual-kicker">Calculation basis</p>
                     <h2>Formula reference and calculation evidence trail.</h2>
                 </div>
-                <p class="manual-section-note">These guide cards summarize the active SR calculation basis; the detailed assumptions and limitations remain in the manual below.</p>
+                <p class="manual-section-note">These guide cards summarize the active calculation basis; the detailed SR and MI assumptions remain in the manual below.</p>
             </div>
             <div class="manual-formula-grid">
                 <article>

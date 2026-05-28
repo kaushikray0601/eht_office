@@ -75,6 +75,14 @@ MAX_FAILED_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
+MI_MVP_RESULT_BASIS_NOTES = [
+    'Automatic MI fallback is used only when SR catalogue temperature limits are exceeded.',
+    'Each MI heater set is treated as an independently protected branch with its own breaker.',
+    'Single-point/shared temperature sensing is assumed for this MVP output; final RTD placement remains an engineering review item.',
+    'MI T-class status remains design-review evidence, not a calculated sheath-temperature approval.',
+    'Physical JB terminal capacity, cold-cable sizing, panel coordination, and voltage-drop optimization are deferred to the next engineering modules.',
+]
+
 PROJECT_DATA_TEMPLATE_FIELDS = [
     'min_amb_t',
     'max_amb_t',
@@ -508,6 +516,11 @@ def _build_result_workspace_data(project_id):
         'mi_fallback_count': sum(1 for item in mi_result_rows if item.selection_status == 'selected'),
         'mi_alternative_count': sum(1 for item in mi_result_rows if item.selection_status == 'available_alternative'),
         'mi_rejected_count': sum(1 for item in mi_result_rows if item.selection_status == 'rejected'),
+        'mi_multi_set_count': sum(
+            1
+            for item in mi_result_rows
+            if item.selection_status == 'selected' and (item.selection_basis or {}).get('heater_set_count', 1) > 1
+        ),
     }
     summary = apply_active_summary_overrides(
         project_id,
@@ -563,6 +576,25 @@ def _line_heating_length_basis(item):
     if _line_heater_type(item) == 'MI':
         return 'MI heated length excludes cold leads and factory terminations'
     return 'Ordered SR length includes termination installation allowance'
+
+
+def _mi_export_design_basis_notes(mi_result):
+    if not mi_result:
+        return ''
+    basis = mi_result.selection_basis or {}
+    notes = [
+        'Automatic MI fallback after SR temperature-limit exceedance'
+        if basis.get('selection_mode') == 'automatic_temperature_fallback'
+        else 'MI candidate stored for engineering review',
+        'Independent breaker per MI heater set',
+        'Shared sensing assumed; RTD location requires project review',
+        'T-class requires design review; no calculated sheath-temperature approval yet',
+        'JB terminal capacity, cold cable, panel coordination, and voltage drop are deferred checks',
+    ]
+    heater_set_count = basis.get('heater_set_count')
+    if heater_set_count and heater_set_count > 1:
+        notes.insert(1, f'{heater_set_count} identical heater sets selected for aggregate heat delivery')
+    return '; '.join(notes)
 
 
 MI_REJECTION_ACTION_HINTS = {
@@ -707,6 +739,7 @@ def result_view(request):
         'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
         'result_summary': summary,
+        'mi_mvp_basis_notes': MI_MVP_RESULT_BASIS_NOTES if summary.get('mi_result_count') else [],
         'has_results': bool(line_results or selection_issue_rows or mi_result_rows),
     })
     return render(request, 'eht/partials/result_tab.html', context)
@@ -1725,6 +1758,10 @@ def result_export_view(request):
         selected_tracer = item['selected_tracer']
         tracer_override = item.get('tracer_override')
         tracer_override_alternate = item.get('tracer_override_alternate')
+        selected_mi_heater = item.get('selected_mi_heater')
+        mi_basis = selected_mi_heater.selection_basis if selected_mi_heater else {}
+        mi_heater_set_count = mi_basis.get('heater_set_count', 1) if mi_basis else ''
+        mi_design_basis_notes = _mi_export_design_basis_notes(selected_mi_heater)
         heater_type = _line_heater_type(item)
         heating_cable_length = _line_heating_cable_length_m(item)
         heating_length_basis = _line_heating_length_basis(item)
@@ -1778,22 +1815,24 @@ def result_export_view(request):
             ),
             'Tracer Length Basis': heating_length_basis,
             'Pipe Size mm': calculation.pipe_size_mm if calculation else '',
-            'MI Candidate Status': item.get('selected_mi_heater').selection_status if item.get('selected_mi_heater') else '',
+            'MI Candidate Status': selected_mi_heater.selection_status if selected_mi_heater else '',
             'MI Heater Part Number': (
-                item.get('selected_mi_heater').heater.part_number
-                if item.get('selected_mi_heater') and item.get('selected_mi_heater').heater
+                selected_mi_heater.heater.part_number
+                if selected_mi_heater and selected_mi_heater.heater
                 else ''
             ),
+            'MI Heater Set Count': mi_heater_set_count,
             'MI Cold Lead Option': (
-                item.get('selected_mi_heater').cold_lead_option_code
-                if item.get('selected_mi_heater')
+                selected_mi_heater.cold_lead_option_code
+                if selected_mi_heater
                 else ''
             ),
             'MI Cold Lead Length (m)': (
-                item.get('selected_mi_heater').cold_lead_length_m
-                if item.get('selected_mi_heater')
+                selected_mi_heater.cold_lead_length_m
+                if selected_mi_heater
                 else ''
             ),
+            'MI Design Basis Notes': mi_design_basis_notes,
         })
         for alternate in item['alternate_tracers']:
             alternate_rows.append({
@@ -1812,6 +1851,7 @@ def result_export_view(request):
         basis = mi_result.selection_basis or {}
         line = mi_result.line
         review_summary = getattr(mi_result, 'review_summary', None) or _mi_result_review_summary(mi_result)
+        mi_design_basis_notes = _mi_export_design_basis_notes(mi_result)
         mi_rows.append({
             'Project ID': project_id,
             'Line ID': line.line_id if line else '',
@@ -1823,15 +1863,17 @@ def result_export_view(request):
             'Diagnostic Evidence': review_summary.get('evidence', ''),
             'Next Action': review_summary.get('action', ''),
             'Heater Part Number': mi_result.heater.part_number if mi_result.heater else '',
+            'Heater Set Count': basis.get('heater_set_count', 1) if basis else '',
             'Cold Lead Option': mi_result.cold_lead_option_code,
             'Heated Length (m)': mi_result.heated_length_m,
             'Nominal Power (W)': mi_result.power_nominal_w,
             'Power Density (W/m)': mi_result.power_density_w_m,
-            'Nominal Current (A)': mi_result.current_nominal_a,
-            'Cold Start Current (A)': mi_result.current_cold_start_a,
+            'Nominal Current per Set (A)': mi_result.current_nominal_a,
+            'Cold Start Current per Set (A)': mi_result.current_cold_start_a,
             'Published Sheath Temp (°C)': mi_result.max_sheath_temp_published_c,
             'Project T-Class Limit (°C)': mi_result.project_t_class_limit_c,
             'T-Class Verdict': mi_result.t_class_verdict,
+            'Design Basis Notes': mi_design_basis_notes,
             'Rejection Reasons': json.dumps(mi_result.selection_rejection_reasons or [], default=str),
         })
 

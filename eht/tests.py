@@ -983,6 +983,75 @@ class PowerDistributionCalculationTests(SimpleTestCase):
             'factory_terminated_mi_heater_set_no_sr_field_termination_allowance',
         )
 
+    def test_compute_mi_power_params_treats_multi_set_mi_as_parallel_circuits(self):
+        selected_mi_heater = {
+            'heater_part_number': 'MIQ-R002',
+            'heater_set_count': 3,
+            'heated_length_m': 90.0,
+            'cold_lead_length_m': 2.0,
+            'current_nominal_a': 15.0,
+            'current_cold_start_a': 18.0,
+            'power_nominal_w': 10800.0,
+        }
+
+        power_params = compute_mi_power_params(
+            make_line(),
+            make_project_settings(max_cb_size=25.0, restrict_cb_current=80.0),
+            make_asme_table(),
+            selected_mi_heater,
+        )
+        distribution = compute_power_distribution(
+            power_params,
+            make_project_settings(max_cb_size=25.0, restrict_cb_current=80.0),
+        )
+
+        self.assertEqual(power_params['calculation_basis'], 'MI_MULTI_HEATER_SET_MVP')
+        self.assertEqual(power_params['heater_set_count'], 3)
+        self.assertEqual(power_params['no_of_circuits'], 3)
+        self.assertEqual(power_params['breaker_size'], 25)
+        self.assertEqual(power_params['operating_current'], 15.0)
+        self.assertEqual(power_params['max_current'], 18.0)
+        self.assertEqual(power_params['line_operating_current'], 45.0)
+        self.assertEqual(power_params['line_max_current'], 54.0)
+        self.assertEqual(power_params['total_tracer_length'], 270.0)
+        self.assertEqual(power_params['total_heated_tracer_length'], 270.0)
+        self.assertEqual(
+            power_params['breaker_sizing']['rule_set'],
+            'MI_MULTI_HEATER_SET_BREAKER_SIZING_MVP_V1',
+        )
+        self.assertEqual(distribution['total_circuits'], 3)
+        self.assertEqual(len(distribution['branches']), 3)
+        self.assertTrue(all(branch['type'] == '1phJB' for branch in distribution['branches']))
+        self.assertTrue(all(branch['circuit_count'] == 1 for branch in distribution['branches']))
+        self.assertEqual(
+            [branch['tagged_components']['MCB'] for branch in distribution['branches']],
+            ['MCB_001', 'MCB_002', 'MCB_003'],
+        )
+        self.assertEqual(
+            [
+                branch['tagged_components']['component_details']['MCB']['metadata']['mi_heater_set_index']
+                for branch in distribution['branches']
+            ],
+            [1, 2, 3],
+        )
+        self.assertTrue(all(
+            branch['tagged_components']['component_details']['MCB']['metadata']['mi_independent_protection']
+            for branch in distribution['branches']
+        ))
+
+        boq = compute_bill_of_quantities(
+            distribution,
+            make_project_settings(max_cb_size=25.0, restrict_cb_current=80.0),
+            tracer_qty=0,
+            line_length=90.0,
+            pipe_size_mm=60.3,
+            is_process_temp_controlled=True,
+        )
+        self.assertEqual(boq['MCB'], 3)
+        self.assertEqual(boq['JB1PH'], 3)
+        self.assertEqual(boq['JB3PH'], 0)
+        self.assertEqual(boq['ENDTRM'], 3)
+
     def test_compute_power_params_and_distribution_for_two_circuits(self):
         selected_tracer = {
             'Tracer_With_Margin': 20.0,
@@ -1720,6 +1789,110 @@ class SldPayloadTests(TestCase):
         self.assertTrue(any('line:LINE-002' in component_id for component_id in component_ids))
         self.assertTrue(all('line_uid:' in component_id for component_id in component_ids))
 
+    def test_build_project_sld_payload_represents_multi_set_mi_as_independent_breakers(self):
+        make_project_record(proj_id='p1')
+        line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-MI-MULTI',
+            service_type='EP',
+            line_size=30.0,
+            line_length=70.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=45.0,
+            oper_temp=45.0,
+            design_temp=350.0,
+            status='confirmed',
+        )
+        mi_result = make_mi_selection_result(line, status='selected')
+        selected_mi_heater = {
+            'uid': line.uid,
+            'heater_id': mi_result.heater_id,
+            'cold_lead_option_id': mi_result.cold_lead_option_id,
+            'selection_status': 'selected',
+            'heater_part_number': mi_result.heater.part_number,
+            'cold_lead_option_code': mi_result.cold_lead_option_code,
+            'heater_set_count': 3,
+            'heated_length_m': 90.0,
+            'cold_lead_length_m': 2.0,
+            'power_nominal_w': 10800.0,
+            'power_density_w_m': 120.0,
+            'current_nominal_a': 15.0,
+            'current_cold_start_a': 18.0,
+            'selection_basis': {
+                'selection_mode': 'automatic_temperature_fallback',
+                'heater_set_count': 3,
+                'mvp_multi_set_selection': True,
+            },
+        }
+        project_settings = make_project_settings(
+            proj_id='p1',
+            max_cb_size=25.0,
+            restrict_cb_current=80.0,
+            isolator_location='bothSides',
+        )
+        power_params = compute_mi_power_params(
+            make_line(uid=str(line.uid), line_id=line.line_id, line_length=70.0),
+            project_settings,
+            make_asme_table(),
+            selected_mi_heater,
+        )
+        distribution = compute_power_distribution(
+            power_params,
+            project_settings,
+            tag_factory=ProjectTagFactory('p1'),
+        )
+        boq = compute_bill_of_quantities(
+            distribution,
+            project_settings,
+            tracer_qty=0,
+            line_length=line.line_length,
+            pipe_size_mm=60.3,
+            is_process_temp_controlled=True,
+        )
+        boq.update({
+            'MI_HEATER_SET': 3,
+            'MI_HEATED_LENGTH': 270.0,
+            'MI_COLD_LEAD_LENGTH': 6.0,
+        })
+
+        self.assertTrue(store_calculated_results('p1', {
+            'heat_loss': [{
+                'uid': line.uid,
+                'heat_loss': 102.0,
+                'design_heat_loss': 102.0,
+                'tracer_adder': 20.0,
+                'selection_status': 'rejected',
+            }],
+            'selected_mi_heaters': [selected_mi_heater],
+            'power_distribution': [distribution],
+            'boq_per_line': {line.uid: boq},
+            'consolidated_boq': boq,
+            'tracer_power_param': [power_params],
+        }))
+
+        payload = build_project_sld_payload('p1')
+        mcb_nodes = [node for node in payload['nodes'] if node['component_type'] == 'MCB']
+        tracer_nodes = [node for node in payload['nodes'] if node['component_type'] == 'Tracer']
+        jb3ph_nodes = [node for node in payload['nodes'] if node['component_type'] == 'JB3PH']
+        mi_group_ids = {node['metadata'].get('mi_group_id') for node in mcb_nodes}
+
+        self.assertEqual(payload['meta']['branch_count'], 3)
+        self.assertEqual(payload['line_groups'][0]['branch_indices'], [1, 2, 3])
+        self.assertEqual(len(mcb_nodes), 3)
+        self.assertEqual(len(tracer_nodes), 3)
+        self.assertEqual(jb3ph_nodes, [])
+        self.assertEqual({node['display_name'] for node in tracer_nodes}, {mi_result.heater.part_number})
+        self.assertEqual(
+            [node['metadata']['mi_heater_set_index'] for node in mcb_nodes],
+            [1, 2, 3],
+        )
+        self.assertEqual(len(mi_group_ids), 1)
+        self.assertTrue(all(
+            node['metadata']['mi_independent_protection']
+            for node in mcb_nodes
+        ))
+
     def test_build_project_sld_payload_keeps_duplicate_line_ids_distinct_by_line_uid(self):
         lines = make_rich_sld_project_snapshot('p1', ['LINE-DUP', 'LINE-DUP'])
         expected_line_uids = {str(line.uid) for line in lines}
@@ -1824,6 +1997,7 @@ class SldPayloadTests(TestCase):
         self.assertEqual(tracer_selection['selected']['v_uid'], 'V-001')
         self.assertEqual(tracer_selection['selected']['tracer_family'], 'SR')
         self.assertEqual(tracer_selection['selected']['power_output'], 30.0)
+        self.assertEqual(tracer_node['display_name'], 'V-001')
         self.assertEqual(tracer_selection['alternate_count'], 1)
         self.assertTrue(tracer_selection['override_supported'])
         self.assertEqual(tracer_selection['alternatives'][0]['v_uid'], 'V-ALT-001')
@@ -4066,7 +4240,10 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'LINE-MI-ONLY')
         self.assertContains(response, 'MI fallback selected')
-        self.assertContains(response, 'MI load distribution pending')
+        self.assertContains(response, 'Per heater set')
+        self.assertContains(response, 'MI MVP design basis and review notes')
+        self.assertContains(response, 'Each MI heater set is treated as an independently protected branch')
+        self.assertContains(response, 'MI T-class status remains design-review evidence')
 
     def test_result_view_summarizes_mi_fallback_as_selected_output_not_unresolved_sr_failure(self):
         line = make_mi_calculated_project_snapshot()
@@ -4079,6 +4256,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'MI 1')
         self.assertContains(response, 'Auto fallback')
         self.assertContains(response, 'Cold lead 2.00 m')
+        self.assertContains(response, 'Physical JB terminal capacity')
         self.assertNotContains(response, 'did not receive a selectable SR tracer')
 
     def test_result_view_explains_rejected_mi_fallback_without_zero_design_values(self):
@@ -4110,6 +4288,8 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(data[header.index('MI Heated Length excl. Cold Leads (m)')], 18.0)
         self.assertEqual(data[header.index('MI Cold Lead Length (m)')], 2.0)
         self.assertIn('MI heated length excludes cold leads', data[header.index('Heating Cable Length Basis')])
+        self.assertIn('Independent breaker per MI heater set', data[header.index('MI Design Basis Notes')])
+        self.assertIn('T-class requires design review', data[header.index('MI Design Basis Notes')])
 
     def test_result_export_explains_rejected_mi_fallback_next_action(self):
         line = make_mi_rejected_project_snapshot()

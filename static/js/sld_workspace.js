@@ -97,6 +97,10 @@
         if (node.component_type === 'MCB' && metadata.breaker_size) {
             return `${metadata.breaker_size}A MCB`;
         }
+        if (node.component_type === 'Tracer') {
+            const selectedTracer = (metadata.tracer_selection || {}).selected || {};
+            return selectedTracer.heater_part_number || selectedTracer.v_uid || node.display_name || 'Heat Trace';
+        }
         return node.display_name || node.component_type;
     }
 
@@ -108,9 +112,28 @@
             return `${node.display_tag}\n${engineeringLabel}`;
         }
         if (node.component_type === 'Tracer') {
-            return node.display_name || 'Heat Trace';
+            return formatNodeBody(node);
         }
         return '';
+    }
+
+    function formatInspectorNumber(value) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+            return value;
+        }
+        return Number(value.toFixed(2));
+    }
+
+    function formatInspectorValue(value) {
+        if (Array.isArray(value)) {
+            return value.map(formatInspectorValue).join(', ');
+        }
+        if (value && typeof value === 'object') {
+            return JSON.stringify(value, function (_key, nestedValue) {
+                return formatInspectorNumber(nestedValue);
+            });
+        }
+        return formatInspectorNumber(value);
     }
 
     function createLineLabel(lineId, x, y) {
@@ -1526,7 +1549,7 @@
             if (value === null || value === undefined || value === '') {
                 return;
             }
-            rows.push([key.replace(/_/g, ' '), Array.isArray(value) ? value.join(', ') : value]);
+            rows.push([key.replace(/_/g, ' '), formatInspectorValue(value)]);
         });
         if (node.component_type === 'Tracer' && metadata.tracer_selection) {
             const selectedTracer = metadata.tracer_selection.selected || {};

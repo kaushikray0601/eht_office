@@ -1,4 +1,5 @@
 import logging
+import math
 import re
 
 from eht.calculations.tracer_selection import (
@@ -19,6 +20,7 @@ MI_REJECTION_RULE_SET = 'MI_SELECTION_REJECTION_REASON_V1'
 MI_SELECTION_RULE_SET = 'MI_SINGLE_PHASE_SELECTION_MVP_V1'
 MI_RESISTANCE_TEMPERATURE_RULE_SET = 'MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1'
 MI_RESISTANCE_REFERENCE_TEMPERATURE_C = 20.0
+MAX_MI_HEATER_SETS_MVP = 12
 T_CLASS_LIMIT_C = {
     'T1': 450.0,
     'T2': 300.0,
@@ -241,25 +243,35 @@ def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, 
     nominal = _single_phase_power(voltage, heater_resistance_ohms, cold_lead_resistance_ohms, heated_length_m)
     high = _single_phase_power(high_voltage, heater_startup_resistance_ohms, cold_lead_resistance_ohms, heated_length_m)
 
-    reasons = []
-    if low['power_density_w_m'] < design_heat_loss_w_m:
-        reasons.append('INSUFFICIENT_HEAT_AT_LOW_VOLTAGE')
-    if family.max_watt_density_w_m and high['power_density_w_m'] > float(family.max_watt_density_w_m):
-        reasons.append('EXCEEDS_FAMILY_WATT_DENSITY')
-    if heater.max_current_a and high['current_a'] > float(heater.max_current_a):
-        reasons.append('EXCEEDS_HEATER_CURRENT_LIMIT')
-    if heater.cold_lead_max_ampacity_a and high['current_a'] > float(heater.cold_lead_max_ampacity_a):
-        reasons.append('EXCEEDS_COLD_LEAD_AMPACITY')
-
     max_cb_size = float(project_settings.get('max_cb_size') or 0.0)
     restricted_loading_factor = float(project_settings.get('restrict_cb_current') or 0.0) / 100.0
     allowed_current_per_circuit = max_cb_size * restricted_loading_factor
-    if allowed_current_per_circuit > 0 and high['current_a'] > allowed_current_per_circuit:
-        reasons.append('EXCEEDS_PROJECT_BREAKER_LOADING_LIMIT')
-
     allowable_vdrop = float(project_settings.get('allowablevdrop') or 0.0)
+
+    non_heat_delivery_reasons = []
+    if family.max_watt_density_w_m and high['power_density_w_m'] > float(family.max_watt_density_w_m):
+        non_heat_delivery_reasons.append('EXCEEDS_FAMILY_WATT_DENSITY')
+    if heater.max_current_a and high['current_a'] > float(heater.max_current_a):
+        non_heat_delivery_reasons.append('EXCEEDS_HEATER_CURRENT_LIMIT')
+    if heater.cold_lead_max_ampacity_a and high['current_a'] > float(heater.cold_lead_max_ampacity_a):
+        non_heat_delivery_reasons.append('EXCEEDS_COLD_LEAD_AMPACITY')
+    if allowed_current_per_circuit > 0 and high['current_a'] > allowed_current_per_circuit:
+        non_heat_delivery_reasons.append('EXCEEDS_PROJECT_BREAKER_LOADING_LIMIT')
     if allowable_vdrop > 0 and nominal['cold_lead_voltage_drop_percent'] > allowable_vdrop:
-        reasons.append('EXCEEDS_COLD_LEAD_VOLTAGE_DROP')
+        non_heat_delivery_reasons.append('EXCEEDS_COLD_LEAD_VOLTAGE_DROP')
+
+    reasons = []
+    heater_set_count = 1
+    if low['power_density_w_m'] < design_heat_loss_w_m:
+        if not non_heat_delivery_reasons and low['power_density_w_m'] > 0:
+            heater_set_count = max(1, math.ceil(design_heat_loss_w_m / low['power_density_w_m']))
+            if heater_set_count > MAX_MI_HEATER_SETS_MVP:
+                reasons.append('EXCEEDS_MVP_HEATER_SET_COUNT')
+            else:
+                reasons = []
+        else:
+            reasons.append('INSUFFICIENT_HEAT_AT_LOW_VOLTAGE')
+    reasons.extend(non_heat_delivery_reasons)
 
     t_class_limit_c = _t_class_limit(project_settings)
     t_class_verdict = 'review'
@@ -281,6 +293,7 @@ def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, 
         'heater_part_number': heater.part_number,
         'cold_lead_option_id': cold_lead.id,
         'cold_lead_option_code': cold_lead.option_code,
+        'heater_set_count': heater_set_count,
         'heated_length_m': heated_length_m,
         'cold_lead_length_m': float(cold_lead.length_m),
         'heater_resistance_ohms': heater_resistance_ohms,
@@ -288,12 +301,14 @@ def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, 
         'heater_startup_resistance_ohms': heater_startup_resistance_ohms,
         'cold_lead_resistance_total_ohms': cold_lead_resistance_ohms,
         'total_resistance_ohms': total_resistance_ohms,
-        'power_nominal_w': nominal['power_w'],
-        'power_density_w_m': nominal['power_density_w_m'],
+        'power_nominal_w': nominal['power_w'] * heater_set_count,
+        'power_density_w_m': nominal['power_density_w_m'] * heater_set_count,
         'current_nominal_a': nominal['current_a'],
         'current_cold_start_a': high['current_a'],
-        'low_voltage_power_density_w_m': low['power_density_w_m'],
-        'high_voltage_power_density_w_m': high['power_density_w_m'],
+        'total_current_nominal_a': nominal['current_a'] * heater_set_count,
+        'total_current_cold_start_a': high['current_a'] * heater_set_count,
+        'low_voltage_power_density_w_m': low['power_density_w_m'] * heater_set_count,
+        'high_voltage_power_density_w_m': high['power_density_w_m'] * heater_set_count,
         'cold_lead_voltage_drop_percent': nominal['cold_lead_voltage_drop_percent'],
         'max_sheath_temp_published_c': float(family.max_sheath_temp_c) if family.max_sheath_temp_c else None,
         'project_t_class_limit_c': t_class_limit_c,
@@ -306,6 +321,18 @@ def _evaluate_single_phase_candidate(heat_loss, line, project_settings, family, 
             'nominal_voltage_v': voltage,
             'high_voltage_v': high_voltage,
             'source_document': family.source_document,
+            'heater_set_count': heater_set_count,
+            'mvp_multi_set_selection': heater_set_count > 1,
+            'max_mi_heater_sets_mvp': MAX_MI_HEATER_SETS_MVP,
+            'per_set_low_voltage_power_density_w_m': low['power_density_w_m'],
+            'per_set_nominal_power_density_w_m': nominal['power_density_w_m'],
+            'per_set_high_voltage_power_density_w_m': high['power_density_w_m'],
+            'per_set_current_nominal_a': nominal['current_a'],
+            'per_set_current_cold_start_a': high['current_a'],
+            'multi_set_note': (
+                'family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery '
+                'is represented by heater_set_count multiplied by per-set output.'
+            ),
             'max_cb_size': max_cb_size,
             'restricted_loading_factor': restricted_loading_factor,
             'allowed_current_per_circuit': allowed_current_per_circuit,
@@ -441,6 +468,7 @@ def get_mi_heater_options(heat_loss, line, project_settings, families=None):
         valid_candidates = sorted(
             valid_candidates,
             key=lambda item: (
+                item.get('heater_set_count', 1),
                 abs(item['low_voltage_power_density_w_m'] - item['selection_basis']['design_heat_loss_w_m']),
                 item['high_voltage_power_density_w_m'],
                 item['current_cold_start_a'],

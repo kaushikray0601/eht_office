@@ -89,6 +89,21 @@
                     {{ result_summary.mi_alternative_count }} available alternative{{ result_summary.mi_alternative_count|pluralize }} for SLD review.
                 </div>
             {% endif %}
+            {% if mi_mvp_basis_notes %}
+                <div class="alert alert-secondary border">
+                    <div class="fw-semibold mb-1">MI MVP design basis and review notes</div>
+                    <ul class="mb-0 ps-3 small">
+                        {% for note in mi_mvp_basis_notes %}
+                            <li>{{ note }}</li>
+                        {% endfor %}
+                    </ul>
+                    {% if result_summary.mi_multi_set_count %}
+                        <div class="small text-muted mt-2">
+                            {{ result_summary.mi_multi_set_count }} selected MI line{{ result_summary.mi_multi_set_count|pluralize }} use multiple identical heater sets. The remaining installed heating capacity after one set trips is visible as a circuit-continuity indication only; it is not a guaranteed N-1 thermal design basis.
+                        </div>
+                    {% endif %}
+                </div>
+            {% endif %}
             {% if result_summary.mi_rejected_count %}
                 <div class="alert alert-warning">
                     {{ result_summary.mi_rejected_count }} high-temperature line{{ result_summary.mi_rejected_count|pluralize }} triggered MI fallback but did not receive a selected MI heater. Review the MI Selection Records for the reason and next action.
@@ -177,7 +192,7 @@
                                         <div class="fw-semibold">{{ item.calculation.selected_tracer }}</div>
                                         <div class="small text-muted">
                                             {% if item.selected_mi_heater and item.selected_mi_heater.selection_status == 'selected' %}
-                                                MI
+                                                MI | Sets {{ item.selected_mi_heater.selection_basis.heater_set_count|default:1 }}
                                             {% else %}
                                                 {{ item.selected_tracer.tracer_family|default:"-" }}
                                             {% endif %}
@@ -226,7 +241,7 @@
                                         <div class="small text-muted">Start/ckt {{ item.calculation.starting_current|floatformat:2 }} A</div>
                                     {% else %}
                                         <div>Nom {{ item.selected_mi_heater.current_nominal_a|floatformat:2 }} A</div>
-                                        <div class="small text-muted">MI load distribution pending</div>
+                                        <div class="small text-muted">Per heater set</div>
                                     {% endif %}
                                 </td>
                                 <td>{% if item.calculation %}{{ item.calculation.total_power_consumption|floatformat:2 }} W{% else %}{{ item.selected_mi_heater.power_nominal_w|floatformat:2 }} W{% endif %}</td>
@@ -267,6 +282,7 @@
                                                 No MI heater selected
                                             {% endif %}
                                         </div>
+                                        <div class="small text-muted">Sets {{ item.selected_mi_heater.selection_basis.heater_set_count|default:1 }}</div>
                                         <div class="small text-muted">{{ item.selected_mi_heater.power_density_w_m|floatformat:2 }} W/m</div>
                                     {% else %}
                                         <span class="text-muted small">None</span>
@@ -336,6 +352,10 @@
                                     <td>
                                         <div class="fw-semibold">{% if mi.heater %}{{ mi.heater.part_number }}{% else %}-{% endif %}</div>
                                         <div class="small text-muted">Cold lead {{ mi.cold_lead_option_code|default:"-" }}</div>
+                                        <div class="small text-muted">Sets {{ mi.selection_basis.heater_set_count|default:1 }}</div>
+                                        {% if mi.selection_basis.heater_set_count and mi.selection_basis.heater_set_count > 1 %}
+                                            <div class="small text-muted">Independent breaker per set</div>
+                                        {% endif %}
                                         <div class="small text-muted">{{ mi.heated_length_m|floatformat:2 }} m heated</div>
                                     </td>
                                     <td>
@@ -343,12 +363,13 @@
                                         <div class="small text-muted">{{ mi.power_nominal_w|floatformat:2 }} W total</div>
                                     </td>
                                     <td>
-                                        <div>Nom {{ mi.current_nominal_a|floatformat:2 }} A</div>
-                                        <div class="small text-muted">Cold {{ mi.current_cold_start_a|floatformat:2 }} A</div>
+                                        <div>Nom {{ mi.current_nominal_a|floatformat:2 }} A/set</div>
+                                        <div class="small text-muted">Cold {{ mi.current_cold_start_a|floatformat:2 }} A/set</div>
                                     </td>
                                     <td>
                                         <div>{{ mi.t_class_verdict|default:"review" }}</div>
                                         <div class="small text-muted">Sheath {{ mi.max_sheath_temp_published_c|floatformat:0 }}°C / limit {{ mi.project_t_class_limit_c|floatformat:0 }}°C</div>
+                                        <div class="small text-muted">Design review required</div>
                                     </td>
                                 {% endif %}
                             </tr>

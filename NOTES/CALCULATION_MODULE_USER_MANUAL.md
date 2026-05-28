@@ -2,8 +2,10 @@
 
 Document status: Draft for integration into the full EHT Office user guide  
 Module covered: Electrical heat tracing calculation module  
-Current calculation technology: Self-regulating tracer cable, also called SR cable  
-Future technology: MI cable will be added as a separate calculation module
+Current calculation technologies: Self-regulating tracer cable, also called SR
+cable, with automatic MI fallback for validated high-temperature cases  
+Future technology: Constant wattage cable and advanced MI zoning will be added
+as separate calculation modules
 
 ## 1. Purpose of This Manual
 
@@ -13,11 +15,17 @@ project users who need to prepare project setup data, upload line-list input,
 run heat-tracing calculations, and review the generated calculation results,
 BOQ, cable schedule, and SLD output.
 
-The current calculation module is focused on self-regulating heating cables.
-The module calculates heat loss, selects a suitable SR tracer from the selected
-vendor catalogue, sizes circuits and breakers, generates per-line and
-consolidated BOQ quantities, creates cable schedule data, and builds SLD-ready
-power-distribution information.
+The current calculation module is focused on self-regulating heating cables as
+the default technology. The module calculates heat loss, selects a suitable SR
+tracer from the selected vendor catalogue, sizes circuits and breakers,
+generates per-line and consolidated BOQ quantities, creates cable schedule data,
+and builds SLD-ready power-distribution information.
+
+For lines whose temperatures exceed the available SR catalogue temperature
+limits, the module can automatically select a validated mineral insulated, or
+MI, heater set. MI selection is a separate calculation path with its own
+catalogue validation, resistance-temperature correction, cold-lead option, and
+heater-set output evidence.
 
 The manual also explains the engineering meaning of important result fields so
 that users do not misinterpret values such as heat loss, current, tracer
@@ -25,12 +33,15 @@ length, or rejected tracer selections.
 
 ## 2. Current Scope and Important Boundary
 
-The current calculation engine supports SR cable calculation. MI cable
-calculation is intentionally not included in this SR module. MI cable will be
-developed as a separate calculation path because MI cable engineering uses
-different selection logic, factory heater-set constraints, sheath temperature
-checks, cold lead and hot-cold joint considerations, series resistance behavior,
-and circuit design rules.
+The current calculation engine supports SR cable calculation and a bounded MI
+automatic-fallback MVP. SR remains the normal default. MI is selected only when
+SR catalogue temperature limits are exceeded and validated MI catalogue data is
+available for the selected vendor.
+
+MI is intentionally kept as a separate calculation path because MI cable
+engineering uses different selection logic, factory heater-set constraints,
+sheath-temperature review, cold lead and hot-cold joint considerations, series
+resistance behavior, and circuit design rules.
 
 The current SR calculation module includes:
 
@@ -49,15 +60,28 @@ The current SR calculation module includes:
 - Cable schedule generation from the active SLD/power-distribution model.
 - SLD graph generation and SLD PDF export.
 - Structured diagnostics when a line cannot receive a suitable SR tracer.
+- Automatic MI fallback when SR temperature limits are exceeded.
+- Validated MI family/heater/cold-lead catalogue selection.
+- MI resistance-temperature correction using heater-level TCR values, with
+  alloy factor table fallback where available.
+- Single-phase MI heater-set current, power, breaker, BOQ, cable schedule, and
+  SLD output.
+- Bounded identical multi-set MI selection when one heater set cannot meet the
+  required heat within per-set electrical limits.
 
 The current SR calculation module does not yet include:
 
-- MI cable calculation.
 - Full external convection and radiation heat-transfer calculation.
 - Integrated k(T) insulation conductivity solver.
 - Vendor or standard heat-loss table interpolation.
 - Multi-layer insulation thermal resistance.
 - Recalculation of load, BOQ, or cable size from manual SLD tracer overrides.
+- Three-phase MI star/delta circuiting.
+- Mixed MI heater optimization.
+- MI line zoning with independent temperature sensors or zone-specific control.
+- Calculated MI sheath/surface temperature for final T-class approval.
+- Physical JB terminal/gland capacity validation for grouped MI cold leads.
+- Full cold-cable sizing, panel coordination, and voltage-drop optimization.
 
 These deferred items are planned as future enhancements and should not be
 assumed to be active unless explicitly released.
@@ -77,7 +101,8 @@ The normal calculation workflow is:
 7. Confirm valid imported rows when required.
 8. Let the calculation run.
 9. Review Calculation Results.
-10. Review SR Selection Diagnostics, if any lines were not assigned a tracer.
+10. Review SR Selection Diagnostics and MI Selection Records, if any lines were
+    not assigned a suitable heating cable.
 11. Review BOQ.
 12. Review Cable Schedule.
 13. Review the Single Line Diagram.
@@ -544,6 +569,86 @@ Result and BOQ labels use "Ordered SR Length" or similar wording to remind
 users that the total ordered cable quantity includes this termination
 allowance.
 
+## 10A. MI Automatic Fallback Basis
+
+MI calculation is not a manual user-selected mode in project setup. The normal
+principle is:
+
+- Use SR by default.
+- Use MI automatically only when the line temperature exceeds the SR catalogue
+  suitability limit.
+- Keep MI alternatives visible for SLD review where an MI candidate is
+  available, but do not silently replace a valid SR design for non-temperature
+  reasons.
+
+### 10A.1 MI Catalogue Gate
+
+MI selection uses only catalogue families marked as validated. A family should
+be validated only after the source document, family limits, heater resistance
+codes, conductor/TCR data, and cold-lead options have been reviewed.
+
+If MI rows exist in the database but are not validated, the line appears in MI
+Selection Records with a rejection reason. This is intentional. The application
+must not select unreviewed MI catalogue data.
+
+### 10A.2 MI Heater-Set Selection
+
+The MVP MI selector evaluates factory heater sets. The selected output includes:
+
+- MI family and heater part number.
+- Heated length.
+- Cold-lead option and cold-lead length.
+- Power density in W/m.
+- Nominal power.
+- Nominal current per heater set.
+- Cold-start current per heater set.
+- T-class review status.
+
+If one heater set cannot provide enough heat within per-set current and
+watt-density limits, the MVP can select multiple identical heater sets. For
+example, a line may require three identical MI heater sets. Each set is counted
+separately in BOQ and appears as a separate protected branch in the SLD.
+
+### 10A.3 MI Electrical Topology
+
+Each selected MI heater set is treated as independently protected. A three-set
+MI result is therefore shown as three one-circuit branches, each with its own
+MCB path. This is different from SR grouping logic, where multiple circuits may
+be represented under a shared distribution branch.
+
+The SLD currently represents electrical protection truth first. It does not yet
+try to optimize physical consolidation of multiple MI cold leads into one shared
+field junction box.
+
+### 10A.4 MI T-Class Review
+
+The MI result shows T-class status as review evidence. The published maximum
+sheath temperature of an MI family is a cable rating/survival limit, not the
+calculated operating sheath temperature for the installed circuit.
+
+Therefore, the MVP does not claim final T-class approval from catalogue maximum
+sheath temperature alone. Final hazardous-area approval requires project
+engineering review and, in a later module, a proper sheath/surface-temperature
+calculation or vendor-confirmed basis.
+
+### 10A.5 MI MVP Review Boundaries
+
+The following items are not yet calculated by the MI MVP:
+
+- Physical JB terminal capacity for multiple cold leads.
+- Gland count and junction-box internal capacity.
+- Full cold-cable sizing from distribution board to field devices.
+- Upstream panel coordination.
+- Voltage-drop optimization.
+- N-1 thermal redundancy.
+- Mixed heater combinations.
+- Line zoning and independent RTD/control behavior.
+
+If one heater set trips in a multi-set MI design, the remaining heater sets may
+remain energized if their protection is independent. That remaining energized
+capacity should be treated as circuit-continuity information, not as proof that
+the line still satisfies the full heat-loss requirement.
+
 ## 11. Power Distribution and SLD Basis
 
 After breaker sizing, the module builds a power-distribution structure for each
@@ -585,6 +690,10 @@ Typical BOQ items include:
 The BOQ tracer item is an ordered cable quantity. It should not be interpreted
 as only the energized heat-delivery length.
 
+For MI-selected lines, BOQ includes MI-specific quantities such as MI heater set
+count, MI heated length, and MI cold-lead length. Multiple MI heater sets are
+counted as multiple factory heater sets.
+
 Control item behavior:
 
 - Inline and offline RTD/thermostat choices affect RTD, thermostat, and pipe
@@ -605,9 +714,12 @@ The summary cards show:
 - Calculated Lines.
 - Total Circuits.
 - Connected Load.
-- Ordered SR Length.
+- Heating Cable Length.
+- SR and MI result/load/length split where MI output exists.
 
-Ordered SR Length includes termination allowance.
+For SR, heating cable length is the ordered SR length and includes termination
+allowance. For MI, heating cable length is the selected MI heated length and
+excludes cold leads.
 
 ### 13.2 Per-Line Design Summary
 
@@ -618,14 +730,17 @@ The per-line table includes:
 - Base heat loss and heat-loss safety factor.
 - Conductivity method evidence.
 - Selected tracer.
+- Heating cable type, normally SR or MI.
 - Tracer override status, if an SLD override exists.
 - Spiral factor.
 - Breaker size.
 - Circuit count.
 - Operating and starting current per circuit.
 - Total connected load.
-- Ordered SR length.
+- Heating cable length.
+- MI cold-lead length where MI is selected.
 - Alternate tracer list.
+- MI option status where available.
 
 Users should review this table before accepting the project calculation.
 
@@ -646,6 +761,22 @@ The diagnostics table shows:
 
 This table is intended to prevent rejected lines from being missed.
 
+### 13.4 MI Selection Records
+
+The MI Selection Records table shows selected, available-alternative, and
+rejected MI outcomes.
+
+For selected MI records, the table shows heater part number, cold-lead option,
+heater set count, heated length, power density, total nominal power, nominal
+current per heater set, cold-start current per heater set, and T-class review
+status.
+
+For rejected MI records, the table shows the primary rejection code, rejection
+message, diagnostic evidence, and suggested next action.
+
+When multiple heater sets are selected, the result should be read as multiple
+independently protected factory heater sets serving the same process line.
+
 ## 14. Result Excel Export
 
 The result Excel export contains:
@@ -656,6 +787,7 @@ The result Excel export contains:
 | Selection Diagnostics | Lines where heat loss was calculated but SR tracer selection failed. |
 | Power Distribution | Branch-level power-distribution rows. |
 | Alternate Tracers | Valid alternate tracer options by line. |
+| MI Selection | Selected, alternative, and rejected MI records by line. |
 
 Important exported fields include:
 
@@ -672,7 +804,14 @@ Important exported fields include:
 - Operating Current / Circuit (A).
 - Current Basis.
 - Total Connected Load (W).
+- Heating Cable Type.
+- Heating Cable Length (m).
+- Heating Cable Length Basis.
 - Ordered SR Tracer Length incl. Termination Allowance (m).
+- MI Heated Length excl. Cold Leads (m).
+- MI Cold Lead Option.
+- MI Cold Lead Length (m).
+- MI Design Basis Notes.
 - Heated Tracer Length excl. Termination Allowance (m).
 - Tracer Length Basis.
 
@@ -724,7 +863,8 @@ The Single Line Diagram tab displays the stored SLD graph for the project.
 
 The graph is based on persisted calculation output and branch data. It includes
 component metadata such as line identity, branch index, circuit index, selected
-tracer information, and SR calculation basis.
+tracer information, SR calculation basis, and MI heater-set evidence where MI
+fallback has been selected.
 
 ### 17.1 SLD Tracer Review
 
@@ -736,6 +876,8 @@ Current limitation:
 - SLD tracer overrides are review-only.
 - A tracer override does not currently recalculate current, breaker size, BOQ,
   cable schedule, or heat loss.
+- MI available-alternative overrides are also review-only until the calculation
+  engine consumes overrides as recalculation input.
 
 The result tab and export clearly indicate when an SLD tracer override is
 active.
@@ -860,26 +1002,28 @@ Before issuing a calculation package, review the following:
 7. There are no unexpected pending input rows.
 8. SR Selection Diagnostics are empty, or every diagnostic line has been
    reviewed and resolved.
-9. Design heat loss and base heat loss are reasonable.
-10. Selected tracer family is acceptable for the service.
-11. Spiral factor is within installation practice.
-12. Current values are understood as per-circuit values.
-13. Ordered SR length is understood to include termination allowance.
-14. Circuit count and breaker sizes are acceptable.
-15. BOQ quantities are reasonable.
-16. Cable schedule lengths are reasonable.
-17. SLD topology matches the intended distribution philosophy.
-18. Any manual SLD edit or tracer override is reviewed.
-19. Exported Excel reports match the on-screen result.
-20. Known limitations are acceptable for the project stage.
+9. MI Selection Records are reviewed where MI fallback is triggered.
+10. Design heat loss and base heat loss are reasonable.
+11. Selected tracer or MI heater family is acceptable for the service.
+12. Spiral factor is within installation practice for SR lines.
+13. Current values are understood as per-circuit or per-heater-set values.
+14. Ordered SR length is understood to include termination allowance.
+15. MI heated length is understood to exclude cold leads.
+16. Circuit count and breaker sizes are acceptable.
+17. BOQ quantities are reasonable.
+18. Cable schedule lengths are reasonable.
+19. SLD topology matches the intended distribution philosophy.
+20. Any manual SLD edit or tracer override is reviewed.
+21. Exported Excel reports match the on-screen result.
+22. Known limitations are acceptable for the project stage.
 
 ## 20. Known Limitations
 
-The current calculation module is ready for SR calculation workflows, but users
-should understand these limitations:
+The current calculation module is ready for SR calculation workflows and bounded
+MI automatic fallback, but users should understand these limitations:
 
-- The module currently supports SR calculation only. MI cable calculation will
-  be added separately.
+- The module supports SR calculation and a bounded MI automatic-fallback MVP.
+  MI advanced design features remain future work.
 - Heat loss is currently based on insulated-pipe conduction with a wind
   correction and safety factor. It is not a full convection/radiation external
   heat-transfer model.
@@ -899,29 +1043,220 @@ should understand these limitations:
   load, BOQ, breaker size, or cable schedule.
 - Accessory tracer adders are empirical SR rules, not vendor-specific detailed
   installation rules.
+- MI T-class status is review evidence, not a final calculated
+  sheath-temperature approval.
+- MI physical JB terminal capacity, gland count, panel coordination, and cold
+  cable voltage drop are not yet calculated.
+- Multi-set MI remaining energized capacity after one breaker trip is not a
+  guaranteed N-1 thermal design unless a future project basis explicitly sizes
+  for that case.
 
 ## 21. Recommended User Practice
 
-For routine SR calculation work:
+For routine calculation work:
 
 1. Use Mean insulation temperature as the heat-loss method unless a project
    specifically requires legacy comparison.
 2. Keep vendor catalogue data curated and reviewed.
 3. Treat SR Selection Diagnostics as mandatory review items.
-4. Do not issue results with unresolved rejected lines unless the project
+4. Treat MI Selection Records as mandatory review items when MI fallback is
+   triggered.
+5. Do not issue results with unresolved rejected lines unless the project
    document clearly excludes those lines.
-5. Use result Excel exports for engineering review and traceability.
-6. Use BOQ and Cable Schedule outputs as generated quantities that still require
+6. Use result Excel exports for engineering review and traceability.
+7. Use BOQ and Cable Schedule outputs as generated quantities that still require
    normal engineering review before procurement or construction issue.
-7. Record project assumptions outside the app where required by the project
+8. Record project assumptions outside the app where required by the project
    quality system.
 
-## 22. Glossary
+## 22. MI Pass 1-18 Engineering Record
+
+This section records the current MI engineering basis at the close of Pass 18.
+It is included in the user guide because MI behavior affects what the user sees
+in the result page, Excel export, BOQ, cable schedule, and SLD. It also prevents
+future readers from confusing MVP output with a fully commercial MI design
+suite.
+
+### 22.1 Current Implemented Status
+
+The current implemented status is:
+
+- SR remains the default heating cable technology.
+- MI is not selected from a project setup dropdown.
+- MI fallback is triggered automatically when published SR catalogue
+  temperature suitability limits are exceeded for a process line.
+- MI selection uses only validated MI catalogue families.
+- Unvalidated MI catalogue data is rejected even if rows exist in the database.
+- MI selection is separate from SR selection logic.
+- Selected MI results are stored as `SelectedMIHeater` snapshots, including
+  catalogue references and calculated values.
+- Rejected MI attempts are also stored, with diagnostic reason codes and user
+  action hints.
+- Available MI alternatives can be shown in the SLD tracer review workflow.
+- The SLD override workflow can record an MI alternative as a review-only
+  decision, but recalculation does not yet consume that override as a new design
+  input.
+- MI output participates in result summaries, result export, BOQ, cable
+  schedule, SLD payload, and SLD PDF output.
+- Multi-set MI output is supported for identical heater sets where one heater
+  set cannot meet the required heat within per-set limits.
+- Each MI heater set is represented as an independently protected branch in the
+  generated electrical topology.
+
+### 22.2 Design Assumptions Made During MI Passes 1-18
+
+The following assumptions are active in the MI MVP:
+
+| Area | Current assumption |
+| --- | --- |
+| Technology choice | SR is attempted first; MI is automatic only for SR temperature-limit exceedance. |
+| User choice | The user does not manually choose SR or MI in project setup. |
+| Catalogue authority | MI families must be marked validated before selection. |
+| Catalogue provenance | MI family source document is recorded; validation remains an engineering/admin responsibility. |
+| MI construction | MI is treated as a factory heater set, not a field-cut SR-style cable. |
+| Phase basis | Current MI calculation path is single-phase MVP. |
+| Heat-loss basis | MI uses the same calculated design heat loss as the line; no MI-specific heat-loss method is added yet. |
+| Resistance basis | Heater-level TCR is the primary resistance-temperature correction. `MIAlloyTempFactor` remains available as a fallback lookup. |
+| TCR ownership | TCR belongs to the heater conductor material, not the sheath/family alloy. |
+| Cold-start basis | MI cold-start resistance uses the lower of startup temperature and minimum ambient where both are available. |
+| T-class | T-class remains a review verdict; published maximum sheath rating is not treated as installed operating sheath temperature. |
+| Multi-set basis | Multiple identical heater sets may be selected, capped by the MVP limit, when one set under-delivers heat. |
+| Protection | Each MI heater set gets independent protection; current is checked per set. |
+| Sensing | Shared/single-point sensing is assumed for MVP result output. Final RTD location remains project review. |
+| SLD topology | The generated SLD prioritizes electrical protection truth, not physical JB consolidation. |
+| BOQ | MI heater set count, MI heated length, and MI cold-lead length are reported separately. |
+| Redundancy | Remaining energized sets after one trip are continuity evidence, not proof of N-1 thermal adequacy. |
+
+### 22.3 Noteworthy Architectural Decisions
+
+The following architectural decisions were made deliberately:
+
+- MI was built as a separate selector/service path instead of being forced into
+  the SR tracer-selection algorithm.
+- Demo MI catalogue data was removed. Wrong catalogue rows are more dangerous
+  than an empty catalogue.
+- `is_validated` is a hard catalogue gate for MI selection.
+- MI result persistence uses snapshot fields so historical results do not drift
+  if catalogue data is later edited.
+- MI rejected rows are persisted and displayed; rejected high-temperature lines
+  are not allowed to disappear silently.
+- The project setup page does not expose a manual SR/MI selector. Automation is
+  based on temperature suitability.
+- MI SLD override identifiers use stable heater part number and cold-lead option
+  code, not transient database row IDs.
+- T-class is not auto-approved by comparing published maximum sheath rating
+  with the project T-class limit. The software records review evidence instead.
+- Resistance-temperature correction keys off heater conductor material/TCR, not
+  MI sheath alloy.
+- Multi-set MI uses identical heater sets only in the MVP. Mixed heater
+  optimization is intentionally deferred.
+- Multi-set MI is represented as independent one-circuit branches, not as an
+  SR-style grouped 3PH branch.
+- The current result page and export expose MI assumptions and deferred checks
+  directly to the user.
+- Cold-lead terminal-capacity checks are not faked. The current schema does not
+  yet store conductor count, gland count, terminal count, or JB capacity.
+
+### 22.4 Known Limitations Specific to MI
+
+Known MI limitations at the close of Pass 18 are:
+
+- No vendor worked-example benchmark has yet been completed against TraceCalc,
+  CompuTrace, ChromaTrace, or an approved vendor calculation sheet.
+- MI T-class is review-only; the app does not yet calculate installed sheath or
+  surface temperature.
+- Physical JB terminal capacity is not calculated.
+- Gland count and JB internal space are not calculated.
+- Cold cable sizing from DB to JB is not calculated from ampacity/voltage-drop
+  rules.
+- Upstream panel coordination is not calculated.
+- Voltage-drop optimization is not yet implemented.
+- Per-cold-lead ampacity and resistance are not yet modeled at cold-lead option
+  level.
+- Per-heater maximum heated length is not yet modeled.
+- Three-phase MI star/delta design is not implemented.
+- MI star-point topology is not implemented.
+- Mixed heater combinations are not implemented.
+- Line zoning with independent control/RTD behavior is not implemented.
+- Grouped control with independent breakers is not yet explicitly modeled.
+- SLD MI overrides are review-only and do not yet drive recalculated output.
+- The current MI catalogue validation workflow is admin/command driven, not a
+  polished user-facing catalogue import and approval workflow.
+
+### 22.5 What Must Be Reviewed Before Issuing MI Results
+
+Before issuing a calculation package containing MI lines, the reviewer should
+check:
+
+1. MI catalogue family is validated from an acceptable source document.
+2. Selected MI heater part number and cold-lead option are acceptable.
+3. Heater set count is reasonable for the line length, heat duty, and field
+   installation practice.
+4. Per-set nominal and cold-start current are acceptable.
+5. Independent breaker-per-set topology is acceptable.
+6. T-class review status is understood and resolved outside the MVP where
+   required.
+7. Physical JB/cold-lead terminal capacity is reviewed manually.
+8. Cold cable sizing and voltage-drop design are reviewed manually.
+9. Panel loading/coordination is reviewed manually.
+10. BOQ quantities are checked before procurement use.
+
+## 23. Pending Activities and Phase Assignment
+
+The following backlog separates MVP-closeout items from future commercial
+product development.
+
+### 23.1 Priority P0 - Before External Issue of MI Results
+
+| Activity | Reason | Status |
+| --- | --- | --- |
+| Validate MI catalogue data source-by-source | Prevent selection from incorrect vendor data | Pending engineering/admin review per project database |
+| Complete at least one worked-example comparison per vendor | Prove numerical behavior against vendor/EPC expectation | Pending vendor output/examples |
+| Review MI T-class basis for hazardous-area jobs | Current result is review evidence only | Manual review required |
+| Review physical JB/cold-lead capacity manually | Current schema cannot calculate terminal/gland capacity | Manual review required |
+| Review cold-cable voltage drop and panel loading manually | Next module not yet built | Manual review required |
+
+### 23.2 Priority P1 - Next Calculation Module
+
+| Activity | Reason | Target phase |
+| --- | --- | --- |
+| Cold cable sizing module | Required for cable size, voltage drop, and installation deliverables | Next module |
+| Voltage-drop optimization | Optimize feeder/cold cable quantities and voltage-drop allocation | Next module |
+| Panel/load coordination summary | Needed for upstream electrical review | Next module |
+| Physical JB/cold-lead capacity data model | Needed before hard terminal-capacity gates can be honest | Next module / early follow-up |
+| Consume active SLD topology in cable sizing | Manual topology edits must affect cable quantities and sizing | Next module |
+
+### 23.3 Priority P2 - MI Engineering Enhancements
+
+| Activity | Reason | Target phase |
+| --- | --- | --- |
+| Per-cold-lead option ampacity and resistance | Current fields are heater-level approximations | MI refinement |
+| Per-heater maximum heated length | Some vendor limits are code-specific | MI refinement |
+| Calculated MI sheath/surface temperature | Needed for stronger T-class evidence | MI refinement |
+| MI line zoning | Needed for long/high-duty lines with zone-specific control | MI phase 2 |
+| Grouped control with independent breakers | Reflect practical control architecture after MI output stabilizes | MI phase 2 |
+| Three-phase MI star/delta and star-point topology | Needed for advanced MI arrangements | MI phase 2+ |
+| Recalculate from MI SLD override | Convert review-only MI override into active design input | MI/SRD refinement |
+
+### 23.4 Priority P3 - Commercial Product Development
+
+| Activity | Reason | Target phase |
+| --- | --- | --- |
+| Constant wattage cable module | Separate cable technology with different engineering behavior | Future module |
+| User-facing catalogue import/governance workflow | Needed for controlled catalogue lifecycle | Commercial hardening |
+| Designer/checker/approver workflow | Required for production engineering issue control | Commercial hardening |
+| Revision control and calculation sign-off | Required for auditable project deliverables | Commercial hardening |
+| 3D model/cable-routing integration | Connect IDF/PCF/IFC/NWD context to design review and routing | Platform expansion |
+| Advanced heat-transfer models | Add convection/radiation, integrated k(T), and multilayer insulation | Calculation expansion |
+
+## 24. Glossary
 
 | Term | Meaning |
 | --- | --- |
 | SR cable | Self-regulating heating cable. |
-| MI cable | Mineral insulated heating cable. Future separate module. |
+| MI cable | Mineral insulated heating cable. In the current MVP it is selected automatically for validated high-temperature fallback cases. |
+| MI heater set | Factory-engineered MI heating cable set with heated section, hot-cold transition, cold lead, and selected resistance code. |
+| MI multi-set selection | Multiple identical MI heater sets selected for one process line when one heater set cannot satisfy heat delivery within per-set limits. |
 | Base heat loss | Heat loss before heat-loss safety factor. |
 | Design heat loss | Heat loss after applying heat-loss safety factor. Used for tracer selection. |
 | Heat-loss safety factor | Project factor applied to base heat loss. |
@@ -936,4 +1271,3 @@ For routine SR calculation work:
 | Selection diagnostics | Stored reason why a line did not receive a selected SR tracer. |
 | SLD | Single Line Diagram. |
 | BOQ | Bill of Quantities. |
-

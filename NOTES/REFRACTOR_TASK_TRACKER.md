@@ -8,6 +8,22 @@ Current architecture/program references:
 - [SLD Refactor And Build Roadmap](/home/kr/mydev/eht_office/NOTES/SLD_REFACTOR_BUILD_ROADMAP.md:1)
 - [EHT SLD Graph Contract](/home/kr/mydev/eht_office/NOTES/EHT_SLD_GRAPH_CONTRACT.md:1)
 
+MI MVP task queue as of 2026-05-28:
+- [x] MI-16.1: Add catalogue readiness checks for source documents, family limits, heater rows, conductor/TCR data, and cold-lead options.
+- [x] MI-16.2: Register MI catalogue/result models in Django admin with guarded validation actions.
+- [x] MI-16.3: Add `mi_catalogue_readiness` command and activate readiness-passing Thermon, nVent, and Chromalox families in the working DB.
+- [x] MI-17.1: Add bounded identical multi-set MI selection for high-duty lines that one validated heater set cannot satisfy.
+- [x] MI-17.2: Represent each selected MI heater set as an independently protected one-circuit branch in power distribution, SLD, BOQ, and cable schedule outputs.
+- [x] MI-17.3: Surface selected MI model numbers and rounded engineering values in the SLD canvas/inspector/PDF output.
+- [x] MI-18.1: Record MI MVP design-basis and deferred-scope notes in engineering documentation and user-facing result output.
+- [ ] MI-Future: Add per-cold-lead ampacity and resistance fields, populate vendor values, and use them in selection checks.
+- [ ] MI-Future: Add per-heater maximum heated length and reject over-length MI selections.
+- [ ] MI-Future: Add physical JB/conductor/terminal/gland capacity modeling before enforcing cold-lead terminal-capacity gates.
+- [ ] MI-Future: Add one worked-example benchmark per vendor after real vendor outputs are available.
+- [ ] MI-Future: Add line zoning with zone-specific length, control sensor, and alarm behavior after MI MVP output is stable.
+- [ ] MI-Future: Decide whether `MIAlloyTempFactor` remains as a curve-table fallback or is removed after linear TCR is accepted.
+- [ ] Next module: Cold cable sizing and voltage-drop optimization should consume the stabilized SR/MI SLD topology and connected-load evidence.
+
 Program-level SLD execution baseline:
 - [ ] Phase 1: Hardening the current EHT SLD foundation
 - [ ] Phase 2: Stabilize the graph model
@@ -285,3 +301,22 @@ Progress notes:
   active schedule rows shown in the new tab. The export uses the engineering
   column order requested for cable scheduling and reflects active manual SLD
   topology instead of falling back to the older branch-style result schedule.
+- Pass 16 user-facing MI output fix: decoded the first high-temperature upload
+  failure. The blocker was not catalogue population or validation; it was the
+  single-heater-set MVP assumption. Added bounded identical multi-set MI
+  selection so a validated heater/cold-lead option that passes current,
+  voltage-drop, and catalogue gates can be repeated as multiple factory heater
+  sets when one set under-delivers heat. MI power distribution now treats those
+  sets as parallel per-set circuits, BOQ totals count MI heater sets and total
+  heated MI length, and the result page/export show set count plus per-set
+  current basis. Deferred: mixed MI optimization, 3-phase MI circuiting, and
+  worked-example benchmark validation.
+- Pass 17 independent MI protection refinement: corrected multi-set MI power
+  distribution so `heater_set_count = N` produces `N` independent one-circuit
+  `1phJB` branches, each with its own MCB path and per-set current evidence.
+  The generated SLD payload now carries MI grouping metadata
+  (`mi_group_id`, set index/count, heater part number, independent-protection
+  flag) while still keeping each heater set independently protected. BOQ/cable
+  schedule now derive MCB/JB/end-termination counts from the corrected branch
+  shape. Deferred: visual SLD grouping, line zoning, grouped control/RTD
+  philosophy, and mixed heater optimization.

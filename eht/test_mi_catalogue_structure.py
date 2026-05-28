@@ -1,11 +1,13 @@
 from io import StringIO
 
+from django.contrib import admin
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, transaction
 from django.core.exceptions import FieldDoesNotExist
 from django.test import TestCase
 
+from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
 from eht.models import (
     HeatTracingInput,
     MIAlloyTempFactor,
@@ -14,6 +16,7 @@ from eht.models import (
     MIColdLeadOption,
     SelectedMIHeater,
 )
+import eht.admin  # noqa: F401 - ensures admin registrations are loaded for smoke tests.
 
 
 def make_mi_family(**overrides):
@@ -197,6 +200,49 @@ class MICatalogueStructureTests(TestCase):
         self.assertTrue(
             MIColdLeadOption.objects.filter(heater=heater, option_code='CL-7FT', length_m=2.134).exists()
         )
+
+    def test_mi_family_readiness_blocks_incomplete_catalogue_before_validation(self):
+        family = make_mi_family(source_document='')
+        make_mi_heater(family=family, conductor_material='', tcr_per_degree_c=0.0)
+
+        report = evaluate_mi_family_readiness(family)
+
+        self.assertFalse(report['ready'])
+        self.assertIn('SOURCE_DOCUMENT_MISSING', report['blockers'])
+        self.assertTrue(any('CONDUCTOR_MATERIAL_MISSING' in item for item in report['blockers']))
+        self.assertTrue(any('TCR_MISSING_OR_NON_POSITIVE' in item for item in report['blockers']))
+        self.assertTrue(any('NO_COLD_LEAD_OPTIONS' in item for item in report['blockers']))
+
+    def test_mi_catalogue_readiness_command_marks_only_ready_reviewed_families_validated(self):
+        ready_family = make_mi_family(vendor='THR', family_name='MIQ')
+        ready_heater = make_mi_heater(
+            family=ready_family,
+            part_number='MIQ-11EOH-2S',
+            conductor_material='Nickel-Chromium',
+            tcr_per_degree_c=0.000088,
+        )
+        MIColdLeadOption.objects.create(heater=ready_heater, option_code='CL-4FT', length_m=1.219)
+        blocked_family = make_mi_family(vendor='CHR', family_name='MI-825B', source_document='')
+
+        output = StringIO()
+        call_command('mi_catalogue_readiness', mark_validated=True, confirm_reviewed=True, stdout=output)
+
+        ready_family.refresh_from_db()
+        blocked_family.refresh_from_db()
+        self.assertTrue(ready_family.is_validated)
+        self.assertFalse(blocked_family.is_validated)
+        self.assertIn('Marked 1 MI family/families as validated.', output.getvalue())
+
+    def test_mi_catalogue_readiness_command_requires_explicit_review_confirmation(self):
+        with self.assertRaises(CommandError):
+            call_command('mi_catalogue_readiness', mark_validated=True, stdout=StringIO())
+
+    def test_mi_catalogue_models_are_registered_in_admin(self):
+        self.assertIn(MICableFamily, admin.site._registry)
+        self.assertIn(MICableHeater, admin.site._registry)
+        self.assertIn(MIColdLeadOption, admin.site._registry)
+        self.assertIn(MIAlloyTempFactor, admin.site._registry)
+        self.assertIn(SelectedMIHeater, admin.site._registry)
 
 
 class SelectedMIHeaterStructureTests(TestCase):

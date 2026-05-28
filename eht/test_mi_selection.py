@@ -371,6 +371,38 @@ class MISelectionCandidateTests(TestCase):
             'DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED',
         )
 
+    def test_selects_multiple_identical_heater_sets_when_single_set_underheats(self):
+        family = make_family(max_watt_density_w_m=20.0)
+        heater = make_heater(
+            family=family,
+            resistance_ohms_m=0.5,
+            max_current_a=10.0,
+            cold_lead_max_ampacity_a=10.0,
+        )
+        make_cold_lead(heater=heater, length_m=2.0)
+        heat_loss = make_heat_loss(design_heat_loss=25.0)
+        line = make_line(line_length=100.0)
+
+        selected, alternatives = get_mi_heater_options(
+            heat_loss,
+            line,
+            make_project_settings(max_cb_size=10.0, restrict_cb_current=80.0),
+        )
+
+        self.assertEqual(alternatives, [])
+        self.assertEqual(heat_loss['mi_selection_status'], 'selected')
+        self.assertEqual(selected['heater_part_number'], heater.part_number)
+        self.assertEqual(selected['heater_set_count'], 3)
+        self.assertEqual(selected['selection_basis']['heater_set_count'], 3)
+        self.assertTrue(selected['selection_basis']['mvp_multi_set_selection'])
+        self.assertLess(selected['selection_basis']['per_set_low_voltage_power_density_w_m'], 25.0)
+        self.assertGreaterEqual(selected['low_voltage_power_density_w_m'], 25.0)
+        self.assertLessEqual(selected['current_cold_start_a'], 8.0)
+        self.assertAlmostEqual(
+            selected['total_current_cold_start_a'],
+            selected['current_cold_start_a'] * 3,
+        )
+
     def test_returns_alternatives_sorted_by_closest_low_voltage_heat_delivery(self):
         family = make_family(max_watt_density_w_m=200.0)
         high_output = make_heater(
@@ -433,3 +465,46 @@ class MIRealCatalogueSmokeTests(TestCase):
         )
         self.assertGreater(selected['heater_resistance_ohms'], selected['heater_base_resistance_ohms'])
         self.assertLess(selected['heater_startup_resistance_ohms'], selected['heater_base_resistance_ohms'])
+
+    def test_real_catalogue_selects_multi_set_mi_for_high_temperature_sample_line(self):
+        call_command('populate_mi_catalogue', stdout=StringIO())
+        family = MICableFamily.objects.get(vendor='THR', family_name='MIQ')
+        family.is_validated = True
+        family.save()
+        heat_loss = make_heat_loss(
+            uid=9433,
+            design_heat_loss=102.95195280403176,
+            tracer_adder=18.02621241242483,
+        )
+        line = make_line(
+            uid=9433,
+            line_id='1__1-PS-A',
+            line_size=30.0,
+            line_length=70.95,
+            maint_temp=45.0,
+            oper_temp=45.0,
+            design_temp=350.0,
+        )
+
+        selected, _alternatives = get_mi_heater_options(
+            heat_loss,
+            line,
+            make_project_settings(
+                voltage=240.0,
+                voltage_var_factor=5.0,
+                startup_t=5.0,
+                min_amb_t=5.0,
+                max_cb_size=25.0,
+                restrict_cb_current=80.0,
+                allowablevdrop=6.0,
+                temp_class='T3',
+            ),
+        )
+
+        self.assertEqual(heat_loss['mi_selection_status'], 'selected')
+        self.assertEqual(selected['vendor'], 'THR')
+        self.assertEqual(selected['heater_part_number'], 'MIQ-31E4H-2S')
+        self.assertEqual(selected['heater_set_count'], 3)
+        self.assertGreaterEqual(selected['low_voltage_power_density_w_m'], heat_loss['design_heat_loss'])
+        self.assertLessEqual(selected['current_cold_start_a'], 20.0)
+        self.assertAlmostEqual(selected['heated_length_m'], 88.97621241242483)
