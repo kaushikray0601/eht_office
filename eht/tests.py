@@ -772,10 +772,42 @@ class TracerSelectionTests(SimpleTestCase):
         )
 
         self.assertEqual(best_tracer['V_UID'], 'T1')
-        self.assertAlmostEqual(best_tracer['Tracer_With_Margin'], 11.88, places=2)
+        self.assertAlmostEqual(best_tracer['Tracer_With_Margin'], 13.20, places=2)
+        self.assertEqual(best_tracer['SR_Parallel_Run_Count'], 1)
         self.assertEqual([item['V_UID'] for item in alternatives], ['T2', 'T3'])
         self.assertEqual(heat_loss['selection_status'], 'selected')
         self.assertEqual(heat_loss['selection_rejection_reasons'], [])
+
+    def test_get_tracer_options_selects_parallel_sr_runs_before_rejecting_heat_duty(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 120.0, 'tracer_adder': 0.0}
+
+        best_tracer, alternatives = get_tracer_options(
+            heat_loss,
+            make_line(line_size=4.0, line_length=10.0),
+            make_project_settings(spiral_factor=1.0, sr_max_parallel_runs=4),
+            self._catalogue({'V_UID': 'T70', 'C_Coeff': 70.0}),
+        )
+
+        self.assertEqual(best_tracer['V_UID'], 'T70')
+        self.assertEqual(best_tracer['SR_Parallel_Run_Count'], 2)
+        self.assertAlmostEqual(best_tracer['Spiral_Factor'], 120.0 / 70.0 / 2, places=6)
+        self.assertAlmostEqual(best_tracer['SR_Per_Run_Tracer_Length'], 10.0, places=6)
+        self.assertAlmostEqual(best_tracer['Tracer_With_Margin'], 22.0, places=6)
+        self.assertEqual(best_tracer['SR_Constructability_Warning'], '')
+        self.assertEqual(alternatives, [])
+
+    def test_get_tracer_options_flags_small_pipe_parallel_run_constructability(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 120.0, 'tracer_adder': 0.0}
+
+        best_tracer, _alternatives = get_tracer_options(
+            heat_loss,
+            make_line(line_size=1.5, line_length=10.0),
+            make_project_settings(spiral_factor=1.0, sr_max_parallel_runs=4),
+            self._catalogue({'V_UID': 'T45', 'C_Coeff': 45.0}),
+        )
+
+        self.assertEqual(best_tracer['SR_Parallel_Run_Count'], 3)
+        self.assertIn('exceed the pipe-size guided preference', best_tracer['SR_Constructability_Warning'])
 
     def test_get_tracer_options_rejects_spiral_wrap_candidates_when_not_allowed(self):
         heat_loss = {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0}
@@ -1200,6 +1232,46 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         self.assertAlmostEqual(power_params['max_current'], (2420.0 / 253.0) / 2, places=6)
         self.assertEqual(power_params['breaker_size'], 6)
         self.assertAlmostEqual(power_params['voltage_scenarios']['max_current_voltage'], 253.0, places=6)
+
+    def test_compute_power_params_keeps_parallel_sr_runs_on_independent_breakers(self):
+        selected_tracer = {
+            'V_UID': 'SR-70',
+            'Tracer_Family': 'Self Regulating',
+            'Tracer_With_Margin': 22.0,
+            'SR_Per_Run_Tracer_Length': 10.0,
+            'SR_Parallel_Run_Count': 2,
+            'SR_Parallel_Run_Basis': 'SR_PARALLEL_STRAIGHT_RUN_SELECTION_MVP_V1',
+            'A_Coeff': 0.0,
+            'B_Coeff': 0.0,
+            'C_Coeff': 70.0,
+            'Voltage_Correction_Factor': 1.0,
+            'Voltage_Correction_Factor_Nominal': 1.0,
+            'Voltage_Correction_Factor_Max_Current': 1.0,
+        }
+
+        power_params = compute_power_params(
+            make_line(line_length=10.0),
+            make_project_settings(margin_on_tracer_lengths=10.0),
+            make_asme_table(),
+            selected_tracer,
+        )
+        distribution = compute_power_distribution(power_params, make_project_settings())
+
+        self.assertEqual(power_params['no_of_circuits'], 2)
+        self.assertTrue(power_params['sr_independent_parallel_runs'])
+        self.assertAlmostEqual(power_params['line_max_current'], 1540.0 / 230.0, places=6)
+        self.assertAlmostEqual(power_params['max_current'], 770.0 / 230.0, places=6)
+        self.assertEqual(distribution['total_circuits'], 2)
+        self.assertEqual(len(distribution['branches']), 2)
+        self.assertEqual(distribution['branches'][0]['type'], '1phJB')
+        self.assertEqual(
+            distribution['branches'][0]['tagged_components']['heating_cable_type'],
+            'SR',
+        )
+        self.assertEqual(
+            distribution['branches'][1]['tagged_components']['sr_parallel_run_index'],
+            2,
+        )
 
 
 class BoqCalculationTests(SimpleTestCase):

@@ -27,6 +27,10 @@ def _tracer_option_payload(tracer, option_rank=None):
         'tracer_family': tracer.tracer_family,
         'power_output': _rounded_or_blank(tracer.power_output),
         'spiral_factor': _rounded_or_blank(tracer.spiral_factor),
+        'sr_parallel_run_count': getattr(tracer, 'sr_parallel_run_count', 1),
+        'sr_parallel_run_basis': getattr(tracer, 'sr_parallel_run_basis', ''),
+        'sr_constructability_warning': getattr(tracer, 'sr_constructability_warning', ''),
+        'sr_per_run_tracer_length': _rounded_or_blank(getattr(tracer, 'sr_per_run_tracer_length', 0)),
         'tracer_length': _rounded_or_blank(tracer.tracer_length),
         'tracer_with_margin': _rounded_or_blank(tracer.tracer_with_margin),
     }
@@ -104,6 +108,9 @@ def _calculation_payload(calculation, selected):
         'total_connected_load_w': _rounded_or_blank(calculation.total_power_consumption),
         'ordered_tracer_length_m': _rounded_or_blank(calculation.total_tracer_length),
         'tracer_length_basis': 'ordered_length_includes_termination_allowance',
+        'sr_parallel_run_count': getattr(calculation, 'sr_parallel_run_count', 1),
+        'sr_parallel_run_basis': getattr(calculation, 'sr_parallel_run_basis', ''),
+        'sr_constructability_warning': getattr(calculation, 'sr_constructability_warning', ''),
     }
     if selected:
         payload['heated_tracer_length_excluding_termination_m'] = _rounded_or_blank(selected.tracer_with_margin)

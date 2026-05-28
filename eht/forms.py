@@ -21,6 +21,8 @@ class ProjectDataForm(forms.ModelForm):
             'allowablevdrop',
             'spiral_factor',
             'spiral_wrap_allowed',
+            'sr_parallel_run_basis',
+            'sr_max_parallel_runs',
             'margin_on_tracer_lengths',
             'voltage_var_factor',
             'res_tol',
@@ -50,6 +52,8 @@ class ProjectDataForm(forms.ModelForm):
             'allowablevdrop':'Allowed voltage drop for cold cable (%)',
             'spiral_factor':'Allowed Spiral Factor',
             'spiral_wrap_allowed':'Installation with spiral wrap',
+            'sr_parallel_run_basis': 'SR parallel run basis',
+            'sr_max_parallel_runs': 'Max. SR parallel runs',
             'margin_on_tracer_lengths':'Margin on tracer length (%)',
             'voltage_var_factor':'Design margin for voltage variation (%)',
             'res_tol':'Tracer resistance tolerance (%)',
@@ -91,6 +95,14 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['heat_loss_method'].widget.attrs.update({'title': (
             'Mean temperature is active by default. Table, integrated k(T), and fixed-basis methods are placeholders for future releases.'
         )})
+        self.fields['sr_parallel_run_basis'].help_text = (
+            'Pipe-size guided uses 1/2/3/4 preferred straight runs for <1, <2, <3, and >=3 inch lines.'
+        )
+        self.fields['sr_max_parallel_runs'].help_text = (
+            'Absolute SR straight-run cap for this pass. Values above the pipe-size guidance are flagged for review.'
+        )
+        self.fields['sr_parallel_run_basis'].required = False
+        self.fields['sr_max_parallel_runs'].required = False
         for name, field in self.fields.items():
             self._apply_bootstrap_widget_classes(name, field)
 
@@ -108,7 +120,13 @@ class ProjectDataForm(forms.ModelForm):
         else:
             ensure_class('form-control')
 
-        if name in {'proj_id', 'vendor', 'heat_loss_method'}:
+        if name in {'proj_id', 'vendor', 'heat_loss_method', 'sr_parallel_run_basis'}:
             ensure_class('project-hero-field')
 
         widget.attrs['class'] = ' '.join(token for token in class_tokens if token)
+
+    def clean_sr_parallel_run_basis(self):
+        return self.cleaned_data.get('sr_parallel_run_basis') or 'PIPE_SIZE_GUIDED'
+
+    def clean_sr_max_parallel_runs(self):
+        return self.cleaned_data.get('sr_max_parallel_runs') or 4

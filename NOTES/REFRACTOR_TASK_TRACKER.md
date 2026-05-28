@@ -320,3 +320,16 @@ Progress notes:
   schedule now derive MCB/JB/end-termination counts from the corrected branch
   shape. Deferred: visual SLD grouping, line zoning, grouped control/RTD
   philosophy, and mixed heater optimization.
+- Pass 19 SR straight-run parallel refinement: added project setup controls for
+  SR parallel run basis and maximum SR runs, defaulting to pipe-size guided
+  constructability with an absolute MVP cap of 4. SR selection now tries
+  multiple straight runs before rejecting a heat-duty shortfall. The persisted
+  selected/alternate/calculation rows record SR run count, per-run length, run
+  basis, and constructability warnings. Multiple SR runs are represented as
+  independently protected one-circuit branches in power distribution and SLD
+  metadata, matching the conservative MVP topology chosen for review clarity.
+  Spiral factor is now treated as heat-duty evidence; straight-run cable length
+  is not reduced below one full heated route per run. Deferred: table-based SR
+  vendor curve interpolation to replace fitted A/B/C coefficients as the
+  primary catalogue basis, grouped SR feeder optimization, and project-specific
+  hard constructability limits.

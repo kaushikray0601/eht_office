@@ -195,8 +195,14 @@
                                                 MI | Sets {{ item.selected_mi_heater.selection_basis.heater_set_count|default:1 }}
                                             {% else %}
                                                 {{ item.selected_tracer.tracer_family|default:"-" }}
+                                                {% if item.calculation.sr_parallel_run_count|default:1 > 1 %}
+                                                    | SR runs {{ item.calculation.sr_parallel_run_count }}
+                                                {% endif %}
                                             {% endif %}
                                         </div>
+                                        {% if item.calculation.sr_constructability_warning %}
+                                            <div class="small text-warning">{{ item.calculation.sr_constructability_warning }}</div>
+                                        {% endif %}
                                     {% else %}
                                         <div class="fw-semibold">MI fallback selected</div>
                                         <div class="small text-muted">
@@ -225,7 +231,16 @@
                                         <span class="text-muted small">Generated</span>
                                     {% endif %}
                                 </td>
-                                <td>{% if item.calculation %}{{ item.calculation.spiral_factor|floatformat:2 }}{% else %}-{% endif %}</td>
+                                <td>
+                                    {% if item.calculation %}
+                                        {{ item.calculation.spiral_factor|floatformat:2 }}
+                                        {% if item.calculation.sr_parallel_run_count|default:1 > 1 %}
+                                            <div class="small text-muted">{{ item.calculation.sr_parallel_run_count }} straight runs</div>
+                                        {% endif %}
+                                    {% else %}
+                                        -
+                                    {% endif %}
+                                </td>
                                 <td>{% if item.calculation %}{{ item.calculation.breaker_size|floatformat:0 }} A{% else %}-{% endif %}</td>
                                 <td>
                                     {% if item.calculation %}

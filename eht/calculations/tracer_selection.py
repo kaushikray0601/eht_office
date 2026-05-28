@@ -19,6 +19,9 @@ ROMAN_ZONE_RANK = {'I': '1', 'II': '2'}
 SR_NOMINAL_VOLTAGE_RULE_SET = 'SR_NOMINAL_VOLTAGE_CLASS_V1'
 SR_NOMINAL_VOLTAGE_DEVIATION_LIMIT = 0.10
 SR_REJECTION_RULE_SET = 'SR_SELECTION_REJECTION_REASON_V1'
+SR_PARALLEL_RUN_RULE_SET = 'SR_PARALLEL_STRAIGHT_RUN_SELECTION_MVP_V1'
+SR_PIPE_SIZE_GUIDED_BASIS = 'PIPE_SIZE_GUIDED'
+SR_FIXED_PROJECT_MAXIMUM_BASIS = 'FIXED_PROJECT_MAXIMUM'
 
 
 def _is_blank(value):
@@ -239,6 +242,42 @@ def _record_selection_success(heat_loss):
     heat_loss['selection_rejection_reasons'] = []
 
 
+def _preferred_sr_runs_for_pipe_size(pipe_size_in):
+    """Return constructability guidance, not a hard thermal limit."""
+    pipe_size_in = float(pipe_size_in)
+    if pipe_size_in < 1:
+        return 1
+    if pipe_size_in < 2:
+        return 2
+    if pipe_size_in < 3:
+        return 3
+    return 4
+
+
+def _sr_run_limits(line, project_settings):
+    project_cap = int(project_settings.get('sr_max_parallel_runs') or 4)
+    project_cap = max(1, min(project_cap, 4))
+    basis = project_settings.get('sr_parallel_run_basis') or SR_PIPE_SIZE_GUIDED_BASIS
+    guided_cap = _preferred_sr_runs_for_pipe_size(line.get('line_size') or 0)
+    return {
+        'absolute_cap': project_cap,
+        'preferred_cap': guided_cap if basis == SR_PIPE_SIZE_GUIDED_BASIS else project_cap,
+        'basis': basis,
+        'rule_set': SR_PARALLEL_RUN_RULE_SET,
+    }
+
+
+def _sr_constructability_warning(run_count, run_limits, line):
+    preferred_cap = int(run_limits['preferred_cap'])
+    if run_count <= preferred_cap:
+        return ''
+    return (
+        f"{run_count} straight SR runs exceed the pipe-size guided preference "
+        f"of {preferred_cap} run(s) for {float(line.get('line_size') or 0):g} in pipe; "
+        "review installation spacing and routing."
+    )
+
+
 def get_tracer_options(heat_loss, line, project_settings, vendor_data):
     """
     Selects the optimal heating tracer from the vendor database.
@@ -268,6 +307,7 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         spiral_allowed = project_settings['spiral_wrap_allowed']
         max_spiral_factor = project_settings['spiral_factor']
         min_spiral_factor = 0.8  # Hardcoded lower limit to prevent unrealistic spiral factors
+        run_limits = _sr_run_limits(line, project_settings)
         
 
         available_tracers = filter_sr_catalogue_suitability(vendor_data, line, project_settings)
@@ -339,8 +379,17 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
             return {}, []
             
         # Size heat delivery at low voltage; nominal and high-voltage scenarios are used separately.
-        valid_tracers.loc[:, 'Spiral_Factor'] = abs(
+        # Spiral_Factor is retained as a heat-duty ratio. For straight runs, cable
+        # order length is not reduced below one full run per trace.
+        valid_tracers.loc[:, 'Single_Run_Duty_Ratio'] = abs(
             heat_loss['heat_loss'] / valid_tracers['Power_Output_Heat_Delivery']
+        )
+        run_count_options = pd.DataFrame(
+            {'SR_Parallel_Run_Count': range(1, run_limits['absolute_cap'] + 1)}
+        )
+        valid_tracers = valid_tracers.merge(run_count_options, how='cross')
+        valid_tracers.loc[:, 'Spiral_Factor'] = (
+            valid_tracers['Single_Run_Duty_Ratio'] / valid_tracers['SR_Parallel_Run_Count']
         )
 
         # Validate spiral factor within project constraints
@@ -359,6 +408,7 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
                     'min_spiral_factor': min_spiral_factor,
                     'max_spiral_factor': max_spiral_factor,
                     'spiral_wrap_allowed': spiral_allowed,
+                    'sr_parallel_run_cap': run_limits['absolute_cap'],
                 },
             )
             return  {}, []
@@ -366,13 +416,26 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         # Calculate total required tracer length
         eqv_pipe_length = float(line['line_length'])
         tracer_adder = float(heat_loss['tracer_adder'])
-        valid_tracers['Tracer_Length'] = (eqv_pipe_length + tracer_adder) * valid_tracers['Spiral_Factor']
+        base_straight_run_length = eqv_pipe_length + tracer_adder
+        valid_tracers['SR_Per_Run_Tracer_Length'] = (
+            base_straight_run_length * valid_tracers['Spiral_Factor'].clip(lower=1.0)
+        )
+        valid_tracers['Tracer_Length'] = (
+            valid_tracers['SR_Per_Run_Tracer_Length'] * valid_tracers['SR_Parallel_Run_Count']
+        )
 
         # Apply design margin to total tracer length       
         valid_tracers['Tracer_With_Margin'] = valid_tracers['Tracer_Length'] * (1 + tracer_length_margin)
+        valid_tracers['SR_Parallel_Run_Basis'] = SR_PARALLEL_RUN_RULE_SET
+        valid_tracers['SR_Constructability_Warning'] = valid_tracers['SR_Parallel_Run_Count'].map(
+            lambda run_count: _sr_constructability_warning(run_count, run_limits, line)
+        )
 
-        # Rank by efficiency (lowest length preferred, then lower power output)
-        valid_tracers = valid_tracers.sort_values(by=['Tracer_With_Margin', 'Power_Output'], ascending=[True, True])
+        # Rank by installation simplicity first, then quantity and power fit.
+        valid_tracers = valid_tracers.sort_values(
+            by=['SR_Parallel_Run_Count', 'Tracer_With_Margin', 'Power_Output'],
+            ascending=[True, True, True],
+        )
 
         # Select best tracer in dictionary and store alternatives in list
         best_tracer = valid_tracers.iloc[0].to_dict()   

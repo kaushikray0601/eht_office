@@ -12,6 +12,10 @@ from .heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD, HEAT_LOSS_METHOD_CHOICE
 MAX_CB_SIZE = [(2, 2), (4, 4), (6, 6), (10, 10), (16, 16), (20, 20), (25, 25), (32, 32), (40, 40)]
 SELECT_VENDOR = [('THR', 'Thermon'), ('CHR', 'Chromalox'), ('nVN', 'nVent'), ('SST', 'SST'), ('KRZ', 'KRUS-Zapad')]
 ALLOW_SPIRAL_WRAP = [(True, 'Allowed'), (False, 'Not Allowed')]
+SR_PARALLEL_RUN_BASIS_CHOICES = [
+    ('PIPE_SIZE_GUIDED', 'Pipe-size guided'),
+    ('FIXED_PROJECT_MAXIMUM', 'Fixed project maximum'),
+]
 SELECT_RTD_THERMOSTAT = [('RI', 'RTD-Inline'), ('RO', 'RTD-Offline'), ('TI', 'Thermostat-Inline'), ('TO', 'Thermostat-Offline')]
 CHOICE_LOCAL_ISOLATOR = [('bothSides', 'Both Sides'), ('outgoingOnly', 'Outgoing Only'), ('incomingOnly', 'Incoming Only'), ('noIsolator', 'No Isolator')]
 LOCAL_ISOLATOR_REQUIREMENT = [('required', 'Required'), ('not_required', 'Not Required')]
@@ -79,7 +83,13 @@ class ProjectData(models.Model):
     restrict_cb_current = models.DecimalField(max_digits=5, decimal_places=2)
     vendor = models.CharField(max_length=30, choices=SELECT_VENDOR, default='THR')
     spiral_wrap_allowed = models.BooleanField(choices=ALLOW_SPIRAL_WRAP, default=True)
-    spiral_factor = models.DecimalField(max_digits=5, decimal_places=2)
+    spiral_factor = models.DecimalField(max_digits=5, decimal_places=2, default=1)
+    sr_parallel_run_basis = models.CharField(
+        max_length=30,
+        choices=SR_PARALLEL_RUN_BASIS_CHOICES,
+        default='PIPE_SIZE_GUIDED',
+    )
+    sr_max_parallel_runs = models.PositiveSmallIntegerField(default=4)
     valve_factor = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     flange_factor = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     support_factor = models.DecimalField(max_digits=5, decimal_places=2, default=0)
@@ -117,6 +127,8 @@ class ProjectData(models.Model):
                 errors[field] = 'Value cannot be negative.'
         if self.restrict_cb_current is not None and not (0 < self.restrict_cb_current <= 100):
             errors['restrict_cb_current'] = 'Circuit breaker loading must be greater than 0 and no more than 100 percent.'
+        if self.sr_max_parallel_runs is not None and not (1 <= self.sr_max_parallel_runs <= 4):
+            errors['sr_max_parallel_runs'] = 'SR maximum parallel runs must be between 1 and 4.'
         if self.heat_loss_sf is not None and self.heat_loss_sf < 1:
             errors['heat_loss_sf'] = 'Heat loss safety factor must be at least 1.0.'
         if errors:
@@ -300,6 +312,10 @@ class SelectedTracer(models.Model):
     voltage_correction_factor = models.FloatField()
     power_output = models.FloatField()
     spiral_factor = models.FloatField()
+    sr_parallel_run_count = models.PositiveSmallIntegerField(default=1)
+    sr_parallel_run_basis = models.CharField(max_length=50, default='', blank=True)
+    sr_constructability_warning = models.CharField(max_length=255, default='', blank=True)
+    sr_per_run_tracer_length = models.FloatField(default=0)
     tracer_length = models.FloatField()
     tracer_with_margin = models.FloatField()
 
@@ -321,6 +337,10 @@ class AlternateTracer(models.Model):
     voltage_correction_factor = models.FloatField()
     power_output = models.FloatField()
     spiral_factor = models.FloatField()
+    sr_parallel_run_count = models.PositiveSmallIntegerField(default=1)
+    sr_parallel_run_basis = models.CharField(max_length=50, default='', blank=True)
+    sr_constructability_warning = models.CharField(max_length=255, default='', blank=True)
+    sr_per_run_tracer_length = models.FloatField(default=0)
     tracer_length = models.FloatField()
     tracer_with_margin = models.FloatField()
 
@@ -556,6 +576,9 @@ class ProcessLineCalculation(models.Model):
     total_tracer_length = models.FloatField(default=0)
     pipe_size_mm = models.FloatField(default=0)
     spiral_factor = models.FloatField()
+    sr_parallel_run_count = models.PositiveSmallIntegerField(default=1)
+    sr_parallel_run_basis = models.CharField(max_length=50, default='', blank=True)
+    sr_constructability_warning = models.CharField(max_length=255, default='', blank=True)
     remarks = models.TextField(null=True, blank=True)  # Placeholder for future
 
     class Meta:

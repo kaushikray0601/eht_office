@@ -95,6 +95,8 @@ PROJECT_DATA_TEMPLATE_FIELDS = [
     'vendor',
     'spiral_wrap_allowed',
     'spiral_factor',
+    'sr_parallel_run_basis',
+    'sr_max_parallel_runs',
     'valve_factor',
     'flange_factor',
     'support_factor',
@@ -575,6 +577,9 @@ def _line_heating_cable_length_m(item):
 def _line_heating_length_basis(item):
     if _line_heater_type(item) == 'MI':
         return 'MI heated length excludes cold leads and factory terminations'
+    calculation = item.get('calculation')
+    if calculation and calculation.sr_parallel_run_count > 1:
+        return 'Ordered SR length includes all straight parallel runs and termination installation allowance'
     return 'Ordered SR length includes termination installation allowance'
 
 
@@ -1796,6 +1801,9 @@ def result_export_view(request):
                 else ''
             ),
             'Spiral Factor': calculation.spiral_factor if calculation else '',
+            'SR Parallel Run Count': calculation.sr_parallel_run_count if calculation else '',
+            'SR Parallel Run Basis': calculation.sr_parallel_run_basis if calculation else '',
+            'SR Constructability Warning': calculation.sr_constructability_warning if calculation else '',
             'Breaker Size': calculation.breaker_size if calculation else '',
             'Total Circuits': calculation.total_circuits if calculation else '',
             'Starting Current / Circuit (A)': calculation.starting_current if calculation else '',
@@ -1843,6 +1851,9 @@ def result_export_view(request):
                 'Tracer Family': alternate.tracer_family,
                 'Power Output': alternate.power_output,
                 'Spiral Factor': alternate.spiral_factor,
+                'SR Parallel Run Count': alternate.sr_parallel_run_count,
+                'SR Parallel Run Basis': alternate.sr_parallel_run_basis,
+                'SR Constructability Warning': alternate.sr_constructability_warning,
                 'Heated Tracer Length before Design Margin (m)': alternate.tracer_length,
                 'Heated Tracer Length with Design Margin excl. Termination (m)': alternate.tracer_with_margin,
             })

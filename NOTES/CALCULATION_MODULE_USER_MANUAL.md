@@ -189,16 +189,19 @@ purpose.
 
 | Field | Meaning | User Guidance |
 | --- | --- | --- |
-| Allowed Spiral Factor | Maximum allowed spiral factor for SR selection. | A tracer is rejected if the required spiral factor is above this limit. |
-| Installation with spiral wrap | Whether spiral installation is allowed. | If disabled, only straight-run selections with spiral factor not more than 1.0 are allowed. |
+| Allowed Spiral Factor | Legacy maximum SR spiral/duty factor. | Current project default is 1.0 because the preferred basis is straight tracing. Higher values should be used only when spiral installation is intentionally accepted. |
+| Installation with spiral wrap | Whether spiral installation is allowed. | If disabled, each selected straight run must have a heat-duty ratio not more than 1.0. |
+| SR parallel run basis | Constructability basis for straight parallel SR tracing. | Default pipe-size guided basis prefers 1 run below 1 in, 2 runs below 2 in, 3 runs below 3 in, and up to 4 runs from 3 in upward. |
+| Max. SR parallel runs | Absolute project cap for SR straight runs. | Default and current MVP maximum is 4. Designs exceeding the pipe-size preference are flagged for review rather than silently rejected. |
 | Margin on tracer length (%) | Design margin applied to heated tracer length. | This margin is applied before termination allowance is added. |
 | Termination margin (in mm) | Installation allowance per circuit for termination. | Added to ordered SR cable length per circuit. It is not treated as energized heat-delivery length. |
 | Safety Factor on Heat Loss (> 1.0) | Safety factor applied to base heat loss. | The result called Design Heat Loss is base heat loss multiplied by this factor. |
 
 Important distinction:
 
-- Heated tracer length is the length required for heat delivery after spiral
-  factor and design margin.
+- SR spiral factor is now treated as a heat-duty ratio for selection evidence.
+- For straight SR tracing, installed length is not reduced below one full run
+  per trace. Multiple straight SR runs multiply the full heated route length.
 - Ordered SR length includes the termination installation allowance.
 - Termination allowance is excluded from electrical load and heat-delivery
   sizing.
@@ -501,9 +504,20 @@ Required spiral factor is calculated from:
 
 `Spiral Factor = Design Heat Loss / Low-Voltage Heat-Delivery Power`
 
-The module currently requires spiral factor to be at least 0.8 and not greater
+For SR parallel tracing, the module tries straight run counts from 1 to the
+project cap, currently no more than 4:
+
+`Per-Run Duty Ratio = Spiral Factor / SR Parallel Run Count`
+
+The module requires this per-run duty ratio to be at least 0.8 and not greater
 than the project Allowed Spiral Factor. If spiral wrap is not allowed, the
-spiral factor must not exceed 1.0.
+per-run duty ratio must not exceed 1.0.
+
+For straight tracing, the ordered heated length is not shortened when duty
+ratio is below 1.0. One selected run still means one full heated route. Two,
+three, or four selected SR runs mean two, three, or four full straight passes.
+The project records constructability warnings when the selected run count
+exceeds the pipe-size guided preference.
 
 If no candidate row satisfies the spiral factor limits, the line appears in SR
 Selection Diagnostics with reason code `NO_SPIRAL_FACTOR_MATCH`.
@@ -512,8 +526,9 @@ Selection Diagnostics with reason code `NO_SPIRAL_FACTOR_MATCH`.
 
 After filtering and sizing, candidate tracers are ranked by:
 
-1. Lowest tracer length with margin.
-2. Lower nominal power output as the secondary sort.
+1. Lowest SR parallel run count.
+2. Lowest ordered tracer length with margin.
+3. Lower nominal power output as the secondary sort.
 
 The first row becomes the generated selected tracer. Remaining valid rows are
 stored as alternate tracers.
@@ -543,8 +558,13 @@ The module calculates allowed current per circuit:
 
 `Allowed Current per Circuit = Max CB Size * Max CB Loading Factor`
 
-The number of circuits is then calculated from line maximum current divided by
-the allowed current per circuit, rounded up.
+For a single SR run, the number of circuits is calculated from line maximum
+current divided by the allowed current per circuit, rounded up.
+
+For multiple straight SR runs in the current MVP, each physical SR run is
+treated as independently protected. Therefore two straight SR runs create two
+one-circuit branches, three straight runs create three branches, and so on.
+This is a conservative design basis for fault isolation and review clarity.
 
 ### 10.3 Breaker Size
 

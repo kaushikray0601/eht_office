@@ -103,10 +103,21 @@
                         {{ form.spiral_factor|as_crispy_field }}
                     </div>
                     <div class="col-lg-4">
+                        {{ form.sr_parallel_run_basis|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.sr_max_parallel_runs|as_crispy_field }}
+                    </div>
+                </div>
+                <div class="row g-3 mt-1">
+                    <div class="col-lg-4">
                         {{ form.heat_loss_sf|as_crispy_field }}
                     </div>
                     <div class="col-lg-4">
                         {{ form.wind_speed|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
+                        {{ form.spiral_wrap_allowed|as_crispy_field }}
                     </div>
                 </div>
                 <div class="row g-3 mt-1">
@@ -115,9 +126,6 @@
                     </div>
                     <div class="col-lg-4">
                         {{ form.termination_margin|as_crispy_field }}
-                    </div>
-                    <div class="col-lg-4">
-                        {{ form.spiral_wrap_allowed|as_crispy_field }}
                     </div>
                 </div>
                 <div class="row g-3 mt-1">
