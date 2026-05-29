@@ -22,7 +22,15 @@ MI MVP task queue as of 2026-05-28:
 - [ ] MI-Future: Add one worked-example benchmark per vendor after real vendor outputs are available.
 - [ ] MI-Future: Add line zoning with zone-specific length, control sensor, and alarm behavior after MI MVP output is stable.
 - [ ] MI-Future: Decide whether `MIAlloyTempFactor` remains as a curve-table fallback or is removed after linear TCR is accepted.
+- [x] Cold-cable kickoff handoff note: documented the SR/MI output contract,
+  topology inputs, current/circuit fields, cable length basis, review-only
+  assumptions, and first-pass build sequence in
+  `NOTES/COLD_CABLE_ENGINEERING_HANDOFF_2026-05-29.md`.
 - [ ] Next module: Cold cable sizing and voltage-drop optimization should consume the stabilized SR/MI SLD topology and connected-load evidence.
+- [x] Pre-cold-cable hardening gate: add focused validation/tests for positive
+  SR catalogue voltage, non-numeric SR coefficients, and explicit zero MI TCR
+  handling before relying on hot-engineering output as the cold-cable input
+  contract.
 
 Program-level SLD execution baseline:
 - [ ] Phase 1: Hardening the current EHT SLD foundation

@@ -35,6 +35,32 @@ GAS_GROUP_CHOICES = [
     ('IIB', 'IIB'),
     ('IIC', 'IIC'),
 ]
+CABLE_CONDUCTOR_MATERIAL_CHOICES = [('Cu', 'Copper'), ('Al', 'Aluminium')]
+CABLE_INSULATION_TYPE_CHOICES = [('XLPE', 'XLPE'), ('PVC', 'PVC')]
+CABLE_STANDARD_CHOICES = [
+    ('IEC_60502_1', 'IEC 60502-1 (international)'),
+    ('BS_5467', 'BS 5467 (UK)'),
+]
+MCB_CURVE_CHOICES = [
+    ('B', 'Type B (3-5x In)'),
+    ('C', 'Type C (5-10x In)'),
+    ('D', 'Type D (10-20x In)'),
+]
+MIN_CABLE_SIZE_CHOICES = [
+    ('CALCULATED', 'Calculated (no minimum)'),
+    ('2.5', '2.5 mm²'),
+    ('4', '4 mm²'),
+    ('6', '6 mm²'),
+    ('10', '10 mm²'),
+]
+CABLE_INSTALL_METHOD_CHOICES = [
+    ('E', 'E - Multi-core on open cable tray or ladder'),
+    ('F', 'F - Single-core touching on open tray'),
+    ('B2', 'B2 - Multi-core in conduit in wall or enclosure'),
+    ('C', 'C - Clipped direct to surface'),
+    ('D1', 'D1 - In duct in ground, single cable'),
+    ('D2', 'D2 - Direct buried in ground'),
+]
 DEFAULT_PROJECT_ID = 'default_project'
 
 
@@ -111,6 +137,14 @@ class ProjectData(models.Model):
     tracer_temp_factor = models.DecimalField(max_digits=5, decimal_places=2, default=1)
     alpha_for_res = models.DecimalField(max_digits=6, decimal_places=4, default=1)
     allowablevdrop = models.DecimalField(max_digits=5, decimal_places=2)
+    cable_standard = models.CharField(max_length=20, choices=CABLE_STANDARD_CHOICES, default='IEC_60502_1')
+    cable_conductor_material = models.CharField(max_length=5, choices=CABLE_CONDUCTOR_MATERIAL_CHOICES, default='Cu')
+    cable_insulation_type = models.CharField(max_length=10, choices=CABLE_INSULATION_TYPE_CHOICES, default='XLPE')
+    cable_install_method = models.CharField(max_length=5, choices=CABLE_INSTALL_METHOD_CHOICES, default='E')
+    cable_grouping_derating = models.DecimalField(max_digits=4, decimal_places=3, default=1.0)
+    min_cold_cable_size_mm2 = models.CharField(max_length=15, choices=MIN_CABLE_SIZE_CHOICES, default='CALCULATED')
+    mcb_curve = models.CharField(max_length=5, choices=MCB_CURVE_CHOICES, default='C')
+    gfep_provided = models.BooleanField(default=True)
     udf1 = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     udf2 = models.CharField(max_length=30, null=True, blank=True)
     udf3 = models.CharField(max_length=30, null=True, blank=True)    
@@ -127,6 +161,8 @@ class ProjectData(models.Model):
                 errors[field] = 'Value cannot be negative.'
         if self.restrict_cb_current is not None and not (0 < self.restrict_cb_current <= 100):
             errors['restrict_cb_current'] = 'Circuit breaker loading must be greater than 0 and no more than 100 percent.'
+        if self.cable_grouping_derating is not None and not (0.1 <= self.cable_grouping_derating <= 1.0):
+            errors['cable_grouping_derating'] = 'Cable grouping derating must be between 0.1 and 1.0.'
         if self.sr_max_parallel_runs is not None and not (1 <= self.sr_max_parallel_runs <= 4):
             errors['sr_max_parallel_runs'] = 'SR maximum parallel runs must be between 1 and 4.'
         if self.heat_loss_sf is not None and self.heat_loss_sf < 1:
@@ -415,6 +451,53 @@ class CableScheduleOverride(models.Model):
         ]
 
 
+class ColdCableCatalogue(models.Model):
+    """Validated LV cold-cable catalogue row used by the cold cable module."""
+    CORE_COUNT_CHOICES = [(2, '2C'), (3, '3C'), (4, '4C')]
+
+    vendor = models.CharField(max_length=60, blank=True, default='')
+    cable_standard = models.CharField(max_length=20, choices=CABLE_STANDARD_CHOICES)
+    catalogue_ref = models.CharField(max_length=100, blank=True, default='')
+    cable_type_code = models.CharField(max_length=50)
+    voltage_grade = models.CharField(max_length=20, default='0.6/1kV')
+    conductor_material = models.CharField(max_length=5, choices=CABLE_CONDUCTOR_MATERIAL_CHOICES)
+    insulation_type = models.CharField(max_length=10, choices=CABLE_INSULATION_TYPE_CHOICES)
+    core_count = models.IntegerField(choices=CORE_COUNT_CHOICES)
+    conductor_size_mm2 = models.FloatField()
+    installation_method = models.CharField(max_length=5, choices=CABLE_INSTALL_METHOD_CHOICES)
+    ampacity_a = models.FloatField()
+    ampacity_temp_ref_c = models.FloatField(default=30.0)
+    max_conductor_temp_c = models.FloatField(default=90.0)
+    resistance_mohm_per_m = models.FloatField()
+    reactance_mohm_per_m = models.FloatField(default=0.08)
+    source_document = models.CharField(max_length=200, blank=True, default='')
+    source_date = models.DateField(null=True, blank=True)
+    is_validated = models.BooleanField(default=False)
+
+    class Meta:
+        ordering = ['conductor_material', 'insulation_type', 'core_count', 'conductor_size_mm2']
+        constraints = [
+            models.UniqueConstraint(
+                fields=[
+                    'cable_standard',
+                    'conductor_material',
+                    'insulation_type',
+                    'core_count',
+                    'conductor_size_mm2',
+                    'installation_method',
+                ],
+                name='unique_cold_cable_catalogue_row',
+            ),
+        ]
+        indexes = [
+            models.Index(fields=['conductor_material', 'insulation_type', 'core_count', 'installation_method']),
+            models.Index(fields=['is_validated']),
+        ]
+
+    def __str__(self):
+        return f"{self.cable_type_code} {self.core_count}C x {self.conductor_size_mm2:g} mm²"
+
+
 class TracerSelectionOverride(models.Model):
     project = models.ForeignKey(
         ProjectData,
@@ -626,7 +709,7 @@ class MICableHeater(models.Model):
     part_number = models.CharField(max_length=100, unique=True) # e.g., '61XMI2100' or 'MIQ-2500'
     conductors = models.IntegerField(default=1) # 1 for Single Core, 2 for Dual Core
     resistance_ohms_m = models.FloatField() # Ohms per metre at catalogue reference temperature, usually 20°C.
-    tcr_per_degree_c = models.FloatField(default=0.0) # Linear resistance coefficient per °C, keyed to conductor alloy.
+    tcr_per_degree_c = models.FloatField(null=True, blank=True, default=None) # Linear resistance coefficient per °C, keyed to conductor alloy.
     max_current_a = models.FloatField() # Catalogue maximum heater current.
     cold_lead_resistance_ohms_m = models.FloatField(default=0.0)
     cold_lead_max_ampacity_a = models.FloatField(default=0.0)

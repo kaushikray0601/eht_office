@@ -2,8 +2,9 @@ import pandas as pd
 from django.test import TestCase
 
 from eht.cal import orchestrate_calculations
+from eht.calculations.mi_selection import get_mi_heater_options
 from eht.heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD
-from eht.models import MICableFamily, MICableHeater, MIColdLeadOption
+from eht.models import MIAlloyTempFactor, MICableFamily, MICableHeater, MIColdLeadOption
 
 
 def make_process_lines(**overrides):
@@ -213,3 +214,58 @@ class MIOrchestrationBoundaryTests(TestCase):
         self.assertEqual(result['selected_tracers'], [])
         self.assertEqual(result['selected_mi_heaters'], [])
         self.assertEqual(result['power_distribution'], [])
+
+    def test_zero_tcr_is_treated_as_explicit_linear_constant_resistance(self):
+        family = MICableFamily.objects.create(
+            vendor='THR',
+            family_name='MIQ-ZERO-TCR',
+            alloy_type='Alloy 825',
+            max_voltage=600.0,
+            max_sheath_temp_c=600.0,
+            max_maintain_temp_c=500.0,
+            max_exposure_temp_c=600.0,
+            max_watt_density_w_m=80.0,
+            min_circuit_length_m=1.0,
+            max_circuit_length_m=250.0,
+            temp_class_rating='T3',
+            gas_group='IIC',
+            zone_approval='Zone 1',
+            source_document='Test-only vendor document',
+            is_validated=True,
+        )
+        heater = MICableHeater.objects.create(
+            family=family,
+            part_number='MIQ-ZERO-TCR-R001',
+            conductors=1,
+            resistance_ohms_m=0.1,
+            tcr_per_degree_c=0.0,
+            max_current_a=60.0,
+            cold_lead_resistance_ohms_m=0.02,
+            cold_lead_max_ampacity_a=60.0,
+            sheath_material='Alloy 825',
+            conductor_material='ZeroTCRMaterial',
+        )
+        MIColdLeadOption.objects.create(
+            heater=heater,
+            option_code='CL-2M',
+            length_m=2.0,
+        )
+        MIAlloyTempFactor.objects.create(
+            alloy_type='ZeroTCRMaterial',
+            temperature_c=120.0,
+            resistance_multiplier=2.0,
+        )
+
+        selected, alternatives = get_mi_heater_options(
+            heat_loss={'uid': 1, 'heat_loss': 20.0, 'tracer_adder': 0.0},
+            line=make_process_lines().iloc[0].to_dict(),
+            project_settings=make_project_settings(),
+        )
+
+        basis = selected['selection_basis']['resistance_temperature_basis']
+        self.assertEqual(selected['heater_part_number'], 'MIQ-ZERO-TCR-R001')
+        self.assertEqual(alternatives, [])
+        self.assertEqual(basis['maintain_method'], 'linear_tcr_per_degree_c')
+        self.assertEqual(basis['startup_method'], 'linear_tcr_per_degree_c')
+        self.assertAlmostEqual(basis['maintain_multiplier'], 1.0, places=6)
+        self.assertAlmostEqual(basis['startup_multiplier'], 1.0, places=6)

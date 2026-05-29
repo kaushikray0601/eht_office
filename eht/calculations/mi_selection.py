@@ -123,7 +123,7 @@ def _linear_tcr_multiplier(tcr_per_degree_c, target_temperature_c):
 
 
 def _resistance_multiplier_for_temperature(heater, factors, target_temperature_c):
-    if heater.tcr_per_degree_c:
+    if heater.tcr_per_degree_c is not None:
         multiplier = _linear_tcr_multiplier(heater.tcr_per_degree_c, target_temperature_c)
         return multiplier, 'linear_tcr_per_degree_c'
     return _interpolate_resistance_multiplier(factors, target_temperature_c)

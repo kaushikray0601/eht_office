@@ -19,6 +19,14 @@ class ProjectDataForm(forms.ModelForm):
             'max_cb_size',
             'restrict_cb_current',
             'allowablevdrop',
+            'cable_standard',
+            'cable_conductor_material',
+            'cable_insulation_type',
+            'cable_install_method',
+            'cable_grouping_derating',
+            'min_cold_cable_size_mm2',
+            'mcb_curve',
+            'gfep_provided',
             'spiral_factor',
             'spiral_wrap_allowed',
             'sr_parallel_run_basis',
@@ -50,6 +58,14 @@ class ProjectDataForm(forms.ModelForm):
             'max_cb_size':'Max. circuit breaker size (A)',            
             'restrict_cb_current':'Max. circuit breaker loading (%)',
             'allowablevdrop':'Allowed voltage drop for cold cable (%)',
+            'cable_standard': 'Cold cable standard',
+            'cable_conductor_material': 'Cold cable conductor material',
+            'cable_insulation_type': 'Cold cable insulation type',
+            'cable_install_method': 'Cold cable installation method',
+            'cable_grouping_derating': 'Cable grouping derating factor',
+            'min_cold_cable_size_mm2': 'Minimum cold cable size',
+            'mcb_curve': 'MCB characteristic curve',
+            'gfep_provided': 'GFEP provided',
             'spiral_factor':'Allowed Spiral Factor',
             'spiral_wrap_allowed':'Installation with spiral wrap',
             'sr_parallel_run_basis': 'SR parallel run basis',
@@ -100,6 +116,12 @@ class ProjectDataForm(forms.ModelForm):
         )
         self.fields['sr_max_parallel_runs'].help_text = (
             'Absolute SR straight-run cap for this pass. Values above the pipe-size guidance are flagged for review.'
+        )
+        self.fields['cable_grouping_derating'].help_text = (
+            'User-entered grouping/spacing derating factor. Use 1.0 only when no grouping derating is required.'
+        )
+        self.fields['gfep_provided'].help_text = (
+            'Enabled by default for EHT circuits. Later cold-cable fault checks will treat missing GFEP as a review condition.'
         )
         self.fields['sr_parallel_run_basis'].required = False
         self.fields['sr_max_parallel_runs'].required = False

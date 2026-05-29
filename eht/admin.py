@@ -2,6 +2,7 @@ from django.contrib import admin, messages
 
 from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
 from eht.models import (
+    ColdCableCatalogue,
     ManagedProject,
     MIAlloyTempFactor,
     MICableFamily,
@@ -23,9 +24,77 @@ class ManagedProjectAdmin(admin.ModelAdmin):
 
 @admin.register(ProjectData)
 class ProjectDataAdmin(admin.ModelAdmin):
-    list_display = ('proj_id', 'vendor', 'voltage', 'max_cb_size')
-    list_filter = ('vendor', 'max_cb_size')
+    list_display = ('proj_id', 'vendor', 'voltage', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'gfep_provided')
+    list_filter = ('vendor', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'gfep_provided')
     search_fields = ('proj_id',)
+
+
+def _cold_cable_row_ready(row):
+    return (
+        row.cable_standard
+        and row.cable_type_code
+        and row.conductor_material
+        and row.insulation_type
+        and row.core_count in {2, 3, 4}
+        and row.conductor_size_mm2 > 0
+        and row.ampacity_a > 0
+        and row.ampacity_temp_ref_c < row.max_conductor_temp_c
+        and row.resistance_mohm_per_m > 0
+        and row.source_document
+    )
+
+
+@admin.action(description='Mark selected ready cold-cable rows as validated')
+def mark_cold_cable_rows_validated(modeladmin, request, queryset):
+    validated_count = 0
+    skipped = []
+    for row in queryset:
+        if not _cold_cable_row_ready(row):
+            skipped.append(str(row))
+            continue
+        if not row.is_validated:
+            row.is_validated = True
+            row.save(update_fields=['is_validated'])
+            validated_count += 1
+
+    if validated_count:
+        modeladmin.message_user(request, f'{validated_count} cold-cable catalogue row(s) marked as validated.')
+    if skipped:
+        modeladmin.message_user(
+            request,
+            f"Skipped {len(skipped)} incomplete cold-cable row(s): {', '.join(skipped[:5])}.",
+            level=messages.WARNING,
+        )
+
+
+@admin.action(description='Mark selected cold-cable rows as not validated')
+def mark_cold_cable_rows_unvalidated(modeladmin, request, queryset):
+    updated = queryset.update(is_validated=False)
+    modeladmin.message_user(request, f'{updated} cold-cable catalogue row(s) marked as not validated.')
+
+
+@admin.register(ColdCableCatalogue)
+class ColdCableCatalogueAdmin(admin.ModelAdmin):
+    list_display = (
+        'cable_standard',
+        'cable_type_code',
+        'core_count',
+        'conductor_size_mm2',
+        'installation_method',
+        'ampacity_a',
+        'resistance_mohm_per_m',
+        'is_validated',
+    )
+    list_filter = (
+        'is_validated',
+        'cable_standard',
+        'conductor_material',
+        'insulation_type',
+        'core_count',
+        'installation_method',
+    )
+    search_fields = ('vendor', 'catalogue_ref', 'cable_type_code', 'source_document')
+    actions = (mark_cold_cable_rows_validated, mark_cold_cable_rows_unvalidated)
 
 
 @admin.register(SLDNodeLayout)

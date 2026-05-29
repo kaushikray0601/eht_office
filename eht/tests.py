@@ -5,6 +5,7 @@ from io import BytesIO
 from unittest.mock import patch
 
 import pandas as pd
+from django.core.management import call_command
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -24,12 +25,14 @@ from eht.calculations.tracer_selection import (
     filter_sr_catalogue_suitability,
     get_tracer_options,
 )
+from eht.cold_cable import resolve_cable_lengths
 from eht.data_service import clear_project_workspace_data, fetch_process_lines, store_calculated_results
 from eht.forms import ProjectDataForm
 from eht.models import (
     AlternateTracer,
     BOQ,
     CableScheduleOverride,
+    ColdCableCatalogue,
     DEFAULT_PROJECT_ID,
     ElecEHT_ASMEB36,
     ElecEHT_ThermalConductivity,
@@ -206,6 +209,14 @@ def make_project_form_payload(**overrides):
         'max_cb_size': '10',
         'restrict_cb_current': '80.00',
         'allowablevdrop': '5.00',
+        'cable_standard': 'IEC_60502_1',
+        'cable_conductor_material': 'Cu',
+        'cable_insulation_type': 'XLPE',
+        'cable_install_method': 'E',
+        'cable_grouping_derating': '1.000',
+        'min_cold_cable_size_mm2': 'CALCULATED',
+        'mcb_curve': 'C',
+        'gfep_provided': 'on',
         'spiral_factor': '2.00',
         'spiral_wrap_allowed': 'True',
         'margin_on_tracer_lengths': '10.00',
@@ -937,6 +948,48 @@ class TracerSelectionTests(SimpleTestCase):
         self.assertAlmostEqual(scenarios['heat_delivery_correction'], 0.81, places=6)
         self.assertAlmostEqual(scenarios['nominal_correction'], 1.0, places=6)
         self.assertAlmostEqual(scenarios['max_current_correction'], 1.21, places=6)
+
+    def test_calculate_voltage_scenarios_rejects_non_positive_voltages(self):
+        with self.assertRaises(ValueError):
+            calculate_voltage_scenarios(230.0, 0.10, 0.0)
+
+        with self.assertRaises(ValueError):
+            calculate_voltage_scenarios(0.0, 0.10, 230.0)
+
+    def test_get_tracer_options_rejects_catalogue_rows_with_invalid_voltage(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0}
+
+        best_tracer, alternatives = get_tracer_options(
+            heat_loss,
+            make_line(),
+            make_project_settings(),
+            self._catalogue({'V_UID': 'BAD_VOLTAGE', 'Voltage_Float': 0.0}),
+        )
+
+        self.assertEqual(best_tracer, {})
+        self.assertEqual(alternatives, [])
+        self.assertEqual(heat_loss['selection_status'], 'rejected')
+        self.assertEqual(
+            heat_loss['selection_rejection_reasons'][0]['code'],
+            'NO_SR_CATALOGUE_VOLTAGE_COMPATIBILITY',
+        )
+
+    def test_get_tracer_options_rejects_rows_with_invalid_power_coefficients(self):
+        heat_loss = {'uid': 'L1', 'heat_loss': 90.0, 'tracer_adder': 2.0}
+
+        best_tracer, alternatives = get_tracer_options(
+            heat_loss,
+            make_line(),
+            make_project_settings(),
+            self._catalogue({'V_UID': 'BAD_COEFF', 'A_Coeff': 'not-a-number'}),
+        )
+
+        self.assertEqual(best_tracer, {})
+        self.assertEqual(alternatives, [])
+        self.assertEqual(heat_loss['selection_status'], 'rejected')
+        rejection = heat_loss['selection_rejection_reasons'][0]
+        self.assertEqual(rejection['code'], 'NO_SR_POWER_COEFFICIENT_DATA')
+        self.assertEqual(rejection['details']['invalid_by_column']['A_Coeff'], 1)
 
     def test_get_tracer_options_sizes_heat_delivery_at_low_voltage(self):
         best_tracer, alternatives = get_tracer_options(
@@ -2578,6 +2631,113 @@ class SldLayoutTests(TestCase):
         first_component_id = original_payload['nodes'][0]['component_id']
         self.assertEqual(reloaded_layout['positions'][first_component_id]['x'], positions[first_component_id]['x'])
         self.assertEqual(reloaded_layout['positions'][first_component_id]['y'], positions[first_component_id]['y'])
+
+
+class ColdCableFoundationTests(TestCase):
+    def test_project_data_defaults_include_cold_cable_basis(self):
+        project = make_project_record(proj_id='p-cold')
+
+        self.assertEqual(project.cable_standard, 'IEC_60502_1')
+        self.assertEqual(project.cable_conductor_material, 'Cu')
+        self.assertEqual(project.cable_insulation_type, 'XLPE')
+        self.assertEqual(project.cable_install_method, 'E')
+        self.assertEqual(float(project.cable_grouping_derating), 1.0)
+        self.assertEqual(project.min_cold_cable_size_mm2, 'CALCULATED')
+        self.assertEqual(project.mcb_curve, 'C')
+        self.assertTrue(project.gfep_provided)
+
+    def test_project_data_rejects_invalid_cold_cable_grouping_derating(self):
+        with self.assertRaises(ValidationError):
+            make_project_record(proj_id='p-cold-invalid', cable_grouping_derating=0.05)
+
+    def test_populate_cold_cable_catalogue_command_is_idempotent(self):
+        call_command('populate_cold_cable_catalogue')
+        call_command('populate_cold_cable_catalogue')
+
+        rows = ColdCableCatalogue.objects.filter(
+            cable_standard='IEC_60502_1',
+            conductor_material='Cu',
+            insulation_type='XLPE',
+            installation_method='E',
+        )
+        self.assertEqual(rows.count(), 14)
+        row = rows.get(core_count=4, conductor_size_mm2=10)
+        self.assertEqual(row.ampacity_a, 52)
+        self.assertEqual(row.resistance_mohm_per_m, 1.83)
+        self.assertTrue(row.is_validated)
+
+    def test_resolve_cable_lengths_uses_generated_branch_defaults(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related('distribution__line').get(distribution__line__proj_id='p1')
+
+        result = resolve_cable_lengths(branch, project)
+
+        self.assertEqual(result.branch_type, '3phJB')
+        self.assertEqual(result.length_4c_m, 30.0)
+        self.assertEqual(result.length_3c_m, 12.0)
+        self.assertEqual(result.length_3c_total_m, 24.0)
+        self.assertEqual(result.length_basis, 'project_default')
+        self.assertFalse(result.length_missing)
+
+    def test_resolve_cable_lengths_prefers_manual_cable_override(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related('distribution__line').get(distribution__line__proj_id='p1')
+        cable3c_detail = branch.tagged_components['Downstream'][0]['component_details']['Cable3C']
+        CableScheduleOverride.objects.create(
+            project=project,
+            component_id=cable3c_detail['component_id'],
+            component_uid=cable3c_detail['component_uid'],
+            display_tag=cable3c_detail['display_tag'],
+            component_type='Cable3C',
+            line_id='LINE-001',
+            line_uid=str(branch.distribution.line.uid),
+            branch_index=branch.branch_index,
+            circuit_index=1,
+            generated_length_m=12.0,
+            manual_length_m=88.5,
+        )
+
+        result = resolve_cable_lengths(branch, project)
+
+        self.assertEqual(result.length_4c_m, 30.0)
+        self.assertEqual(result.length_3c_m, 88.5)
+        self.assertEqual(result.length_3c_total_m, 88.5)
+        self.assertEqual(result.length_3c_basis, 'manual_override')
+        self.assertEqual(result.length_basis, 'manual_override')
+
+    def test_resolve_cable_lengths_can_use_applied_topology_schedule_row(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related('distribution__line').get(distribution__line__proj_id='p1')
+        generated_payload = build_project_sld_payload('p1')
+        SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
+            edit_payload={
+                'cable_schedule_rows': [{
+                    'distribution': {'line': {'line_id': 'LINE-001'}},
+                    'branch_index': branch.branch_index,
+                    'branch_type': 'manual_topology_edit',
+                    'connected_to': 'manual',
+                    'circuit_count': 2,
+                    'cable_length_db_to_jb': 45.0,
+                    'branch_cable_length_total_m': 40.0,
+                    'tagged_components': {'MCB': branch.tagged_components['MCB']},
+                }],
+            },
+            validation_summary={'status': 'passed'},
+        )
+
+        result = resolve_cable_lengths(branch, project)
+
+        self.assertEqual(result.length_4c_m, 45.0)
+        self.assertEqual(result.length_3c_m, 20.0)
+        self.assertEqual(result.length_3c_total_m, 40.0)
+        self.assertEqual(result.length_basis, 'topology_edit')
 
 
 class SldTopologyWorkflowTests(TestCase):

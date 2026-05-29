@@ -22,6 +22,8 @@ SR_REJECTION_RULE_SET = 'SR_SELECTION_REJECTION_REASON_V1'
 SR_PARALLEL_RUN_RULE_SET = 'SR_PARALLEL_STRAIGHT_RUN_SELECTION_MVP_V1'
 SR_PIPE_SIZE_GUIDED_BASIS = 'PIPE_SIZE_GUIDED'
 SR_FIXED_PROJECT_MAXIMUM_BASIS = 'FIXED_PROJECT_MAXIMUM'
+SR_POWER_POLYNOMIAL_RULE_SET = 'SR_POWER_POLYNOMIAL_A_B_C_V1'
+SR_POWER_COEFFICIENT_COLUMNS = ('A_Coeff', 'B_Coeff', 'C_Coeff')
 
 
 def _is_blank(value):
@@ -52,6 +54,13 @@ def _filter_numeric_catalogue_limit(tracers, column, required_value):
 
     required_value = float(required_value)
     catalogue_values = pd.to_numeric(tracers[column], errors='coerce')
+    conversion_failures = declared & catalogue_values.isna()
+    if conversion_failures.any():
+        logging.warning(
+            "Ignoring %s SR catalogue row(s) with non-numeric %s values during suitability filtering.",
+            int(conversion_failures.sum()),
+            column,
+        )
     return tracers[(~declared) | (catalogue_values >= required_value)]
 
 
@@ -139,6 +148,10 @@ def calculate_voltage_scenarios(system_voltage, voltage_var_factor, catalogue_vo
     system_voltage = float(system_voltage)
     voltage_var_factor = max(float(voltage_var_factor), 0.0)
     catalogue_voltage = float(catalogue_voltage)
+    if system_voltage <= 0:
+        raise ValueError(f"Project system voltage must be positive, got {system_voltage}.")
+    if catalogue_voltage <= 0:
+        raise ValueError(f"SR catalogue voltage must be positive, got {catalogue_voltage}.")
     low_voltage = system_voltage * max(1 - voltage_var_factor, 0)
     high_voltage = system_voltage * (1 + voltage_var_factor)
     return {
@@ -170,10 +183,21 @@ def filter_sr_catalogue_voltage_compatibility(
     compatible_tracers = tracers.copy()
     catalogue_voltage = pd.to_numeric(compatible_tracers['Voltage_Float'], errors='coerce')
     declared = catalogue_voltage.notna() & (catalogue_voltage > 0)
+    invalid_declared = compatible_tracers['Voltage_Float'].map(lambda value: not _is_blank(value)) & ~declared
+    if invalid_declared.any():
+        logging.warning(
+            "Ignoring %s SR catalogue row(s) with missing, zero, or non-numeric voltage values.",
+            int(invalid_declared.sum()),
+        )
     if not declared.any():
-        return compatible_tracers
+        return compatible_tracers.iloc[0:0].copy()
 
     system_voltage = float(system_voltage)
+    if system_voltage <= 0:
+        return compatible_tracers.iloc[0:0].copy()
+
+    compatible_tracers = compatible_tracers[declared].copy()
+    catalogue_voltage = catalogue_voltage[declared]
     voltage_deviation = abs(catalogue_voltage - system_voltage) / catalogue_voltage
     compatible_tracers['Catalogue_Voltage_Rule_Set'] = SR_NOMINAL_VOLTAGE_RULE_SET
     compatible_tracers['Catalogue_Voltage_Deviation'] = voltage_deviation
@@ -240,6 +264,55 @@ def _record_selection_rejection(heat_loss, code, message, details=None):
 def _record_selection_success(heat_loss):
     heat_loss['selection_status'] = 'selected'
     heat_loss['selection_rejection_reasons'] = []
+
+
+def _validate_sr_power_coefficients(tracers):
+    """Keep rows with numeric SR power coefficients and return rejection evidence."""
+    missing_columns = [
+        column for column in SR_POWER_COEFFICIENT_COLUMNS
+        if column not in tracers.columns
+    ]
+    if missing_columns:
+        return tracers.iloc[0:0].copy(), {
+            'missing_columns': missing_columns,
+            'invalid_row_count': len(tracers.index),
+        }
+
+    numeric_columns = {}
+    invalid_mask = pd.Series(False, index=tracers.index)
+    invalid_by_column = {}
+    for column in SR_POWER_COEFFICIENT_COLUMNS:
+        numeric_values = pd.to_numeric(tracers[column], errors='coerce')
+        invalid_column = numeric_values.isna()
+        invalid_by_column[column] = int(invalid_column.sum())
+        invalid_mask = invalid_mask | invalid_column
+        numeric_columns[column] = numeric_values
+
+    if invalid_mask.any():
+        logging.warning(
+            "Ignoring %s SR catalogue row(s) with missing or non-numeric power coefficients.",
+            int(invalid_mask.sum()),
+        )
+
+    valid_tracers = tracers[~invalid_mask].copy()
+    for column, numeric_values in numeric_columns.items():
+        valid_tracers[column] = numeric_values.loc[valid_tracers.index]
+
+    return valid_tracers, {
+        'rule_set': SR_POWER_POLYNOMIAL_RULE_SET,
+        'candidate_rows_before_validation': len(tracers.index),
+        'invalid_row_count': int(invalid_mask.sum()),
+        'invalid_by_column': invalid_by_column,
+    }
+
+
+def _sr_power_at_temperature(tracers, temperature_c):
+    temperature_c = float(temperature_c)
+    return (
+        tracers['A_Coeff'] * temperature_c**2
+        + tracers['B_Coeff'] * temperature_c
+        + tracers['C_Coeff']
+    )
 
 
 def _preferred_sr_runs_for_pipe_size(pipe_size_in):
@@ -366,6 +439,17 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
                 {'system_voltage': system_voltage},
             )
             return {}, []
+
+        available_tracers, coefficient_evidence = _validate_sr_power_coefficients(available_tracers)
+        if available_tracers.empty:
+            logging.warning(f"No SR tracers have valid power coefficient data, UID: {line['uid']}")
+            _record_selection_rejection(
+                heat_loss,
+                'NO_SR_POWER_COEFFICIENT_DATA',
+                'No SR catalogue rows had complete numeric A/B/C power coefficient data.',
+                coefficient_evidence,
+            )
+            return {}, []
         
         scenario_columns = available_tracers['Voltage_Float'].apply(
             lambda catalogue_voltage: calculate_voltage_scenarios(
@@ -390,16 +474,11 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         
         # Calculate required tracer power output
         maint_temp = float(line['maint_temp'])
-        base_power_at_maint = available_tracers.apply(
-            lambda row: row['A_Coeff'] * maint_temp**2 + row['B_Coeff'] * maint_temp + row['C_Coeff'],
-            axis=1,
-        )
+        base_power_at_maint = _sr_power_at_temperature(available_tracers, maint_temp)
         available_tracers['Power_Output_Heat_Delivery'] = (
             base_power_at_maint * available_tracers['Voltage_Correction_Factor_Heat_Delivery']
         )
-        available_tracers['Power_Output'] = available_tracers.apply(
-            lambda row: (row['A_Coeff'] * maint_temp**2 + row['B_Coeff'] * maint_temp + row['C_Coeff']
-                         ) * row['Voltage_Correction_Factor'], axis=1)
+        available_tracers['Power_Output'] = base_power_at_maint * available_tracers['Voltage_Correction_Factor']
 
         # Filter out invalid tracers (negative or zero power output)
         valid_tracers = available_tracers[available_tracers['Power_Output_Heat_Delivery'] > 0].copy()
@@ -424,6 +503,7 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
             {'SR_Parallel_Run_Count': range(1, run_limits['absolute_cap'] + 1)}
         )
         valid_tracers = valid_tracers.merge(run_count_options, how='cross')
+        valid_tracers = valid_tracers[valid_tracers['SR_Parallel_Run_Count'] > 0].copy()
         valid_tracers.loc[:, 'Spiral_Factor'] = (
             valid_tracers['Single_Run_Duty_Ratio'] / valid_tracers['SR_Parallel_Run_Count']
         )
@@ -431,8 +511,14 @@ def get_tracer_options(heat_loss, line, project_settings, vendor_data):
         # Validate the required heat-duty ratio against the project upper limit.
         # There is intentionally no lower rejection gate for straight tracing:
         # a stronger cable remains a full straight run, not a fractional length.
-        valid_tracers = valid_tracers[(valid_tracers['Spiral_Factor'] <= max_spiral_factor) & 
-                                      (spiral_allowed or (valid_tracers['Spiral_Factor'] <= 1.0))                                    ]
+        if spiral_allowed:
+            duty_limit_filter = valid_tracers['Spiral_Factor'] <= max_spiral_factor
+        else:
+            duty_limit_filter = (
+                (valid_tracers['Spiral_Factor'] <= max_spiral_factor)
+                & (valid_tracers['Spiral_Factor'] <= 1.0)
+            )
+        valid_tracers = valid_tracers[duty_limit_filter]
             
         if valid_tracers.empty:
             logging.warning(f"No valid tracers found within spiral factor limits, UID: {line['uid']}")

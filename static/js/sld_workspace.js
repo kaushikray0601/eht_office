@@ -19,7 +19,7 @@
         JB3PH: { width: 96, height: 54, fill: '#f5f8fc', stroke: '#20394f' },
         JB1PH: { width: 78, height: 44, fill: '#f5f8fc', stroke: '#20394f' },
         Tracer: { width: 120, height: 28, fill: 'transparent', stroke: '#c2410c' },
-        EndTermination: { width: 14, height: 14, fill: '#243b53', stroke: '#1a2735' },
+        EndTermination: { width: 10.1, height: 10.1, fill: '#243b53', stroke: '#1a2735' },
     };
     const SCHEMATIC_SYMBOL_COMPONENTS = new Set(['MCB', 'Isolator3PH', 'Isolator1PH', 'JB3PH', 'JB1PH', 'Tracer']);
     let SchematicSymbolElement = null;
@@ -40,6 +40,7 @@
             SchematicSymbolElement = joint.dia.Element.define('sld.SchematicSymbolElement', {}, {
                 markup: [
                     { tagName: 'rect', selector: 'body' },
+                    { tagName: 'rect', selector: 'symbolBox' },
                     { tagName: 'path', selector: 'terminalPath' },
                     { tagName: 'path', selector: 'symbolPath' },
                     { tagName: 'circle', selector: 'symbolRing' },
@@ -124,16 +125,65 @@
         return Number(value.toFixed(2));
     }
 
-    function formatInspectorValue(value) {
+    function getInspectorUnitForKey(key) {
+        const normalized = String(key || '').toLowerCase();
+        const isDimensionless = (
+            normalized.includes('factor')
+            || normalized.includes('ratio')
+            || normalized.endsWith('_sf')
+            || normalized.includes('count')
+            || normalized.includes('qty')
+            || normalized.includes('quantity')
+            || normalized.includes('index')
+        );
+        if (isDimensionless) {
+            return '';
+        }
+        if (
+            normalized.includes('current')
+            || normalized.includes('ampacity')
+            || normalized.includes('breaker_size')
+            || normalized.includes('cb_size')
+            || normalized.includes('breaker_rating')
+        ) {
+            return 'A';
+        }
+        if (
+            normalized.includes('power_density')
+            || normalized.includes('power_output')
+            || normalized.includes('heat_loss')
+        ) {
+            return 'W/m';
+        }
+        if (
+            normalized.includes('power')
+            || normalized.includes('connected_load')
+            || normalized.includes('operating_load')
+            || normalized.includes('total_load')
+        ) {
+            return 'W';
+        }
+        return '';
+    }
+
+    function formatInspectorValue(value, key) {
         if (Array.isArray(value)) {
-            return value.map(formatInspectorValue).join(', ');
+            return value.map(function (item) { return formatInspectorValue(item, key); }).join(', ');
         }
         if (value && typeof value === 'object') {
-            return JSON.stringify(value, function (_key, nestedValue) {
-                return formatInspectorNumber(nestedValue);
-            });
+            return Object.keys(value).sort().map(function (key) {
+                return `${key.replace(/_/g, ' ')}: ${formatInspectorValue(value[key], key)}`;
+            }).join('\n');
         }
-        return formatInspectorNumber(value);
+        const formattedValue = formatInspectorNumber(value);
+        const unit = typeof value === 'number' ? getInspectorUnitForKey(key) : '';
+        return unit ? `${formattedValue} ${unit}` : formattedValue;
+    }
+
+    function formatInspectorLabel(value) {
+        return String(value)
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
     }
 
     function createLineLabel(lineId, x, y) {
@@ -279,6 +329,18 @@
                 strokeLinejoin: 'round',
                 pointerEvents: 'none',
             },
+            symbolBox: {
+                x: 0,
+                y: 0,
+                width: 0,
+                height: 0,
+                rx: 0,
+                ry: 0,
+                fill: 'transparent',
+                stroke: 'transparent',
+                strokeWidth: 0,
+                pointerEvents: 'none',
+            },
             symbolPath: {
                 d: '',
                 fill: 'none',
@@ -382,8 +444,8 @@
             const leftLeadEnd = 28;
             const rightLeadStart = width - 28;
             const toothWidth = (rightLeadStart - leftLeadEnd) / 6;
-            const topY = centerY - 9;
-            const bottomY = centerY + 9;
+            const topY = centerY - 6.3;
+            const bottomY = centerY + 6.3;
             common.terminalPath.stroke = style.stroke;
             common.terminalPath.strokeWidth = 2.4;
             common.terminalPath.d = `M 0 ${centerY} L ${leftLeadEnd} ${centerY} M ${rightLeadStart} ${centerY} L ${width} ${centerY}`;
@@ -405,21 +467,31 @@
 
         if (node.component_type === 'JB3PH' || node.component_type === 'JB1PH') {
             const busX = Math.round(width * 0.36);
+            const boxHeight = node.component_type === 'JB3PH' ? 42 : 30;
+            const boxWidth = node.component_type === 'JB3PH' ? 34 : 28;
             common.terminalPath.d = `M -2 ${centerY} L ${busX} ${centerY}`;
-            common.symbolPath.strokeWidth = 5;
-            common.tagLabel.x = busX - 8;
-            common.tagLabel.y = centerY - 22;
-            common.tagLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
-            common.tagLabel.textAnchor = 'end';
-            common.bodyLabel.x = busX + 8;
-            common.bodyLabel.y = centerY + 26;
-            common.bodyLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE;
-            common.bodyLabel.textAnchor = 'start';
+            common.symbolBox.x = busX - (boxWidth / 2);
+            common.symbolBox.y = centerY - (boxHeight / 2);
+            common.symbolBox.width = boxWidth;
+            common.symbolBox.height = boxHeight;
+            common.symbolBox.rx = 1.5;
+            common.symbolBox.ry = 1.5;
+            common.symbolBox.stroke = '#9fb0bf';
+            common.symbolBox.strokeWidth = 0.85;
+            common.symbolPath.strokeWidth = 3.825;
+            common.tagLabel.x = node.component_type === 'JB3PH' ? busX - 17 : busX;
+            common.tagLabel.y = centerY - 25;
+            common.tagLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE * 0.8;
+            common.tagLabel.textAnchor = node.component_type === 'JB3PH' ? 'end' : 'middle';
+            common.bodyLabel.x = node.component_type === 'JB3PH' ? busX - 17 : busX;
+            common.bodyLabel.y = node.component_type === 'JB3PH' ? centerY + 31 : centerY + 29;
+            common.bodyLabel.fontSize = SLD_SCHEMATIC_LABEL_FONT_SIZE * 0.8;
+            common.bodyLabel.textAnchor = node.component_type === 'JB3PH' ? 'end' : 'middle';
             common.bodyLabel.text = node.component_type === 'JB3PH' ? '3PH JB' : '1PH JB';
             if (node.component_type === 'JB3PH') {
                 const slots = getJbOutgoingSlotOffsets(node, context);
                 const fullSlots = new Set(slots.map(function (offset) { return Math.round(offset); }));
-                common.symbolPath.d = `M ${busX} ${centerY - 18} L ${busX} ${centerY + 18}`;
+                common.symbolPath.d = `M ${busX} ${centerY - 13.9} L ${busX} ${centerY + 13.9}`;
                 [-12, 0, 12].forEach(function (offset) {
                     const y = centerY + offset;
                     const endX = fullSlots.has(offset) ? width + 2 : busX + Math.round((width - busX) * 0.5);
@@ -433,7 +505,7 @@
                     common.terminalPath.d += ` M ${busX} ${y} L ${width + 2} ${y}`;
                 });
             } else {
-                common.symbolPath.d = `M ${busX} ${centerY - 10} L ${busX} ${centerY + 10}`;
+                common.symbolPath.d = `M ${busX} ${centerY - 7.7} L ${busX} ${centerY + 7.7}`;
                 common.terminalPath.d += ` M ${busX} ${centerY} L ${width + 2} ${centerY}`;
             }
         }
@@ -521,8 +593,8 @@
         const isCable = CABLE_COMPONENTS.has(node.component_type);
         const labelWidth = isCable ? 120 : style.width + 34;
         const label = new joint.shapes.standard.TextBlock();
-        label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 7);
-        label.resize(labelWidth, isCable ? 36 : 24);
+        label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 10);
+        label.resize(labelWidth, isCable ? 36 : 44);
         label.attr({
             body: {
                 fill: 'transparent',
@@ -1549,7 +1621,7 @@
             if (value === null || value === undefined || value === '') {
                 return;
             }
-            rows.push([key.replace(/_/g, ' '), formatInspectorValue(value)]);
+            rows.push([formatInspectorLabel(key), formatInspectorValue(value, key)]);
         });
         if (node.component_type === 'Tracer' && metadata.tracer_selection) {
             const selectedTracer = metadata.tracer_selection.selected || {};
@@ -1665,7 +1737,7 @@
             ? 'Using user-selected tracer option for this line.'
             : 'Using generated tracer selection.';
         editor.innerHTML = `
-            <div class="sld-tracer-options sld-tracer-options-preview mt-3">
+            <div class="sld-tracer-options sld-tracer-options-preview">
                 <div class="d-flex justify-content-between align-items-center gap-2 mb-2">
                     <div class="fw-semibold small">Tracer Selection</div>
                     <button type="button" class="btn btn-outline-secondary btn-sm" id="sld-review-tracer-options">
@@ -1727,7 +1799,7 @@
             : 'Using generated project setup values for this cable.';
         const labelClass = isCableOverride ? 'form-label small mb-1 sld-cable-manual-label' : 'form-label small text-muted mb-1';
         editor.innerHTML = `
-            <div class="border-top pt-3">
+            <div class="sld-cable-editor-card">
                 <h6 class="mb-2">Cable Management</h6>
                 <div class="small text-muted mb-2">Generated length: ${escapeHtml(generatedLength || '-')} m${generatedSize ? ` | Generated size: ${escapeHtml(generatedSize)}` : ''}</div>
                 <div class="mb-2">
@@ -1762,11 +1834,11 @@
             return;
         }
         summary.innerHTML = `Selected <strong>${escapeHtml(node.display_tag || node.component_type)}</strong>. The highlighted path shows how power reaches this component in the active SLD.`;
+        renderTracerEditor(root, node);
+        renderCableEditor(root, node);
         details.innerHTML = renderBreakerReviewInspector(node) + buildInspectorRows(node, pathNodeCount, pathLinkCount).map(function (row) {
             return `<dt>${escapeHtml(row[0])}</dt><dd>${escapeHtml(row[1])}</dd>`;
         }).join('');
-        renderTracerEditor(root, node);
-        renderCableEditor(root, node);
     }
 
     function renderLinkInspector(root, edge, sourceNode, targetNode) {

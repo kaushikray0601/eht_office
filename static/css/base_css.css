@@ -448,23 +448,97 @@ footer {
     padding-bottom: 1rem !important;
 }
 
+.sld-workspace-header {
+    display: grid !important;
+    grid-template-columns: minmax(250px, 0.9fr) minmax(420px, 1.8fr) auto;
+    align-items: start !important;
+}
+
+.sld-header-title-block {
+    min-width: 0;
+}
+
+.sld-title-meta {
+    display: flex;
+    align-items: baseline;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+}
+
+.sld-title-meta .workspace-subtitle::before {
+    content: "/";
+    margin-right: 0.45rem;
+    color: #9fb0bf;
+}
+
+.sld-header-alert-anchor {
+    grid-column: 2;
+    justify-self: center;
+    width: min(100%, 960px);
+    min-width: 0;
+}
+
+.sld-header-status {
+    grid-column: 3;
+    justify-self: end;
+}
+
 .sld-panel .workspace-section .badge {
     min-width: 82px;
 }
 
 .sld-command-bar {
-    padding: 0.48rem 0.62rem;
+    padding: 0.36rem 0.48rem;
     border-radius: 0.55rem;
     background: rgba(255, 255, 255, 0.52);
     border: 1px solid rgba(148, 163, 184, 0.16);
 }
 
+.sld-control-deck {
+    display: grid;
+    grid-template-columns: minmax(270px, 0.9fr) auto minmax(220px, 0.6fr) minmax(760px, 2.4fr);
+    gap: 0.32rem;
+    align-items: center;
+}
+
+.sld-inline-search,
+.sld-page-controls,
+.sld-layout-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    min-width: 0;
+}
+
+.sld-page-controls,
+.sld-layout-actions {
+    justify-content: flex-end;
+}
+
+.sld-layout-actions .btn,
+.sld-inline-search .btn,
+.sld-page-controls .btn,
+.sld-page-controls .form-select {
+    min-height: 31px;
+    line-height: 1.1;
+    padding-top: 0.22rem;
+    padding-bottom: 0.22rem;
+}
+
+.sld-layout-actions .btn {
+    padding-left: 0.48rem;
+    padding-right: 0.48rem;
+    white-space: nowrap;
+}
+
 .sld-component-find-form {
-    min-width: min(420px, 100%);
+    min-width: 0;
+    flex-wrap: nowrap;
 }
 
 .sld-component-find-form .form-control {
-    width: min(260px, 42vw);
+    width: min(168px, 18vw);
 }
 
 .sld-summary-strip {
@@ -486,11 +560,11 @@ footer {
 }
 
 .sld-line-filter-input {
-    width: min(280px, 52vw);
+    width: min(190px, 24vw);
 }
 
 .sld-topology-edit-alert {
-    font-size: 0.88rem;
+    font-size: 0.78rem;
     border-left: 4px solid #d97706;
 }
 
@@ -500,7 +574,7 @@ footer {
 }
 
 .sld-topology-edit-alert .btn-close {
-    padding: 0.75rem;
+    padding: 0.62rem;
 }
 
 .sld-topology-control-panel {
@@ -728,6 +802,7 @@ body.sld-zen-mode .sld-diagram-shell--canvas {
     color: #102a43;
     font-size: 0.92rem;
     word-break: break-word;
+    white-space: pre-line;
 }
 
 .sld-breaker-review {
@@ -749,4 +824,51 @@ body.sld-zen-mode .sld-diagram-shell--canvas {
 
 .sld-breaker-review-grid--compact {
     grid-template-columns: minmax(90px, 1fr) auto;
+}
+
+.sld-cable-editor-card {
+    border: 1px solid rgba(148, 163, 184, 0.24);
+    border-radius: 0.5rem;
+    padding: 0.65rem;
+    background: rgba(248, 250, 252, 0.72);
+}
+
+@media (max-width: 1399.98px) {
+    .sld-control-deck {
+        grid-template-columns: minmax(290px, 1fr) auto minmax(230px, 0.85fr);
+    }
+
+    .sld-layout-actions {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 1199.98px) {
+    .sld-workspace-header {
+        grid-template-columns: 1fr;
+    }
+
+    .sld-header-alert-anchor,
+    .sld-header-status {
+        grid-column: 1;
+        justify-self: start;
+    }
+
+    .sld-header-alert-anchor {
+        width: 100%;
+    }
+
+    .sld-control-deck {
+        grid-template-columns: 1fr;
+    }
+
+    .sld-page-controls,
+    .sld-layout-actions {
+        justify-content: flex-start;
+    }
+
+    .sld-line-filter-input,
+    .sld-component-find-form .form-control {
+        width: min(100%, 320px);
+    }
 }
