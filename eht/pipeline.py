@@ -13,6 +13,7 @@ from .data_service import (
     fetch_vendor_data,
     store_calculated_results,
 )
+from .cold_cable import size_cold_cables_for_project
 from .models import SELECT_VENDOR
 
 
@@ -76,9 +77,11 @@ def run_project_calculations(project_id):
 
     store_started = perf_counter()
     store_calculated_results(project_id, calculation_result)
+    cold_cable_results = size_cold_cables_for_project(project_id)
     store_duration = perf_counter() - store_started
 
     result_counts = summarize_calculation_result(calculation_result)
+    result_counts['cold_cable_results'] = len(cold_cable_results)
     total_duration = perf_counter() - overall_started
     emit_timing(
         "EHT timing | project={project} | rows={rows} | fetch={fetch:.3f}s | orchestrate={orchestrate:.3f}s | store={store:.3f}s | total={total:.3f}s | counts={counts}".format(

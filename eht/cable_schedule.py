@@ -1,5 +1,6 @@
 from math import ceil
 
+from .models import ColdCableResult
 from .sld_payload import build_project_sld_payload
 
 
@@ -12,6 +13,11 @@ CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Sr. No',
     'Cable Tag',
     'Cable Specification',
+    'Calculated Cold Cable Size',
+    'Cold Cable Status',
+    'Voltage Drop Status',
+    'Fault Protection Status',
+    'Conductor Mass (MT)',
     'Cable Length (m)',
     'Connected From',
     'Connected To',
@@ -86,6 +92,50 @@ def _cable_length_m(node):
     )
 
 
+def _format_size(core_count, size_mm2):
+    if size_mm2 in (None, ''):
+        return ''
+    return f'{core_count}C x {float(size_mm2):g} mm2'
+
+
+def _cold_cable_result_for_node(node, cold_results):
+    branch_index = node.get('branch_index') or 0
+    line_uid = str(node.get('line_uid') or '')
+    line_id = str(node.get('line_id') or '')
+    return (
+        cold_results.get((line_uid, branch_index))
+        or cold_results.get((line_id, branch_index))
+    )
+
+
+def _cold_cable_fields(node, cold_results):
+    result = _cold_cable_result_for_node(node, cold_results)
+    if result is None:
+        return {
+            'calculated_cold_cable_size': '',
+            'cold_cable_status': '',
+            'cold_cable_vd_status': '',
+            'cold_cable_fault_status': '',
+            'cold_cable_conductor_mass_mt': None,
+        }
+
+    if node.get('component_type') == 'Cable4C':
+        size = _format_size(4, result.cable_4c_size_mm2)
+        fault_status = result.fault_protection_4c_status
+        mass = result.cable_4c_conductor_mass_mt
+    else:
+        size = _format_size(3, result.cable_3c_size_mm2)
+        fault_status = result.fault_protection_3c_status
+        mass = result.cable_3c_conductor_mass_mt
+    return {
+        'calculated_cold_cable_size': size,
+        'cold_cable_status': result.sizing_status,
+        'cold_cable_vd_status': result.vd_status,
+        'cold_cable_fault_status': fault_status,
+        'cold_cable_conductor_mass_mt': mass,
+    }
+
+
 def _line_ids(node):
     line_ids = node.get('line_ids') or ([node.get('line_id')] if node.get('line_id') else [])
     return ', '.join(line_id for line_id in line_ids if line_id)
@@ -121,7 +171,8 @@ def _purpose(node, incoming_edges, outgoing_edges, node_by_id):
     return ''
 
 
-def _cable_schedule_rows(payload):
+def _cable_schedule_rows(payload, cold_results=None):
+    cold_results = cold_results or {}
     node_by_id = _node_lookup(payload)
     incoming_by_id, outgoing_by_id = _edge_lookup(payload)
     cable_nodes = sorted(
@@ -144,10 +195,12 @@ def _cable_schedule_rows(payload):
         incoming_edges = incoming_by_id.get(component_id, [])
         outgoing_edges = outgoing_by_id.get(component_id, [])
         metadata = _metadata(node)
+        cold_fields = _cold_cable_fields(node, cold_results)
         rows.append({
             'sr_no': index,
             'cable_tag': _display_tag(node),
             'cable_specification': _cable_specification(node),
+            **cold_fields,
             'cable_length_m': _cable_length_m(node),
             'connected_from': _connected_tags(incoming_edges, node_by_id, 'from_component_id'),
             'connected_to': _connected_tags(outgoing_edges, node_by_id, 'to_component_id'),
@@ -166,9 +219,15 @@ def build_cable_schedule_workspace_data(project_id):
     sld_payload = build_project_sld_payload(project_id)
     sld_meta = sld_payload.get('meta') or {}
     allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
-    cable_rows = _cable_schedule_rows(sld_payload)
+    cold_results = {}
+    cold_result_rows = list(ColdCableResult.objects.filter(project_id=project_id).order_by('line_id', 'branch_index'))
+    for result in cold_result_rows:
+        cold_results[(str(result.line_uid), result.branch_index)] = result
+        cold_results[(str(result.line_id), result.branch_index)] = result
+    cable_rows = _cable_schedule_rows(sld_payload, cold_results)
 
     total_cable_length_m = sum(row['cable_length_m'] for row in cable_rows)
+    total_conductor_mass_mt = sum(result.conductor_mass_total_mt or 0 for result in cold_result_rows)
     summary = {
         'row_count': len(cable_rows),
         'source_label': 'Manual SLD topology' if sld_meta.get('has_topology_edit') and allow_topology_overrides else 'Generated calculation',
@@ -177,6 +236,7 @@ def build_cable_schedule_workspace_data(project_id):
         'manual_topology_warning': sld_meta.get('manual_topology_warning') or '',
         'total_cable_length_m': total_cable_length_m,
         'total_cable_length_display': f'{ceil(total_cable_length_m):,}',
+        'total_conductor_mass_mt': total_conductor_mass_mt,
         'override_count': sum(1 for row in cable_rows if row['manual_override_active']),
     }
     return {
@@ -192,6 +252,11 @@ def cable_schedule_export_rows(cable_rows):
             'Sr. No': row.get('sr_no', ''),
             'Cable Tag': row.get('cable_tag', ''),
             'Cable Specification': row.get('cable_specification', ''),
+            'Calculated Cold Cable Size': row.get('calculated_cold_cable_size', ''),
+            'Cold Cable Status': row.get('cold_cable_status', ''),
+            'Voltage Drop Status': row.get('cold_cable_vd_status', ''),
+            'Fault Protection Status': row.get('cold_cable_fault_status', ''),
+            'Conductor Mass (MT)': row.get('cold_cable_conductor_mass_mt', ''),
             'Cable Length (m)': row.get('cable_length_m', ''),
             'Connected From': row.get('connected_from', ''),
             'Connected To': row.get('connected_to', ''),

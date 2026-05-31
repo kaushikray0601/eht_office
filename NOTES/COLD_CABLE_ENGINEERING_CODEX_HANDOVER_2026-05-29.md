@@ -67,7 +67,6 @@ MIN_CABLE_SIZE_CHOICES = [
 ]
 CABLE_INSTALL_METHOD_CHOICES = [
     ('E', 'E — Multi-core on open cable tray or ladder'),
-    ('F', 'F — Single-core touching on open tray'),
     ('B2', 'B2 — Multi-core in conduit in wall or enclosure'),
     ('C', 'C — Clipped direct to surface'),
     ('D1', 'D1 — In duct in ground, single cable'),
@@ -118,7 +117,6 @@ class ColdCableCatalogue(models.Model):
     CABLE_STANDARD_CHOICES = [('IEC_60502_1', 'IEC 60502-1'), ('BS_5467', 'BS 5467')]
     INSTALL_METHOD_CHOICES = [
         ('E', 'E — Multi-core on open tray'),
-        ('F', 'F — Single-core on open tray'),
         ('B2', 'B2 — In conduit in wall'),
         ('C', 'C — Clipped direct'),
         ('D1', 'D1 — In duct in ground'),

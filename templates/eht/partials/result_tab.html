@@ -109,6 +109,105 @@
                     {{ result_summary.mi_rejected_count }} high-temperature line{{ result_summary.mi_rejected_count|pluralize }} triggered MI fallback but did not receive a selected MI heater. Review the MI Selection Records for the reason and next action.
                 </div>
             {% endif %}
+            {% if result_summary.cold_cable_result_count %}
+                <div class="alert alert-secondary border">
+                    <div class="fw-semibold mb-1">Cold cable engineering</div>
+                    <div class="small">
+                        {{ result_summary.cold_cable_result_count }} branch result{{ result_summary.cold_cable_result_count|pluralize }} |
+                        {{ result_summary.cold_cable_review_count|default:0 }} review required |
+                        {{ result_summary.cold_cable_unsizeable_count|default:0 }} unsizeable |
+                        conductor mass {{ result_summary.cold_cable_total_mass_mt|default:0|floatformat:4 }} MT
+                    </div>
+                </div>
+            {% endif %}
+
+            {% if cold_cable_rows %}
+            <div class="workspace-section mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Cold Cable Sizing</h6>
+                    <span class="text-muted small">{{ cold_cable_rows|length }} branch result{{ cold_cable_rows|length|pluralize }}</span>
+                </div>
+                <table
+                    class="table table-striped table-hover align-middle"
+                    data-toggle="table"
+                    data-classes="table table-striped table-hover align-middle"
+                    data-search="true"
+                    data-pagination="true"
+                    data-page-size="5"
+                    data-page-list="[5, 10, 25, 50, 100, all]"
+                    data-show-columns="true"
+                    data-sort-name="line"
+                >
+                    <thead class="table-light">
+                        <tr>
+                            <th data-field="line" data-sortable="true">Line</th>
+                            <th data-field="branch" data-sortable="true">Branch</th>
+                            <th data-field="status" data-sortable="true">Status</th>
+                            <th data-field="selected-cables" data-sortable="true">Selected Cables</th>
+                            <th data-field="voltage-drop" data-sortable="true">Voltage Drop</th>
+                            <th data-field="fault" data-sortable="true">Fault Check</th>
+                            <th data-field="mass" data-sortable="true">Mass</th>
+                            <th data-field="notes">Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for cold in cold_cable_rows %}
+                            <tr>
+                                <td>{{ cold.line_id }}</td>
+                                <td>#{{ cold.branch_index }}</td>
+                                <td>
+                                    <span class="badge {% if cold.sizing_status == 'selected' %}text-bg-success{% elif cold.sizing_status == 'review_required' %}text-bg-warning text-dark{% else %}text-bg-danger{% endif %}">
+                                        {{ cold.sizing_status }}
+                                    </span>
+                                    <div class="small text-muted">{{ cold.length_basis }}</div>
+                                </td>
+                                <td>
+                                    {% if cold.cable_4c_size_mm2 %}
+                                        <div>4C x {{ cold.cable_4c_size_mm2|floatformat:"-1" }} mm²</div>
+                                    {% else %}
+                                        <div class="text-muted">4C N/A</div>
+                                    {% endif %}
+                                    {% if cold.cable_3c_size_mm2 %}
+                                        <div>3C x {{ cold.cable_3c_size_mm2|floatformat:"-1" }} mm²</div>
+                                    {% else %}
+                                        <div class="text-muted">3C N/A</div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div>{{ cold.vd_status }}</div>
+                                    {% if cold.vd_total_pct %}
+                                        <div class="small text-muted">{{ cold.vd_total_pct|floatformat:2 }}% / {{ cold.vd_allowable_pct|floatformat:2 }}%</div>
+                                    {% endif %}
+                                    {% if cold.load_end_voltage_v %}
+                                        <div class="small text-muted">{{ cold.load_end_voltage_v|floatformat:1 }} V load end</div>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    <div>4C {{ cold.fault_protection_4c_status }}</div>
+                                    <div>3C {{ cold.fault_protection_3c_status }}</div>
+                                </td>
+                                <td>
+                                    {% if cold.conductor_mass_total_mt %}
+                                        {{ cold.conductor_mass_total_mt|floatformat:4 }} MT
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td class="small">
+                                    {% if cold.review_notes %}
+                                        {% for note in cold.review_notes %}
+                                            <div>{{ note }}</div>
+                                        {% endfor %}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
 
             {% if line_results %}
             <div class="workspace-section mb-4">

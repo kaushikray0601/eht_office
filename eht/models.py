@@ -55,12 +55,13 @@ MIN_CABLE_SIZE_CHOICES = [
 ]
 CABLE_INSTALL_METHOD_CHOICES = [
     ('E', 'E - Multi-core on open cable tray or ladder'),
-    ('F', 'F - Single-core touching on open tray'),
     ('B2', 'B2 - Multi-core in conduit in wall or enclosure'),
     ('C', 'C - Clipped direct to surface'),
     ('D1', 'D1 - In duct in ground, single cable'),
     ('D2', 'D2 - Direct buried in ground'),
 ]
+CABLE_GROUPING_DERATING_MIN = 0.25
+CABLE_GROUPING_DERATING_MAX = 1.0
 DEFAULT_PROJECT_ID = 'default_project'
 
 
@@ -161,8 +162,13 @@ class ProjectData(models.Model):
                 errors[field] = 'Value cannot be negative.'
         if self.restrict_cb_current is not None and not (0 < self.restrict_cb_current <= 100):
             errors['restrict_cb_current'] = 'Circuit breaker loading must be greater than 0 and no more than 100 percent.'
-        if self.cable_grouping_derating is not None and not (0.1 <= self.cable_grouping_derating <= 1.0):
-            errors['cable_grouping_derating'] = 'Cable grouping derating must be between 0.1 and 1.0.'
+        if self.cable_grouping_derating is not None and not (
+            CABLE_GROUPING_DERATING_MIN <= self.cable_grouping_derating <= CABLE_GROUPING_DERATING_MAX
+        ):
+            errors['cable_grouping_derating'] = (
+                f'Cable grouping derating must be between {CABLE_GROUPING_DERATING_MIN:g} '
+                f'and {CABLE_GROUPING_DERATING_MAX:g}.'
+            )
         if self.sr_max_parallel_runs is not None and not (1 <= self.sr_max_parallel_runs <= 4):
             errors['sr_max_parallel_runs'] = 'SR maximum parallel runs must be between 1 and 4.'
         if self.heat_loss_sf is not None and self.heat_loss_sf < 1:
@@ -666,6 +672,106 @@ class ProcessLineCalculation(models.Model):
 
     class Meta:
         ordering = ['line']
+
+
+class ColdCableResult(models.Model):
+    SIZING_STATUS_CHOICES = [
+        ('selected', 'Selected'),
+        ('review_required', 'Review Required'),
+        ('unsizeable', 'Unsizeable - no feasible cable found'),
+        ('length_missing', 'Length Basis Missing'),
+    ]
+    VD_STATUS_CHOICES = [
+        ('pass', 'Pass'),
+        ('fail', 'Fail'),
+        ('review_required', 'Review Required'),
+        ('not_calculated', 'Not Calculated'),
+    ]
+    FAULT_STATUS_CHOICES = [
+        ('pass', 'Pass'),
+        ('fail', 'Fail'),
+        ('review_required', 'Review Required'),
+        ('not_calculated', 'Not Calculated'),
+    ]
+
+    project = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='project_id',
+        on_delete=models.CASCADE,
+        related_name='cold_cable_results',
+    )
+    distribution = models.ForeignKey(PowerDistribution, on_delete=models.CASCADE, related_name='cold_cable_results')
+    branch = models.ForeignKey(PowerDistributionBranch, on_delete=models.CASCADE, related_name='cold_cable_results', null=True, blank=True)
+    branch_index = models.PositiveIntegerField()
+    line_id = models.CharField(max_length=100)
+    line_uid = models.CharField(max_length=100)
+    heating_cable_type = models.CharField(max_length=10, default='SR')
+
+    per_circuit_operating_current_a = models.FloatField(default=0.0)
+    line_operating_current_a = models.FloatField(default=0.0)
+    breaker_size_a = models.FloatField(default=0.0)
+    circuit_count = models.IntegerField(default=0)
+    mcb_curve = models.CharField(max_length=5, choices=MCB_CURVE_CHOICES, default='C')
+    gfep_provided = models.BooleanField(default=True)
+
+    length_4c_m = models.FloatField(null=True, blank=True)
+    length_3c_m = models.FloatField(null=True, blank=True)
+    length_basis = models.CharField(max_length=30, default='project_default')
+
+    site_ambient_temp_c = models.FloatField(default=0.0)
+    catalogue_temp_ref_c = models.FloatField(default=30.0)
+    k_temp = models.FloatField(null=True, blank=True)
+    k_group = models.FloatField(default=1.0)
+    k_total = models.FloatField(null=True, blank=True)
+    install_method = models.CharField(max_length=5, choices=CABLE_INSTALL_METHOD_CHOICES, default='E')
+
+    cable_4c_size_mm2 = models.FloatField(null=True, blank=True)
+    cable_4c_catalogue = models.ForeignKey(ColdCableCatalogue, null=True, blank=True, on_delete=models.SET_NULL, related_name='results_4c')
+    cable_4c_ampacity_derated_a = models.FloatField(null=True, blank=True)
+    cable_4c_ampacity_margin_pct = models.FloatField(null=True, blank=True)
+    cable_4c_conductor_temp_c = models.FloatField(null=True, blank=True)
+    cable_4c_conductor_mass_mt = models.FloatField(null=True, blank=True)
+    cable_4c_vd_v = models.FloatField(null=True, blank=True)
+    cable_4c_vd_pct = models.FloatField(null=True, blank=True)
+
+    cable_3c_size_mm2 = models.FloatField(null=True, blank=True)
+    cable_3c_catalogue = models.ForeignKey(ColdCableCatalogue, null=True, blank=True, on_delete=models.SET_NULL, related_name='results_3c')
+    cable_3c_ampacity_derated_a = models.FloatField(null=True, blank=True)
+    cable_3c_ampacity_margin_pct = models.FloatField(null=True, blank=True)
+    cable_3c_conductor_temp_c = models.FloatField(null=True, blank=True)
+    cable_3c_conductor_mass_mt = models.FloatField(null=True, blank=True)
+    cable_3c_vd_v = models.FloatField(null=True, blank=True)
+    cable_3c_vd_pct = models.FloatField(null=True, blank=True)
+
+    vd_total_pct = models.FloatField(null=True, blank=True)
+    vd_allowable_pct = models.FloatField(default=0.0)
+    vd_status = models.CharField(max_length=20, choices=VD_STATUS_CHOICES, default='not_calculated')
+    load_end_voltage_v = models.FloatField(null=True, blank=True)
+
+    optimization_run = models.BooleanField(default=False)
+    conductor_volume_proxy = models.FloatField(null=True, blank=True)
+    conductor_material_density_kg_m3 = models.FloatField(null=True, blank=True)
+    conductor_mass_total_mt = models.FloatField(null=True, blank=True)
+
+    fault_current_4c_phase_to_phase_a = models.FloatField(null=True, blank=True)
+    fault_protection_4c_status = models.CharField(max_length=20, choices=FAULT_STATUS_CHOICES, default='not_calculated')
+    fault_current_3c_line_to_neutral_a = models.FloatField(null=True, blank=True)
+    fault_protection_3c_status = models.CharField(max_length=20, choices=FAULT_STATUS_CHOICES, default='not_calculated')
+
+    sizing_status = models.CharField(max_length=20, choices=SIZING_STATUS_CHOICES)
+    review_notes = models.JSONField(default=list, blank=True)
+    calculated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['project', 'line_id', 'branch_index']
+        constraints = [
+            models.UniqueConstraint(fields=['distribution', 'branch_index'], name='unique_cold_cable_result_per_branch'),
+        ]
+        indexes = [
+            models.Index(fields=['project', 'sizing_status']),
+            models.Index(fields=['line_id', 'branch_index']),
+        ]
 
 # ------ STORE CALCULATED DATA -------------------------------------------------------
 

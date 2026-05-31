@@ -1,0 +1,1039 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Engineering Hub | eTrace</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="{% static 'css/design_guide.css' %}" rel="stylesheet">
+</head>
+<body id="top" class="dg-page">
+
+<!-- Scroll progress -->
+<div class="dg-progress-bar" aria-hidden="true"></div>
+
+<!-- ═══════════════════════════════════════════════════════
+     TOP NAVIGATION
+════════════════════════════════════════════════════════ -->
+<nav class="dg-nav" aria-label="Engineering Hub navigation">
+    <div class="dg-nav-left">
+        <a class="dg-brand" href="{% url 'base' %}">
+            <span class="dg-brand-logo">e<span>Trace</span></span>
+        </a>
+        <span class="dg-nav-badge"><i class="bi bi-lightning-charge-fill"></i> Engineering Hub</span>
+    </div>
+    <div class="dg-nav-right">
+        <a href="{% url 'base' %}"           class="dg-nav-link"><i class="bi bi-grid-1x2"></i> Workspace</a>
+        <a href="#pipeline"                   class="dg-nav-link"><i class="bi bi-diagram-3"></i> Workflow</a>
+        <a href="#formulas"                   class="dg-nav-link"><i class="bi bi-calculator"></i> Formulas</a>
+        <a href="#diagnostics"                class="dg-nav-link"><i class="bi bi-exclamation-triangle"></i> Diagnostics</a>
+        <a href="{% url 'verification_report_view' %}"                     class="dg-nav-link"><i class="bi bi-file-earmark-check"></i> Verify</a>
+        <a href="#reader"                     class="dg-nav-link"><i class="bi bi-book"></i> Manual</a>
+        <button type="button" class="dg-nav-link" data-dg-print><i class="bi bi-printer"></i> Print</button>
+        <a href="{% url 'calculation_manual_view' %}" class="dg-nav-cta"><i class="bi bi-arrow-left-right"></i> Classic Guide</a>
+    </div>
+</nav>
+
+<main class="dg-shell">
+
+<!-- ═══════════════════════════════════════════════════════
+     HERO
+════════════════════════════════════════════════════════ -->
+<section class="dg-hero dg-section" aria-label="Engineering Hub overview">
+    <div class="dg-hero-inner">
+        <div class="dg-hero-left">
+            <div class="dg-hero-eyebrow">
+                <i class="bi bi-lightning-charge-fill"></i>
+                Electrical Heat Tracing Design Platform
+            </div>
+            <h1>
+                Engineer.<br>
+                <span class="accent-blue">Verify.</span><br>
+                <span class="accent-amber">Deliver.</span>
+            </h1>
+            <p class="dg-hero-lede">
+                A fully traceable EHT design workflow — from Excel line list to heat-loss evidence,
+                SR/MI tracer selection, electrical sizing, BOQ, cable schedule, and SLD output.
+                Every result carries the evidence trail it needs for engineering review and sign-off.
+            </p>
+            <div class="dg-hero-actions">
+                <a href="#pipeline"  class="dg-btn-primary"><i class="bi bi-diagram-3"></i> Explore Workflow</a>
+                <a href="#formulas"  class="dg-btn-secondary"><i class="bi bi-calculator"></i> Formula Reference</a>
+                <a href="{% url 'verification_report_view' %}"    class="dg-btn-amber"><i class="bi bi-file-earmark-check"></i> Verify a Calculation</a>
+            </div>
+            <div class="dg-hero-stats">
+                <div class="dg-stat-item">
+                    <span class="dg-stat-value">8</span>
+                    <span class="dg-stat-label">Workflow Steps</span>
+                </div>
+                <div class="dg-stat-item">
+                    <span class="dg-stat-value">SR+MI+CC</span>
+                    <span class="dg-stat-label">Cable Technologies</span>
+                </div>
+                <div class="dg-stat-item">
+                    <span class="dg-stat-value">IEC</span>
+                    <span class="dg-stat-label">Design Basis</span>
+                </div>
+                <div class="dg-stat-item">
+                    <span class="dg-stat-value">4×</span>
+                    <span class="dg-stat-label">Max SR Parallel Runs</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Mini pipeline visualiser (right column) -->
+        <div class="dg-hero-right" aria-hidden="true">
+            <div class="dg-pipeline-mini">
+                <div class="dg-pipeline-node">
+                    <div class="dg-pnode-icon blue"><i class="bi bi-table"></i></div>
+                    <div>
+                        <div class="dg-pnode-label">Excel Line List Upload</div>
+                        <div class="dg-pnode-sub">Validation · Pending/Confirmed rows</div>
+                    </div>
+                </div>
+                <div class="dg-pnode-arrow"><i class="bi bi-arrow-down"></i></div>
+
+                <div class="dg-pipeline-node">
+                    <div class="dg-pnode-icon amber"><i class="bi bi-thermometer-half"></i></div>
+                    <div>
+                        <div class="dg-pnode-label">Heat Loss Calculation</div>
+                        <div class="dg-pnode-sub">k(T) · Pipe OD · Wind correction · SF</div>
+                    </div>
+                </div>
+                <div class="dg-pnode-arrow"><i class="bi bi-arrow-down"></i></div>
+
+                <div class="dg-pipeline-node">
+                    <div class="dg-pnode-icon green"><i class="bi bi-layers"></i></div>
+                    <div>
+                        <div class="dg-pnode-label">SR / MI Tracer Selection</div>
+                        <div class="dg-pnode-sub">Catalogue filtering · Duty ratio · Multi-run</div>
+                    </div>
+                </div>
+                <div class="dg-pnode-arrow"><i class="bi bi-arrow-down"></i></div>
+
+                <div class="dg-pipeline-node">
+                    <div class="dg-pnode-icon blue"><i class="bi bi-lightning-charge"></i></div>
+                    <div>
+                        <div class="dg-pnode-label">Electrical Sizing</div>
+                        <div class="dg-pnode-sub">Current · Breaker · Power distribution</div>
+                    </div>
+                </div>
+                <div class="dg-pnode-arrow"><i class="bi bi-arrow-down"></i></div>
+
+                <div class="dg-pipeline-node">
+                    <div class="dg-pnode-icon green"><i class="bi bi-plugin"></i></div>
+                    <div>
+                        <div class="dg-pnode-label">Cold Cable Sizing</div>
+                        <div class="dg-pnode-sub">Ampacity · VD · Earth loop · Optimisation</div>
+                    </div>
+                </div>
+                <div class="dg-pnode-arrow"><i class="bi bi-arrow-down"></i></div>
+
+                <div class="dg-pipeline-node">
+                    <div class="dg-pnode-icon purple"><i class="bi bi-boxes"></i></div>
+                    <div>
+                        <div class="dg-pnode-label">BOQ · Cable Schedule · SLD</div>
+                        <div class="dg-pnode-sub">Persisted evidence · Export-ready</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     QUICK-FACTS BAND
+════════════════════════════════════════════════════════ -->
+<div class="dg-facts-band dg-section">
+    <div class="dg-card dg-fact">
+        <div class="dg-fact-icon blue"><i class="bi bi-diagram-2"></i></div>
+        <h3>Connected Pipeline</h3>
+        <p>Project setup, line input, calculation evidence, diagnostics, and deliverables are linked as one traceable chain — no disconnected exports.</p>
+    </div>
+    <div class="dg-card dg-fact">
+        <div class="dg-fact-icon amber"><i class="bi bi-layers-half"></i></div>
+        <h3>SR with MI Fallback</h3>
+        <p>SR is the default with straight parallel runs (up to 4×). Validated MI heater sets activate automatically when SR temperature limits are exceeded.</p>
+    </div>
+    <div class="dg-card dg-fact">
+        <div class="dg-fact-icon green"><i class="bi bi-shield-check"></i></div>
+        <h3>Traceable Evidence</h3>
+        <p>Every calculated result stores what input produced it, what catalogue row was selected, and what still requires human engineering review before issue.</p>
+    </div>
+    <div class="dg-card dg-fact">
+        <div class="dg-fact-icon purple"><i class="bi bi-bezier2"></i></div>
+        <h3>SLD as Topology</h3>
+        <p>The Single Line Diagram is generated from persisted branch data — not a static drawing. Combine, split, and audit topology changes with review records.</p>
+    </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════
+     SEARCH
+════════════════════════════════════════════════════════ -->
+<section class="dg-card dg-search-section dg-section" aria-label="Search the Engineering Hub">
+    <div class="dg-kicker">Search</div>
+    <form class="dg-search-form" role="search" data-dg-search>
+        <input id="dg-search-input" class="dg-search-input" type="search"
+               placeholder="Heat loss, SR duty ratio, MI fallback, diagnostics code…" autocomplete="off">
+        <button type="submit" class="dg-search-btn"><i class="bi bi-search"></i> Search</button>
+        <button type="button" class="dg-search-clear" data-dg-clear>Clear</button>
+    </form>
+    <p class="dg-search-status" data-dg-status>Search across formulas, workflow steps, diagnostics, and the full manual.</p>
+    <div class="dg-search-results" data-dg-results aria-live="polite"></div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     WORKFLOW PIPELINE — step-by-step interactive
+════════════════════════════════════════════════════════ -->
+<section id="pipeline" class="dg-card dg-pipeline-section dg-section" aria-label="Calculation workflow pipeline">
+    <div class="dg-section-head">
+        <div>
+            <p class="dg-kicker">Calculation Workflow</p>
+            <h2 class="dg-section-title">Eight steps from line list to issue-ready package.</h2>
+            <p class="dg-section-sub">Click any step to expand the engineering detail, inputs, and outputs for that stage.</p>
+        </div>
+    </div>
+
+    <div class="dg-pipeline-steps">
+
+        <!-- Step 1 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num">01</span>
+                <span class="dg-step-title">Project Setup &amp; Design Basis</span>
+                <span class="dg-step-tag">Configuration</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>Defines the engineering design basis for all calculations in the project. All downstream tracer selection, current sizing, breaker choice, and BOQ quantities depend on these values.</p>
+                    <p style="margin-top:10px;">Key decisions here: vendor selection, voltage and voltage-variation scenarios, ambient temperature, heat-loss safety factor, maximum breaker size and loading, SR spiral/run limits, RTD/thermostat type, and isolator arrangement.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Min / Max ambient temperature</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> System voltage + variation factor</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Max CB size + loading %</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Heat-loss safety factor</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Area classification + T-class</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Vendor catalogue selection</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Max SR parallel runs (1–4)</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 2 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num">02</span>
+                <span class="dg-step-title">Excel Line List Upload &amp; Validation</span>
+                <span class="dg-step-tag">Input</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>Upload an <code>.xlsx</code> file (max 10 MB). The module validates mandatory columns, numeric ranges, temperature ordering (Oper_T ≤ Maint_T ≤ Design_T), and detects duplicate rows.</p>
+                    <p style="margin-top:10px;">Invalid rows produce a downloadable error workbook with per-row rejection messages. Valid rows enter a <em>Pending</em> state and must be confirmed before calculation proceeds. This protects existing project data from accidental bad uploads.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Mandatory: Service_Type, Line_Size, Line_Length</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Mandatory: Ins_Mat_Type, Insul_Thick</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Mandatory: Maint_T, Oper_T, Design_T</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Optional: Valve_Qty, Flange_Qty, Support_Qty</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Error workbook on validation failure</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Confirmed rows proceed to calculation</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 3 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num amber">03</span>
+                <span class="dg-step-title">Heat Loss Calculation</span>
+                <span class="dg-step-tag amber">Thermal</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>Conduction-based cylindrical heat loss through insulation. The insulation conductivity <code>k</code> is evaluated at the mean insulation temperature using stored polynomial coefficients. Pipe outside diameter is looked up from the ASME B36 table or approximated for non-standard sizes.</p>
+                    <p style="margin-top:10px;">Wind correction is applied as a practical project factor (capped at 20%). Heat-loss safety factor (SF) is then applied to give the Design Heat Loss used for tracer selection. Accessory adders (valves, flanges, supports) are calculated using named empirical rules based on pipe OD.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> T_mean = (Maint_T + T_amb,min) / 2</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> k = A·T² + B·T + C  (conductivity)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> q_base = 2πk(ΔT) / ln((2t+D)/D)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Wind correction factor applied</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Design Heat Loss = q_base × SF</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Accessory tracer adders (m)</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 4 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num green">04</span>
+                <span class="dg-step-title">SR / MI Tracer Selection</span>
+                <span class="dg-step-tag green">Selection</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p><strong style="color:var(--blue)">SR path:</strong> Catalogue rows are filtered by family, temperature suitability, hazardous-area zone, gas group, temperature class, and voltage compatibility. Power output at Maint_T uses the vendor polynomial. The selector tries 1 → 4 straight parallel runs. Each candidate is ranked by run count, ordered length, and power fit.</p>
+                    <p style="margin-top:10px;"><strong style="color:var(--amber)">MI path (automatic):</strong> Triggered only when SR catalogue temperature limits are exceeded. Only validated MI families are used. The MVP selects identical factory heater sets, with multiple sets allowed where one set under-delivers heat within per-set limits. Each set is independently protected.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Duty ratio = Q_design / (P_LV × N_SR)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> SR run count + constructability warning</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Selected tracer + alternate tracers</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> MI heater-set count + cold-lead option</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Selection diagnostics on failure</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Rejection reason codes stored</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 5 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num">05</span>
+                <span class="dg-step-title">Electrical Sizing</span>
+                <span class="dg-step-tag">Electrical</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>Three voltage scenarios are kept separate: <strong style="color:var(--green)">low voltage</strong> sizes heat delivery, <strong style="color:var(--blue)">nominal voltage</strong> gives the display power output, and <strong style="color:var(--red)">high voltage</strong> sizes maximum current and breaker.</p>
+                    <p style="margin-top:10px;">Circuit count = ceil(I_max_line / (CB_max × CB_loading%)). For multiple SR straight runs or MI heater sets, each run/set is modelled as an independently protected branch. Breaker size is selected from the standard size table to satisfy the restricted loading factor.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Operating current / circuit (A)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Starting / max current / circuit (A)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Circuit count per line</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Breaker size (A) per circuit</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Total connected load (W) per line</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Termination allowance excluded from load</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 6 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num purple">06</span>
+                <span class="dg-step-title">Power Distribution &amp; SLD Generation</span>
+                <span class="dg-step-tag amber">Topology</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>After breaker sizing, power-distribution branches are built for each line. Branches carry tagged component data: MCBs, 3-phase and 1-phase JBs, cold cables, local isolators, tracers, and end terminations.</p>
+                    <p style="margin-top:10px;">The SLD graph is generated from these persisted branches — not from a freehand drawing. Manual topology edits (combine, split, downstream JB) create audit records and can affect cable schedule and BOQ. SLD layout positions are saved separately so recalculation does not destroy manually arranged nodes.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Power distribution branch records</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Per-branch tagged component data</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> SLD graph payload</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Saved node layout (survives recalc)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Manual edit audit records</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> SLD PDF export</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 7 — Cold Cable Sizing -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num purple">07</span>
+                <span class="dg-step-title">Cold Cable Sizing</span>
+                <span class="dg-step-tag">Electrical</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>Once the SLD topology is committed, the cold cable engine reads every <code>PowerDistributionBranch</code> in the project and sizes the upstream power cable for each feeder segment. Inputs come directly from the confirmed SR/MI results — per-circuit operating current, breaker size, and circuit count — requiring no manual re-entry.</p>
+                    <p style="margin-top:10px;">For <strong>3-phase JB branches</strong> (4-core trunk to JB, then 3-core outgoing runs), the engine searches all ampacity-qualified cable combinations and selects the pair that minimises total conductor volume — effectively minimising copper/aluminium tonnage — while keeping the combined path voltage drop within the project limit. For <strong>direct 1-phase branches</strong>, a single 3-core cable is sized against the full VD allowance.</p>
+                    <p style="margin-top:10px;">Fault protection is verified separately: the 4-core trunk is checked for phase-to-phase fault clearance against the MCB instantaneous trip threshold (Type B/C/D curve × breaker rating), and the 3-core outgoing circuit is checked for earth fault loop with GFEP handling. If GFEP is enabled, a marginally failing earth loop becomes <em>Review Required</em> rather than a hard rejection.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> K_temp = √((T_max−T_site)/(T_max−T_ref))</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> K_group from project setup (clamped range)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Derated ampacity = Catalogue_A × K_temp × K_group</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> VD_1ph = 2×I×R(T)×L · VD_3ph = √3×I×R(T)×L</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Total path VD (4C+3C) + load-end voltage</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> 3-phase JB: min. conductor volume optimisation</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Fault check — 4C phase-to-phase (MCB B/C/D)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Earth loop — 3C with GFEP-aware gate</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Conductor mass (metric tonnes) per branch</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Status: Selected / Review Required / Unsizeable</div>
+                </div>
+            </div>
+        </details>
+
+        <!-- Step 8 -->
+        <details class="dg-step">
+            <summary class="dg-step-header">
+                <span class="dg-step-num green">08</span>
+                <span class="dg-step-title">BOQ, Cable Schedule &amp; Result Export</span>
+                <span class="dg-step-tag green">Deliverables</span>
+                <i class="bi bi-chevron-down dg-step-chevron"></i>
+            </summary>
+            <div class="dg-step-body">
+                <div>
+                    <p>BOQ is generated per line then consolidated at project level. Items include MCBs, JBs, heating cable (ordered length, including termination allowance), end terminations, RTDs, thermostats, caution labels, isolators, and adhesive tape.</p>
+                    <p style="margin-top:10px;">Cable schedule rows are derived from the active SLD topology and the configured DB-to-JB / JB-to-JB length assumptions. Excel exports cover Line Results, Selection Diagnostics, Power Distribution, Alternate Tracers, and MI Selection worksheets.</p>
+                </div>
+                <div class="dg-step-outputs">
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Consolidated + per-line BOQ</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Ordered SR tracer length (incl. term. allowance)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> MI heated length + cold-lead quantities</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Cable schedule (tag, spec, from/to, length)</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Excel: 5 worksheets of calculation evidence</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> SLD PDF export</div>
+                </div>
+            </div>
+        </details>
+
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     FORMULA REFERENCE
+════════════════════════════════════════════════════════ -->
+<section id="formulas" class="dg-card dg-formula-section dg-section" aria-label="Formula reference">
+    <div class="dg-section-head">
+        <div>
+            <p class="dg-kicker">Calculation Basis</p>
+            <h2 class="dg-section-title">Core engineering formulas.</h2>
+            <p class="dg-section-sub">Click any card to expand variable definitions and standard references.</p>
+        </div>
+    </div>
+
+    <div class="dg-formula-grid">
+
+        <!-- Formula 1 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag">Thermal — Step 3</div>
+            <h3>Mean Insulation Temperature</h3>
+            <div class="dg-formula-eq">
+                T<sub>mean</sub> = (<span class="var-amber">T<sub>maint</sub></span> + <span class="var-green">T<sub>amb,min</sub></span>) / 2
+            </div>
+            <p class="dg-formula-desc">Conductivity evaluation temperature for the default "Mean insulation temperature" method.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>T<sub>mean</sub></td><td>Mean insulation temperature (°C) — used to evaluate k(T)</td></tr>
+                    <tr><td>T<sub>maint</sub></td><td>Line maintain temperature from line list input (°C)</td></tr>
+                    <tr><td>T<sub>amb,min</sub></td><td>Project minimum ambient temperature from project setup (°C)</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> Active default method. Legacy maintain-temperature method also available for backward comparison.</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 2 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag">Thermal — Step 3</div>
+            <h3>Insulation Conductivity Polynomial</h3>
+            <div class="dg-formula-eq">
+                <span class="var-green">k</span> = <span class="var-amber">A</span>·T² + <span class="var-amber">B</span>·T + <span class="var-amber">C</span>
+            </div>
+            <p class="dg-formula-desc">Evaluates insulation thermal conductivity from stored material-specific polynomial coefficients.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>k</td><td>Insulation conductivity (W/m·K)</td></tr>
+                    <tr><td>T</td><td>Conductivity evaluation temperature — T<sub>mean</sub> for default method (°C)</td></tr>
+                    <tr><td>A, B, C</td><td>Material polynomial coefficients from the conductivity database</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> Coefficients are stored per insulation material type. Ins_Mat_Type from line list must match a database record.</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 3 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag amber">Thermal — Step 3</div>
+            <h3>Cylindrical Pipe Heat Loss</h3>
+            <div class="dg-formula-eq">
+                q = 2π<span class="var-green">k</span>(<span class="var-amber">T<sub>maint</sub></span>−<span class="var-purple">T<sub>amb</sub></span>) / ln((2<span class="var-muted">t</span>+<span class="var-muted">D</span>)/<span class="var-muted">D</span>)
+            </div>
+            <p class="dg-formula-desc">Base heat loss per metre through cylindrical insulation — the core thermal model.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>q</td><td>Base heat loss per metre (W/m)</td></tr>
+                    <tr><td>k</td><td>Insulation conductivity at T<sub>mean</sub> (W/m·K)</td></tr>
+                    <tr><td>T<sub>maint</sub></td><td>Maintain temperature (°C)</td></tr>
+                    <tr><td>T<sub>amb</sub></td><td>Minimum ambient temperature (°C)</td></tr>
+                    <tr><td>t</td><td>Insulation thickness (m) — Insul_Thick input converted</td></tr>
+                    <tr><td>D</td><td>Pipe outside diameter (m) — from ASME B36 table or approximation</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> IEC/IEEE 62395 · IEEE 515 · Fourier heat conduction through cylindrical annulus</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 4 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag">Selection — Step 4</div>
+            <h3>SR Duty Ratio</h3>
+            <div class="dg-formula-eq">
+                F<sub>duty</sub> = <span class="var-amber">Q<sub>design</sub></span> / (<span class="var-green">P<sub>LV</sub></span> × <span class="var-purple">N<sub>SR</sub></span>)
+            </div>
+            <p class="dg-formula-desc">Heat-delivery check for straight SR parallel runs. Duty ratio ≤ 1.0 means one full straight run delivers enough heat.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>F<sub>duty</sub></td><td>SR duty ratio (dimensionless) — must be ≤ Allowed Spiral Factor</td></tr>
+                    <tr><td>Q<sub>design</sub></td><td>Design heat loss (W/m) — after SF and wind correction</td></tr>
+                    <tr><td>P<sub>LV</sub></td><td>SR heat delivery at maintain temp under low-voltage scenario (W/m)</td></tr>
+                    <tr><td>N<sub>SR</sub></td><td>Number of straight SR parallel runs being evaluated (1 to max 4)</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> For straight tracing: F<sub>duty</sub> &lt; 1.0 does NOT shorten the installed cable. One full run is always installed.</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 5 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag green">Electrical — Step 5</div>
+            <h3>Circuit Count</h3>
+            <div class="dg-formula-eq">
+                N<sub>circuits</sub> = ⌈ <span class="var-amber">I<sub>max</sub></span> / (<span class="var-green">CB<sub>max</sub></span> × <span class="var-purple">f<sub>load</sub></span>) ⌉
+            </div>
+            <p class="dg-formula-desc">Number of circuits required for a single SR run — rounded up to ensure no breaker exceeds its loading limit.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>N<sub>circuits</sub></td><td>Number of circuits (rounded up)</td></tr>
+                    <tr><td>I<sub>max</sub></td><td>Maximum line current at high-voltage scenario (A)</td></tr>
+                    <tr><td>CB<sub>max</sub></td><td>Maximum circuit breaker size from project setup (A)</td></tr>
+                    <tr><td>f<sub>load</sub></td><td>Maximum CB loading factor (decimal) — e.g. 0.80 for 80%</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> For multiple SR parallel runs: each run is modelled as an independently protected branch, not grouped.</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 6 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag purple">Cold Cable — Step 7</div>
+            <h3>Ampacity Temperature Derating</h3>
+            <div class="dg-formula-eq">
+                K<sub>temp</sub> = √( (<span class="var-amber">T<sub>max</sub></span>−<span class="var-green">T<sub>site</sub></span>) / (<span class="var-amber">T<sub>max</sub></span>−<span class="var-muted">T<sub>ref</sub></span>) )
+            </div>
+            <p class="dg-formula-desc">Reduces catalogue ampacity for site ambient temperature. Applied before grouping derating.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>K<sub>temp</sub></td><td>Temperature derating factor (dimensionless, ≤ 1.0)</td></tr>
+                    <tr><td>T<sub>max</sub></td><td>Maximum conductor temperature from catalogue (90°C XLPE, 70°C PVC)</td></tr>
+                    <tr><td>T<sub>site</sub></td><td>Project maximum site ambient temperature (°C)</td></tr>
+                    <tr><td>T<sub>ref</sub></td><td>Catalogue reference temperature at which ampacity was published (typically 30°C)</td></tr>
+                    <tr><td>K<sub>total</sub></td><td>= K<sub>temp</sub> × K<sub>group</sub> — combined derating applied to catalogue ampacity</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> IEC 60364-5-52 ampacity correction factors · K_group set in project setup (0.25–1.0)</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 7 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag purple">Cold Cable — Step 7</div>
+            <h3>Cold Cable Voltage Drop</h3>
+            <div class="dg-formula-eq">
+                VD<sub>1ph</sub> = 2 × <span class="var-amber">I</span> × <span class="var-green">R(T)</span> × <span class="var-muted">L</span><br>
+                VD<sub>3ph</sub> = √3 × <span class="var-amber">I</span> × <span class="var-green">R(T)</span> × <span class="var-muted">L</span>
+            </div>
+            <p class="dg-formula-desc">Voltage drop for resistive EHT loads (PF = 1.0). Temperature-corrected resistance at cable operating temperature.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>VD</td><td>Voltage drop (V)</td></tr>
+                    <tr><td>I</td><td>Per-circuit operating current (A) — from SR/MI electrical sizing</td></tr>
+                    <tr><td>R(T)</td><td>Conductor resistance at operating temp (Ω/m) = R₂₀ × (1 + α × (T<sub>op</sub>−20))</td></tr>
+                    <tr><td>L</td><td>Cable route length (m)</td></tr>
+                    <tr><td>α</td><td>Temperature coefficient of resistance: Cu = 0.00393/°C, Al = 0.00403/°C</td></tr>
+                    <tr><td>T<sub>op</sub></td><td>Cable operating temperature: 70°C (PVC), 90°C (XLPE)</td></tr>
+                    <tr><td>Factor 2</td><td>Both conductors in 1-phase loop (outgoing + return) carry the same current</td></tr>
+                    <tr><td>Factor √3</td><td>Balanced 3-phase geometry for 4-core trunk feeder</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> IEC 60364-5-52 · EHT loads are pure resistive (PF=1.0), IEEE 515-2017 §4 · VD% = VD(V)/V_nominal × 100</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 8 -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag purple">Cold Cable — Step 7</div>
+            <h3>MCB Fault Protection Check</h3>
+            <div class="dg-formula-eq">
+                I<sub>fault,4C</sub> = <span class="var-amber">V<sub>line</sub></span>×√3 / (2×<span class="var-green">R</span>×<span class="var-muted">L</span>)<br>
+                I<sub>fault,3C</sub> = <span class="var-amber">V<sub>phase</sub></span> / (2×<span class="var-green">R</span>×<span class="var-muted">L</span>)
+            </div>
+            <p class="dg-formula-desc">Worst-case fault current at cable far end must exceed MCB instantaneous trip threshold (k × I<sub>breaker</sub>).</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>I<sub>fault,4C</sub></td><td>Phase-to-phase fault current at end of 4C trunk (A)</td></tr>
+                    <tr><td>I<sub>fault,3C</sub></td><td>Line-to-neutral fault current at end of 3C outgoing (A)</td></tr>
+                    <tr><td>V<sub>line</sub></td><td>Line-to-line voltage (V) — e.g. 400 V</td></tr>
+                    <tr><td>V<sub>phase</sub></td><td>Phase-to-neutral voltage (V) — e.g. 230 V</td></tr>
+                    <tr><td>R</td><td>Phase conductor resistance at operating temp per unit length (Ω/m)</td></tr>
+                    <tr><td>L</td><td>Cable length (m)</td></tr>
+                    <tr><td>k (curve)</td><td>MCB instantaneous factor: Type B = 3×, Type C = 5×, Type D = 10× (lower bound)</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> IEC 60364-4-41 Table 41.1 — max 0.4 s disconnection for TN systems at 230 V · IEC 60898-1 MCB characteristic curves B/C/D</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+        <!-- Formula 9 — MI TCR -->
+        <div class="dg-formula-card" tabindex="0" role="button" aria-expanded="false">
+            <div class="dg-formula-tag purple">MI — Step 4</div>
+            <h3>MI Resistance–Temperature Correction</h3>
+            <div class="dg-formula-eq">
+                R<sub>T</sub> = R<sub>20</sub> × (1 + <span class="var-amber">TCR</span> × (<span class="var-green">T<sub>op</sub></span> − 20))
+            </div>
+            <p class="dg-formula-desc">Heater resistance at operating temperature — drives cold-start vs operating current difference for MI heater sets.</p>
+            <div class="dg-formula-expand">
+                <table class="dg-var-table">
+                    <tr><td>R<sub>T</sub></td><td>Heater resistance at temperature T (Ω)</td></tr>
+                    <tr><td>R<sub>20</sub></td><td>Catalogue heater resistance at 20°C reference (Ω)</td></tr>
+                    <tr><td>TCR</td><td>Temperature coefficient of resistance for heater conductor material (1/°C)</td></tr>
+                    <tr><td>T<sub>op</sub></td><td>Operating temperature — maintain temp for operating current; lower of startup temp / min ambient for cold-start</td></tr>
+                </table>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> TCR is a property of the heater conductor material, not the MI sheath alloy. IEC/IEEE 62395.</p>
+            </div>
+            <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
+        </div>
+
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     TECHNOLOGY STATUS MATRIX
+════════════════════════════════════════════════════════ -->
+<section class="dg-card dg-tech-section dg-section" aria-label="Cable technology status">
+    <div class="dg-section-head">
+        <div>
+            <p class="dg-kicker">Technology Status</p>
+            <h2 class="dg-section-title">What is implemented, what is MVP, what is planned.</h2>
+        </div>
+    </div>
+    <div class="dg-tech-grid">
+        <div class="dg-tech-card">
+            <div class="dg-tech-header">
+                <span class="dg-tech-label blue">SR</span>
+                <span class="dg-tech-badge live">Live</span>
+            </div>
+            <h3>Self-Regulating Cable</h3>
+            <p>The default heating technology. Full pipeline from line-list upload through heat loss, tracer selection, electrical sizing, BOQ, cable schedule, and SLD.</p>
+            <ul class="dg-tech-checklist">
+                <li><i class="bi bi-check-circle-fill"></i> Straight parallel runs (1–4×)</li>
+                <li><i class="bi bi-check-circle-fill"></i> Constructability warnings for small-bore</li>
+                <li><i class="bi bi-check-circle-fill"></i> Voltage scenario separation (LV / NV / HV)</li>
+                <li><i class="bi bi-check-circle-fill"></i> Selection diagnostics with reason codes</li>
+                <li><i class="bi bi-check-circle-fill"></i> SLD inspector evidence per tracer node</li>
+                <li><i class="bi bi-clock"></i> Vendor curve-point interpolation (roadmap)</li>
+                <li><i class="bi bi-clock"></i> Override-driven recalculation (roadmap)</li>
+            </ul>
+        </div>
+        <div class="dg-tech-card">
+            <div class="dg-tech-header">
+                <span class="dg-tech-label amber">MI</span>
+                <span class="dg-tech-badge mvp">MVP</span>
+            </div>
+            <h3>Mineral Insulated Cable</h3>
+            <p>Automatic fallback when SR temperature limits are exceeded. Uses validated MI catalogue families only. Multi-set selection for high heat-duty lines.</p>
+            <ul class="dg-tech-checklist">
+                <li><i class="bi bi-check-circle-fill"></i> Validated catalogue gate (is_validated flag)</li>
+                <li><i class="bi bi-check-circle-fill"></i> TCR-based resistance–temperature correction</li>
+                <li><i class="bi bi-check-circle-fill"></i> Multi-set identical heater selection</li>
+                <li><i class="bi bi-check-circle-fill"></i> Independent protection per heater set</li>
+                <li><i class="bi bi-check-circle-fill"></i> T-class review evidence (not auto-approved)</li>
+                <li><i class="bi bi-clock"></i> Calculated sheath temperature (roadmap)</li>
+                <li><i class="bi bi-clock"></i> JB terminal / gland capacity check (roadmap)</li>
+            </ul>
+        </div>
+        <div class="dg-tech-card">
+            <div class="dg-tech-header">
+                <span class="dg-tech-label purple">CC</span>
+                <span class="dg-tech-badge live">Complete</span>
+            </div>
+            <h3>Cold Cable Sizing</h3>
+            <p>Sizes upstream power cables from DB/MCC to field JBs and tracer cold ends. Reads directly from the confirmed SLD topology — no manual re-entry of currents or breaker sizes.</p>
+            <ul class="dg-tech-checklist">
+                <li><i class="bi bi-check-circle-fill"></i> Temperature derating: K_temp = sqrt((T_max-T_site)/(T_max-T_ref)) — IEC 60364-5-52</li>
+                <li><i class="bi bi-check-circle-fill"></i> Derated ampacity = A_catalogue × K_temp × K_group (grouping derating)</li>
+                <li><i class="bi bi-check-circle-fill"></i> Conductor R(T) = R₂₀ × (1 + α(T-20)) — IEC 60228</li>
+                <li><i class="bi bi-check-circle-fill"></i> VD: 2×I×R(T)×L (1-phase) · √3×I×R(T)×L (3-phase) · PF = 1.0</li>
+                <li><i class="bi bi-check-circle-fill"></i> <strong>Conductor volume optimisation</strong> — minimises copper/aluminium tonnage by distributing VD budget across 4C trunk and 3C outgoing pair</li>
+                <li><i class="bi bi-check-circle-fill"></i> Series VD check: trunk + outgoing VD ≤ project limit; load-end voltage reported in V</li>
+                <li><i class="bi bi-check-circle-fill"></i> 4C trunk fault check: MCB B/C/D instantaneous trip verification (IEC 60364-4-41)</li>
+                <li><i class="bi bi-check-circle-fill"></i> 3C earth loop: Ground Fault Equipment Protection (GFEP)-aware sizing gate</li>
+                <li><i class="bi bi-check-circle-fill"></i> Conductor mass per branch (metric tonnes) — material takeoff</li>
+                <li><i class="bi bi-clock"></i> Tracer PE-path in earth loop (pending SR/MI catalogue data)</li>
+            </ul>
+        </div>
+
+        <div class="dg-tech-card">
+            <div class="dg-tech-header">
+                <span class="dg-tech-label red">CP</span>
+                <span class="dg-tech-badge planned">Planned</span>
+            </div>
+            <h3>Constant Power Cable</h3>
+            <p>Fixed wattage per metre, independent of temperature — for services where constant heat input is required and self-regulating behaviour is not acceptable. Planned as a fully independent module with its own selection, circuit design, and SLD output.</p>
+            <ul class="dg-tech-checklist">
+                <li><i class="bi bi-circle"></i> Series-resistance constant-power circuit design</li>
+                <li><i class="bi bi-circle"></i> Zone-length and power-density matching</li>
+                <li><i class="bi bi-circle"></i> Parallel and series circuit topologies</li>
+                <li><i class="bi bi-circle"></i> Mandatory over-temperature protection modelling</li>
+                <li><i class="bi bi-circle"></i> RTD / thermostat zone control integration</li>
+                <li><i class="bi bi-circle"></i> CP-specific BOQ, cable schedule, and SLD</li>
+            </ul>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     DIAGNOSTICS CARD ENCYCLOPEDIA
+════════════════════════════════════════════════════════ -->
+<section id="diagnostics" class="dg-card dg-diag-section dg-section" aria-label="SR Selection Diagnostics reference">
+    <div class="dg-section-head">
+        <div>
+            <p class="dg-kicker">SR Selection Diagnostics</p>
+            <h2 class="dg-section-title">Understand every rejection code instantly.</h2>
+            <p class="dg-section-sub">Hover or click any card to flip it and see engineering actions to resolve the issue.</p>
+        </div>
+    </div>
+
+    <div class="dg-diag-grid">
+
+        <div class="dg-diag-card" tabindex="0" role="button" aria-label="NO_VENDOR_CATALOGUE_ROWS">
+            <div class="dg-diag-inner">
+                <div class="dg-diag-front">
+                    <div>
+                        <div class="dg-diag-code red">NO_VENDOR_CATALOGUE_ROWS</div>
+                        <p class="dg-diag-title">No catalogue rows for selected vendor</p>
+                        <p class="dg-diag-desc">The selected vendor has no usable SR rows in the local database for this project.</p>
+                    </div>
+                    <p class="dg-diag-flip-hint"><i class="bi bi-arrow-repeat"></i> Flip for actions</p>
+                </div>
+                <div class="dg-diag-back">
+                    <p class="dg-diag-back-title">Engineering Actions</p>
+                    <ul>
+                        <li>Confirm the correct vendor is selected in Project Data</li>
+                        <li>Check that SR catalogue rows exist in the database for this vendor</li>
+                        <li>Verify vendor does not only have CW/MI rows loaded</li>
+                        <li>Contact administrator to load missing catalogue data</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="dg-diag-card" tabindex="0" role="button" aria-label="NO_SR_CATALOGUE_SUITABILITY">
+            <div class="dg-diag-inner">
+                <div class="dg-diag-front">
+                    <div>
+                        <div class="dg-diag-code amber">NO_SR_CATALOGUE_SUITABILITY</div>
+                        <p class="dg-diag-title">No catalogue row passed suitability checks</p>
+                        <p class="dg-diag-desc">Rows exist but fail maintain temp, exposure, area class, gas group, or T-class limits.</p>
+                    </div>
+                    <p class="dg-diag-flip-hint"><i class="bi bi-arrow-repeat"></i> Flip for actions</p>
+                </div>
+                <div class="dg-diag-back">
+                    <p class="dg-diag-back-title">Engineering Actions</p>
+                    <ul>
+                        <li>Review Maint_T, Oper_T, Design_T values on the line</li>
+                        <li>Check area class and T-class against available catalogue families</li>
+                        <li>Confirm catalogue data is correctly loaded (max temp fields)</li>
+                        <li>Consider whether MI is appropriate for this temperature range</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="dg-diag-card" tabindex="0" role="button" aria-label="NO_SR_CATALOGUE_VOLTAGE_COMPATIBILITY">
+            <div class="dg-diag-inner">
+                <div class="dg-diag-front">
+                    <div>
+                        <div class="dg-diag-code blue">NO_SR_CATALOGUE_VOLTAGE_COMPATIBILITY</div>
+                        <p class="dg-diag-title">No voltage-compatible catalogue class</p>
+                        <p class="dg-diag-desc">No SR row satisfied the voltage compatibility rule — no row rated at or near the project supply voltage.</p>
+                    </div>
+                    <p class="dg-diag-flip-hint"><i class="bi bi-arrow-repeat"></i> Flip for actions</p>
+                </div>
+                <div class="dg-diag-back">
+                    <p class="dg-diag-back-title">Engineering Actions</p>
+                    <ul>
+                        <li>Review project System Voltage setting (Project Data)</li>
+                        <li>Confirm vendor catalogue includes the required voltage class</li>
+                        <li>Check if a nearby nominal voltage class should be added</li>
+                        <li>Tolerance: ±10% of nominal class is allowed</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="dg-diag-card" tabindex="0" role="button" aria-label="NO_POSITIVE_POWER_OUTPUT">
+            <div class="dg-diag-inner">
+                <div class="dg-diag-front">
+                    <div>
+                        <div class="dg-diag-code purple">NO_POSITIVE_POWER_OUTPUT</div>
+                        <p class="dg-diag-title">Zero or negative power output at maintain temperature</p>
+                        <p class="dg-diag-desc">SR polynomial yields ≤ 0 W/m at Maint_T after low-voltage correction.</p>
+                    </div>
+                    <p class="dg-diag-flip-hint"><i class="bi bi-arrow-repeat"></i> Flip for actions</p>
+                </div>
+                <div class="dg-diag-back">
+                    <p class="dg-diag-back-title">Engineering Actions</p>
+                    <ul>
+                        <li>Review vendor A/B/C polynomial coefficients in the catalogue</li>
+                        <li>Verify maintain temperature is within the SR cable's rated range</li>
+                        <li>Check catalogue data quality — coefficients may be incorrectly entered</li>
+                        <li>Consider MI if maintain temperature is approaching SR limits</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="dg-diag-card" tabindex="0" role="button" aria-label="NO_SPIRAL_FACTOR_MATCH">
+            <div class="dg-diag-inner">
+                <div class="dg-diag-front">
+                    <div>
+                        <div class="dg-diag-code red">NO_SPIRAL_FACTOR_MATCH</div>
+                        <p class="dg-diag-title">No run count satisfies duty ratio limit</p>
+                        <p class="dg-diag-desc">Even at the max configured parallel runs, no SR candidate delivers enough heat per run.</p>
+                    </div>
+                    <p class="dg-diag-flip-hint"><i class="bi bi-arrow-repeat"></i> Flip for actions</p>
+                </div>
+                <div class="dg-diag-back">
+                    <p class="dg-diag-back-title">Engineering Actions</p>
+                    <ul>
+                        <li>Review Max SR parallel runs setting (currently 1–4)</li>
+                        <li>Consider allowing spiral wrap if project practice permits</li>
+                        <li>Review heat-loss safety factor — reduce if justified</li>
+                        <li>Consider a higher-output tracer family or different vendor</li>
+                        <li>Review insulation thickness and basis</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+        <div class="dg-diag-card" tabindex="0" role="button" aria-label="TRACER_SELECTION_ERROR">
+            <div class="dg-diag-inner">
+                <div class="dg-diag-front">
+                    <div>
+                        <div class="dg-diag-code amber">TRACER_SELECTION_ERROR</div>
+                        <p class="dg-diag-title">Unexpected engine error</p>
+                        <p class="dg-diag-desc">The SR selection engine encountered an unexpected exception during evaluation.</p>
+                    </div>
+                    <p class="dg-diag-flip-hint"><i class="bi bi-arrow-repeat"></i> Flip for actions</p>
+                </div>
+                <div class="dg-diag-back">
+                    <p class="dg-diag-back-title">Engineering Actions</p>
+                    <ul>
+                        <li>Check line data for unusual or missing values</li>
+                        <li>Check catalogue data for null or malformed fields</li>
+                        <li>Review server logs for the specific exception</li>
+                        <li>Escalate to application maintainer if it persists</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     VERIFICATION REPORT — DETAILED MOCKUP
+════════════════════════════════════════════════════════ -->
+<section id="verify" class="dg-card dg-verify-section dg-section" aria-label="Calculation Verification Report">
+    <div class="dg-section-head">
+        <div>
+            <p class="dg-kicker">Now Available</p>
+            <h2 class="dg-section-title">Calculation Verification Report.</h2>
+        </div>
+    </div>
+
+    <div class="dg-verify-inner">
+
+        <div class="dg-verify-info">
+            <span class="dg-verify-badge"><i class="bi bi-check-circle-fill"></i> Live</span>
+            <h3>Hand-calculation level transparency for any line, on demand.</h3>
+            <p>
+                Select any line in your project and generate a step-by-step calculation report that mirrors
+                how a senior engineer would manually verify the result: every formula substituted with actual values,
+                every catalogue lookup referenced by part number, every standard cited by clause.
+            </p>
+            <p>
+                The report is self-contained — suitable for inclusion in a calculation package,
+                client submission, or third-party review — and printable directly from the browser.
+            </p>
+            <a href="{% url 'verification_report_view' %}" class="dg-btn-primary" style="margin-top:4px; width:fit-content;">
+                <i class="bi bi-file-earmark-check-fill"></i> Open Verification Report
+            </a>
+            <div class="dg-verify-feature-list">
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Full formula substitution with actual project values</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Pipe OD lookup result (ASME B36 table citation)</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Conductivity polynomial evaluation step-by-step</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Heat loss with intermediate values shown</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> SR duty ratio check — each run count shown</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Electrical sizing with voltage scenario breakdown</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Standard references: IEC 62395, IEEE 515, ASME B36</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Vendor catalogue traceability (part number, source)</div>
+                <div class="dg-verify-feature"><i class="bi bi-check2-circle"></i> Review checklist with sign-off fields</div>
+            </div>
+        </div>
+
+        <!-- Mockup window -->
+        <div class="dg-verify-mockup">
+            <div class="dg-mockup-bar">
+                <div class="dg-mockup-dot"></div>
+                <div class="dg-mockup-dot"></div>
+                <div class="dg-mockup-dot"></div>
+                <span class="dg-mockup-bar-title">eTrace — Calculation Verification Report</span>
+                <a href="{% url 'verification_report_view' %}" style="font-size:10px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--green);padding:3px 8px;background:rgba(5,122,85,.12);border:1px solid rgba(5,122,85,.25);border-radius:5px;text-decoration:none;">Live ↗</a>
+            </div>
+            <div class="dg-mockup-body">
+                <!-- Line selector -->
+                <div class="dg-mockup-selector">
+                    <label>Line ID</label>
+                    <span class="dg-mock-select">L-1001 · 6″ CS · CWS · 80°C</span>
+                    <button class="dg-mock-btn" disabled>Generate Report</button>
+                </div>
+
+                <!-- Calculation steps -->
+                <div class="dg-calc-steps-mockup">
+
+                    <div class="dg-calc-step-mock">
+                        <div class="dg-csm-num">1</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title">Input Data Summary</div>
+                            <div class="dg-csm-formula">Line_Size=6″ · Maint_T=80°C · T_amb=-10°C · Insul=Mineral Wool · t=75mm</div>
+                            <div class="dg-csm-ref">Source: Confirmed line list upload · Project setup Rev A</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock">
+                        <div class="dg-csm-num">2</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title">Pipe Outside Diameter Lookup</div>
+                            <div class="dg-csm-formula">D = 168.3 mm (6″ NPS) — ASME B36.10M Table</div>
+                            <div class="dg-csm-ref">Reference: ASME B36.10M · Welded and Seamless Wrought Steel Pipe</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock">
+                        <div class="dg-csm-num amber">3</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title">Mean Insulation Temperature</div>
+                            <div class="dg-csm-formula">T_mean = (80 + (−10)) / 2 = 35.0°C</div>
+                            <div class="dg-csm-ref">Method: Mean insulation temperature (default) · IEC/IEEE 62395-1</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock">
+                        <div class="dg-csm-num amber">4</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title">Conductivity Polynomial Evaluation</div>
+                            <div class="dg-csm-formula">k = 0.0000003×35² + 0.00015×35 + 0.038 = 0.0438 W/m·K</div>
+                            <div class="dg-csm-ref">Material: Mineral Wool · Coefficients: A=3e-7, B=1.5e-4, C=0.038</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock">
+                        <div class="dg-csm-num green">5</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title">Base Heat Loss</div>
+                            <div class="dg-csm-formula">q = 2π × 0.0438 × (80−(−10)) / ln((2×0.075+0.1683)/0.1683) = 18.4 W/m</div>
+                            <div class="dg-csm-ref">Formula: Cylindrical insulation conduction · IEEE 515-2017 §4.3</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock locked">
+                        <div class="dg-csm-num green">6</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title skeleton">Wind Correction + Safety Factor</div>
+                            <div class="dg-csm-formula skeleton">Generating…</div>
+                            <div class="dg-csm-ref skeleton">Generating…</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock locked">
+                        <div class="dg-csm-num purple">7</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title skeleton">SR Catalogue Filtering + Duty Check</div>
+                            <div class="dg-csm-formula skeleton">Generating…</div>
+                            <div class="dg-csm-ref skeleton">Generating…</div>
+                        </div>
+                    </div>
+
+                    <div class="dg-calc-step-mock locked">
+                        <div class="dg-csm-num purple">8</div>
+                        <div class="dg-csm-body">
+                            <div class="dg-csm-title skeleton">Electrical Sizing + Breaker Selection</div>
+                            <div class="dg-csm-formula skeleton">Generating…</div>
+                            <div class="dg-csm-ref skeleton">Generating…</div>
+                        </div>
+                    </div>
+
+                </div>
+            </div>
+        </div>
+
+    </div>
+</section>
+
+<!-- ═══════════════════════════════════════════════════════
+     FULL CALCULATION MANUAL — dark themed reader
+════════════════════════════════════════════════════════ -->
+<section id="reader" class="dg-section" aria-label="Full calculation manual">
+    <div style="padding: 0 0 20px; display:flex; align-items:flex-end; justify-content:space-between; flex-wrap:wrap; gap:12px;">
+        <div>
+            <p class="dg-kicker">Full Reference</p>
+            <h2 class="dg-section-title">Calculation Manual</h2>
+            <p class="dg-section-sub">Complete engineering reference — SR, MI, Cold Cable, electrical basis, diagnostics, review checklist, and glossary. Updated to reflect the current implemented module state.</p>
+        </div>
+        <div style="display:flex; gap:8px; flex-shrink:0;">
+            <button type="button" class="dg-btn-secondary" data-dg-print style="padding:8px 14px; font-size:13px;">
+                <i class="bi bi-printer"></i> Print
+            </button>
+        </div>
+    </div>
+
+    <!-- Reader toolbar: section tracker + font controls -->
+    <div class="dg-reader-toolbar">
+        <span class="dg-reader-section-label" id="dg-reader-active-section">
+            <i class="bi bi-book" style="margin-right:5px; opacity:.6;"></i> Calculation Manual
+        </span>
+        <div class="dg-reader-tools">
+            <span style="font-size:11px; color:var(--faint); margin-right:4px;">Text</span>
+            <button type="button" class="dg-tool-btn" data-dg-font="-" title="Smaller text">A−</button>
+            <button type="button" class="dg-tool-btn" data-dg-font="0" title="Reset text size">A</button>
+            <button type="button" class="dg-tool-btn" data-dg-font="+" title="Larger text">A+</button>
+        </div>
+    </div>
+
+    <div class="dg-reader-shell">
+        <aside class="dg-reader-toc">
+            <div class="dg-card dg-toc-card">
+                <p class="dg-kicker">Contents</p>
+                <nav class="dg-toc-nav" aria-label="Manual table of contents">
+                    {% for item in manual_toc %}
+                        <a class="dg-toc-link toc-level-{{ item.level }}" href="#{{ item.id }}">{{ item.title }}</a>
+                    {% empty %}
+                        <p style="font-size:13px;color:var(--faint);">Table of contents unavailable.</p>
+                    {% endfor %}
+                </nav>
+            </div>
+        </aside>
+        <article class="dg-card dg-article" id="dg-article">
+            {{ manual_html }}
+        </article>
+    </div>
+</section>
+
+</main><!-- /dg-shell -->
+
+<!-- Back to top -->
+<a class="dg-back-top" href="#top" aria-label="Back to top"><i class="bi bi-arrow-up"></i></a>
+
+<script src="{% static 'js/design_guide.js' %}"></script>
+</body>
+</html>

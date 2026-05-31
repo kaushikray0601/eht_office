@@ -1,0 +1,251 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Verification Report{% if report %} — {{ report.line.line_id }}{% endif %} | eTrace</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="{% static 'css/verification_report.css' %}" rel="stylesheet">
+</head>
+<body id="top" class="vr-page">
+<div class="vr-progress-bar" aria-hidden="true"></div>
+
+<nav class="vr-nav" aria-label="Verification Report navigation">
+    <div class="vr-nav-left">
+        <a class="vr-brand" href="{% url 'base' %}">
+            <span class="vr-brand-logo">e<span>Trace</span></span>
+        </a>
+        <span class="vr-nav-title"><i class="bi bi-file-earmark-check-fill" style="margin-right:4px;"></i>Verification Report</span>
+    </div>
+    <div class="vr-nav-right">
+        <a href="{% url 'design_guide_view' %}" class="vr-nav-btn"><i class="bi bi-arrow-left"></i> Engineering Hub</a>
+        {% if report %}
+        <button type="button" class="vr-nav-btn" onclick="window.print()"><i class="bi bi-printer"></i> Print / PDF</button>
+        {% endif %}
+    </div>
+</nav>
+
+<main class="vr-shell">
+
+    <!-- ═══ SELECTOR CARD ════════════════════════════════════ -->
+    <div class="vr-selector">
+        <div class="vr-selector-title"><i class="bi bi-sliders" style="margin-right:8px;color:var(--blue);"></i>Select Line to Verify</div>
+        <div class="vr-selector-sub">Choose a project and a confirmed process line to generate a step-by-step hand-calculation verification document.</div>
+        <form class="vr-selector-row" method="get" action="">
+            <div class="vr-field">
+                <label class="vr-label" for="vr-proj">Project</label>
+                <select class="vr-select" id="vr-proj" name="project_id" onchange="this.form.submit()">
+                    <option value="">— Select project —</option>
+                    {% for p in projects %}
+                    <option value="{{ p.proj_id }}" {% if p.proj_id == selected_project_id %}selected{% endif %}>
+                        {{ p.proj_id }}
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            {% if lines %}
+            <div class="vr-field">
+                <label class="vr-label" for="vr-line">Process Line</label>
+                <select class="vr-select" id="vr-line" name="line_uid">
+                    <option value="">— Select line —</option>
+                    {% for l in lines %}
+                    <option value="{{ l.uid }}" {% if l.uid|stringformat:"s" == selected_line_uid %}selected{% endif %}>
+                        {{ l.line_id }} — {{ l.service_type }} {{ l.line_size }}″ {{ l.maint_temp }}°C
+                    </option>
+                    {% endfor %}
+                </select>
+            </div>
+            <button type="submit" class="vr-run-btn">
+                <i class="bi bi-file-earmark-check"></i> Generate Report
+            </button>
+            {% endif %}
+            {% if selected_project_id and not lines %}
+            <p style="font-size:13px;color:var(--amber);align-self:flex-end;margin-bottom:8px;">
+                <i class="bi bi-exclamation-triangle"></i> No confirmed lines found in this project. Upload and confirm line data first.
+            </p>
+            {% endif %}
+        </form>
+        {% if error %}
+        <p style="color:var(--red);font-size:13px;margin-top:10px;"><i class="bi bi-exclamation-circle"></i> {{ error }}</p>
+        {% endif %}
+    </div>
+
+    {% if not report %}
+    <!-- ═══ NO-DATA PLACEHOLDER ══════════════════════════════ -->
+    <div class="vr-no-data">
+        <i class="bi bi-file-earmark-text"></i>
+        <p style="font-size:16px;font-weight:700;color:var(--muted);margin-bottom:6px;">No line selected</p>
+        <p>Select a project and a confirmed process line above to generate the verification report.</p>
+    </div>
+
+    {% else %}
+    <!-- ═══ REPORT HEADER ════════════════════════════════════ -->
+    <div class="vr-report-header">
+        <div class="vr-rh-top">
+            <div>
+                <div class="vr-rh-title">Calculation Verification Report</div>
+                <div class="vr-rh-line">{{ report.line.line_id }}</div>
+            </div>
+            <span class="vr-status-badge {% if report.has_mi %}mi{% else %}ok{% endif %}">
+                <i class="bi bi-{% if report.has_mi %}layers{% else %}check-circle-fill{% endif %}"></i>
+                {% if report.has_mi %}MI Heater{% else %}SR Tracer{% endif %} Selected
+            </span>
+        </div>
+        <div class="vr-rh-meta">
+            <div class="vr-rh-meta-item">
+                <span class="vr-rh-meta-label">Project</span>
+                <span class="vr-rh-meta-value">{{ report.project.proj_id }}</span>
+            </div>
+            <div class="vr-rh-meta-item">
+                <span class="vr-rh-meta-label">Service</span>
+                <span class="vr-rh-meta-value">{{ report.line.service_type }}</span>
+            </div>
+            <div class="vr-rh-meta-item">
+                <span class="vr-rh-meta-label">Pipe Size</span>
+                <span class="vr-rh-meta-value">{{ report.line.line_size }}″ NPS</span>
+            </div>
+            <div class="vr-rh-meta-item">
+                <span class="vr-rh-meta-label">Maintain Temp</span>
+                <span class="vr-rh-meta-value">{{ report.line.maint_temp }} °C</span>
+            </div>
+            <div class="vr-rh-meta-item">
+                <span class="vr-rh-meta-label">Vendor</span>
+                <span class="vr-rh-meta-value">{{ report.project.vendor }}</span>
+            </div>
+            <div class="vr-rh-meta-item">
+                <span class="vr-rh-meta-label">System Voltage</span>
+                <span class="vr-rh-meta-value">{{ report.project.voltage }} V</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══ CALCULATION SECTIONS ════════════════════════════ -->
+    {% for section in report.sections %}
+    <div class="vr-section-header">
+        <span class="vr-section-letter {{ section.color }}">{{ section.letter }}</span>
+        <span class="vr-section-title">{{ section.title }}</span>
+        <span class="vr-section-sub">Section {{ section.letter }}</span>
+    </div>
+    <div class="vr-steps">
+    {% for step in report.steps %}{% if step.section == section.letter %}
+
+        <div class="vr-step {% if not step.available %}unavailable{% endif %}">
+            <div class="vr-step-top">
+                <div class="vr-step-num {{ step.num_color }}">{{ step.num }}</div>
+                <div class="vr-step-content">
+                    <div class="vr-step-title">{{ step.title }}</div>
+
+                    {% if not step.available %}
+                    <p style="font-size:13px;color:var(--faint);font-style:italic;">
+                        <i class="bi bi-hourglass"></i>
+                        {% if step.note %}{{ step.note }}{% else %}No calculation data available for this step.{% endif %}
+                    </p>
+
+                    {% elif step.table %}
+                    <table class="vr-data-table">
+                        <thead><tr><th>Parameter</th><th>Value</th></tr></thead>
+                        <tbody>
+                        {% for row in step.table %}
+                        <tr><td>{{ row.0 }}</td><td>{{ row.1 }}</td></tr>
+                        {% endfor %}
+                        </tbody>
+                    </table>
+
+                    {% elif step.note %}
+                    <div class="vr-formula-block">
+                        <div class="vr-formula-label">Result</div>
+                        <div class="vr-formula-result">{{ step.note }}</div>
+                    </div>
+
+                    {% else %}
+                    <div class="vr-formula-block">
+                        {% if step.symbolic %}
+                        <div class="vr-formula-label">Formula (symbolic)</div>
+                        <div class="vr-formula-symbolic">{{ step.symbolic }}</div>
+                        {% endif %}
+                        {% if step.substitution %}
+                        <div class="vr-formula-label" style="margin-top:10px;">With values substituted</div>
+                        <div class="vr-formula-substitution" style="white-space:pre-line;">{{ step.substitution }}</div>
+                        {% endif %}
+                    </div>
+                    {% if step.result_value %}
+                    <div class="vr-result-row">
+                        <span class="vr-result-value">{{ step.result_value }}</span>
+                        {% if step.result_unit %}<span class="vr-result-unit">{{ step.result_unit }}</span>{% endif %}
+                        {% if step.result_label %}<span class="vr-result-label">{{ step.result_label }}</span>{% endif %}
+                    </div>
+                    {% endif %}
+                    {% endif %}
+
+                    {% if step.evidence or step.std_refs %}
+                    <div class="vr-evidence-row">
+                        {% for ev in step.evidence %}
+                        <span class="vr-evidence-tag"><i class="bi {{ ev.icon }}"></i> {{ ev.label }}</span>
+                        {% endfor %}
+                        {% for ref in step.std_refs %}
+                        <span class="vr-ref-tag"><i class="bi bi-journal-bookmark-fill"></i> {{ ref.label }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+
+                </div>
+            </div>
+        </div>
+
+    {% endif %}{% endfor %}
+    </div><!-- /vr-steps -->
+    {% endfor %}
+
+    <!-- ═══ REVIEW CHECKLIST ════════════════════════════════ -->
+    <div class="vr-checklist">
+        <div class="vr-checklist-title"><i class="bi bi-clipboard2-check" style="margin-right:8px;color:var(--green);"></i>Engineering Review Checklist</div>
+        <div class="vr-checklist-sub">Complete this checklist before approving the calculation for issue. All items must be resolved or explicitly accepted.</div>
+        <div class="vr-cl-grid">
+            <label class="vr-cl-item"><input type="checkbox"> Input temperatures satisfy Oper_T ≤ Maint_T ≤ Design_T</label>
+            <label class="vr-cl-item"><input type="checkbox"> Pipe OD taken from ASME B36.10M (or approximation reviewed)</label>
+            <label class="vr-cl-item"><input type="checkbox"> Insulation conductivity coefficients verified against datasheet</label>
+            <label class="vr-cl-item"><input type="checkbox"> Heat loss method and safety factor match project basis</label>
+            <label class="vr-cl-item"><input type="checkbox"> Wind correction applied correctly for project wind speed</label>
+            <label class="vr-cl-item"><input type="checkbox"> Design heat loss value accepted for tracer selection</label>
+            <label class="vr-cl-item"><input type="checkbox"> SR tracer family, voltage class, and T-class are acceptable</label>
+            <label class="vr-cl-item"><input type="checkbox"> Duty ratio and parallel run count are acceptable for this pipe size</label>
+            <label class="vr-cl-item"><input type="checkbox"> Any constructability warning reviewed and accepted</label>
+            <label class="vr-cl-item"><input type="checkbox"> Breaker size and circuit count satisfy project electrical basis</label>
+            <label class="vr-cl-item"><input type="checkbox"> Per-circuit current understood (operating vs starting)</label>
+            {% if report.has_mi %}
+            <label class="vr-cl-item"><input type="checkbox"> MI heater T-class status reviewed — not auto-approved</label>
+            <label class="vr-cl-item"><input type="checkbox"> MI heater set count and cold-lead arrangement reviewed</label>
+            {% endif %}
+            {% if report.has_cc %}
+            <label class="vr-cl-item"><input type="checkbox"> Cold cable sizing status is Selected or Review Required</label>
+            <label class="vr-cl-item"><input type="checkbox"> Total path voltage drop ≤ project allowable</label>
+            <label class="vr-cl-item"><input type="checkbox"> Cable length basis confirmed (not project-default for procurement)</label>
+            <label class="vr-cl-item"><input type="checkbox"> Fault protection status Pass on all 4C trunk cables</label>
+            {% endif %}
+            <label class="vr-cl-item"><input type="checkbox"> All known limitations for this project stage accepted</label>
+            <label class="vr-cl-item"><input type="checkbox"> Report matches on-screen result tab values</label>
+        </div>
+    </div>
+
+    {% endif %}<!-- end if report -->
+
+</main>
+
+<script>
+(function(){
+    'use strict';
+    // Scroll progress
+    const bar = document.querySelector('.vr-progress-bar');
+    window.addEventListener('scroll', function(){
+        if(!bar) return;
+        const max = document.documentElement.scrollHeight - window.innerHeight;
+        bar.style.width = (max > 0 ? (window.scrollY / max) * 100 : 0) + '%';
+    }, {passive:true});
+    // Auto-submit line selector when project changes
+    const projSel = document.getElementById('vr-proj');
+    if(projSel) projSel.addEventListener('change', function(){ this.form.submit(); });
+})();
+</script>
+</body>
+</html>

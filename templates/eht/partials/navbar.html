@@ -22,7 +22,14 @@
                 </li>
                 <li class="nav-item"><a class="nav-link" href="#">Input</a></li>
                 <li class="nav-item"><a class="nav-link" href="#">Features</a></li>
-                <li class="nav-item"><a class="nav-link" href="{% url 'calculation_manual_view' %}">Guide</a></li>
+                <li class="nav-item dropdown">
+                    <a class="nav-link dropdown-toggle" href="#" data-bs-toggle="dropdown">Guide</a>
+                    <ul class="dropdown-menu">
+                        <li><a class="dropdown-item" href="{% url 'calculation_manual_view' %}">Calculation Manual</a></li>
+                        <li><a class="dropdown-item" href="{% url 'design_guide_view' %}">⚡ Engineering Hub <span style="font-size:10px;color:#0f21e4;font-weight:700;">NEW</span></a></li>
+                        <li><a class="dropdown-item" href="{% url 'verification_report_view' %}">✔ Verification Report</a></li>
+                    </ul>
+                </li>
                 <li class="nav-item"><a class="nav-link" href="#">FAQ</a></li>
                 <li class="nav-item"><a class="nav-link" href="#">Contact us</a></li>
                 <li class="nav-item dropdown">

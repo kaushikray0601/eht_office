@@ -229,6 +229,14 @@ def fetch_project_data(project_id):
         "ckt_ln": float(project_data.ckt_ln),
         "loop_ln": float(project_data.loop_ln),
         "allowablevdrop": float(project_data.allowablevdrop),
+        "cable_standard": project_data.cable_standard,
+        "cable_conductor_material": project_data.cable_conductor_material,
+        "cable_insulation_type": project_data.cable_insulation_type,
+        "cable_install_method": project_data.cable_install_method,
+        "cable_grouping_derating": float(project_data.cable_grouping_derating),
+        "min_cold_cable_size_mm2": project_data.min_cold_cable_size_mm2,
+        "mcb_curve": project_data.mcb_curve,
+        "gfep_provided": project_data.gfep_provided,
     }
 
 

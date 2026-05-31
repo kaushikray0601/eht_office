@@ -15,6 +15,7 @@ from django.urls import reverse
 from openpyxl import load_workbook
 
 from eht.cal import orchestrate_calculations
+from eht.cable_schedule import build_cable_schedule_workspace_data
 from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_mi_power_params, compute_power_distribution, compute_power_params
@@ -25,14 +26,32 @@ from eht.calculations.tracer_selection import (
     filter_sr_catalogue_suitability,
     get_tracer_options,
 )
-from eht.cold_cable import resolve_cable_lengths
+from eht.cold_cable import (
+    build_cold_cable_sizing_input,
+    calculate_k_temp,
+    calculate_vd,
+    check_fault_3c,
+    check_fault_4c,
+    ColdCableSizingInput,
+    conductor_density_kg_m3,
+    conductor_operating_temperature,
+    conductor_temperature_coefficient,
+    find_minimum_cable_for_ampacity,
+    get_conductor_resistance_at_temp,
+    mcb_instantaneous_factor,
+    optimise_cable_pair,
+    resolve_cable_lengths,
+    size_cold_cable_for_branch,
+    size_cold_cables_for_project,
+)
 from eht.data_service import clear_project_workspace_data, fetch_process_lines, store_calculated_results
-from eht.forms import ProjectDataForm
+from eht.forms import PROJECT_FORM_COLD_CABLE_DEFAULTS, ProjectDataForm
 from eht.models import (
     AlternateTracer,
     BOQ,
     CableScheduleOverride,
     ColdCableCatalogue,
+    ColdCableResult,
     DEFAULT_PROJECT_ID,
     ElecEHT_ASMEB36,
     ElecEHT_ThermalConductivity,
@@ -616,6 +635,57 @@ def make_rich_sld_project_snapshot(project_id='p1', line_ids=None):
 
     store_calculated_results(project_id, aggregated_results)
     return created_lines
+
+
+def make_direct_sld_project_snapshot(project_id='p1', line_id='LINE-001'):
+    make_project_record(proj_id=project_id)
+    project_settings = make_project_settings(proj_id=project_id)
+    tag_factory = ProjectTagFactory(project_id)
+    line = HeatTracingInput.objects.create(
+        proj_id=project_id,
+        line_id=line_id,
+        service_type='EP',
+        line_size=2.0,
+        line_length=10.0,
+        ins_mat_type='Mineral Wool',
+        insul_thick=50.0,
+        maint_temp=120.0,
+        oper_temp=100.0,
+        design_temp=140.0,
+        status='confirmed',
+    )
+    selected_tracer = {
+        'V_UID': 'V-001',
+        'A_Coeff': 0.0,
+        'B_Coeff': 0.0,
+        'C_Coeff': 10.0,
+        'Power_at_Startup_T': 10.0,
+        'Ohm_per_km': 1.0,
+        'Res_corrFactor_Mica': 1.0,
+        'Tracer_Family': 'SR',
+        'Voltage_Float': 230.0,
+        'Voltage_Correction_Factor': 1.0,
+        'Power_Output': 10.0,
+        'Spiral_Factor': 1.0,
+        'Tracer_Length': 10.0,
+        'Tracer_With_Margin': 10.0,
+    }
+    power_params = compute_power_params(
+        make_line(uid=str(line.uid), line_id=line.line_id, oper_temp=100.0),
+        project_settings,
+        make_asme_table(),
+        selected_tracer,
+    )
+    store_calculated_results(project_id, {
+        'heat_loss': [],
+        'selected_tracers': [{**selected_tracer, 'uid': line.uid}],
+        'alternative_tracers': [],
+        'power_distribution': [compute_power_distribution(power_params, project_settings, tag_factory=tag_factory)],
+        'boq_per_line': {},
+        'consolidated_boq': {},
+        'tracer_power_param': [power_params],
+    })
+    return line
 
 
 def make_mi_selection_result(line, status='available_alternative'):
@@ -2646,9 +2716,24 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(project.mcb_curve, 'C')
         self.assertTrue(project.gfep_provided)
 
+    def test_project_data_install_method_excludes_single_core_method(self):
+        form = ProjectDataForm()
+        install_methods = {value for value, _label in form.fields['cable_install_method'].choices}
+
+        self.assertIn('E', install_methods)
+        self.assertNotIn('F', install_methods)
+
     def test_project_data_rejects_invalid_cold_cable_grouping_derating(self):
         with self.assertRaises(ValidationError):
-            make_project_record(proj_id='p-cold-invalid', cable_grouping_derating=0.05)
+            make_project_record(proj_id='p-cold-invalid', cable_grouping_derating=0.24)
+
+    def test_project_data_form_guides_cold_cable_grouping_derating_range(self):
+        form = ProjectDataForm()
+        widget_attrs = form.fields['cable_grouping_derating'].widget.attrs
+
+        self.assertEqual(widget_attrs['min'], '0.25')
+        self.assertEqual(widget_attrs['max'], '1.0')
+        self.assertEqual(widget_attrs['step'], '0.001')
 
     def test_populate_cold_cable_catalogue_command_is_idempotent(self):
         call_command('populate_cold_cable_catalogue')
@@ -2738,6 +2823,425 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(result.length_3c_m, 20.0)
         self.assertEqual(result.length_3c_total_m, 40.0)
         self.assertEqual(result.length_basis, 'topology_edit')
+
+    def test_resolve_cable_lengths_uses_topology_db_route_for_direct_1ph_branch(self):
+        make_direct_sld_project_snapshot('p-direct', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-direct')
+        branch = PowerDistributionBranch.objects.select_related('distribution__line').get(distribution__line__proj_id='p-direct')
+        generated_payload = build_project_sld_payload('p-direct')
+        SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
+            edit_payload={
+                'cable_schedule_rows': [{
+                    'distribution': {'line': {'line_id': 'LINE-001'}},
+                    'branch_index': branch.branch_index,
+                    'branch_type': 'manual_topology_edit',
+                    'connected_to': 'manual',
+                    'circuit_count': 1,
+                    'cable_length_db_to_jb': 123.0,
+                    'cable_length_jb_to_jb': None,
+                    'branch_cable_length_total_m': 0,
+                    'tagged_components': {'MCB': branch.tagged_components['MCB']},
+                }],
+            },
+            validation_summary={'status': 'passed'},
+        )
+
+        result = resolve_cable_lengths(branch, project)
+
+        self.assertEqual(result.branch_type, '1phJB')
+        self.assertIsNone(result.length_4c_m)
+        self.assertEqual(result.length_3c_m, 123.0)
+        self.assertEqual(result.length_3c_total_m, 123.0)
+        self.assertEqual(result.length_basis, 'topology_edit')
+        self.assertFalse(result.length_missing)
+
+    def test_resolve_cable_lengths_ignores_zero_topology_3c_length_and_uses_project_default(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related('distribution__line').get(distribution__line__proj_id='p1')
+        generated_payload = build_project_sld_payload('p1')
+        SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
+            edit_payload={
+                'cable_schedule_rows': [{
+                    'distribution': {'line': {'line_id': 'LINE-001'}},
+                    'branch_index': branch.branch_index,
+                    'branch_type': 'manual_topology_edit',
+                    'connected_to': 'manual',
+                    'circuit_count': 2,
+                    'cable_length_db_to_jb': 45.0,
+                    'cable_length_jb_to_jb': None,
+                    'branch_cable_length_total_m': 0,
+                    'tagged_components': {'MCB': branch.tagged_components['MCB']},
+                }],
+            },
+            validation_summary={'status': 'passed'},
+        )
+
+        result = resolve_cable_lengths(branch, project)
+
+        self.assertEqual(result.length_4c_m, 45.0)
+        self.assertEqual(result.length_4c_basis, 'topology_edit')
+        self.assertEqual(result.length_3c_m, 12.0)
+        self.assertEqual(result.length_3c_total_m, 24.0)
+        self.assertEqual(result.length_3c_basis, 'project_default')
+        self.assertEqual(result.length_basis, 'topology_edit')
+        self.assertFalse(result.length_missing)
+
+    def test_resolve_cable_lengths_does_not_substring_match_topology_line_id(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-1', 'LINE-10'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related('distribution__line').get(distribution__line__line_id='LINE-1')
+        generated_payload = build_project_sld_payload('p1')
+        SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            baseline_fingerprint=payload_fingerprint(generated_payload),
+            edit_payload={
+                'cable_schedule_rows': [{
+                    'distribution': {'line': {'line_id': 'LINE-10'}},
+                    'branch_index': branch.branch_index,
+                    'branch_type': 'manual_topology_edit',
+                    'connected_to': 'manual',
+                    'circuit_count': 2,
+                    'cable_length_db_to_jb': 99.0,
+                    'branch_cable_length_total_m': 88.0,
+                    'tagged_components': {'MCB': 'NOT-THE-BRANCH-MCB'},
+                }],
+            },
+            validation_summary={'status': 'passed'},
+        )
+
+        result = resolve_cable_lengths(branch, project)
+
+        self.assertEqual(result.length_4c_m, 30.0)
+        self.assertEqual(result.length_3c_m, 12.0)
+        self.assertEqual(result.length_basis, 'project_default')
+
+    def test_build_cold_cable_sizing_input_normalises_branch_current_and_lengths(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p1')
+
+        sizing_input = build_cold_cable_sizing_input(branch, project)
+
+        self.assertEqual(sizing_input.project_id, 'p1')
+        self.assertEqual(sizing_input.branch_type, '3phJB')
+        self.assertEqual(sizing_input.heating_cable_type, 'SR')
+        self.assertGreater(sizing_input.per_circuit_operating_current_a, 0)
+        self.assertEqual(sizing_input.length_4c_m, 30.0)
+        self.assertEqual(sizing_input.length_3c_m, 12.0)
+
+    def test_calculate_k_temp_uses_conductor_and_site_temperatures(self):
+        self.assertAlmostEqual(calculate_k_temp(40.0, 30.0, 90.0), math.sqrt(50.0 / 60.0), places=6)
+
+    def test_calculate_k_temp_rejects_site_ambient_at_conductor_limit(self):
+        with self.assertRaises(ValueError):
+            calculate_k_temp(90.0, 30.0, 90.0)
+
+    def test_get_conductor_resistance_at_temp_applies_copper_alpha(self):
+        call_command('populate_cold_cable_catalogue')
+        row = ColdCableCatalogue.objects.get(core_count=4, conductor_size_mm2=2.5)
+
+        resistance = get_conductor_resistance_at_temp(row, 75.0)
+
+        self.assertAlmostEqual(resistance, 7.41 * (1 + 0.00393 * 55.0), places=6)
+
+    def test_conductor_temperature_uses_insulation_rating_basis(self):
+        xlpe = ColdCableCatalogue(
+            cable_standard='IEC_60502_1',
+            cable_type_code='XLPE-test',
+            conductor_material='Cu',
+            insulation_type='XLPE',
+            core_count=3,
+            conductor_size_mm2=2.5,
+            installation_method='E',
+            ampacity_a=26.0,
+            resistance_mohm_per_m=7.41,
+            max_conductor_temp_c=90.0,
+        )
+        pvc = ColdCableCatalogue(
+            cable_standard='IEC_60502_1',
+            cable_type_code='PVC-test',
+            conductor_material='Cu',
+            insulation_type='PVC',
+            core_count=3,
+            conductor_size_mm2=2.5,
+            installation_method='E',
+            ampacity_a=26.0,
+            resistance_mohm_per_m=7.41,
+            max_conductor_temp_c=70.0,
+        )
+
+        self.assertEqual(conductor_operating_temperature(xlpe, 45.0), 90.0)
+        self.assertEqual(conductor_operating_temperature(pvc, 45.0), 70.0)
+
+    def test_conductor_material_coefficients_and_density_are_available(self):
+        self.assertEqual(conductor_temperature_coefficient('Cu'), 0.00393)
+        self.assertEqual(conductor_temperature_coefficient('Al'), 0.00403)
+        self.assertEqual(conductor_density_kg_m3('Cu'), 8960.0)
+        self.assertEqual(conductor_density_kg_m3('Al'), 2700.0)
+
+    def test_calculate_vd_uses_single_and_three_phase_factors(self):
+        one_phase = calculate_vd(10.0, 10.0, 100.0, '1phase', 230.0)
+        three_phase = calculate_vd(10.0, 10.0, 100.0, '3phase', 230.0)
+
+        self.assertAlmostEqual(one_phase.vd_v, 20.0, places=6)
+        self.assertAlmostEqual(one_phase.vd_pct, 20.0 / 230.0 * 100.0, places=6)
+        self.assertAlmostEqual(three_phase.vd_v, math.sqrt(3) * 10.0, places=6)
+
+    def test_find_minimum_cable_for_ampacity_applies_derating_and_minimum_size(self):
+        call_command('populate_cold_cable_catalogue')
+        project = make_project_record(
+            proj_id='p-ampacity',
+            max_amb_t=40.0,
+            cable_grouping_derating=0.8,
+            min_cold_cable_size_mm2='4',
+        )
+
+        selection = find_minimum_cable_for_ampacity(project, 4, 20.0)
+
+        self.assertEqual(selection.status, 'selected')
+        self.assertEqual(selection.catalogue.core_count, 4)
+        self.assertEqual(selection.catalogue.conductor_size_mm2, 4.0)
+        self.assertAlmostEqual(selection.k_temp, math.sqrt(50.0 / 60.0), places=6)
+        self.assertAlmostEqual(selection.k_group, 0.8)
+        self.assertGreaterEqual(selection.derated_ampacity_a, 20.0)
+
+    def test_cold_cable_sizing_clamps_stale_grouping_derating_below_current_floor(self):
+        call_command('populate_cold_cable_catalogue')
+        project = make_project_record(proj_id='p-stale-derating', max_amb_t=40.0)
+        ProjectData.objects.filter(proj_id='p-stale-derating').update(cable_grouping_derating=0.10)
+        project.refresh_from_db()
+
+        selection = find_minimum_cable_for_ampacity(project, 4, 5.0)
+
+        self.assertEqual(selection.status, 'selected')
+        self.assertEqual(selection.k_group, 0.25)
+        self.assertTrue(any('0.1 is outside the allowed range' in note for note in selection.review_notes))
+
+    def test_find_minimum_cable_for_ampacity_rejects_thermally_unsuitable_site(self):
+        call_command('populate_cold_cable_catalogue')
+        project = make_project_record(proj_id='p-hot-site', max_amb_t=95.0)
+
+        selection = find_minimum_cable_for_ampacity(project, 3, 1.0)
+
+        self.assertEqual(selection.status, 'unsizeable')
+        self.assertIsNone(selection.catalogue)
+        self.assertTrue(any('Site ambient temperature' in note for note in selection.review_notes))
+
+    def test_optimise_cable_pair_finds_minimum_cost_voltage_drop_pair(self):
+        call_command('populate_cold_cable_catalogue')
+        project = make_project_record(proj_id='p-opt', allowablevdrop=5.0)
+        sizing_input = ColdCableSizingInput(
+            project_id='p-opt',
+            line_id='LINE-001',
+            line_uid='1',
+            branch_index=1,
+            branch_type='3phJB',
+            circuit_count=2,
+            heating_cable_type='SR',
+            per_circuit_operating_current_a=8.0,
+            line_operating_current_a=16.0,
+            breaker_size_a=10.0,
+            length_4c_m=150.0,
+            length_3c_m=10.0,
+            length_basis='manual_override',
+            length_missing=False,
+        )
+
+        result = optimise_cable_pair(project, sizing_input)
+
+        self.assertEqual(result.status, 'selected')
+        self.assertEqual(result.selection_4c.catalogue.conductor_size_mm2, 6.0)
+        self.assertEqual(result.selection_3c.catalogue.conductor_size_mm2, 2.5)
+        self.assertLessEqual(result.vd_total_pct, 5.0)
+        self.assertEqual(result.conductor_volume_proxy, 3750.0)
+
+    def test_size_cold_cable_for_branch_marks_total_voltage_drop_unsizeable(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        project.allowablevdrop = 0.01
+        project.save()
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p1')
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.sizing_status, 'unsizeable')
+        self.assertEqual(result.vd_status, 'fail')
+        self.assertTrue(any('voltage-drop' in note for note in result.review_notes))
+
+    def test_size_cold_cable_for_direct_1ph_branch_skips_optimisation(self):
+        call_command('populate_cold_cable_catalogue')
+        make_direct_sld_project_snapshot('p-direct', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-direct')
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-direct')
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(branch.branch_type, '1phJB')
+        self.assertIsNone(result.cable_4c_size_mm2)
+        self.assertEqual(result.cable_3c_size_mm2, 2.5)
+        self.assertFalse(result.optimization_run)
+        self.assertEqual(result.vd_status, 'pass')
+        self.assertIsNotNone(result.cable_3c_vd_pct)
+
+    def test_mcb_curve_threshold_uses_lower_instantaneous_bound(self):
+        self.assertEqual(mcb_instantaneous_factor('B'), 3.0)
+        self.assertEqual(mcb_instantaneous_factor('C'), 5.0)
+        self.assertEqual(mcb_instantaneous_factor('D'), 10.0)
+
+    def test_fault_checks_return_expected_pass_fail_statuses(self):
+        call_command('populate_cold_cable_catalogue')
+        row = ColdCableCatalogue.objects.get(core_count=4, conductor_size_mm2=2.5)
+
+        passing = check_fault_4c(row, 30.0, 230.0, 10.0, 'C', conductor_temp_c=90.0)
+        failing = check_fault_4c(row, 600.0, 230.0, 10.0, 'C', conductor_temp_c=90.0)
+        gfep_review = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', True, conductor_temp_c=90.0)
+        no_gfep_fail = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', False, conductor_temp_c=90.0)
+
+        self.assertEqual(passing.status, 'pass')
+        self.assertGreaterEqual(passing.fault_current_a, passing.threshold_current_a)
+        self.assertEqual(failing.status, 'fail')
+        self.assertEqual(gfep_review.status, 'review_required')
+        self.assertEqual(no_gfep_fail.status, 'fail')
+
+    def test_size_cold_cable_for_branch_upsizes_4c_for_fault_threshold(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p-fault-4c', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p-fault-4c')
+        project.ckt_ln = 600.0
+        project.loop_ln = 10.0
+        project.allowablevdrop = 50.0
+        project.mcb_curve = 'D'
+        project.save()
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-fault-4c')
+        branch.cable_length_db_to_jb = 600.0
+        branch.cable_length_jb_to_jb = 10.0
+        tagged_components = branch.tagged_components
+        tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['cable_length_db_to_jb', 'cable_length_jb_to_jb', 'tagged_components'])
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.fault_protection_4c_status, 'pass')
+        self.assertGreater(result.cable_4c_size_mm2, 2.5)
+        self.assertEqual(result.cable_3c_size_mm2, 2.5)
+        self.assertEqual(result.cable_4c_conductor_temp_c, 90.0)
+        self.assertGreaterEqual(result.fault_current_4c_phase_to_phase_a, result.breaker_size_a * 10.0)
+
+    def test_size_cold_cable_for_3c_fault_review_required_with_gfep(self):
+        call_command('populate_cold_cable_catalogue')
+        make_direct_sld_project_snapshot('p-gfep-review', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-gfep-review')
+        project.loop_ln = 900.0
+        project.allowablevdrop = 10.0
+        project.gfep_provided = True
+        project.save()
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-gfep-review')
+        branch.cable_length_db_to_jb = 900.0
+        tagged_components = branch.tagged_components
+        tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['cable_length_db_to_jb', 'tagged_components'])
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.sizing_status, 'review_required')
+        self.assertEqual(result.fault_protection_3c_status, 'review_required')
+        self.assertEqual(result.vd_status, 'pass')
+        self.assertTrue(any('Tracer PE-path resistance' in note for note in result.review_notes))
+
+    def test_size_cold_cable_for_3c_fault_hard_fails_without_gfep(self):
+        call_command('populate_cold_cable_catalogue')
+        make_direct_sld_project_snapshot('p-no-gfep-fail', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-no-gfep-fail')
+        project.loop_ln = 999.0
+        project.allowablevdrop = 100.0
+        project.mcb_curve = 'D'
+        project.gfep_provided = False
+        project.save()
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-no-gfep-fail')
+        branch.cable_length_db_to_jb = 999.0
+        tagged_components = branch.tagged_components
+        tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['cable_length_db_to_jb', 'tagged_components'])
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.sizing_status, 'unsizeable')
+        self.assertEqual(result.fault_protection_3c_status, 'fail')
+        self.assertTrue(any('without GFEP' in note for note in result.review_notes))
+
+    def test_size_cold_cable_for_branch_stores_ampacity_result(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p1')
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(ColdCableResult.objects.count(), 1)
+        self.assertEqual(result.branch, branch)
+        self.assertEqual(result.sizing_status, 'review_required')
+        self.assertEqual(result.cable_4c_size_mm2, 2.5)
+        self.assertEqual(result.cable_3c_size_mm2, 2.5)
+        self.assertGreater(result.cable_4c_ampacity_derated_a, result.per_circuit_operating_current_a)
+        self.assertGreater(result.cable_3c_ampacity_derated_a, result.per_circuit_operating_current_a)
+        self.assertEqual(result.cable_4c_conductor_temp_c, 90.0)
+        self.assertEqual(result.cable_3c_conductor_temp_c, 90.0)
+        self.assertEqual(result.conductor_material_density_kg_m3, 8960.0)
+        self.assertIsNotNone(result.cable_4c_conductor_mass_mt)
+        self.assertIsNotNone(result.cable_3c_conductor_mass_mt)
+        self.assertAlmostEqual(
+            result.conductor_mass_total_mt,
+            result.cable_4c_conductor_mass_mt + result.cable_3c_conductor_mass_mt,
+            places=9,
+        )
+        self.assertEqual(result.vd_status, 'pass')
+        self.assertIsNotNone(result.vd_total_pct)
+        self.assertEqual(result.fault_protection_4c_status, 'pass')
+        self.assertEqual(result.fault_protection_3c_status, 'pass')
+        self.assertTrue(result.optimization_run)
+        self.assertTrue(any('project default' in note for note in result.review_notes))
 
 
 class SldTopologyWorkflowTests(TestCase):
@@ -4089,6 +4593,18 @@ class ProjectDataViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'action="/create-project-data/"')
 
+    def test_base_workspace_renders_cold_cable_project_settings(self):
+        response = self.client.get(reverse('base'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cold cable standard')
+        self.assertContains(response, 'Cold cable conductor material')
+        self.assertContains(response, 'Cold cable installation method')
+        self.assertContains(response, 'Cable grouping derating factor')
+        self.assertContains(response, 'Minimum cold cable size')
+        self.assertContains(response, 'MCB characteristic curve')
+        self.assertContains(response, 'GFEP provided')
+
     def test_update_project_data_workspace_form_posts_to_project_update_route(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
         make_project_record(proj_id='PLANT_A_001')
@@ -4109,6 +4625,25 @@ class ProjectDataViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(ProjectData.objects.filter(proj_id='PLANT_B_001').exists())
         self.assertIn('PLANT_B_001', response.json()['form_html'])
+
+    def test_update_project_data_partial_renders_cold_cable_project_settings(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        make_project_record(proj_id='PLANT_A_001')
+
+        response = self.client.get(
+            reverse('update_project_data', args=['PLANT_A_001']),
+            HTTP_X_REQUESTED_WITH='XMLHttpRequest',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        form_html = response.json()['form_html']
+        self.assertIn('Cold cable standard', form_html)
+        self.assertIn('Cold cable conductor material', form_html)
+        self.assertIn('Cold cable installation method', form_html)
+        self.assertIn('Cable grouping derating factor', form_html)
+        self.assertIn('Minimum cold cable size', form_html)
+        self.assertIn('MCB characteristic curve', form_html)
+        self.assertIn('GFEP provided', form_html)
 
     def test_default_project_button_copies_template_values_into_selected_project(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -4196,6 +4731,86 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'V-001')
         self.assertContains(response, 'V-ALT-001')
         self.assertContains(response, 'MCB_001')
+
+    def test_result_view_surfaces_cold_cable_sizing_results(self):
+        call_command('populate_cold_cable_catalogue')
+        make_calculated_project_snapshot()
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Cold Cable Sizing')
+        self.assertContains(response, 'Cold cable engineering')
+        self.assertContains(response, '3C x 2.5 mm²')
+        self.assertContains(response, 'MT')
+
+    def test_verification_report_lists_only_available_working_projects(self):
+        user = User.objects.create_user(username='planner', password='password123')
+        make_managed_project(proj_id='P-001', description='Assigned', users=[user])
+        make_project_record(proj_id='P-001')
+        make_managed_project(proj_id='P-002', description='Not assigned')
+        make_project_record(proj_id='P-002')
+        make_managed_project(proj_id=DEFAULT_PROJECT_ID, description='Default project', users=[user])
+        make_default_project_record()
+        self.client.force_login(user)
+
+        response = self.client.get(reverse('verification_report_view'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'P-001')
+        self.assertNotContains(response, 'P-002')
+        self.assertNotContains(response, DEFAULT_PROJECT_ID)
+
+    def test_verification_report_renders_cold_cable_evidence(self):
+        call_command('populate_cold_cable_catalogue')
+        line = make_calculated_project_snapshot()
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(
+            reverse('verification_report_view'),
+            {'project_id': 'p1', 'line_uid': str(line.uid)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Calculation Verification Report')
+        self.assertContains(response, line.line_id)
+        self.assertContains(response, 'Cold Cable Sizing')
+        self.assertContains(response, 'VD_4C = sqrt(3)*I*R(T)*L')
+
+    def test_verification_report_does_not_truncate_cold_cable_branches(self):
+        call_command('populate_cold_cable_catalogue')
+        line = make_calculated_project_snapshot()
+        size_cold_cables_for_project('p1')
+        base_result = ColdCableResult.objects.get(project_id='p1', branch_index=1)
+        for branch_index in [2, 3, 4]:
+            clone = ColdCableResult.objects.get(pk=base_result.pk)
+            clone.pk = None
+            clone.branch = None
+            clone.branch_index = branch_index
+            clone.save()
+
+        response = self.client.get(
+            reverse('verification_report_view'),
+            {'project_id': 'p1', 'line_uid': str(line.uid)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Branch 4')
+
+    def test_verification_report_rejects_unavailable_project(self):
+        user = User.objects.create_user(username='planner', password='password123')
+        make_managed_project(proj_id='P-001', description='Assigned', users=[user])
+        make_project_record(proj_id='P-001')
+        make_managed_project(proj_id='P-002', description='Not assigned')
+        make_project_record(proj_id='P-002')
+        self.client.force_login(user)
+
+        response = self.client.get(reverse('verification_report_view'), {'project_id': 'P-002'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Project not found or unavailable.')
+        self.assertNotContains(response, 'No confirmed lines found in this project')
 
     def test_result_view_shows_cable_override_summary(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -4294,6 +4909,30 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'CCAB')
         self.assertContains(response, 'MCB_001')
 
+    def test_cable_schedule_view_surfaces_calculated_cold_cable_size(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Calculated Cold Cable')
+        self.assertContains(response, '4C x 2.5 mm2')
+        self.assertContains(response, '3C x 2.5 mm2')
+        self.assertContains(response, 'Total Cable Copper Tonnage')
+
+    def test_cable_schedule_summary_totals_branch_conductor_mass_once(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        size_cold_cables_for_project('p1')
+
+        schedule_data = build_cable_schedule_workspace_data('p1')
+        expected_mass = sum(result.conductor_mass_total_mt or 0 for result in ColdCableResult.objects.filter(project_id='p1'))
+
+        self.assertGreater(schedule_data['summary']['total_conductor_mass_mt'], 0)
+        self.assertAlmostEqual(schedule_data['summary']['total_conductor_mass_mt'], expected_mass, places=9)
+
     def test_cable_schedule_view_shows_manual_override_status_and_remarks(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         generated_payload = build_project_sld_payload('p1')
@@ -4377,6 +5016,11 @@ class ResultAndBoqViewTests(TestCase):
             'Sr. No',
             'Cable Tag',
             'Cable Specification',
+            'Calculated Cold Cable Size',
+            'Cold Cable Status',
+            'Voltage Drop Status',
+            'Fault Protection Status',
+            'Conductor Mass (MT)',
             'Cable Length (m)',
             'Connected From',
             'Connected To',
@@ -4388,7 +5032,7 @@ class ResultAndBoqViewTests(TestCase):
             'Rev. No.',
         ))
         self.assertTrue(any(row[1] and str(row[1]).startswith('CCAB') for row in rows[1:]))
-        self.assertTrue(any(row[6] == 'LINE-001' for row in rows[1:]))
+        self.assertTrue(any(row[11] == 'LINE-001' for row in rows[1:]))
 
     def test_cable_schedule_export_uses_applied_topology_rows(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -4416,10 +5060,10 @@ class ResultAndBoqViewTests(TestCase):
         workbook = load_workbook(BytesIO(response.content))
         rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
         self.assertTrue(any(
-            row[1] and '-M' in row[1] and row[2] == '4C x 10' and row[3] == 25
+            row[1] and '-M' in row[1] and row[2] == '4C x 10' and row[8] == 25
             for row in rows[1:]
         ))
-        self.assertTrue(any(row[4] == 'MCB_001-M' for row in rows[1:]))
+        self.assertTrue(any(row[9] == 'MCB_001-M' for row in rows[1:]))
 
     def test_result_export_returns_line_branch_and_alternate_sheets(self):
         line = make_calculated_project_snapshot()
@@ -4438,6 +5082,7 @@ class ResultAndBoqViewTests(TestCase):
             'Line Results',
             'Selection Diagnostics',
             'Power Distribution',
+            'Cold Cable Sizing',
             'Alternate Tracers',
             'MI Selection',
         ])
@@ -4449,6 +5094,19 @@ class ResultAndBoqViewTests(TestCase):
         self.assertTrue(any(row[1] == line.line_id for row in line_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in branch_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in alternate_rows[1:]))
+
+    def test_result_export_includes_cold_cable_sizing_sheet(self):
+        call_command('populate_cold_cable_catalogue')
+        line = make_calculated_project_snapshot()
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cold Cable Sizing'].iter_rows(values_only=True))
+        self.assertTrue(any(row[1] == line.line_id and row[15] == 2.5 for row in rows[1:]))
+        self.assertTrue(any(row[39] and 'project default' in row[39] for row in rows[1:]))
 
     def test_result_view_and_export_surface_mi_selection_records(self):
         line = make_calculated_project_snapshot()
@@ -5434,6 +6092,62 @@ class CalculateViewHardeningTests(TransactionTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(ProjectData.objects.get(proj_id='p1').vendor, 'SST')
+
+    def test_calculate_view_backfills_missing_cold_cable_fields_from_stale_project_form(self):
+        valid_rows = [{
+            'XLID': 1,
+            'Line_ID': 'LINE-NEW',
+            'Service_Type': 'EP',
+            'Line_Size': 2.0,
+            'Line_Length': 11.0,
+            'Ins_Mat_Type': 'Mineral Wool',
+            'Insul_Thick': 50.0,
+            'Maint_T': 120.0,
+            'Oper_T': 100.0,
+            'Design_T': 140.0,
+            'IsDeleted': False,
+            'PID_No': '',
+            'Area': '',
+            'Train': '',
+            'Valve_Qty': 0,
+            'Flange_Qty': 0,
+            'Support_Qty': 0,
+            'Pipe_Mat_Class': '',
+            'Emergency_Supply': False,
+            'Discipline': '',
+            'Remarks': '',
+        }]
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+        ManagedProject.objects.get(proj_id='p1').assigned_users.add(self.user)
+        payload = make_project_form_payload(proj_id='p1', vendor='SST', voltage='240.00')
+        for field_name in PROJECT_FORM_COLD_CABLE_DEFAULTS:
+            payload.pop(field_name, None)
+        payload.pop('gfep_provided', None)
+        payload.update({'project_id': 'p1', 'file': upload})
+
+        def fake_run_project_calculations(project_id):
+            project = ProjectData.objects.get(proj_id=project_id)
+            self.assertEqual(project.cable_standard, 'IEC_60502_1')
+            self.assertEqual(project.cable_conductor_material, 'Cu')
+            self.assertEqual(project.cable_insulation_type, 'XLPE')
+            self.assertEqual(project.cable_install_method, 'E')
+            self.assertEqual(float(project.cable_grouping_derating), 1.0)
+            self.assertEqual(project.min_cold_cable_size_mm2, 'CALCULATED')
+            self.assertEqual(project.mcb_curve, 'C')
+            self.assertTrue(project.gfep_provided)
+            return ({'heat_loss': []}, {'heat_loss': 0, 'selected_tracers': 0, 'alternative_tracers': 0, 'power_distribution': 0, 'boq_lines': 0, 'consolidated_boq_items': 0, 'tracer_power_param': 0})
+
+        with patch('eht.views.sanitize_file', return_value=(valid_rows, [], '')), patch(
+            'eht.views.run_project_calculations',
+            side_effect=fake_run_project_calculations,
+        ):
+            response = self.client.post(reverse('calculate_view'), payload)
+
+        self.assertEqual(response.status_code, 200)
 
     def test_calculate_view_rejects_mismatched_visible_project_setup(self):
         existing_line = HeatTracingInput.objects.create(

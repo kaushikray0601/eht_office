@@ -1,5 +1,6 @@
 import json
 import logging
+import math
 import os
 from collections import Counter
 from io import BytesIO
@@ -31,12 +32,14 @@ from .cable_schedule import (
     build_cable_schedule_workspace_data,
     cable_schedule_export_rows,
 )
-from .forms import ProjectDataForm
+from .cold_cable import size_cold_cables_for_project
+from .forms import PROJECT_FORM_COLD_CABLE_DEFAULTS, ProjectDataForm
 from .data_service import clear_project_workspace_data
 from .manual_renderer import render_markdown_manual
 from .models import (
     AlternateTracer,
     BOQ,
+    ColdCableResult,
     DEFAULT_PROJECT_ID,
     HeatLoss,
     HeatTracingInput,
@@ -80,7 +83,7 @@ MI_MVP_RESULT_BASIS_NOTES = [
     'Each MI heater set is treated as an independently protected branch with its own breaker.',
     'Single-point/shared temperature sensing is assumed for this MVP output; final RTD placement remains an engineering review item.',
     'MI T-class status remains design-review evidence, not a calculated sheath-temperature approval.',
-    'Physical JB terminal capacity, cold-cable sizing, panel coordination, and voltage-drop optimization are deferred to the next engineering modules.',
+    'Physical JB terminal capacity and panel coordination remain deferred; cold-cable sizing results are now shown separately for engineering review.',
 ]
 
 PROJECT_DATA_TEMPLATE_FIELDS = [
@@ -118,6 +121,14 @@ PROJECT_DATA_TEMPLATE_FIELDS = [
     'tracer_temp_factor',
     'alpha_for_res',
     'allowablevdrop',
+    'cable_standard',
+    'cable_conductor_material',
+    'cable_insulation_type',
+    'cable_install_method',
+    'cable_grouping_derating',
+    'min_cold_cable_size_mm2',
+    'mcb_curve',
+    'gfep_provided',
     'udf1',
     'udf2',
     'udf3',
@@ -154,6 +165,472 @@ def _timed_json_response(payload, *, status=200, context_label='response'):
 def index(request):
     context = {'key1': 'value1','key2': 'value2' }
     return render (request, 'eht/home.html', context)
+
+
+def design_guide_view(request):
+    manual_path = Path(settings.BASE_DIR) / 'NOTES' / 'CALCULATION_MODULE_USER_MANUAL.md'
+    try:
+        manual_source = manual_path.read_text(encoding='utf-8')
+    except FileNotFoundError:
+        manual_source = '# Calculation Module User Manual\n\nThe calculation module manual has not been generated yet.'
+    rendered = render_markdown_manual(manual_source)
+    return render(request, 'eht/design_guide.html', {
+        'manual_html': mark_safe(rendered.html),
+        'manual_toc': rendered.toc,
+    })
+
+
+def _verification_report_projects(user):
+    available_project_ids = ManagedProject.available_to_user(user).exclude(
+        proj_id__iexact=DEFAULT_PROJECT_ID
+    ).values_list('proj_id', flat=True)
+    return ProjectData.objects.filter(proj_id__in=available_project_ids).order_by('proj_id')
+
+
+def verification_report_view(request):
+    project_id = request.GET.get('project_id', '').strip()
+    line_uid   = request.GET.get('line_uid',   '').strip()
+
+    projects = _verification_report_projects(getattr(request, 'user', None))
+    ctx = {
+        'projects':            projects,
+        'selected_project_id': project_id,
+        'selected_line_uid':   line_uid,
+        'lines':               [],
+        'line':                None,
+        'project':             None,
+        'report':              None,
+        'error':               None,
+    }
+
+    if not project_id:
+        return render(request, 'eht/verification_report.html', ctx)
+
+    project = projects.filter(proj_id=project_id).first()
+    if project is None:
+        ctx['selected_project_id'] = ''
+        ctx['error'] = 'Project not found or unavailable.'
+        return render(request, 'eht/verification_report.html', ctx)
+    ctx['project'] = project
+
+    lines = HeatTracingInput.objects.filter(
+        proj_id=project_id, status='confirmed', is_deleted=False
+    ).order_by('line_id')
+    ctx['lines'] = lines
+
+    if not line_uid:
+        return render(request, 'eht/verification_report.html', ctx)
+
+    try:
+        line_uid_int = int(line_uid)
+    except (TypeError, ValueError):
+        line_uid_int = None
+    line = lines.filter(uid=line_uid_int).first() if line_uid_int is not None else None
+    if line is None:
+        ctx['error'] = 'Line or project not found.'
+        return render(request, 'eht/verification_report.html', ctx)
+
+    ctx['line']    = line
+    ctx['project'] = project
+
+    hl   = getattr(line, 'heat_loss_result',          None)
+    st   = getattr(line, 'selected_tracer_result',    None)
+    calc = getattr(line, 'process_line_calculation',  None)
+    mi   = getattr(line, 'selected_mi_heater_result', None)
+    cc_results = list(ColdCableResult.objects.filter(
+        project_id=project_id, line_uid=str(line.uid)
+    ).order_by('branch_index'))
+
+    def f2(v, n=2):
+        try:
+            return round(float(v), n)
+        except (TypeError, ValueError):
+            return None
+
+    def fmt(v, n=2, suffix=''):
+        r = f2(v, n)
+        return f'{r}{suffix}' if r is not None else '—'
+
+    # ── shared inputs ──────────────────────────────────────────
+    maint_t      = f2(line.maint_temp)
+    min_amb      = f2(project.min_amb_t)
+    ins_thick_mm = f2(line.insul_thick)
+    ins_thick_m  = round(ins_thick_mm / 1000, 5) if ins_thick_mm else None
+    pipe_size_in = f2(line.line_size)
+
+    # Safe accessors for project fields that may not be present on older records
+    proj_vendor    = getattr(project, 'vendor',              '—')
+    proj_wind      = getattr(project, 'wind_speed',          None)
+    proj_cb_max    = getattr(project, 'max_cb_size',         None)
+    proj_cb_load   = getattr(project, 'restrict_cb_current', None)
+    proj_voltage   = getattr(project, 'voltage',             None)
+
+    steps = []
+
+    # ── SECTION A: INPUT DATA ──────────────────────────────────
+    steps.append({
+        'section': 'A', 'section_color': 'blue',
+        'num': 1, 'num_color': '',
+        'title': 'Input Data Summary',
+        'available': True,
+        'table': [
+            ('Line ID',               line.line_id),
+            ('Service Type',          line.service_type),
+            ('Pipe Nominal Size',      f'{pipe_size_in}″'),
+            ('Pipe Outside Diameter',  f'{fmt(hl.pipe_size_mm if hl else None, 1)} mm' if hl else '—'),
+            ('Pipe Length',           f'{fmt(line.line_length, 1)} m'),
+            ('Insulation Material',   line.ins_mat_type),
+            ('Insulation Thickness',  f'{fmt(line.insul_thick, 1)} mm  ({fmt(ins_thick_m, 4)} m)'),
+            ('Maintain Temperature',  f'{fmt(maint_t, 1)} °C'),
+            ('Operating Temperature', f'{fmt(line.oper_temp, 1)} °C'),
+            ('Design Temperature',    f'{fmt(line.design_temp, 1)} °C'),
+            ('Min Ambient (Project)', f'{fmt(min_amb, 1)} °C'),
+            ('Max Ambient (Project)', f'{fmt(project.max_amb_t, 1)} °C'),
+            ('Accessories',           f'{line.valve_qty} valves · {line.flange_qty} flanges · {line.support_qty} supports'),
+        ],
+        'evidence': [
+            {'icon': 'bi-table',  'label': 'Confirmed line list upload'},
+            {'icon': 'bi-gear',   'label': 'Project setup'},
+        ],
+        'std_refs': [],
+    })
+
+    # ── SECTION B: THERMAL ────────────────────────────────────
+    # Step 2: Pipe OD Lookup
+    if hl:
+        pipe_od_mm = f2(hl.pipe_size_mm, 1)
+        pipe_od_m  = round(pipe_od_mm / 1000, 5) if pipe_od_mm else None
+        steps.append({
+            'section': 'B', 'section_color': 'amber',
+            'num': 2, 'num_color': 'amber',
+            'title': 'Pipe Outside Diameter Lookup',
+            'available': True,
+            'symbolic':     'D = lookup(Nominal_Size) from ASME B36.10M table',
+            'substitution': f'D = lookup({pipe_size_in}″ NPS) → {pipe_od_mm} mm',
+            'result_value': fmt(pipe_od_mm, 1),
+            'result_unit':  'mm',
+            'result_label': 'Pipe outside diameter D',
+            'evidence': [
+                {'icon': 'bi-book', 'label': 'ASME B36.10M pipe table (application database)'},
+            ],
+            'std_refs': [{'label': 'ASME B36.10M — Welded and Seamless Wrought Steel Pipe'}],
+        })
+    else:
+        steps.append({'section': 'B', 'section_color': 'amber', 'num': 2, 'num_color': 'amber',
+            'title': 'Pipe Outside Diameter Lookup', 'available': False})
+
+    # Step 3: Mean Insulation Temperature
+    if hl:
+        basis  = hl.conductivity_basis or {}
+        t_eval = f2(basis.get('evaluation_temperature_c'), 2)
+        method = basis.get('effective_method_label', 'Mean insulation temperature')
+        steps.append({
+            'section': 'B', 'section_color': 'amber',
+            'num': 3, 'num_color': 'amber',
+            'title': 'Mean Insulation Temperature',
+            'available': True,
+            'symbolic':     'T_mean = (T_maint + T_amb,min) / 2',
+            'substitution': f'T_mean = ({maint_t} + ({min_amb})) / 2',
+            'result_value': fmt(t_eval, 2),
+            'result_unit':  '°C',
+            'result_label': 'Conductivity evaluation temperature T_mean',
+            'evidence': [
+                {'icon': 'bi-gear', 'label': f'Method: {method}'},
+            ],
+            'std_refs': [{'label': 'IEC/IEEE 62395-1 — Mean insulation temperature method'}],
+        })
+    else:
+        steps.append({'section': 'B', 'section_color': 'amber', 'num': 3, 'num_color': 'amber',
+            'title': 'Mean Insulation Temperature', 'available': False})
+
+    # Step 4: Conductivity Polynomial
+    if hl:
+        basis  = hl.conductivity_basis or {}
+        coeffs = basis.get('coefficients', {})
+        A_k = f2(coeffs.get('K_factor_A'), 8)
+        B_k = f2(coeffs.get('K_factor_B'), 6)
+        C_k = f2(coeffs.get('K_factor_C'), 4)
+        t_ev = f2(basis.get('evaluation_temperature_c'), 2)
+        k    = f2(hl.conductivity, 5)
+        subs = f'k = {A_k} × {t_ev}² + {B_k} × {t_ev} + {C_k}' if all(x is not None for x in [A_k, B_k, C_k, t_ev]) else '—'
+        steps.append({
+            'section': 'B', 'section_color': 'amber',
+            'num': 4, 'num_color': 'amber',
+            'title': 'Insulation Conductivity Polynomial',
+            'available': True,
+            'symbolic':     'k = A·T² + B·T + C',
+            'substitution': subs,
+            'result_value': fmt(k, 5),
+            'result_unit':  'W/m·K',
+            'result_label': f'k at T_mean = {t_ev} °C  |  Material: {line.ins_mat_type}',
+            'evidence': [
+                {'icon': 'bi-database', 'label': f'Conductivity DB: A={A_k}, B={B_k}, C={C_k}  ({line.ins_mat_type})'},
+            ],
+            'std_refs': [],
+        })
+    else:
+        steps.append({'section': 'B', 'section_color': 'amber', 'num': 4, 'num_color': 'amber',
+            'title': 'Insulation Conductivity Polynomial', 'available': False})
+
+    # Step 5: Base Heat Loss
+    if hl and ins_thick_m and (f2(hl.pipe_size_mm, 5) is not None):
+        pipe_od_mm2 = f2(hl.pipe_size_mm, 1)
+        pipe_d_m    = round(pipe_od_mm2 / 1000, 5) if pipe_od_mm2 else None
+        k2   = f2(hl.conductivity, 5)
+        bhl  = f2(hl.base_heat_loss, 3)
+        try:
+            ln_arg = f2(math.log((2 * ins_thick_m + pipe_d_m) / pipe_d_m), 4) if pipe_d_m else None
+        except Exception:
+            ln_arg = None
+        subs5 = (
+            f'q = 2π × {k2} × ({maint_t} − ({min_amb})) / ln((2×{ins_thick_m} + {pipe_d_m}) / {pipe_d_m})\n'
+            f'  = 2π × {k2} × {round(maint_t - min_amb, 1) if maint_t is not None and min_amb is not None else "?"} / {ln_arg}'
+        ) if all(x is not None for x in [k2, maint_t, min_amb, ins_thick_m, pipe_d_m, ln_arg]) else '—'
+        steps.append({
+            'section': 'B', 'section_color': 'amber',
+            'num': 5, 'num_color': 'amber',
+            'title': 'Base Heat Loss (Cylindrical Conduction)',
+            'available': True,
+            'symbolic':     'q = 2π · k · (T_maint − T_amb) / ln((2t + D) / D)',
+            'substitution': subs5,
+            'result_value': fmt(bhl, 2),
+            'result_unit':  'W/m',
+            'result_label': 'Base heat loss q (before safety factor)',
+            'evidence': [
+                {'icon': 'bi-thermometer-half', 'label': f't = {ins_thick_mm} mm, D = {pipe_od_mm2} mm, ΔT = {round(maint_t - min_amb, 1) if maint_t is not None and min_amb is not None else "?"} °C'},
+            ],
+            'std_refs': [
+                {'label': 'IEC/IEEE 62395-1 · IEEE 515-2017 §4.3 — Cylindrical insulation conduction'},
+                {'label': 'ASME B36.10M — Pipe OD source'},
+            ],
+        })
+    else:
+        steps.append({'section': 'B', 'section_color': 'amber', 'num': 5, 'num_color': 'amber',
+            'title': 'Base Heat Loss', 'available': False})
+
+    # Step 6: Wind Correction + Design Heat Loss
+    if hl:
+        wind  = f2(hl.wind_correction, 4)
+        sf    = f2(hl.heat_loss_sf, 2)
+        bhl2  = f2(hl.base_heat_loss, 3)
+        dhl   = f2(hl.design_heat_loss, 3)
+        subs6 = f'Q_design = {bhl2} × {wind} × {sf}' if all(x is not None for x in [bhl2, wind, sf]) else '—'
+        steps.append({
+            'section': 'B', 'section_color': 'amber',
+            'num': 6, 'num_color': 'amber',
+            'title': 'Wind Correction + Heat Loss Safety Factor → Design Heat Loss',
+            'available': True,
+            'symbolic':     'Q_design = q_base × k_wind × SF',
+            'substitution': subs6,
+            'result_value': fmt(dhl, 2),
+            'result_unit':  'W/m',
+            'result_label': 'Design heat loss Q_design (tracer selection basis)',
+            'evidence': [
+                {'icon': 'bi-wind',         'label': f'Wind correction factor = {wind}  (project wind speed: {fmt(proj_wind, 0)} km/h)'},
+                {'icon': 'bi-shield-check', 'label': f'Safety factor (SF) = {sf}  (project setting)'},
+            ],
+            'std_refs': [],
+        })
+    else:
+        steps.append({'section': 'B', 'section_color': 'amber', 'num': 6, 'num_color': 'amber',
+            'title': 'Wind Correction + Design Heat Loss', 'available': False})
+
+    # ── SECTION C: SR TRACER SELECTION ────────────────────────
+    if st:
+        A_s   = f2(st.a_coeff, 8)
+        B_s   = f2(st.b_coeff, 6)
+        C_s   = f2(st.c_coeff, 4)
+        vcf   = f2(st.voltage_correction_factor, 4)
+        p_out = f2(st.power_output, 3)
+        if all(x is not None for x in [A_s, B_s, C_s, maint_t]):
+            p_nom_calc = round(A_s * maint_t**2 + B_s * maint_t + C_s, 3)
+        else:
+            p_nom_calc = None
+        subs7 = (
+            f'P_nom = {A_s}×{maint_t}² + {B_s}×{maint_t} + {C_s} = {p_nom_calc} W/m\n'
+            f'P_LV  = {p_nom_calc} × {vcf}² (low-voltage correction) ≈ {p_out} W/m'
+        ) if all(x is not None for x in [A_s, B_s, C_s, maint_t, vcf, p_out]) else '—'
+
+        n_sr  = st.sr_parallel_run_count or 1
+        dhl_v = f2(hl.design_heat_loss, 3) if hl else None
+        steps.append({
+            'section': 'C', 'section_color': 'green',
+            'num': 7, 'num_color': 'green',
+            'title': f'SR Tracer Power Output at T_maint (Tracer: {st.tracer_family})',
+            'available': True,
+            'symbolic':     'P_LV = (A·T² + B·T + C) × (V_LV/V_nom)²',
+            'substitution': subs7,
+            'result_value': fmt(p_out, 2),
+            'result_unit':  'W/m',
+            'result_label': f'Heat delivery at {fmt(maint_t, 1)} °C under low-voltage scenario',
+            'evidence': [
+                {'icon': 'bi-database',  'label': f'Catalogue: {st.tracer_family}  |  Coefficients A={A_s}, B={B_s}, C={C_s}'},
+                {'icon': 'bi-lightning', 'label': f'Voltage correction factor VCF = {vcf}  (V_LV / V_nom)'},
+            ],
+            'std_refs': [{'label': 'Vendor polynomial catalogue — power at maintain temperature'}],
+        })
+
+        # Step 8: Duty Ratio
+        if dhl_v is not None and p_out is not None and p_out > 0:
+            duty_calc = round(dhl_v / (p_out * n_sr), 4)
+        else:
+            duty_calc = f2(st.spiral_factor, 4)
+        subs8 = f'F_duty = {dhl_v} / ({p_out} × {n_sr})  =  {duty_calc}' if all(x is not None for x in [dhl_v, p_out]) else '—'
+        constr_warn = st.sr_constructability_warning or ''
+        steps.append({
+            'section': 'C', 'section_color': 'green',
+            'num': 8, 'num_color': 'green',
+            'title': f'SR Duty Ratio — {n_sr}× Straight Run(s)',
+            'available': True,
+            'symbolic':     'F_duty = Q_design / (P_LV × N_SR)',
+            'substitution': subs8,
+            'result_value': fmt(duty_calc, 3),
+            'result_unit':  '(≤ 1.0 for straight trace)',
+            'result_label': f'Duty ratio for {n_sr} straight SR run(s)  ·  Basis: {st.sr_parallel_run_basis or "straight"}',
+            'evidence': [
+                {'icon': 'bi-arrows-expand', 'label': f'SR parallel run count: {n_sr}'},
+            ] + ([{'icon': 'bi-exclamation-triangle', 'label': f'Constructability: {constr_warn}'}] if constr_warn else []),
+            'std_refs': [],
+        })
+    elif mi:
+        mi_heater_pn  = mi.heater.part_number if mi.heater else '—'
+        mi_family_nm  = mi.heater.family.family_name if (mi.heater and mi.heater.family) else '—'
+        mi_set_count  = mi.selection_basis.get('set_count', 1) if isinstance(mi.selection_basis, dict) else 1
+        steps.append({
+            'section': 'C', 'section_color': 'green',
+            'num': 7, 'num_color': 'green',
+            'title': 'MI Heater Selection (SR temperature limit exceeded)',
+            'available': True,
+            'note': (
+                f'SR catalogue temperature limits exceeded. MI heater selected: {mi_heater_pn}  |  '
+                f'Sets: {mi_set_count}  |  Heated length: {fmt(mi.heated_length_m, 1)} m/set  |  '
+                f'Nominal power: {fmt(mi.power_nominal_w, 1)} W'
+            ),
+            'evidence': [{'icon': 'bi-layers', 'label': f'MI family: {mi_family_nm}  |  Cold lead: {mi.cold_lead_option_code}'}],
+            'std_refs': [],
+        })
+    else:
+        steps.append({'section': 'C', 'section_color': 'green', 'num': 7, 'num_color': 'green',
+            'title': 'SR/MI Tracer Selection', 'available': False})
+
+    # ── SECTION D: ELECTRICAL SIZING ─────────────────────────
+    if calc:
+        n_cct  = calc.total_circuits
+        brk    = f2(calc.breaker_size, 0)
+        i_op   = f2(calc.operating_current, 3)
+        i_st   = f2(calc.starting_current, 3)
+        load_w = f2(calc.total_power_consumption, 1)
+        allowed_i = round(float(proj_cb_max) * float(proj_cb_load) / 100, 1) if proj_cb_max and proj_cb_load else None
+        subs9 = (
+            f'N_circuits = ceil(I_max_line / (CB_max × f_load))\n'
+            f'           ≈ {n_cct}  (CB_max={proj_cb_max} A, f_load={proj_cb_load}%,  allowed={allowed_i} A/circuit)'
+        )
+        steps.append({
+            'section': 'D', 'section_color': 'purple',
+            'num': 9, 'num_color': 'purple',
+            'title': 'Electrical Sizing — Circuit Count and Breaker Selection',
+            'available': True,
+            'symbolic':     'N_circuits = ⌈ I_max_line / (CB_max × f_load) ⌉',
+            'substitution': subs9,
+            'result_value': str(n_cct),
+            'result_unit':  'circuits',
+            'result_label': f'Breaker: {brk} A  ·  Op. current: {i_op} A/circuit  ·  Start current: {i_st} A/circuit',
+            'evidence': [
+                {'icon': 'bi-gear',            'label': f'Project basis: CB max {proj_cb_max} A, loading {proj_cb_load}%, voltage {fmt(proj_voltage, 0)} V'},
+                {'icon': 'bi-lightning-charge', 'label': f'Total connected load: {fmt(load_w, 0)} W  ({fmt(load_w / 1000 if load_w else None, 2)} kW)'},
+            ],
+            'std_refs': [],
+        })
+    else:
+        steps.append({'section': 'D', 'section_color': 'purple', 'num': 9, 'num_color': 'purple',
+            'title': 'Electrical Sizing', 'available': False})
+
+    # ── SECTION E: COLD CABLE ─────────────────────────────────
+    if cc_results:
+        for idx, cc in enumerate(cc_results):
+            branch_label = f'Branch {cc.branch_index}  ({cc.heating_cable_type})'
+            k_t     = f2(cc.k_temp, 4)
+            k_g     = f2(cc.k_group, 3)
+            k_total = f2(cc.k_total, 4)
+            t_site  = f2(cc.site_ambient_temp_c, 1)
+            c4      = f2(cc.cable_4c_size_mm2, 1)
+            c3      = f2(cc.cable_3c_size_mm2, 1)
+            vd4     = f2(cc.cable_4c_vd_pct, 2)
+            vd3     = f2(cc.cable_3c_vd_pct, 2)
+            vd_total = f2(cc.vd_total_pct, 2)
+            v_end    = f2(cc.load_end_voltage_v, 1)
+            i_op_cc  = f2(cc.per_circuit_operating_current_a, 3)
+            status_cc = cc.sizing_status
+            cat_max_t = (
+                cc.cable_4c_catalogue.max_conductor_temp_c
+                if cc.cable_4c_catalogue
+                else cc.cable_3c_catalogue.max_conductor_temp_c
+                if cc.cable_3c_catalogue
+                else 90
+            )
+            t_ref     = f2(cc.catalogue_temp_ref_c, 1)
+            vd_symbolic = (
+                'K_temp = sqrt((T_max_cond - T_site) / (T_max_cond - T_ref))   |   '
+                'VD_4C = sqrt(3)*I*R(T)*L, VD_3C = 2*I*R(T)*L'
+                if cc.length_4c_m else
+                'K_temp = sqrt((T_max_cond - T_site) / (T_max_cond - T_ref))   |   '
+                'VD_3C = 2*I*R(T)*L'
+            )
+            subs_amp = (
+                f'K_temp = sqrt(({cat_max_t}−{t_site}) / ({cat_max_t}−{t_ref})) = {k_t}\n'
+                f'K_total = {k_t} × {k_g} = {k_total}\n'
+                f'VD_4C = {vd4 if vd4 is not None else "N/A"}%, VD_3C = {vd3 if vd3 is not None else "N/A"}%'
+            ) if k_t else f'K_temp = {k_t},  K_group = {k_g},  K_total = {k_total}'
+            step_num = 10 + idx
+            steps.append({
+                'section': 'E', 'section_color': 'purple',
+                'num': step_num, 'num_color': 'purple',
+                'title': f'Cold Cable Sizing — {branch_label}',
+                'available': True,
+                'symbolic':     vd_symbolic,
+                'substitution': subs_amp,
+                'result_value': (f'{c3} mm² (3C)' + (f'  +  {c4} mm² (4C)' if c4 else '')),
+                'result_unit':  '',
+                'result_label': (
+                    f'VD_total = {vd_total}%  (allowable: {fmt(cc.vd_allowable_pct, 1)}%)  ·  '
+                    f'Load-end V = {v_end} V  ·  Status: {status_cc.upper()}'
+                ),
+                'evidence': [
+                    {'icon': 'bi-plug',         'label': f'Operating current: {i_op_cc} A/circuit  ·  Length basis: {cc.length_basis}'},
+                    {'icon': 'bi-shield-check', 'label': f'4C fault: {cc.fault_protection_4c_status}  ·  3C earth loop: {cc.fault_protection_3c_status}'},
+                ],
+                'std_refs': [
+                    {'label': 'IEC 60364-5-52 — Ampacity derating'},
+                    {'label': 'IEC 60228 — Conductor resistance-temperature correction'},
+                    {'label': 'IEC 60364-4-41 — Fault protection disconnection time'},
+                ],
+            })
+    else:
+        steps.append({
+            'section': 'E', 'section_color': 'purple',
+            'num': 10, 'num_color': 'purple',
+            'title': 'Cold Cable Sizing',
+            'available': False,
+            'note': 'No cold cable sizing results found for this line. Run or re-run the project calculation, or save a cable length override.',
+        })
+
+    ctx['report'] = {
+        'line':    line,
+        'project': project,
+        'steps':   steps,
+        'has_mi':  mi is not None,
+        'has_sr':  st is not None,
+        'has_cc':  bool(cc_results),
+        'sections': [
+            {'letter': 'A', 'color': 'blue',   'title': 'Input Data'},
+            {'letter': 'B', 'color': 'amber',  'title': 'Thermal Calculation'},
+            {'letter': 'C', 'color': 'green',  'title': 'Tracer Selection'},
+            {'letter': 'D', 'color': 'purple', 'title': 'Electrical Sizing'},
+            {'letter': 'E', 'color': 'purple', 'title': 'Cold Cable Sizing'},
+        ],
+    }
+
+    return render(request, 'eht/verification_report.html', ctx)
 
 
 def calculation_manual_view(request):
@@ -414,6 +891,8 @@ def _build_result_workspace_data(project_id):
         allow_stale=allow_topology_overrides,
     )
     branch_rows = attach_cable_override_summaries(branch_rows, sld_payload)
+    cold_cable_rows = _cold_cable_results(project_id)
+    branch_rows = _attach_cold_cable_results(branch_rows, cold_cable_rows)
     active_tracer_overrides = {
         str(override.line_id): override
         for override in TracerSelectionOverride.objects.filter(
@@ -523,6 +1002,11 @@ def _build_result_workspace_data(project_id):
             for item in mi_result_rows
             if item.selection_status == 'selected' and (item.selection_basis or {}).get('heater_set_count', 1) > 1
         ),
+        'cold_cable_result_count': len(cold_cable_rows),
+        'cold_cable_selected_count': sum(1 for item in cold_cable_rows if item.sizing_status == 'selected'),
+        'cold_cable_review_count': sum(1 for item in cold_cable_rows if item.sizing_status == 'review_required'),
+        'cold_cable_unsizeable_count': sum(1 for item in cold_cable_rows if item.sizing_status == 'unsizeable'),
+        'cold_cable_total_mass_mt': sum(item.conductor_mass_total_mt or 0 for item in cold_cable_rows),
     }
     summary = apply_active_summary_overrides(
         project_id,
@@ -535,6 +1019,7 @@ def _build_result_workspace_data(project_id):
         'selection_issue_rows': selection_issue_rows,
         'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
+        'cold_cable_rows': cold_cable_rows,
         'summary': summary,
     }
 
@@ -737,11 +1222,97 @@ def _branch_value(branch, path, default=''):
     return value
 
 
+def _cold_cable_results(project_id):
+    return list(
+        ColdCableResult.objects.filter(project_id=project_id)
+        .select_related('distribution', 'distribution__line', 'cable_4c_catalogue', 'cable_3c_catalogue')
+        .order_by('line_id', 'branch_index')
+    )
+
+
+def _cold_cable_result_indexes(cold_rows):
+    by_distribution_branch = {}
+    by_line_branch = {}
+    for result in cold_rows:
+        by_distribution_branch[(result.distribution_id, result.branch_index)] = result
+        by_line_branch[(str(result.line_uid), result.branch_index)] = result
+        by_line_branch[(str(result.line_id), result.branch_index)] = result
+    return by_distribution_branch, by_line_branch
+
+
+def _attach_cold_cable_results(branch_rows, cold_rows):
+    by_distribution_branch, by_line_branch = _cold_cable_result_indexes(cold_rows)
+    for branch in branch_rows:
+        result = None
+        distribution_id = _branch_value(branch, ['distribution', 'uid'], None)
+        branch_index = _branch_value(branch, ['branch_index'], 0)
+        if distribution_id is not None:
+            result = by_distribution_branch.get((distribution_id, branch_index))
+        if result is None:
+            line_uid = _branch_value(branch, ['distribution', 'line', 'uid'], '')
+            line_id = _branch_value(branch, ['distribution', 'line', 'line_id'], '')
+            result = by_line_branch.get((str(line_uid), branch_index)) or by_line_branch.get((str(line_id), branch_index))
+        if isinstance(branch, dict):
+            branch['cold_cable_result'] = result
+        else:
+            setattr(branch, 'cold_cable_result', result)
+    return branch_rows
+
+
+def _cold_cable_export_rows(cold_rows):
+    rows = []
+    for result in cold_rows:
+        rows.append({
+            'Project ID': result.project_id,
+            'Line ID': result.line_id,
+            'Line UID': result.line_uid,
+            'Branch Index': result.branch_index,
+            'Heating Cable Type': result.heating_cable_type,
+            'Topology Branch': result.branch.branch_type if result.branch else '',
+            'Circuit Count': result.circuit_count,
+            'Operating Current / Circuit (A)': result.per_circuit_operating_current_a,
+            'Line Operating Current (A)': result.line_operating_current_a,
+            'Breaker Size (A)': result.breaker_size_a,
+            'MCB Curve': result.mcb_curve,
+            'GFEP Provided': result.gfep_provided,
+            'Length Basis': result.length_basis,
+            '4C Length (m)': result.length_4c_m,
+            '3C Length (m)': result.length_3c_m,
+            '4C Size (mm2)': result.cable_4c_size_mm2,
+            '3C Size (mm2)': result.cable_3c_size_mm2,
+            '4C Derated Ampacity (A)': result.cable_4c_ampacity_derated_a,
+            '3C Derated Ampacity (A)': result.cable_3c_ampacity_derated_a,
+            '4C Conductor Temp (C)': result.cable_4c_conductor_temp_c,
+            '3C Conductor Temp (C)': result.cable_3c_conductor_temp_c,
+            'K Temp': result.k_temp,
+            'K Group': result.k_group,
+            'K Total': result.k_total,
+            'VD Allowable (%)': result.vd_allowable_pct,
+            '4C VD (%)': result.cable_4c_vd_pct,
+            '3C VD (%)': result.cable_3c_vd_pct,
+            'Total VD (%)': result.vd_total_pct,
+            'Load-End Voltage (V)': result.load_end_voltage_v,
+            'VD Status': result.vd_status,
+            '4C Fault Current L-L (A)': result.fault_current_4c_phase_to_phase_a,
+            '4C Fault Status': result.fault_protection_4c_status,
+            '3C Fault Current L-N (A)': result.fault_current_3c_line_to_neutral_a,
+            '3C Fault Status': result.fault_protection_3c_status,
+            '4C Conductor Mass (MT)': result.cable_4c_conductor_mass_mt,
+            '3C Conductor Mass (MT)': result.cable_3c_conductor_mass_mt,
+            'Total Conductor Mass (MT)': result.conductor_mass_total_mt,
+            'Density Basis (kg/m3)': result.conductor_material_density_kg_m3,
+            'Sizing Status': result.sizing_status,
+            'Review Notes': '; '.join(result.review_notes or []),
+        })
+    return rows
+
+
 def result_view(request):
     project_id = request.GET.get('project_id')
     context = _get_project_workspace_context(request, project_id)
     line_results = []
     branch_rows = []
+    cold_cable_rows = []
     selection_issue_rows = []
     mi_result_rows = []
     summary = {
@@ -762,6 +1333,7 @@ def result_view(request):
         selection_issue_rows = result_data['selection_issue_rows']
         mi_result_rows = result_data['mi_result_rows']
         branch_rows = result_data['branch_rows']
+        cold_cable_rows = result_data['cold_cable_rows']
         summary = result_data['summary']
 
     context.update({
@@ -769,6 +1341,7 @@ def result_view(request):
         'selection_issue_rows': selection_issue_rows,
         'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
+        'cold_cable_rows': cold_cable_rows,
         'result_summary': summary,
         'mi_mvp_basis_notes': MI_MVP_RESULT_BASIS_NOTES if summary.get('mi_result_count') else [],
         'has_results': bool(line_results or selection_issue_rows or mi_result_rows),
@@ -1301,12 +1874,14 @@ def sld_cable_override_save_view(request):
     except ValidationError as exc:
         return _json_validation_error(exc)
 
+    cold_results = size_cold_cables_for_project(project_id)
     return JsonResponse({
         'success': f'Cable override saved for {override.display_tag}.',
         'component_id': override.component_id,
         'display_tag': override.display_tag,
         'manual_length_m': override.manual_length_m,
         'manual_cable_size': override.manual_cable_size,
+        'cold_cable_result_count': len(cold_results),
     })
 
 
@@ -1325,9 +1900,11 @@ def sld_cable_override_reset_view(request):
 
     _get_project_workspace_context(request, project_id)
     reset_count = reset_cable_override(project_id, component_id)
+    cold_results = size_cold_cables_for_project(project_id)
     return JsonResponse({
         'success': 'Cable override reset to generated value.',
         'reset_count': reset_count,
+        'cold_cable_result_count': len(cold_results),
     })
 
 
@@ -1782,6 +2359,7 @@ def result_export_view(request):
     alternate_rows = []
     mi_rows = []
     selection_rows = []
+    cold_cable_rows = _cold_cable_export_rows(result_data['cold_cable_rows'])
     for item in result_data['line_results']:
         calculation = item['calculation']
         line = item['line']
@@ -1960,6 +2538,7 @@ def result_export_view(request):
         pd.DataFrame(line_rows).to_excel(writer, sheet_name='Line Results', index=False)
         pd.DataFrame(selection_rows).to_excel(writer, sheet_name='Selection Diagnostics', index=False)
         pd.DataFrame(branch_rows).to_excel(writer, sheet_name='Power Distribution', index=False)
+        pd.DataFrame(cold_cable_rows).to_excel(writer, sheet_name='Cold Cable Sizing', index=False)
         pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
         pd.DataFrame(mi_rows).to_excel(writer, sheet_name='MI Selection', index=False)
 
@@ -2160,6 +2739,11 @@ def _save_project_setup_from_upload(request, project_id):
     post_data['proj_id'] = project_id
 
     instance = ProjectData.objects.filter(proj_id=project_id).first() or ProjectData(proj_id=project_id)
+    for field_name, default_value in PROJECT_FORM_COLD_CABLE_DEFAULTS.items():
+        if field_name not in post_data:
+            post_data[field_name] = getattr(instance, field_name, default_value) or default_value
+    if 'gfep_provided' not in post_data and getattr(instance, 'gfep_provided', True):
+        post_data['gfep_provided'] = 'on'
     form = ProjectDataForm(post_data, instance=instance, user=getattr(request, 'user', None))
     if not form.is_valid():
         raise ValidationError(f"Project setup could not be saved before calculation. {_format_form_errors(form)}")

@@ -23,7 +23,7 @@ class Migration(migrations.Migration):
         migrations.AddField(
             model_name='projectdata',
             name='cable_install_method',
-            field=models.CharField(choices=[('E', 'E - Multi-core on open cable tray or ladder'), ('F', 'F - Single-core touching on open tray'), ('B2', 'B2 - Multi-core in conduit in wall or enclosure'), ('C', 'C - Clipped direct to surface'), ('D1', 'D1 - In duct in ground, single cable'), ('D2', 'D2 - Direct buried in ground')], default='E', max_length=5),
+            field=models.CharField(choices=[('E', 'E - Multi-core on open cable tray or ladder'), ('B2', 'B2 - Multi-core in conduit in wall or enclosure'), ('C', 'C - Clipped direct to surface'), ('D1', 'D1 - In duct in ground, single cable'), ('D2', 'D2 - Direct buried in ground')], default='E', max_length=5),
         ),
         migrations.AddField(
             model_name='projectdata',
@@ -63,7 +63,7 @@ class Migration(migrations.Migration):
                 ('insulation_type', models.CharField(choices=[('XLPE', 'XLPE'), ('PVC', 'PVC')], max_length=10)),
                 ('core_count', models.IntegerField(choices=[(2, '2C'), (3, '3C'), (4, '4C')])),
                 ('conductor_size_mm2', models.FloatField()),
-                ('installation_method', models.CharField(choices=[('E', 'E - Multi-core on open cable tray or ladder'), ('F', 'F - Single-core touching on open tray'), ('B2', 'B2 - Multi-core in conduit in wall or enclosure'), ('C', 'C - Clipped direct to surface'), ('D1', 'D1 - In duct in ground, single cable'), ('D2', 'D2 - Direct buried in ground')], max_length=5)),
+                ('installation_method', models.CharField(choices=[('E', 'E - Multi-core on open cable tray or ladder'), ('B2', 'B2 - Multi-core in conduit in wall or enclosure'), ('C', 'C - Clipped direct to surface'), ('D1', 'D1 - In duct in ground, single cable'), ('D2', 'D2 - Direct buried in ground')], max_length=5)),
                 ('ampacity_a', models.FloatField()),
                 ('ampacity_temp_ref_c', models.FloatField(default=30.0)),
                 ('max_conductor_temp_c', models.FloatField(default=90.0)),

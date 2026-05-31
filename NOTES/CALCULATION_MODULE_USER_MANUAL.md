@@ -86,7 +86,8 @@ The current SR calculation module does not yet include:
 - MI line zoning with independent temperature sensors or zone-specific control.
 - Calculated MI sheath/surface temperature for final T-class approval.
 - Physical JB terminal/gland capacity validation for grouped MI cold leads.
-- Full cold-cable sizing, panel coordination, and voltage-drop optimization.
+
+The cold cable sizing module is now implemented. See Section 10B.
 
 These deferred items are planned as future enhancements and should not be
 assumed to be active unless explicitly released.
@@ -97,7 +98,7 @@ The normal calculation workflow is:
 
 1. Open the project workspace.
 2. Select a project in the Project Data tab.
-3. Enter or verify project setup values.
+3. Enter or verify project setup values, including cold cable basis fields.
 4. Save the project setup, or upload an input file from the same workspace. If
    the upload is started after changing project setup values, the visible setup
    values are saved before the calculation runs.
@@ -108,10 +109,12 @@ The normal calculation workflow is:
 9. Review Calculation Results.
 10. Review SR Selection Diagnostics and MI Selection Records, if any lines were
     not assigned a suitable heating cable.
-11. Review BOQ.
-12. Review Cable Schedule.
-13. Review the Single Line Diagram.
-14. Export required Excel or PDF outputs.
+11. Review Cold Cable Sizing results. Check sizing status, voltage drop, fault
+    protection, and any review notes for each branch.
+12. Review BOQ.
+13. Review Cable Schedule, which now includes cold cable columns.
+14. Review the Single Line Diagram.
+15. Export required Excel or PDF outputs.
 
 The application is designed to store calculation evidence. This means the
 result tabs and exports display persisted calculation values rather than
@@ -739,6 +742,266 @@ remain energized if their protection is independent. That remaining energized
 capacity should be treated as circuit-continuity information, not as proof that
 the line still satisfies the full heat-loss requirement.
 
+## 10B. Cold Cable Sizing Module
+
+### 10B.1 Purpose and Scope
+
+The cold cable sizing module sizes the upstream electrical conductors that carry
+power from the distribution board or MCC to the field junction boxes and to the
+heating cable cold-end connections.
+
+Cold cables are conventional power cables — the same family used throughout
+industrial power distribution — that connect the electrical panel to the heat
+tracing field circuits. They are called cold cables to distinguish them from the
+heating cables (SR or MI) that form the actual tracing element.
+
+The cold cable module is the third major calculation step in EHT Office, after
+heat loss and SR/MI tracer selection. The module reads the confirmed SR/MI
+electrical outputs — circuit count, per-circuit current, breaker size, and SLD
+topology — and produces sized cold cable specifications for each feeder segment.
+
+The cold cable module does not recalculate heat loss, re-select heating cables,
+or modify the SR/MI calculation. It is a downstream consumer of that stable output.
+
+### 10B.2 What the Cold Cable Module Calculates
+
+For every feeder segment in the active SLD topology, the module produces:
+
+| Output | Meaning |
+| --- | --- |
+| Cable type and size (mm²) | Selected conductor cross-section for this segment |
+| Core count | 3-core for single-phase circuits, 4-core for three-phase trunk feeders |
+| Derated ampacity (A) | Current-carrying capacity after temperature and grouping correction |
+| Ampacity margin (%) | Headroom between operating current and derated ampacity |
+| Voltage drop (%) | Calculated voltage drop for this cable segment |
+| Total path voltage drop (%) | Sum across all series segments to the tracer |
+| Load-end voltage (V) | Supply voltage minus total series voltage drop |
+| VD status | Pass or fail against the project allowable voltage drop |
+| Fault protection status | Whether the MCB can trip instantaneously on a worst-case fault |
+| Earth loop status | GFEP status and review notes |
+| Conductor mass (metric tonnes) | Material takeoff basis per branch |
+| Sizing status | Selected, Review Required, or Unsizeable |
+
+### 10B.3 Cold Cable Sizing — Step by Step
+
+The sizing engine works through the following checks for each feeder segment.
+Each step can only increase the cable size. No step reduces a size chosen by
+an earlier step.
+
+#### Step 1 — Resolve Active Cable Lengths
+
+The engine resolves the active cable length from three possible sources in
+priority order:
+
+1. Manual override: a length entered in the cable schedule or SLD inspector.
+2. Topology edit: a length set when a combine, downstream JB, or attach-JB
+   topology edit was applied.
+3. Project default: the project setup circuit or loop length assumption.
+
+The source is recorded as the length basis. Results based on a project default
+will carry a Review Required note until the user confirms or updates the length.
+
+If no length is available, the branch receives a Length Missing status and no
+sizing is attempted.
+
+#### Step 2 — Ampacity (current-carrying capacity)
+
+The cable must carry the maximum continuous operating current without overheating.
+
+The catalogue ampacity is adjusted for:
+
+- Site ambient temperature, using the formula:
+
+  `K_temp = sqrt((T_max_conductor - T_site) / (T_max_conductor - T_ref_catalogue))`
+
+  where `T_max_conductor` is 90°C for XLPE or 70°C for PVC, `T_site` is the
+  project maximum ambient temperature, and `T_ref_catalogue` is the temperature
+  at which the catalogue ampacity was published, typically 30°C.
+
+  Reference: IEC 60364-5-52 temperature correction factors.
+
+  Example: XLPE cable, 40°C site ambient, 30°C catalogue reference:
+  `K_temp = sqrt((90 - 40) / (90 - 30)) = sqrt(50/60) = 0.913`
+
+- Grouping and spacing: the project field Cable Grouping Derating Factor
+  (`K_group`) allows the user to enter an overall derating factor for the
+  cable laying arrangement.
+
+  `Available_ampacity = Catalogue_ampacity × K_temp × K_group`
+
+The engine selects the smallest standard cable size whose derated ampacity
+equals or exceeds the circuit operating current.
+
+Note: the cold cable is sized for operating current, not starting current.
+The starting current is transient and the MCB is already selected to handle it.
+
+#### Step 3 — Voltage Drop
+
+The cable must deliver adequate voltage to the heating cable terminals.
+
+EHT heating cables are resistive loads (power factor 1.0). Conductor resistance
+is corrected from the catalogue reference (20°C) to operating temperature using
+the temperature coefficient of resistance, per IEC 60228:
+
+`R(T) = R_20 × (1 + α × (T_op - 20))`
+
+where α is 0.00393/°C for copper and 0.00403/°C for aluminium.
+
+Voltage drop formulas:
+
+- Single-phase 3-core: `VD (V) = 2 × I × R(T) × L`
+- Three-phase 4-core trunk: `VD (V) = sqrt(3) × I_phase × R(T) × L`
+
+The total path voltage drop is the sum of trunk and outgoing segment drops.
+The load-end voltage is: `V_load = V_nominal - VD_4C - VD_3C`.
+
+#### Step 4 — Optimisation for Three-Phase Distribution Branches
+
+When the SLD topology includes a 4-core trunk cable feeding a 3-phase JB
+with outgoing 3-core branches, the engine systematically searches all
+ampacity-qualified cable combinations and selects the pair that minimises
+total conductor volume, which is directly proportional to copper or aluminium
+tonnage:
+
+`Conductor_volume_proxy = 4 × A_4C × L_4C + N_out × 3 × A_3C × L_3C`
+
+where `A_4C` and `A_3C` are the selected conductor cross-sections, `L_4C` and
+`L_3C` are the respective cable lengths, and `N_out` is the number of active
+outgoing circuits from the 3-phase JB.
+
+This optimisation distributes the voltage drop budget between the trunk and
+outgoing cables to find the most material-efficient combination that still
+satisfies the total path VD constraint. A lower trunk VD leaves more budget
+for the outgoing cables, and vice versa — the optimiser finds the minimum-mass
+pair, not just the minimum-size pair.
+
+For direct single-phase branches (MCB to 3-core cable to 1-phase JB), no
+optimisation is needed. The full project VD allowance is available for the
+single cable segment.
+
+#### Step 5 — Fault Protection (Phase-to-Phase on 4-Core Trunk)
+
+The MCB must trip instantaneously if a phase-to-phase short circuit develops
+at the far end of the 4-core trunk.
+
+The worst-case fault current is:
+`I_fault = V_line_to_line / (2 × R(T) × L)`
+
+For the MCB to trip instantaneously (within 0.4 seconds per IEC 60364-4-41):
+`I_fault >= k_curve × I_breaker`
+
+where `k_curve` is the lower bound of the MCB characteristic range:
+Type B → 3×, Type C → 5×, Type D → 10×.
+
+If the fault current does not meet the threshold, the engine upsizes the 4-core
+cable until the check passes.
+
+#### Step 6 — Earth Fault on Single-Phase Outgoing Circuits
+
+Earth faults on the single-phase outgoing circuits are handled primarily by
+Ground Fault Equipment Protection (GFEP) when enabled in project setup.
+
+When GFEP is present, the MCB earth-loop check is a secondary verification.
+If the check is borderline, the result is Review Required rather than a hard
+rejection. When GFEP is absent, the MCB is the sole earth fault protection
+and the check becomes a hard sizing gate.
+
+The fault current for the 3-core outgoing circuit is calculated as:
+`I_fault = V_phase / (2 × R(T) × L)`
+
+Note: tracer PE-path resistance is excluded from this calculation because
+SR braid and MI sheath resistance data are not yet in the heating cable
+catalogues. The calculation therefore overestimates the fault current and
+is non-conservative for the earth loop check. All results carry a review
+note flagging this limitation.
+
+### 10B.4 Project Setup Fields for Cold Cable Sizing
+
+The following project setup fields control cold cable sizing:
+
+| Field | Meaning | User Guidance |
+| --- | --- | --- |
+| Cable Standard | Design standard for cable catalogue data | Default is IEC 60502-1. |
+| Cold Cable Conductor Material | Conductor material for all cold cables | Default is copper. Aluminium is available. |
+| Cold Cable Insulation Type | Cable insulation specification | Default is XLPE. PVC available for non-hazardous, lower-temperature applications. |
+| Cable Installation Method | Installation arrangement (IEC 60364-5-52 code) | Default is Method E (multi-core on open cable tray). |
+| Cable Grouping Derating Factor | Overall derating for grouping and spacing | Enter 0.25–1.0. A value of 1.0 means no grouping derating. |
+| Minimum Cold Cable Size | Project contractual minimum conductor size | Default is Calculated (no floor). Set 2.5 mm² or higher if the project specification requires it. |
+| MCB Characteristic Curve | Trip curve type for heating circuit MCBs | Default is Type C. Use Type B for pure resistive SR loads. Type C for MI or SR circuits with cold-start current. |
+| GFEP Provided | Whether all heating circuits have Ground Fault Equipment Protection | Default is Yes. If unchecked, the MCB earth-loop check becomes a hard sizing gate. |
+
+### 10B.5 Understanding the Voltage Drop Result
+
+The project allowable voltage drop sets the maximum permissible voltage drop
+between the MCB and the heating cable cold-end connection.
+
+For a direct circuit (MCB → 3-core cable → 1-phase JB → tracer), the full
+allowable drop is available for the single cable run.
+
+For a distributed circuit (MCB → 4-core trunk → 3-phase JB → 3-core outgoing
+→ 1-phase JB → tracer), the voltage drop is shared across two cable segments.
+The engine optimises how the allowance is distributed by finding the cable pair
+with minimum conductor volume that keeps the sum of both drops within the limit.
+
+The load-end voltage is shown in absolute volts. For SR cable, the heating cable
+power output at this terminal voltage may differ from the design heat delivery
+power calculated at the low-voltage scenario. This cross-check is a manual
+engineering step.
+
+### 10B.6 Sizing Status
+
+Each cold cable result carries one of four statuses:
+
+**Selected**: All checks pass. Ampacity, voltage drop, and fault protection
+requirements are satisfied.
+
+**Review Required**: The calculation completed but one or more conditions require
+engineering review. Common reasons include: GFEP not enabled and earth loop
+check is borderline; cable length is based on a project default; tracer
+PE-path resistance was not available for the earth loop check.
+
+**Unsizeable**: No catalogue cable combination satisfies all constraints.
+Common causes: route length too long for the voltage drop allowance; maximum
+site ambient too close to the cable conductor temperature limit; no catalogue
+rows available for the selected material and installation method.
+
+**Length Missing**: No cable length is available for the branch. Sizing cannot
+proceed. Enter a length in the cable schedule or via the SLD cable length
+override field.
+
+### 10B.7 Limitations and Deferred Scope
+
+The following items are not calculated in the current cold cable module:
+
+- Tracer PE-path resistance in the earth loop calculation (deferred pending
+  SR/MI catalogue data addition).
+- Aluminium conductor sizing (selectable but not fully characterised in the
+  current catalogue population).
+- Short-circuit withstand verification (minimum cable cross-section for the
+  prospective short-circuit current at the MCB).
+- Phase balancing across 3-phase JB outgoing circuits (all circuits currently
+  assumed balanced for the 4-core trunk current).
+- Route-aware cable length from a 3D model or layout drawing.
+- Panel loading schedule and phase-bus current totals.
+- MI cold-lead integration with upstream cold cable voltage drop budget.
+
+These limitations are noted as review notes on affected results.
+
+### 10B.8 What Must Be Reviewed Before Issuing Cold Cable Results
+
+1. All branches have a measured or topology-edit cable length. Project-default
+   lengths are engineering assumptions and should not be used for procurement.
+2. Sizing status is Selected or Review Required (not Unsizeable).
+3. All Review Required notes are read and assessed.
+4. Total path voltage drop is within the project allowable limit for all branches.
+5. Load-end voltage is acceptable for the heating cable type (SR or MI).
+6. Fault protection status is Pass for all 4-core trunk cables.
+7. Earth loop status is acceptable for all 3-core outgoing circuits.
+8. GFEP basis matches the project protection philosophy.
+9. Conductor mass output has been passed to the material takeoff engineer.
+10. Any topology edit or cable length override made after the initial cold cable
+    run has triggered an updated sizing result for the affected branch.
+
 ## 11. Power Distribution and SLD Basis
 
 After breaker sizing, the module builds a power-distribution structure for each
@@ -1112,8 +1375,16 @@ Before issuing a calculation package, review the following:
 18. Cable schedule lengths are reasonable.
 19. SLD topology matches the intended distribution philosophy.
 20. Any manual SLD edit or tracer override is reviewed.
-21. Exported Excel reports match the on-screen result.
-22. Known limitations are acceptable for the project stage.
+21. Cold cable sizing results are reviewed: all branches are Selected or
+    Review Required, not Unsizeable or Length Missing.
+22. Cold cable length basis is confirmed — project-default lengths must be
+    replaced with measured route lengths before procurement.
+23. Total path voltage drop is within the project allowable limit for all branches.
+24. Ground Fault Equipment Protection (GFEP) basis matches the project protection
+    philosophy. If GFEP is not provided, all MCB earth-loop checks must pass.
+25. Conductor mass output has been passed to the materials engineer.
+26. Exported Excel reports match the on-screen result.
+27. Known limitations are acceptable for the project stage.
 
 ## 20. Known Limitations
 
@@ -1138,20 +1409,25 @@ MI automatic fallback, but users should understand these limitations:
 - Blank vendor catalogue suitability fields are treated as non-blocking. This
   avoids false rejection of legacy catalogue rows, but users should curate
   catalogue data carefully for final design use.
-- Resistance tolerance and allowable voltage drop are stored project fields,
-  but the current SR release does not yet perform a complete resistance
-  tolerance or cold-cable voltage-drop design calculation.
+- Resistance tolerance is a stored project field, but the current SR release
+  does not yet apply a detailed resistance-tolerance current model.
 - Manual SLD tracer overrides are review-only and do not recalculate electrical
   load, BOQ, breaker size, or cable schedule.
 - Accessory tracer adders are empirical SR rules, not vendor-specific detailed
   installation rules.
 - MI T-class status is review evidence, not a final calculated
   sheath-temperature approval.
-- MI physical JB terminal capacity, gland count, panel coordination, and cold
-  cable voltage drop are not yet calculated.
+- MI physical JB terminal capacity, gland count, and panel coordination are not
+  yet calculated.
 - Multi-set MI remaining energized capacity after one breaker trip is not a
   guaranteed N-1 thermal design unless a future project basis explicitly sizes
   for that case.
+- Cold cable sizing is implemented for ampacity, voltage drop, fault protection,
+  and earth loop. Remaining limitations: tracer PE-path in earth loop (non-
+  conservative, review note applied); aluminium conductor not fully characterised
+  in catalogue; short-circuit withstand check not yet implemented; phase balancing
+  across 3-phase JB circuits assumed balanced; route-aware lengths not yet
+  available from 3D model.
 
 ## 21. Recommended User Practice
 
@@ -1462,3 +1738,13 @@ product development.
 | Selection diagnostics | Stored reason why a line did not receive a selected SR tracer. |
 | SLD | Single Line Diagram. |
 | BOQ | Bill of Quantities. |
+| Cold cable | Conventional power cable carrying electricity from the distribution board or MCC to field junction boxes and heating cable cold ends. Distinguished from heating cables (SR or MI) by the fact that it does not generate heat. |
+| CC module | Cold cable sizing module — the third calculation step in EHT Office. |
+| K_temp | Temperature derating factor applied to catalogue ampacity to correct for site ambient temperature above the catalogue reference temperature. Formula: sqrt((T_max_conductor - T_site) / (T_max_conductor - T_ref)). |
+| K_group | Grouping derating factor entered by the user to account for cable spacing and laying arrangement. Multiplied with K_temp to give the total derating applied to catalogue ampacity. |
+| GFEP | Ground Fault Equipment Protection. A residual current device that trips at low earth fault current, typically 30 mA for industrial equipment protection. When GFEP is present, the MCB earth-loop check for the 3-core outgoing circuit is a secondary verification, not a primary sizing gate. |
+| Load-end voltage | The supply voltage minus the total series voltage drop across the cold cable path (trunk + outgoing). Reported in absolute volts as evidence that adequate voltage reaches the heating cable cold end. |
+| Conductor volume proxy | The cost function used in the 3-phase JB cable pair optimisation: 4 x A_4C x L_4C + N_out x 3 x A_3C x L_3C. Minimising this proxy minimises conductor cross-section times length, which is directly proportional to copper or aluminium tonnage and procurement cost. |
+| 3phJB branch | A power distribution branch where an MCB feeds a 4-core trunk cable to a 3-phase junction box, which in turn feeds 3-core outgoing cables to individual 1-phase junction boxes and tracers. Requires the paired optimisation algorithm. |
+| 1phJB branch | A power distribution branch where an MCB feeds a 3-core cable directly to a 1-phase junction box and tracer, with no intermediate 3-phase junction box. Uses the simpler direct sizing algorithm. |
+| CP cable | Constant power heating cable — fixed wattage per metre regardless of temperature. A planned future module in EHT Office. |

@@ -29,25 +29,31 @@
             {% endif %}
 
             <div class="row g-3 mb-4">
-                <div class="col-md-6 col-xl-3">
+                <div class="col-md-6 col-xl">
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Schedule Source</div>
                         <div class="h6 mb-0">{{ cable_schedule_summary.source_label }}</div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
+                <div class="col-md-6 col-xl">
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Rows</div>
                         <div class="h4 mb-0">{{ cable_schedule_summary.row_count }}</div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
+                <div class="col-md-6 col-xl">
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Total Cable Length</div>
                         <div class="h4 mb-0">{{ cable_schedule_summary.total_cable_length_display }} <small class="text-muted">m</small></div>
                     </div>
                 </div>
-                <div class="col-md-6 col-xl-3">
+                <div class="col-md-6 col-xl">
+                    <div class="workspace-metric-card h-100">
+                        <div class="workspace-metric-label">Total Cable Copper Tonnage</div>
+                        <div class="h4 mb-0">{{ cable_schedule_summary.total_conductor_mass_mt|floatformat:4 }} <small class="text-muted">MT</small></div>
+                    </div>
+                </div>
+                <div class="col-md-6 col-xl">
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Manual Overrides</div>
                         <div class="h4 mb-0">{{ cable_schedule_summary.override_count }}</div>
@@ -85,6 +91,8 @@
                             <th data-field="sr-no" data-sortable="true">Sr. No</th>
                             <th data-field="cable-tag" data-sortable="true">Cable Tag</th>
                             <th data-field="cable-specification" data-sortable="true">Cable Specification</th>
+                            <th data-field="calculated-cold-cable" data-sortable="true">Calculated Cold Cable</th>
+                            <th data-field="cold-cable-status" data-sortable="true">Cold Cable Status</th>
                             <th data-field="cable-length" data-sortable="true">Cable Length (m)</th>
                             <th data-field="connected-from" data-sortable="true">Connected From</th>
                             <th data-field="connected-to" data-sortable="true">Connected To</th>
@@ -108,6 +116,21 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ row.cable_specification|default:"-" }}</td>
+                                <td>{{ row.calculated_cold_cable_size|default:"-" }}</td>
+                                <td>
+                                    {% if row.cold_cable_status %}
+                                        <div>{{ row.cold_cable_status }}</div>
+                                        <div class="small text-muted">
+                                            VD {{ row.cold_cable_vd_status|default:"-" }} /
+                                            Fault {{ row.cold_cable_fault_status|default:"-" }}
+                                        </div>
+                                        {% if row.cold_cable_conductor_mass_mt %}
+                                            <div class="small text-muted">{{ row.cold_cable_conductor_mass_mt|floatformat:4 }} MT</div>
+                                        {% endif %}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
                                 <td>{{ row.cable_length_m|floatformat:2 }}</td>
                                 <td>{{ row.connected_from|default:"-" }}</td>
                                 <td>{{ row.connected_to|default:"-" }}</td>

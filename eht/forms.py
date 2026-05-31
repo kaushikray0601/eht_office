@@ -1,8 +1,25 @@
 from django import forms
 
-from .models import ManagedProject, ProjectData, is_default_project_id
+from .models import (
+    CABLE_GROUPING_DERATING_MAX,
+    CABLE_GROUPING_DERATING_MIN,
+    ManagedProject,
+    ProjectData,
+    is_default_project_id,
+)
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Submit, Div, Field, Row, Column
+
+PROJECT_FORM_COLD_CABLE_DEFAULTS = {
+    'cable_standard': 'IEC_60502_1',
+    'cable_conductor_material': 'Cu',
+    'cable_insulation_type': 'XLPE',
+    'cable_install_method': 'E',
+    'cable_grouping_derating': 1.0,
+    'min_cold_cable_size_mm2': 'CALCULATED',
+    'mcb_curve': 'C',
+}
+
 
 class ProjectDataForm(forms.ModelForm):
     proj_id = forms.ChoiceField(label="Project ID")
@@ -111,6 +128,11 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['heat_loss_method'].widget.attrs.update({'title': (
             'Mean temperature is active by default. Table, integrated k(T), and fixed-basis methods are placeholders for future releases.'
         )})
+        self.fields['cable_grouping_derating'].widget.attrs.update({
+            'min': f'{CABLE_GROUPING_DERATING_MIN:g}',
+            'max': f'{CABLE_GROUPING_DERATING_MAX:.1f}',
+            'step': '0.001',
+        })
         self.fields['sr_parallel_run_basis'].help_text = (
             'Pipe-size guided uses 1/2/3/4 preferred straight runs for <1, <2, <3, and >=3 inch lines.'
         )
@@ -120,6 +142,14 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['cable_grouping_derating'].help_text = (
             'User-entered grouping/spacing derating factor. Use 1.0 only when no grouping derating is required.'
         )
+        self.fields['cable_standard'].help_text = 'Default basis for LV EHT cold-cable sizing.'
+        self.fields['cable_conductor_material'].help_text = 'Used for resistance correction and conductor mass estimate.'
+        self.fields['cable_insulation_type'].help_text = 'XLPE uses 90 C and PVC uses 70 C conductor temperature basis.'
+        self.fields['cable_install_method'].help_text = (
+            'Selects the matching validated ampacity catalogue rows. Single-core tray methods are not included in this phase.'
+        )
+        self.fields['min_cold_cable_size_mm2'].help_text = 'Optional project minimum. Calculated allows the sizing engine to choose freely.'
+        self.fields['mcb_curve'].help_text = 'Type C is the default EHT breaker curve for fault-check screening.'
         self.fields['gfep_provided'].help_text = (
             'Enabled by default for EHT circuits. Later cold-cable fault checks will treat missing GFEP as a review condition.'
         )
@@ -139,7 +169,9 @@ class ProjectDataForm(forms.ModelForm):
             if value not in class_tokens:
                 class_tokens.append(value)
 
-        if isinstance(widget, forms.Select):
+        if isinstance(widget, forms.CheckboxInput):
+            ensure_class('form-check-input')
+        elif isinstance(widget, forms.Select):
             ensure_class('form-select')
         else:
             ensure_class('form-control')

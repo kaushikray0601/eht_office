@@ -3,6 +3,7 @@ from django.contrib import admin, messages
 from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
 from eht.models import (
     ColdCableCatalogue,
+    ColdCableResult,
     ManagedProject,
     MIAlloyTempFactor,
     MICableFamily,
@@ -95,6 +96,27 @@ class ColdCableCatalogueAdmin(admin.ModelAdmin):
     )
     search_fields = ('vendor', 'catalogue_ref', 'cable_type_code', 'source_document')
     actions = (mark_cold_cable_rows_validated, mark_cold_cable_rows_unvalidated)
+
+
+@admin.register(ColdCableResult)
+class ColdCableResultAdmin(admin.ModelAdmin):
+    list_display = (
+        'project',
+        'line_id',
+        'branch_index',
+        'sizing_status',
+        'cable_4c_size_mm2',
+        'cable_3c_size_mm2',
+        'per_circuit_operating_current_a',
+        'length_basis',
+        'calculated_at',
+    )
+    list_filter = ('project', 'sizing_status', 'heating_cable_type', 'length_basis')
+    search_fields = ('project__proj_id', 'line_id', 'line_uid')
+    readonly_fields = tuple(field.name for field in ColdCableResult._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
 
 
 @admin.register(SLDNodeLayout)
