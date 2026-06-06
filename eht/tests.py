@@ -235,7 +235,7 @@ def make_project_form_payload(**overrides):
         'cable_grouping_derating': '1.000',
         'min_cold_cable_size_mm2': 'CALCULATED',
         'mcb_curve': 'C',
-        'gfep_provided': 'on',
+        'rcd_provided': 'on',
         'spiral_factor': '2.00',
         'spiral_wrap_allowed': 'True',
         'margin_on_tracer_lengths': '10.00',
@@ -2187,6 +2187,50 @@ class SldPayloadTests(TestCase):
         self.assertTrue(adjusted['metadata']['cable_override_active'])
         self.assertEqual(adjusted['metadata']['cable_override_remarks'], 'Routed via field JB rack.')
 
+    def test_build_project_sld_payload_adds_cold_cable_metadata_to_cable_nodes(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        size_cold_cables_for_project('p1')
+
+        payload = build_project_sld_payload('p1')
+        cable4c = next(node for node in payload['nodes'] if node['component_type'] == 'Cable4C')
+        cable3c = next(node for node in payload['nodes'] if node['component_type'] == 'Cable3C')
+
+        self.assertEqual(cable4c['metadata']['cold_cable_calculated_size'], '4C x 2.5 mm2')
+        self.assertEqual(cable3c['metadata']['cold_cable_calculated_size'], '3C x 2.5 mm2')
+        self.assertEqual(cable4c['metadata']['cold_cable']['calculated_size'], '4C x 2.5 mm2')
+        self.assertEqual(cable3c['metadata']['cold_cable']['calculated_size'], '3C x 2.5 mm2')
+        self.assertIn(cable3c['metadata']['cold_cable_status'], {'selected', 'review_required'})
+        self.assertEqual(cable3c['metadata']['cold_cable_vd_status'], 'pass')
+        self.assertEqual(cable3c['metadata']['cold_cable_fault_status'], 'pass')
+        self.assertGreater(cable3c['metadata']['cold_cable']['conductor_mass_mt'], 0)
+
+    def test_build_project_sld_payload_flags_manual_cable_size_below_calculated_size(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        size_cold_cables_for_project('p1')
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            generated_length_m=(cable_node['metadata'] or {}).get('length_m'),
+            manual_cable_size='3C x 1.5',
+        )
+
+        payload = build_project_sld_payload('p1')
+        adjusted = next(node for node in payload['nodes'] if node['component_id'] == cable_node['component_id'])
+
+        self.assertEqual(adjusted['metadata']['manual_size_review_status'], 'undersized')
+        self.assertIn('below the calculated cold cable size', adjusted['metadata']['manual_size_review_note'])
+
     def test_build_project_sld_payload_adds_tracer_selection_metadata(self):
         line = make_rich_sld_project_snapshot('p1', ['LINE-001'])[0]
         AlternateTracer.objects.create(
@@ -2714,7 +2758,7 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(float(project.cable_grouping_derating), 1.0)
         self.assertEqual(project.min_cold_cable_size_mm2, 'CALCULATED')
         self.assertEqual(project.mcb_curve, 'C')
-        self.assertTrue(project.gfep_provided)
+        self.assertTrue(project.rcd_provided)
 
     def test_project_data_install_method_excludes_single_core_method(self):
         form = ProjectDataForm()
@@ -2788,9 +2832,13 @@ class ColdCableFoundationTests(TestCase):
 
         self.assertEqual(result.length_4c_m, 30.0)
         self.assertEqual(result.length_3c_m, 88.5)
-        self.assertEqual(result.length_3c_total_m, 88.5)
+        self.assertEqual(result.length_3c_total_m, 100.5)
         self.assertEqual(result.length_3c_basis, 'manual_override')
         self.assertEqual(result.length_basis, 'manual_override')
+        self.assertEqual(
+            sorted((segment.length_m, segment.length_basis) for segment in result.length_3c_segments),
+            [(12.0, 'project_default'), (88.5, 'manual_override')],
+        )
 
     def test_resolve_cable_lengths_can_use_applied_topology_schedule_row(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -2984,14 +3032,33 @@ class ColdCableFoundationTests(TestCase):
             max_conductor_temp_c=70.0,
         )
 
-        self.assertEqual(conductor_operating_temperature(xlpe, 45.0), 90.0)
-        self.assertEqual(conductor_operating_temperature(pvc, 45.0), 70.0)
+        self.assertEqual(conductor_operating_temperature(xlpe), 90.0)
+        self.assertEqual(conductor_operating_temperature(pvc), 70.0)
+
+    def test_conductor_temperature_rejects_unknown_insulation_type(self):
+        unknown = ColdCableCatalogue(
+            cable_standard='IEC_60502_1',
+            cable_type_code='unknown-test',
+            conductor_material='Cu',
+            insulation_type='UNKNOWN',
+            core_count=3,
+            conductor_size_mm2=2.5,
+            installation_method='E',
+            ampacity_a=26.0,
+            resistance_mohm_per_m=7.41,
+            max_conductor_temp_c=90.0,
+        )
+
+        with self.assertRaisesMessage(ValueError, "Insulation type must be 'XLPE' or 'PVC'."):
+            conductor_operating_temperature(unknown)
 
     def test_conductor_material_coefficients_and_density_are_available(self):
         self.assertEqual(conductor_temperature_coefficient('Cu'), 0.00393)
-        self.assertEqual(conductor_temperature_coefficient('Al'), 0.00403)
         self.assertEqual(conductor_density_kg_m3('Cu'), 8960.0)
-        self.assertEqual(conductor_density_kg_m3('Al'), 2700.0)
+        with self.assertRaisesMessage(ValueError, "Conductor material must be 'Cu'."):
+            conductor_temperature_coefficient('Al')
+        with self.assertRaisesMessage(ValueError, "Conductor material must be 'Cu'."):
+            conductor_density_kg_m3('Al')
 
     def test_calculate_vd_uses_single_and_three_phase_factors(self):
         one_phase = calculate_vd(10.0, 10.0, 100.0, '1phase', 230.0)
@@ -3000,6 +3067,12 @@ class ColdCableFoundationTests(TestCase):
         self.assertAlmostEqual(one_phase.vd_v, 20.0, places=6)
         self.assertAlmostEqual(one_phase.vd_pct, 20.0 / 230.0 * 100.0, places=6)
         self.assertAlmostEqual(three_phase.vd_v, math.sqrt(3) * 10.0, places=6)
+
+    def test_calculate_vd_exact_allowable_threshold_is_not_rounded_over(self):
+        result = calculate_vd(10.0, 5.75, 100.0, '1phase', 230.0)
+
+        self.assertAlmostEqual(result.vd_v, 11.5, places=6)
+        self.assertAlmostEqual(result.vd_pct, 5.0, places=6)
 
     def test_find_minimum_cable_for_ampacity_applies_derating_and_minimum_size(self):
         call_command('populate_cold_cable_catalogue')
@@ -3117,14 +3190,14 @@ class ColdCableFoundationTests(TestCase):
 
         passing = check_fault_4c(row, 30.0, 230.0, 10.0, 'C', conductor_temp_c=90.0)
         failing = check_fault_4c(row, 600.0, 230.0, 10.0, 'C', conductor_temp_c=90.0)
-        gfep_review = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', True, conductor_temp_c=90.0)
-        no_gfep_fail = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', False, conductor_temp_c=90.0)
+        rcd_review = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', True, conductor_temp_c=90.0)
+        no_rcd_fail = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', False, conductor_temp_c=90.0)
 
         self.assertEqual(passing.status, 'pass')
         self.assertGreaterEqual(passing.fault_current_a, passing.threshold_current_a)
         self.assertEqual(failing.status, 'fail')
-        self.assertEqual(gfep_review.status, 'review_required')
-        self.assertEqual(no_gfep_fail.status, 'fail')
+        self.assertEqual(rcd_review.status, 'review_required')
+        self.assertEqual(no_rcd_fail.status, 'fail')
 
     def test_size_cold_cable_for_branch_upsizes_4c_for_fault_threshold(self):
         call_command('populate_cold_cable_catalogue')
@@ -3155,19 +3228,19 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(result.cable_4c_conductor_temp_c, 90.0)
         self.assertGreaterEqual(result.fault_current_4c_phase_to_phase_a, result.breaker_size_a * 10.0)
 
-    def test_size_cold_cable_for_3c_fault_review_required_with_gfep(self):
+    def test_size_cold_cable_for_3c_fault_review_required_with_rcd(self):
         call_command('populate_cold_cable_catalogue')
-        make_direct_sld_project_snapshot('p-gfep-review', 'LINE-001')
-        project = ProjectData.objects.get(proj_id='p-gfep-review')
+        make_direct_sld_project_snapshot('p-rcd-review', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-rcd-review')
         project.loop_ln = 900.0
         project.allowablevdrop = 10.0
-        project.gfep_provided = True
+        project.rcd_provided = True
         project.save()
         branch = PowerDistributionBranch.objects.select_related(
             'distribution',
             'distribution__line',
             'distribution__line__process_line_calculation',
-        ).get(distribution__line__proj_id='p-gfep-review')
+        ).get(distribution__line__proj_id='p-rcd-review')
         branch.cable_length_db_to_jb = 900.0
         tagged_components = branch.tagged_components
         tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
@@ -3181,20 +3254,46 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(result.vd_status, 'pass')
         self.assertTrue(any('Tracer PE-path resistance' in note for note in result.review_notes))
 
-    def test_size_cold_cable_for_3c_fault_hard_fails_without_gfep(self):
+    def test_size_cold_cable_for_3c_fault_upsizes_without_rcd_when_larger_cable_can_pass(self):
         call_command('populate_cold_cable_catalogue')
-        make_direct_sld_project_snapshot('p-no-gfep-fail', 'LINE-001')
-        project = ProjectData.objects.get(proj_id='p-no-gfep-fail')
-        project.loop_ln = 999.0
+        make_direct_sld_project_snapshot('p-no-rcd-upsize', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-no-rcd-upsize')
+        project.loop_ln = 150.0
         project.allowablevdrop = 100.0
         project.mcb_curve = 'D'
-        project.gfep_provided = False
+        project.rcd_provided = False
         project.save()
         branch = PowerDistributionBranch.objects.select_related(
             'distribution',
             'distribution__line',
             'distribution__line__process_line_calculation',
-        ).get(distribution__line__proj_id='p-no-gfep-fail')
+        ).get(distribution__line__proj_id='p-no-rcd-upsize')
+        branch.cable_length_db_to_jb = 150.0
+        tagged_components = branch.tagged_components
+        tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['cable_length_db_to_jb', 'tagged_components'])
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.sizing_status, 'review_required')
+        self.assertEqual(result.fault_protection_3c_status, 'pass')
+        self.assertEqual(result.cable_3c_size_mm2, 6.0)
+
+    def test_size_cold_cable_for_3c_fault_hard_fails_without_rcd(self):
+        call_command('populate_cold_cable_catalogue')
+        make_direct_sld_project_snapshot('p-no-rcd-fail', 'LINE-001')
+        project = ProjectData.objects.get(proj_id='p-no-rcd-fail')
+        project.loop_ln = 999.0
+        project.allowablevdrop = 100.0
+        project.mcb_curve = 'D'
+        project.rcd_provided = False
+        project.save()
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-no-rcd-fail')
         branch.cable_length_db_to_jb = 999.0
         tagged_components = branch.tagged_components
         tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
@@ -3205,7 +3304,7 @@ class ColdCableFoundationTests(TestCase):
 
         self.assertEqual(result.sizing_status, 'unsizeable')
         self.assertEqual(result.fault_protection_3c_status, 'fail')
-        self.assertTrue(any('without GFEP' in note for note in result.review_notes))
+        self.assertTrue(any('without RCD' in note for note in result.review_notes))
 
     def test_size_cold_cable_for_branch_stores_ampacity_result(self):
         call_command('populate_cold_cable_catalogue')
@@ -3242,6 +3341,57 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(result.fault_protection_3c_status, 'pass')
         self.assertTrue(result.optimization_run)
         self.assertTrue(any('project default' in note for note in result.review_notes))
+
+    def test_sld_cold_cable_metadata_sizes_each_3c_outgoing_by_own_length(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p-variable-3c', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p-variable-3c')
+        project.allowablevdrop = 5.0
+        project.save(update_fields=['allowablevdrop'])
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-variable-3c')
+        branch.cable_length_db_to_jb = 30.0
+        tagged_components = branch.tagged_components
+        tagged_components['component_details']['MCB']['metadata']['operating_current'] = 8.0
+        tagged_components['component_details']['MCB']['metadata']['per_circuit_operating_current'] = 8.0
+        tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['cable_length_db_to_jb', 'tagged_components'])
+        cable3c_details = [
+            downstream['component_details']['Cable3C']
+            for downstream in branch.tagged_components['Downstream']
+        ]
+        for detail, length in zip(cable3c_details, [15.0, 150.0]):
+            CableScheduleOverride.objects.create(
+                project=project,
+                component_id=detail['component_id'],
+                component_uid=detail['component_uid'],
+                display_tag=detail['display_tag'],
+                component_type='Cable3C',
+                line_id='LINE-001',
+                line_uid=str(branch.distribution.line.uid),
+                branch_index=branch.branch_index,
+                circuit_index=detail['circuit_index'],
+                generated_length_m=12.0,
+                manual_length_m=length,
+            )
+
+        result = size_cold_cable_for_branch(branch, project)
+        payload = build_project_sld_payload('p-variable-3c')
+        cable_nodes = sorted(
+            [node for node in payload['nodes'] if node['component_type'] == 'Cable3C'],
+            key=lambda node: node['metadata']['cold_cable']['length_m'],
+        )
+
+        self.assertEqual(len(result.cable_3c_segments), 2)
+        self.assertEqual(cable_nodes[0]['metadata']['cold_cable']['length_m'], 15.0)
+        self.assertEqual(cable_nodes[1]['metadata']['cold_cable']['length_m'], 150.0)
+        self.assertEqual(cable_nodes[0]['metadata']['cold_cable_calculated_size'], '3C x 2.5 mm2')
+        self.assertEqual(cable_nodes[1]['metadata']['cold_cable_calculated_size'], '3C x 6 mm2')
+        self.assertEqual(result.cable_3c_size_mm2, 6.0)
 
 
 class SldTopologyWorkflowTests(TestCase):
@@ -4603,7 +4753,7 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'Cable grouping derating factor')
         self.assertContains(response, 'Minimum cold cable size')
         self.assertContains(response, 'MCB characteristic curve')
-        self.assertContains(response, 'GFEP provided')
+        self.assertContains(response, 'RCD / earth fault protection provided')
 
     def test_update_project_data_workspace_form_posts_to_project_update_route(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -4643,7 +4793,7 @@ class ProjectDataViewTests(TestCase):
         self.assertIn('Cable grouping derating factor', form_html)
         self.assertIn('Minimum cold cable size', form_html)
         self.assertIn('MCB characteristic curve', form_html)
-        self.assertIn('GFEP provided', form_html)
+        self.assertIn('RCD / earth fault protection provided', form_html)
 
     def test_default_project_button_copies_template_values_into_selected_project(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -4776,7 +4926,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Calculation Verification Report')
         self.assertContains(response, line.line_id)
         self.assertContains(response, 'Cold Cable Sizing')
-        self.assertContains(response, 'VD_4C = sqrt(3)*I*R(T)*L')
+        self.assertContains(response, 'VD_4C = √3')
 
     def test_verification_report_does_not_truncate_cold_cable_branches(self):
         call_command('populate_cold_cable_catalogue')
@@ -4961,6 +5111,64 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, '<td>Yes</td>', html=True)
         self.assertContains(response, 'Measured along pipe rack A.')
 
+    def test_cable_schedule_view_warns_when_manual_size_is_below_calculated_size(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        size_cold_cables_for_project('p1')
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            generated_length_m=(cable_node['metadata'] or {}).get('length_m'),
+            manual_cable_size='3C x 1.5',
+        )
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Manual size below calculated value.')
+        self.assertContains(response, '1 size review')
+
+    def test_cable_schedule_export_includes_manual_size_review_columns(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        size_cold_cables_for_project('p1')
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            generated_length_m=(cable_node['metadata'] or {}).get('length_m'),
+            manual_cable_size='3C x 1.5',
+        )
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        header = rows[0]
+        review_status_index = header.index('Manual Size Review')
+        review_note_index = header.index('Manual Size Review Note')
+        export_row = next(row for row in rows[1:] if row[1] == cable_node['display_tag'])
+        self.assertEqual(export_row[review_status_index], 'undersized')
+        self.assertIn('below the calculated cold cable size', export_row[review_note_index])
+
     def test_cable_schedule_view_uses_applied_topology_rows(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
         generated_payload = build_project_sld_payload('p1')
@@ -5029,6 +5237,8 @@ class ResultAndBoqViewTests(TestCase):
             'Cable Drum Tag',
             'Cable Route Details',
             'Remarks',
+            'Manual Size Review',
+            'Manual Size Review Note',
             'Rev. No.',
         ))
         self.assertTrue(any(row[1] and str(row[1]).startswith('CCAB') for row in rows[1:]))
@@ -5397,6 +5607,21 @@ class ResultAndBoqViewTests(TestCase):
         self.assertIn('p1_sld.pdf', response['Content-Disposition'])
         self.assertTrue(response.content.startswith(b'%PDF'))
         self.assertGreater(len(response.content), 1000)
+
+    def test_sld_pdf_cable_label_uses_compact_cold_cable_size_and_vd(self):
+        from eht.sld_pdf import _cable_label
+
+        label = _cable_label({
+            'display_tag': 'CCAB4C_001',
+            'metadata': {
+                'cold_cable': {
+                    'calculated_size': '4C x 10 mm2',
+                    'vd_total_pct': 5.54,
+                },
+            },
+        })
+
+        self.assertEqual(label, '4Cx10mm² (Vd 5.54%)')
 
     def test_sld_pdf_renderer_draws_multicircuit_branch_links(self):
         from eht.sld_pdf import _pdf_rows
@@ -6126,7 +6351,7 @@ class CalculateViewHardeningTests(TransactionTestCase):
         payload = make_project_form_payload(proj_id='p1', vendor='SST', voltage='240.00')
         for field_name in PROJECT_FORM_COLD_CABLE_DEFAULTS:
             payload.pop(field_name, None)
-        payload.pop('gfep_provided', None)
+        payload.pop('rcd_provided', None)
         payload.update({'project_id': 'p1', 'file': upload})
 
         def fake_run_project_calculations(project_id):
@@ -6138,7 +6363,7 @@ class CalculateViewHardeningTests(TransactionTestCase):
             self.assertEqual(float(project.cable_grouping_derating), 1.0)
             self.assertEqual(project.min_cold_cable_size_mm2, 'CALCULATED')
             self.assertEqual(project.mcb_curve, 'C')
-            self.assertTrue(project.gfep_provided)
+            self.assertTrue(project.rcd_provided)
             return ({'heat_loss': []}, {'heat_loss': 0, 'selected_tracers': 0, 'alternative_tracers': 0, 'power_distribution': 0, 'boq_lines': 0, 'consolidated_boq_items': 0, 'tracer_power_param': 0})
 
         with patch('eht.views.sanitize_file', return_value=(valid_rows, [], '')), patch(

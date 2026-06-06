@@ -25,19 +25,26 @@ MCB_INSTANTANEOUS_FACTORS = {
 }
 CONDUCTOR_TEMP_COEFFICIENTS = {
     'Cu': 0.00393,
-    'Al': 0.00403,
 }
 CONDUCTOR_DENSITY_KG_M3 = {
     'Cu': 8960.0,
-    'Al': 2700.0,
 }
 INSULATION_CONDUCTOR_TEMPERATURE_C = {
     'PVC': 70.0,
     'XLPE': 90.0,
 }
 TRACER_PE_FAULT_LOOP_NOTE = (
-    'Tracer PE-path resistance not included - non-conservative for earth loop check.'
+    'Tracer PE-path resistance is deferred and not included; this overestimates earth-fault current and is non-conservative.'
 )
+
+
+@dataclass
+class ColdCable3CSegmentLength:
+    component_id: str
+    display_tag: str
+    circuit_index: int | None
+    length_m: float | None
+    length_basis: str
 
 
 @dataclass
@@ -57,12 +64,15 @@ class ColdCableLengthResolution:
     length_basis: str = 'project_default'
     cable_4c_component_id: str = ''
     cable_3c_component_ids: list[str] = field(default_factory=list)
+    length_3c_segments: list[ColdCable3CSegmentLength] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
 
     @property
     def length_missing(self):
         if self.branch_type == '3phJB' and not self.length_4c_m:
             return True
+        if self.length_3c_segments:
+            return any(not segment.length_m for segment in self.length_3c_segments)
         return not self.length_3c_m
 
 
@@ -82,6 +92,7 @@ class ColdCableSizingInput:
     length_3c_m: float | None
     length_basis: str
     length_missing: bool
+    length_3c_segments: list[ColdCable3CSegmentLength] = field(default_factory=list)
     review_notes: list[str] = field(default_factory=list)
 
 
@@ -135,6 +146,7 @@ class CablePairOptimisation:
     conductor_volume_proxy: float | None = None
     fault_4c: FaultProtectionResult | None = None
     fault_3c: FaultProtectionResult | None = None
+    segment_3c_results: list[dict] = field(default_factory=list)
     review_notes: list[str] = field(default_factory=list)
 
 
@@ -292,17 +304,9 @@ def resolve_cable_lengths(branch, project):
         length_4c_m = manual_4c
         length_4c_basis = 'manual_override'
 
-    manual_3c_lengths = [
-        length for length in (_manual_length_for_detail(overrides, detail) for detail in cable_3c_details)
-        if length is not None
-    ]
     length_3c_m = None
     length_3c_total_m = None
     length_3c_basis = 'project_default'
-    if manual_3c_lengths:
-        length_3c_m = max(manual_3c_lengths)
-        length_3c_total_m = sum(manual_3c_lengths)
-        length_3c_basis = 'manual_override'
 
     topology_row = _active_topology_row(project_id, branch)
     if topology_row and branch_type == '3phJB' and length_4c_basis != 'manual_override':
@@ -310,7 +314,9 @@ def resolve_cable_lengths(branch, project):
         if topology_4c is not None:
             length_4c_m = topology_4c
             length_4c_basis = 'topology_edit'
-    if topology_row and length_3c_basis != 'manual_override':
+    topology_3c = None
+    topology_3c_total = None
+    if topology_row:
         topology_3c_total = _positive_float(topology_row.get('branch_cable_length_total_m'))
         if branch_type == '3phJB':
             topology_3c = _positive_float(topology_row.get('cable_length_jb_to_jb'))
@@ -319,30 +325,50 @@ def resolve_cable_lengths(branch, project):
         else:
             # Direct 1Ph branches use the MCB-to-load route as the 3C cable length.
             topology_3c = _positive_float(topology_row.get('cable_length_db_to_jb'))
-        if topology_3c is not None:
-            length_3c_m = topology_3c
-            length_3c_total_m = (
-                topology_3c_total if topology_3c_total is not None else topology_3c * max(circuit_count, 1)
-            )
-            length_3c_basis = 'topology_edit'
 
     if length_4c_m is None:
         length_4c_m = _to_float(getattr(branch, 'cable_length_db_to_jb', None)) if branch_type == '3phJB' else None
-    if length_3c_m is None:
-        fallback_3c = (
-            getattr(branch, 'cable_length_jb_to_jb', None)
-            if branch_type == '3phJB'
-            else getattr(branch, 'cable_length_db_to_jb', None)
+    fallback_3c = (
+        getattr(branch, 'cable_length_jb_to_jb', None)
+        if branch_type == '3phJB'
+        else getattr(branch, 'cable_length_db_to_jb', None)
+    )
+    fallback_3c = _to_float(fallback_3c)
+    if not cable_3c_details:
+        cable_3c_details = [{}]
+    length_3c_segments = []
+    for index, detail in enumerate(cable_3c_details, start=1):
+        manual_3c = _manual_length_for_detail(overrides, detail)
+        if manual_3c is not None:
+            segment_length = manual_3c
+            segment_basis = 'manual_override'
+        elif topology_3c is not None:
+            segment_length = topology_3c
+            segment_basis = 'topology_edit'
+        else:
+            segment_length = fallback_3c
+            segment_basis = 'project_default'
+        length_3c_segments.append(
+            ColdCable3CSegmentLength(
+                component_id=_component_id(detail),
+                display_tag=_display_tag(detail),
+                circuit_index=(detail or {}).get('circuit_index') or index,
+                length_m=segment_length,
+                length_basis=segment_basis,
+            )
         )
-        length_3c_m = _to_float(fallback_3c)
-    if length_3c_total_m is None and length_3c_m is not None:
-        length_3c_total_m = length_3c_m * max(circuit_count, 1)
+
+    segment_lengths = [segment.length_m for segment in length_3c_segments if segment.length_m is not None]
+    if segment_lengths:
+        length_3c_m = max(segment_lengths)
+        length_3c_total_m = sum(segment_lengths)
+        length_3c_basis = _combine_basis(*(segment.length_basis for segment in length_3c_segments))
 
     warnings = []
     if branch_type == '3phJB' and not length_4c_m:
         warnings.append('4C trunk cable length is missing.')
-    if not length_3c_m:
-        warnings.append('3C outgoing cable length is missing.')
+    if not length_3c_segments or any(not segment.length_m for segment in length_3c_segments):
+        warnings.append('One or more 3C outgoing cable lengths are missing.')
 
     return ColdCableLengthResolution(
         project_id=project_id,
@@ -359,6 +385,7 @@ def resolve_cable_lengths(branch, project):
         length_basis=_combine_basis(length_4c_basis, length_3c_basis),
         cable_4c_component_id=_component_id(cable_4c_detail),
         cable_3c_component_ids=[_component_id(detail) for detail in cable_3c_details if _component_id(detail)],
+        length_3c_segments=length_3c_segments,
         warnings=warnings,
     )
 
@@ -433,6 +460,7 @@ def build_cold_cable_sizing_input(branch, project):
         length_3c_m=length_resolution.length_3c_m,
         length_basis=length_resolution.length_basis,
         length_missing=length_resolution.length_missing,
+        length_3c_segments=length_resolution.length_3c_segments,
         review_notes=review_notes,
     )
 
@@ -562,37 +590,38 @@ def _ampacity_candidates(project, core_count, required_current_a):
     for row in _catalogue_rows(project, core_count):
         try:
             selection = _ampacity_selection_for_row(project, row, required_current)
+            conductor_temp = conductor_operating_temperature(row)
+            resistance_at_temp = get_conductor_resistance_at_temp(row, conductor_temp)
         except ValueError:
             continue
         if selection is None:
             continue
-        conductor_temp = conductor_operating_temperature(row)
         candidates.append(CableCandidate(
             selection=selection,
-            resistance_mohm_per_m_at_temp=get_conductor_resistance_at_temp(row, conductor_temp),
+            resistance_mohm_per_m_at_temp=resistance_at_temp,
             conductor_temp_c=conductor_temp,
         ))
     return candidates
 
 
-def conductor_operating_temperature(row, site_ambient_c=None):
+def conductor_operating_temperature(row):
     insulation_type = str(getattr(row, 'insulation_type', '') or '').upper()
     if insulation_type in INSULATION_CONDUCTOR_TEMPERATURE_C:
         return INSULATION_CONDUCTOR_TEMPERATURE_C[insulation_type]
-    return float(row.max_conductor_temp_c)
+    raise ValueError("Insulation type must be 'XLPE' or 'PVC'.")
 
 
 def conductor_temperature_coefficient(conductor_material):
     material = str(conductor_material or '').strip()
     if material not in CONDUCTOR_TEMP_COEFFICIENTS:
-        raise ValueError("Conductor material must be 'Cu' or 'Al'.")
+        raise ValueError("Conductor material must be 'Cu'.")
     return CONDUCTOR_TEMP_COEFFICIENTS[material]
 
 
 def conductor_density_kg_m3(conductor_material):
     material = str(conductor_material or '').strip()
     if material not in CONDUCTOR_DENSITY_KG_M3:
-        raise ValueError("Conductor material must be 'Cu' or 'Al'.")
+        raise ValueError("Conductor material must be 'Cu'.")
     return CONDUCTOR_DENSITY_KG_M3[material]
 
 
@@ -650,7 +679,7 @@ def check_fault_4c(row_4c, length_4c_m, nominal_voltage_v, breaker_size_a, mcb_c
     )
 
 
-def check_fault_3c(row_3c, length_3c_m, nominal_voltage_v, breaker_size_a, mcb_curve, gfep_provided, conductor_temp_c=None):
+def check_fault_3c(row_3c, length_3c_m, nominal_voltage_v, breaker_size_a, mcb_curve, rcd_provided, conductor_temp_c=None):
     length = float(length_3c_m or 0.0)
     if length <= 0:
         return FaultProtectionResult(status='not_calculated', review_notes=['3C cable length is required for fault check.'])
@@ -659,7 +688,7 @@ def check_fault_3c(row_3c, length_3c_m, nominal_voltage_v, breaker_size_a, mcb_c
     fault_current = float(nominal_voltage_v) / (2 * r_ohm_per_m * length)
     status = 'pass'
     if fault_current < threshold:
-        status = 'review_required' if gfep_provided else 'fail'
+        status = 'review_required' if rcd_provided else 'fail'
     return FaultProtectionResult(
         status=status,
         fault_current_a=fault_current,
@@ -699,6 +728,12 @@ def _cable_cost_proxy(sizing_input, selection_4c=None, selection_3c=None):
     return cost or None
 
 
+def _segment_cost_proxy(selection, length_m):
+    if not selection or not selection.catalogue or not length_m:
+        return 0.0
+    return 3 * selection.catalogue.conductor_size_mm2 * float(length_m)
+
+
 def _selection_mass_mt(selection, length_m, parallel_count=1):
     if not selection or not selection.catalogue or not length_m:
         return None
@@ -718,6 +753,134 @@ def _total_mass_mt(*masses):
     if not values:
         return None
     return sum(values)
+
+
+def _active_3c_segments(sizing_input):
+    if sizing_input.length_3c_segments:
+        return sizing_input.length_3c_segments
+    return [
+        ColdCable3CSegmentLength(
+            component_id='',
+            display_tag='',
+            circuit_index=index,
+            length_m=sizing_input.length_3c_m,
+            length_basis=sizing_input.length_basis,
+        )
+        for index in range(1, max(1, int(sizing_input.circuit_count or 1)) + 1)
+    ]
+
+
+def _catalogue_id(row):
+    return row.pk if row and row.pk is not None else None
+
+
+def _segment_result_payload(segment, selection, conductor_temp_c, vd_3c, vd_4c, fault, nominal_voltage):
+    vd_4c_v = vd_4c.vd_v if vd_4c else 0.0
+    vd_4c_pct = vd_4c.vd_pct if vd_4c else 0.0
+    vd_total_v = vd_4c_v + vd_3c.vd_v
+    vd_total_pct = vd_4c_pct + vd_3c.vd_pct
+    mass_mt = _selection_mass_mt(selection, segment.length_m)
+    return {
+        'component_id': segment.component_id,
+        'display_tag': segment.display_tag,
+        'circuit_index': segment.circuit_index,
+        'length_m': segment.length_m,
+        'length_basis': segment.length_basis,
+        'catalogue_id': _catalogue_id(selection.catalogue),
+        'size_mm2': selection.catalogue.conductor_size_mm2,
+        'ampacity_derated_a': selection.derated_ampacity_a,
+        'ampacity_margin_pct': selection.ampacity_margin_pct,
+        'conductor_temp_c': conductor_temp_c,
+        'conductor_mass_mt': mass_mt,
+        'vd_v': vd_3c.vd_v,
+        'vd_pct': vd_3c.vd_pct,
+        'vd_total_pct': vd_total_pct,
+        'load_end_voltage_v': nominal_voltage - vd_total_v,
+        'fault_current_a': fault.fault_current_a,
+        'fault_status': fault.status,
+        'sizing_status': 'review_required' if fault.status == 'review_required' else 'selected',
+        'k_temp': selection.k_temp,
+        'k_group': selection.k_group,
+        'k_total': selection.k_total,
+        'review_notes': list(fault.review_notes),
+    }
+
+
+def _select_3c_segment_for_voltage_drop(project, sizing_input, segment, vd_4c=None):
+    current = float(sizing_input.per_circuit_operating_current_a or 0.0)
+    nominal_voltage = float(project.voltage)
+    allowable_vd_pct = float(project.allowablevdrop)
+    if not segment.length_m:
+        return None, ['3C outgoing cable length is missing.']
+
+    candidates = _ampacity_candidates(project, 3, current)
+    if not candidates:
+        return None, ['No ampacity-qualified 3C cable is available for the outgoing branch.']
+
+    vd_4c_pct = vd_4c.vd_pct if vd_4c else 0.0
+    notes = []
+    for candidate in candidates:
+        vd_3c = calculate_vd(
+            current,
+            candidate.resistance_mohm_per_m_at_temp,
+            segment.length_m,
+            '1phase',
+            nominal_voltage,
+        )
+        if vd_4c_pct + vd_3c.vd_pct > allowable_vd_pct:
+            continue
+        fault = check_fault_3c(
+            candidate.selection.catalogue,
+            segment.length_m,
+            nominal_voltage,
+            sizing_input.breaker_size_a,
+            project.mcb_curve,
+            project.rcd_provided,
+            conductor_temp_c=candidate.conductor_temp_c,
+        )
+        _append_unique(notes, fault.review_notes)
+        if fault.status == 'fail':
+            continue
+        return _segment_result_payload(
+            segment,
+            candidate.selection,
+            candidate.conductor_temp_c,
+            vd_3c,
+            vd_4c,
+            fault,
+            nominal_voltage,
+        ), notes
+
+    failure_note = (
+        'No 3C cable satisfies ampacity, voltage-drop, and fault-protection constraints '
+        'for one outgoing branch.'
+    )
+    if not project.rcd_provided:
+        failure_note = 'No 3C cable satisfies the breaker instantaneous fault threshold without RCD protection.'
+    notes.append(failure_note)
+    return None, notes
+
+
+def _selection_from_segment_result(project, segment_result, required_current_a):
+    if not segment_result or not segment_result.get('catalogue_id'):
+        return None
+    row = ColdCableCatalogue.objects.filter(pk=segment_result['catalogue_id']).first()
+    if row is None:
+        return None
+    return _ampacity_selection_for_row(project, row, float(required_current_a or 0.0))
+
+
+def _critical_3c_segment(segment_results):
+    if not segment_results:
+        return None
+    return max(
+        segment_results,
+        key=lambda item: (
+            float(item.get('size_mm2') or 0),
+            float(item.get('vd_total_pct') or 0),
+            float(item.get('length_m') or 0),
+        ),
+    )
 
 
 def _apply_4c_fault_check(project, sizing_input, sizing_result):
@@ -780,7 +943,7 @@ def _apply_3c_fault_check(project, sizing_input, sizing_result):
     allowable_vd_pct = float(project.allowablevdrop)
     selected_size = sizing_result.selection_3c.catalogue.conductor_size_mm2
 
-    if project.gfep_provided:
+    if project.rcd_provided:
         conductor_temp = sizing_result.conductor_temp_3c_c
         fault = check_fault_3c(
             sizing_result.selection_3c.catalogue,
@@ -840,13 +1003,15 @@ def _apply_3c_fault_check(project, sizing_input, sizing_result):
     sizing_result.fault_3c = FaultProtectionResult(status='fail', review_notes=[TRACER_PE_FAULT_LOOP_NOTE])
     _append_unique(sizing_result.review_notes, [
         TRACER_PE_FAULT_LOOP_NOTE,
-        'No 3C cable satisfies the breaker instantaneous fault threshold without GFEP.',
+        'No 3C cable satisfies the breaker instantaneous fault threshold without RCD protection.',
     ])
     return sizing_result
 
 
 def apply_fault_protection_checks(project, sizing_input, sizing_result):
     if sizing_result.status not in {'selected', 'review_required'}:
+        return sizing_result
+    if sizing_result.segment_3c_results:
         return sizing_result
     sizing_result = _apply_4c_fault_check(project, sizing_input, sizing_result)
     if sizing_result.status == 'unsizeable':
@@ -862,15 +1027,15 @@ def optimise_cable_pair(project, sizing_input):
             status='unsizeable',
             review_notes=['Operating current must be greater than zero for voltage-drop sizing.'],
         )
-    if not sizing_input.length_4c_m or not sizing_input.length_3c_m:
+    segments = _active_3c_segments(sizing_input)
+    if not sizing_input.length_4c_m or any(not segment.length_m for segment in segments):
         return CablePairOptimisation(
             status='length_missing',
-            review_notes=['4C and 3C cable lengths are required for 3phJB voltage-drop optimisation.'],
+            review_notes=['4C and all 3C outgoing cable lengths are required for 3phJB voltage-drop optimisation.'],
         )
 
     candidates_4c = _ampacity_candidates(project, 4, current)
-    candidates_3c = _ampacity_candidates(project, 3, current)
-    if not candidates_4c or not candidates_3c:
+    if not candidates_4c or not _ampacity_candidates(project, 3, current):
         return CablePairOptimisation(
             status='unsizeable',
             review_notes=['No ampacity-qualified 4C/3C cable pair is available for voltage-drop optimisation.'],
@@ -889,37 +1054,65 @@ def optimise_cable_pair(project, sizing_input):
         )
         if vd_4c.vd_pct >= allowable_vd_pct:
             continue
-        for candidate_3c in candidates_3c:
-            vd_3c = calculate_vd(
-                current,
-                candidate_3c.resistance_mohm_per_m_at_temp,
-                sizing_input.length_3c_m,
-                '1phase',
-                nominal_voltage,
-            )
-            vd_total_pct = vd_4c.vd_pct + vd_3c.vd_pct
-            if vd_total_pct > allowable_vd_pct:
-                continue
-            cost = _cable_cost_proxy(sizing_input, candidate_4c.selection, candidate_3c.selection)
-            option = CablePairOptimisation(
-                status='selected',
-                selection_4c=candidate_4c.selection,
-                selection_3c=candidate_3c.selection,
-                conductor_temp_4c_c=candidate_4c.conductor_temp_c,
-                conductor_temp_3c_c=candidate_3c.conductor_temp_c,
+        fault_4c = check_fault_4c(
+            candidate_4c.selection.catalogue,
+            sizing_input.length_4c_m,
+            nominal_voltage,
+            sizing_input.breaker_size_a,
+            project.mcb_curve,
+            conductor_temp_c=candidate_4c.conductor_temp_c,
+        )
+        if fault_4c.status != 'pass':
+            continue
+
+        segment_results = []
+        review_notes = list(candidate_4c.selection.review_notes)
+        option_cost = 4 * candidate_4c.selection.catalogue.conductor_size_mm2 * float(sizing_input.length_4c_m)
+        for segment in segments:
+            segment_result, segment_notes = _select_3c_segment_for_voltage_drop(
+                project,
+                sizing_input,
+                segment,
                 vd_4c=vd_4c,
-                vd_3c=vd_3c,
-                vd_total_pct=vd_total_pct,
-                load_end_voltage_v=nominal_voltage - vd_4c.vd_v - vd_3c.vd_v,
-                conductor_volume_proxy=cost,
-                review_notes=[
-                    *candidate_4c.selection.review_notes,
-                    *candidate_3c.selection.review_notes,
-                ],
             )
-            if best is None or cost < best.conductor_volume_proxy:
-                best = option
-            break
+            _append_unique(review_notes, segment_notes)
+            if segment_result is None:
+                break
+            segment_results.append(segment_result)
+            option_cost += _segment_cost_proxy(
+                _selection_from_segment_result(project, segment_result, current),
+                segment.length_m,
+            )
+        if len(segment_results) != len(segments):
+            continue
+
+        critical_segment = _critical_3c_segment(segment_results)
+        selection_3c = _selection_from_segment_result(project, critical_segment, current)
+        status = 'review_required' if any(item.get('sizing_status') == 'review_required' for item in segment_results) else 'selected'
+        option = CablePairOptimisation(
+            status=status,
+            selection_4c=candidate_4c.selection,
+            selection_3c=selection_3c,
+            conductor_temp_4c_c=candidate_4c.conductor_temp_c,
+            conductor_temp_3c_c=critical_segment.get('conductor_temp_c') if critical_segment else None,
+            vd_4c=vd_4c,
+            vd_3c=VoltageDropResult(
+                vd_v=critical_segment.get('vd_v'),
+                vd_pct=critical_segment.get('vd_pct'),
+            ) if critical_segment else None,
+            vd_total_pct=max(item.get('vd_total_pct') or 0 for item in segment_results),
+            load_end_voltage_v=min(item.get('load_end_voltage_v') or nominal_voltage for item in segment_results),
+            conductor_volume_proxy=option_cost,
+            fault_4c=fault_4c,
+            fault_3c=FaultProtectionResult(
+                status=critical_segment.get('fault_status'),
+                fault_current_a=critical_segment.get('fault_current_a'),
+            ) if critical_segment else None,
+            segment_3c_results=segment_results,
+            review_notes=review_notes,
+        )
+        if best is None or option_cost < best.conductor_volume_proxy:
+            best = option
 
     if best is None:
         return CablePairOptimisation(
@@ -939,43 +1132,41 @@ def select_direct_3c_cable(project, sizing_input):
             status='unsizeable',
             review_notes=['Operating current must be greater than zero for voltage-drop sizing.'],
         )
-    if not sizing_input.length_3c_m:
+    segments = _active_3c_segments(sizing_input)
+    segment = segments[0]
+    if not segment.length_m:
         return CablePairOptimisation(
             status='length_missing',
             review_notes=['3C cable length is required for direct 1phJB voltage-drop sizing.'],
         )
-    candidates = _ampacity_candidates(project, 3, current)
-    if not candidates:
-        return CablePairOptimisation(
-            status='unsizeable',
-            review_notes=['No ampacity-qualified 3C cable is available for direct branch sizing.'],
-        )
 
     nominal_voltage = float(project.voltage)
-    allowable_vd_pct = float(project.allowablevdrop)
-    for candidate in candidates:
-        vd_3c = calculate_vd(
-            current,
-            candidate.resistance_mohm_per_m_at_temp,
-            sizing_input.length_3c_m,
-            '1phase',
-            nominal_voltage,
+    segment_result, segment_notes = _select_3c_segment_for_voltage_drop(project, sizing_input, segment)
+    if segment_result is not None:
+        selection_3c = _selection_from_segment_result(project, segment_result, current)
+        return CablePairOptimisation(
+            status=segment_result.get('sizing_status') or 'selected',
+            selection_3c=selection_3c,
+            conductor_temp_3c_c=segment_result.get('conductor_temp_c'),
+            vd_3c=VoltageDropResult(vd_v=segment_result.get('vd_v'), vd_pct=segment_result.get('vd_pct')),
+            vd_total_pct=segment_result.get('vd_total_pct'),
+            load_end_voltage_v=segment_result.get('load_end_voltage_v'),
+            conductor_volume_proxy=_segment_cost_proxy(selection_3c, segment.length_m),
+            fault_3c=FaultProtectionResult(
+                status=segment_result.get('fault_status'),
+                fault_current_a=segment_result.get('fault_current_a'),
+            ),
+            segment_3c_results=[segment_result],
+            review_notes=segment_notes,
         )
-        if vd_3c.vd_pct <= allowable_vd_pct:
-            return CablePairOptimisation(
-                status='selected',
-                selection_3c=candidate.selection,
-                conductor_temp_3c_c=candidate.conductor_temp_c,
-                vd_3c=vd_3c,
-                vd_total_pct=vd_3c.vd_pct,
-                load_end_voltage_v=nominal_voltage - vd_3c.vd_v,
-                conductor_volume_proxy=_cable_cost_proxy(sizing_input, selection_3c=candidate.selection),
-                review_notes=list(candidate.selection.review_notes),
-            )
 
     return CablePairOptimisation(
         status='unsizeable',
-        review_notes=['No 3C cable satisfies ampacity and voltage-drop constraints for the direct branch.'],
+        fault_3c=FaultProtectionResult(
+            status='fail' if not project.rcd_provided else 'not_calculated',
+            review_notes=segment_notes,
+        ),
+        review_notes=segment_notes or ['No 3C cable satisfies ampacity and voltage-drop constraints for the direct branch.'],
     )
 
 
@@ -1055,10 +1246,15 @@ def size_cold_cable_for_branch(branch, project):
     if sizing_result is not None:
         vd_status = 'pass' if sizing_result.status in {'selected', 'review_required'} else 'fail'
     cable_4c_mass_mt = _selection_mass_mt(selection_4c, sizing_input.length_4c_m) if sizing_result else None
-    cable_3c_mass_mt = (
-        _selection_mass_mt(selection_3c, sizing_input.length_3c_m, sizing_input.circuit_count)
-        if sizing_result else None
-    )
+    if sizing_result and sizing_result.segment_3c_results:
+        cable_3c_mass_mt = _total_mass_mt(
+            *(segment.get('conductor_mass_mt') for segment in sizing_result.segment_3c_results)
+        )
+    else:
+        cable_3c_mass_mt = (
+            _selection_mass_mt(selection_3c, sizing_input.length_3c_m, sizing_input.circuit_count)
+            if sizing_result else None
+        )
     selected_catalogue = (
         selection_4c.catalogue if selection_4c and selection_4c.catalogue
         else selection_3c.catalogue if selection_3c and selection_3c.catalogue
@@ -1081,7 +1277,7 @@ def size_cold_cable_for_branch(branch, project):
         'breaker_size_a': sizing_input.breaker_size_a,
         'circuit_count': sizing_input.circuit_count,
         'mcb_curve': project.mcb_curve,
-        'gfep_provided': project.gfep_provided,
+        'rcd_provided': project.rcd_provided,
         'length_4c_m': sizing_input.length_4c_m,
         'length_3c_m': sizing_input.length_3c_m,
         'length_basis': sizing_input.length_basis,
@@ -1113,6 +1309,7 @@ def size_cold_cable_for_branch(branch, project):
         'cable_3c_conductor_temp_c': sizing_result.conductor_temp_3c_c if sizing_result else None,
         'cable_4c_conductor_mass_mt': cable_4c_mass_mt,
         'cable_3c_conductor_mass_mt': cable_3c_mass_mt,
+        'cable_3c_segments': sizing_result.segment_3c_results if sizing_result else [],
     })
     result_defaults.update(_vd_defaults(sizing_result.vd_4c if sizing_result else None, 'cable_4c'))
     result_defaults.update(_vd_defaults(sizing_result.vd_3c if sizing_result else None, 'cable_3c'))

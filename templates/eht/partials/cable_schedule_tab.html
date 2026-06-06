@@ -57,6 +57,9 @@
                     <div class="workspace-metric-card h-100">
                         <div class="workspace-metric-label">Manual Overrides</div>
                         <div class="h4 mb-0">{{ cable_schedule_summary.override_count }}</div>
+                        {% if cable_schedule_summary.manual_size_review_count %}
+                            <div class="small text-warning">{{ cable_schedule_summary.manual_size_review_count }} size review</div>
+                        {% endif %}
                     </div>
                 </div>
             </div>
@@ -115,7 +118,16 @@
                                         <span class="badge text-bg-warning text-dark ms-1">Manual</span>
                                     {% endif %}
                                 </td>
-                                <td>{{ row.cable_specification|default:"-" }}</td>
+                                <td>
+                                    {{ row.cable_specification|default:"-" }}
+                                    {% if row.manual_size_review_status == "undersized" %}
+                                        <div class="small text-danger">Manual size below calculated value.</div>
+                                    {% elif row.manual_size_review_status == "review_required" %}
+                                        <div class="small text-warning">{{ row.manual_size_review_note }}</div>
+                                    {% elif row.manual_size_review_status == "acceptable" %}
+                                        <div class="small text-success">Manual size checked against calculated value.</div>
+                                    {% endif %}
+                                </td>
                                 <td>{{ row.calculated_cold_cable_size|default:"-" }}</td>
                                 <td>
                                     {% if row.cold_cable_status %}

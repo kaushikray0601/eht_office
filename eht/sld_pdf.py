@@ -92,6 +92,22 @@ def _short_text(value, max_chars=24):
     return value if len(value) <= max_chars else f'{value[:max_chars - 3]}...'
 
 
+def _format_engineering_number(value, digits=2):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return value
+    return f'{numeric:.{digits}f}'.rstrip('0').rstrip('.')
+
+
+def _format_cable_size(value):
+    value = str(value or '')
+    value = value.replace('mm2', 'mm²').replace('sqmm', 'mm²')
+    value = value.replace(' x ', 'x').replace(' X ', 'x')
+    value = value.replace(' mm²', 'mm²')
+    return value
+
+
 def _draw_text(pdf, text, x, y, size=7, color=POWER_COLOR, bold=False, align='center'):
     pdf.setFillColor(color)
     pdf.setFont('Helvetica-Bold' if bold else 'Helvetica', size)
@@ -105,13 +121,20 @@ def _draw_text(pdf, text, x, y, size=7, color=POWER_COLOR, bold=False, align='ce
 
 def _cable_label(node):
     metadata = node.get('metadata') or {}
-    cable_size = metadata.get('manual_cable_size') or metadata.get('cable_size') or node.get('display_name') or ''
-    length = metadata.get('manual_length_m') or metadata.get('length_m')
-    parts = [node.get('display_tag') or 'Cable']
+    cold_cable = metadata.get('cold_cable') or {}
+    cable_size = (
+        metadata.get('manual_cable_size')
+        or cold_cable.get('calculated_size')
+        or metadata.get('cold_cable_calculated_size')
+        or metadata.get('cable_size')
+        or node.get('display_name')
+        or ''
+    )
+    parts = []
     if cable_size:
-        parts.append(str(cable_size))
-    if length:
-        parts.append(f'{length:g} m' if isinstance(length, float) else f'{length} m')
+        parts.append(_format_cable_size(cable_size))
+    if cold_cable.get('vd_total_pct') not in (None, ''):
+        parts.append(f"(Vd {_format_engineering_number(cold_cable.get('vd_total_pct'))}%)")
     return ' '.join(parts)
 
 
@@ -215,7 +238,8 @@ def _draw_cable(pdf, node, x, y, width):
     pdf.line(x, y, body_x, y)
     pdf.line(body_x + body_w, y, x + width, y)
     pdf.roundRect(body_x, y - 5, body_w, 10, 1.8, stroke=1, fill=1)
-    _draw_text(pdf, _cable_label(node), x + width / 2, y - 18, size=7)
+    _draw_text(pdf, node.get('display_tag') or 'Cable', x + width / 2, y - 17, size=7, bold=True)
+    _draw_text(pdf, _cable_label(node), x + width / 2, y - 27, size=6.5)
 
 
 def _draw_tracer(pdf, node, x, y, width):

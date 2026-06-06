@@ -18,6 +18,7 @@ PROJECT_FORM_COLD_CABLE_DEFAULTS = {
     'cable_grouping_derating': 1.0,
     'min_cold_cable_size_mm2': 'CALCULATED',
     'mcb_curve': 'C',
+    'rcd_provided': True,
 }
 
 
@@ -43,7 +44,7 @@ class ProjectDataForm(forms.ModelForm):
             'cable_grouping_derating',
             'min_cold_cable_size_mm2',
             'mcb_curve',
-            'gfep_provided',
+            'rcd_provided',
             'spiral_factor',
             'spiral_wrap_allowed',
             'sr_parallel_run_basis',
@@ -82,7 +83,7 @@ class ProjectDataForm(forms.ModelForm):
             'cable_grouping_derating': 'Cable grouping derating factor',
             'min_cold_cable_size_mm2': 'Minimum cold cable size',
             'mcb_curve': 'MCB characteristic curve',
-            'gfep_provided': 'GFEP provided',
+            'rcd_provided': 'RCD / earth fault protection provided',
             'spiral_factor':'Allowed Spiral Factor',
             'spiral_wrap_allowed':'Installation with spiral wrap',
             'sr_parallel_run_basis': 'SR parallel run basis',
@@ -150,8 +151,8 @@ class ProjectDataForm(forms.ModelForm):
         )
         self.fields['min_cold_cable_size_mm2'].help_text = 'Optional project minimum. Calculated allows the sizing engine to choose freely.'
         self.fields['mcb_curve'].help_text = 'Type C is the default EHT breaker curve for fault-check screening.'
-        self.fields['gfep_provided'].help_text = (
-            'Enabled by default for EHT circuits. Later cold-cable fault checks will treat missing GFEP as a review condition.'
+        self.fields['rcd_provided'].help_text = (
+            'Enabled by default for EHT circuits. If disabled, the MCB earth-loop check is a hard cold-cable sizing gate.'
         )
         self.fields['sr_parallel_run_basis'].required = False
         self.fields['sr_max_parallel_runs'].required = False

@@ -353,8 +353,8 @@
             <div class="dg-step-body">
                 <div>
                     <p>Once the SLD topology is committed, the cold cable engine reads every <code>PowerDistributionBranch</code> in the project and sizes the upstream power cable for each feeder segment. Inputs come directly from the confirmed SR/MI results — per-circuit operating current, breaker size, and circuit count — requiring no manual re-entry.</p>
-                    <p style="margin-top:10px;">For <strong>3-phase JB branches</strong> (4-core trunk to JB, then 3-core outgoing runs), the engine searches all ampacity-qualified cable combinations and selects the pair that minimises total conductor volume — effectively minimising copper/aluminium tonnage — while keeping the combined path voltage drop within the project limit. For <strong>direct 1-phase branches</strong>, a single 3-core cable is sized against the full VD allowance.</p>
-                    <p style="margin-top:10px;">Fault protection is verified separately: the 4-core trunk is checked for phase-to-phase fault clearance against the MCB instantaneous trip threshold (Type B/C/D curve × breaker rating), and the 3-core outgoing circuit is checked for earth fault loop with GFEP handling. If GFEP is enabled, a marginally failing earth loop becomes <em>Review Required</em> rather than a hard rejection.</p>
+                    <p style="margin-top:10px;">For <strong>3-phase JB branches</strong> (4-core trunk to JB, then 3-core outgoing runs), the engine searches all ampacity-qualified cable combinations and selects the pair that minimises total conductor volume — effectively minimising copper tonnage — while keeping the combined path voltage drop within the project limit. For <strong>direct 1-phase branches</strong>, a single 3-core cable is sized against the full VD allowance.</p>
+                    <p style="margin-top:10px;">Fault protection is verified separately: the 4-core trunk is checked for phase-to-phase fault clearance against the MCB instantaneous trip threshold (Type B/C/D curve × breaker rating), and the 3-core outgoing circuit is checked for earth fault loop with RCD handling. If an RCD is provided, a marginally failing earth loop becomes <em>Review Required</em> rather than a hard rejection.</p>
                 </div>
                 <div class="dg-step-outputs">
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> K_temp = √((T_max−T_site)/(T_max−T_ref))</div>
@@ -364,7 +364,7 @@
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Total path VD (4C+3C) + load-end voltage</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> 3-phase JB: min. conductor volume optimisation</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Fault check — 4C phase-to-phase (MCB B/C/D)</div>
-                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Earth loop — 3C with GFEP-aware gate</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Earth loop — 3C with RCD-aware gate</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Conductor mass (metric tonnes) per branch</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Status: Selected / Review Required / Unsizeable</div>
                 </div>
@@ -548,7 +548,7 @@
                     <tr><td>I</td><td>Per-circuit operating current (A) — from SR/MI electrical sizing</td></tr>
                     <tr><td>R(T)</td><td>Conductor resistance at operating temp (Ω/m) = R₂₀ × (1 + α × (T<sub>op</sub>−20))</td></tr>
                     <tr><td>L</td><td>Cable route length (m)</td></tr>
-                    <tr><td>α</td><td>Temperature coefficient of resistance: Cu = 0.00393/°C, Al = 0.00403/°C</td></tr>
+                    <tr><td>α</td><td>Temperature coefficient of resistance: Cu = 0.00393/°C</td></tr>
                     <tr><td>T<sub>op</sub></td><td>Cable operating temperature: 70°C (PVC), 90°C (XLPE)</td></tr>
                     <tr><td>Factor 2</td><td>Both conductors in 1-phase loop (outgoing + return) carry the same current</td></tr>
                     <tr><td>Factor √3</td><td>Balanced 3-phase geometry for 4-core trunk feeder</td></tr>
@@ -662,10 +662,10 @@
                 <li><i class="bi bi-check-circle-fill"></i> Derated ampacity = A_catalogue × K_temp × K_group (grouping derating)</li>
                 <li><i class="bi bi-check-circle-fill"></i> Conductor R(T) = R₂₀ × (1 + α(T-20)) — IEC 60228</li>
                 <li><i class="bi bi-check-circle-fill"></i> VD: 2×I×R(T)×L (1-phase) · √3×I×R(T)×L (3-phase) · PF = 1.0</li>
-                <li><i class="bi bi-check-circle-fill"></i> <strong>Conductor volume optimisation</strong> — minimises copper/aluminium tonnage by distributing VD budget across 4C trunk and 3C outgoing pair</li>
+                <li><i class="bi bi-check-circle-fill"></i> <strong>Conductor volume optimisation</strong> — minimises copper tonnage by distributing VD budget across 4C trunk and 3C outgoing pair</li>
                 <li><i class="bi bi-check-circle-fill"></i> Series VD check: trunk + outgoing VD ≤ project limit; load-end voltage reported in V</li>
                 <li><i class="bi bi-check-circle-fill"></i> 4C trunk fault check: MCB B/C/D instantaneous trip verification (IEC 60364-4-41)</li>
-                <li><i class="bi bi-check-circle-fill"></i> 3C earth loop: Ground Fault Equipment Protection (GFEP)-aware sizing gate</li>
+                <li><i class="bi bi-check-circle-fill"></i> 3C earth loop: Residual Current Device (RCD)-aware sizing gate</li>
                 <li><i class="bi bi-check-circle-fill"></i> Conductor mass per branch (metric tonnes) — material takeoff</li>
                 <li><i class="bi bi-clock"></i> Tracer PE-path in earth loop (pending SR/MI catalogue data)</li>
             </ul>

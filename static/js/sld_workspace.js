@@ -23,6 +23,7 @@
     };
     const SCHEMATIC_SYMBOL_COMPONENTS = new Set(['MCB', 'Isolator3PH', 'Isolator1PH', 'JB3PH', 'JB1PH', 'Tracer']);
     let SchematicSymbolElement = null;
+    let CableDetailLabelElement = null;
     UPSTREAM_COMPONENT_ORDER.concat(DOWNSTREAM_COMPONENT_ORDER).forEach(function (componentType, index) {
         COMPONENT_SORT_ORDER[componentType] = index;
     });
@@ -53,6 +54,20 @@
             });
         }
         return SchematicSymbolElement;
+    }
+
+    function getCableDetailLabelElementClass() {
+        if (!CableDetailLabelElement) {
+            CableDetailLabelElement = joint.dia.Element.define('sld.CableDetailLabelElement', {}, {
+                markup: [
+                    { tagName: 'rect', selector: 'body' },
+                    { tagName: 'text', selector: 'tagLabel' },
+                    { tagName: 'text', selector: 'sizeLabel' },
+                    { tagName: 'text', selector: 'vdLabel' },
+                ],
+            });
+        }
+        return CableDetailLabelElement;
     }
 
     function escapeHtml(value) {
@@ -105,17 +120,77 @@
         return node.display_name || node.component_type;
     }
 
+    function hasValue(value) {
+        return value !== null && value !== undefined && value !== '';
+    }
+
+    function formatEngineeringNumber(value, digits) {
+        if (typeof value !== 'number' || !Number.isFinite(value)) {
+            const parsed = Number(value);
+            if (!Number.isFinite(parsed)) {
+                return value;
+            }
+            value = parsed;
+        }
+        return Number(value.toFixed(digits === undefined ? 2 : digits)).toString();
+    }
+
+    function formatStatusText(value) {
+        return String(value || '-')
+            .replace(/_/g, ' ')
+            .replace(/\b\w/g, function (letter) { return letter.toUpperCase(); });
+    }
+
+    function formatCableSizeText(value) {
+        return String(value || '')
+            .replace(/\s*x\s*/i, ' x ')
+            .replace(/\s*mm2\b/i, ' mm²')
+            .replace(/\s*sqmm\b/i, ' mm²');
+    }
+
+    function compactCableSizeText(value) {
+        return formatCableSizeText(value)
+            .replace(/\s*x\s*/i, 'x')
+            .replace(/\s+mm²\b/i, 'mm²');
+    }
+
+    function formatPercent(value, digits) {
+        if (!hasValue(value)) {
+            return '-';
+        }
+        return `${formatEngineeringNumber(value, digits === undefined ? 2 : digits)}%`;
+    }
+
+    function formatUnit(value, unit, digits) {
+        if (!hasValue(value)) {
+            return '-';
+        }
+        return `${formatEngineeringNumber(value, digits === undefined ? 2 : digits)} ${unit}`;
+    }
+
     function formatExternalDetail(node) {
         const metadata = node.metadata || {};
         if (node.component_type === 'Cable4C' || node.component_type === 'Cable3C') {
-            const cableLabel = metadata.manual_cable_size || metadata.cable_size || node.display_name;
-            const engineeringLabel = metadata.length_m ? `${cableLabel} ${metadata.length_m} m` : cableLabel;
-            return `${node.display_tag}\n${engineeringLabel}`;
+            const parts = formatCableExternalDetailParts(node);
+            return [parts.tag, parts.size, parts.vd].filter(Boolean).join('\n');
         }
         if (node.component_type === 'Tracer') {
             return formatNodeBody(node);
         }
         return '';
+    }
+
+    function formatCableExternalDetailParts(node) {
+        const metadata = node.metadata || {};
+        const coldCable = metadata.cold_cable || {};
+        const cableLabel = metadata.manual_cable_size || coldCable.calculated_size || metadata.cold_cable_calculated_size || metadata.cable_size || node.display_name;
+        return {
+            tag: node.display_tag || '',
+            size: compactCableSizeText(cableLabel),
+            vd: hasValue(coldCable.vd_total_pct)
+                ? `(Vd ${formatEngineeringNumber(coldCable.vd_total_pct, 2)}%)`
+                : '',
+        };
     }
 
     function formatInspectorNumber(value) {
@@ -581,6 +656,21 @@
             rectangle.attr('body/stroke', '#d97706');
             rectangle.attr('body/strokeWidth', 2.6);
         }
+        if (node.component_type === 'Cable4C' || node.component_type === 'Cable3C') {
+            const coldCable = (node.metadata || {}).cold_cable || {};
+            if (
+                coldCable.sizing_status === 'unsizeable'
+                || coldCable.sizing_status === 'length_missing'
+                || coldCable.vd_status === 'fail'
+                || coldCable.fault_status === 'fail'
+            ) {
+                rectangle.attr('body/stroke', '#b42318');
+                rectangle.attr('body/strokeWidth', 2.8);
+            } else if (coldCable.sizing_status === 'review_required') {
+                rectangle.attr('body/stroke', '#d97706');
+                rectangle.attr('body/strokeWidth', 2.4);
+            }
+        }
         rectangle.prop('sldMeta', { componentId: node.component_id, node: node });
         return rectangle;
     }
@@ -591,10 +681,58 @@
         const isCableOverride = (node.component_type === 'Cable4C' || node.component_type === 'Cable3C')
             && !!(metadata.cable_override_active || metadata.manual_length_m || metadata.manual_cable_size);
         const isCable = CABLE_COMPONENTS.has(node.component_type);
-        const labelWidth = isCable ? 120 : style.width + 34;
+        if (isCable) {
+            const labelWidth = 98;
+            const labelHeight = 48;
+            const label = new (getCableDetailLabelElementClass())();
+            const detailParts = formatCableExternalDetailParts(node);
+            label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 14);
+            label.resize(labelWidth, labelHeight);
+            label.attr({
+                body: {
+                    fill: 'transparent',
+                    stroke: 'transparent',
+                },
+                tagLabel: {
+                    text: detailParts.tag,
+                    fill: isCableOverride ? '#8a5b12' : '#17324d',
+                    fontSize: SLD_LABEL_FONT_SIZE,
+                    fontWeight: SLD_LABEL_FONT_WEIGHT,
+                    textAnchor: 'middle',
+                    textVerticalAnchor: 'top',
+                    x: labelWidth / 2,
+                    y: 0,
+                },
+                sizeLabel: {
+                    text: detailParts.size,
+                    fill: isCableOverride ? '#8a5b12' : '#17324d',
+                    fontSize: SLD_LABEL_FONT_SIZE,
+                    fontWeight: SLD_LABEL_FONT_WEIGHT,
+                    textAnchor: 'middle',
+                    textVerticalAnchor: 'top',
+                    x: labelWidth / 2,
+                    y: 14,
+                },
+                vdLabel: {
+                    text: detailParts.vd,
+                    fill: isCableOverride ? '#8a5b12' : '#486581',
+                    fontSize: SLD_LABEL_FONT_SIZE - 0.5,
+                    fontWeight: SLD_LABEL_FONT_WEIGHT,
+                    textAnchor: 'middle',
+                    textVerticalAnchor: 'top',
+                    x: labelWidth / 2,
+                    y: 28,
+                },
+            });
+            label.prop('sldMeta', { type: 'external-detail-label', ownerComponentId: node.component_id });
+            return label;
+        }
+        const labelWidth = isCable ? 176 : style.width + 34;
+        const labelHeight = isCable ? 48 : 44;
+        const labelOffsetY = isCable ? 16 : 10;
         const label = new joint.shapes.standard.TextBlock();
-        label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 10);
-        label.resize(labelWidth, isCable ? 36 : 44);
+        label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + labelOffsetY);
+        label.resize(labelWidth, labelHeight);
         label.attr({
             body: {
                 fill: 'transparent',
@@ -1614,7 +1752,17 @@
             ['Path Links', pathLinkCount],
         ];
         Object.keys(metadata).sort().forEach(function (key) {
-            if (key === 'tracer_selection' || key === 'sr_calculation') {
+            if (
+                key === 'tracer_selection'
+                || key === 'sr_calculation'
+                || key === 'cold_cable'
+                || key === 'cold_cable_calculated_size'
+                || key === 'cold_cable_status'
+                || key === 'cold_cable_vd_status'
+                || key === 'cold_cable_fault_status'
+                || key === 'manual_size_review_status'
+                || key === 'manual_size_review_note'
+            ) {
                 return;
             }
             const value = metadata[key];
@@ -1650,6 +1798,36 @@
                 rows.push(['Constructability', constructabilityWarning]);
             }
             rows.push(['Alternate Options', alternatives.length ? alternatives.map(function (item) { return item.v_uid; }).join(', ') : '-']);
+        }
+        if (CABLE_COMPONENTS.has(node.component_type) && metadata.cold_cable) {
+            const coldCable = metadata.cold_cable;
+            rows.push(['Calculated Size', formatCableSizeText(coldCable.calculated_size) || '-']);
+            rows.push(['Sizing Status', formatStatusText(coldCable.sizing_status)]);
+            rows.push(['Voltage Drop Status', formatStatusText(coldCable.vd_status)]);
+            rows.push(['Fault Status', formatStatusText(coldCable.fault_status)]);
+            rows.push(['Length Basis', formatStatusText(coldCable.length_basis)]);
+            rows.push(['Length', formatUnit(coldCable.length_m, 'm', 2)]);
+            rows.push(['Derated Ampacity', formatUnit(coldCable.derated_ampacity_a, 'A', 2)]);
+            rows.push(['Ampacity Margin', formatPercent(coldCable.ampacity_margin_pct, 2)]);
+            rows.push(['Conductor Temperature', formatUnit(coldCable.conductor_temp_c, '°C', 1)]);
+            rows.push(['Conductor Mass', formatUnit(coldCable.conductor_mass_mt, 'MT', 4)]);
+            rows.push(['Segment VD', formatPercent(coldCable.vd_pct, 2)]);
+            rows.push(['Total Path VD', formatPercent(coldCable.vd_total_pct, 2)]);
+            rows.push(['VD Allowable', formatPercent(coldCable.vd_allowable_pct, 2)]);
+            rows.push(['Load End Voltage', formatUnit(coldCable.load_end_voltage_v, 'V', 1)]);
+            rows.push(['Fault Current', formatUnit(coldCable.fault_current_a, 'A', 2)]);
+            rows.push(['K Temp', hasValue(coldCable.k_temp) ? formatEngineeringNumber(coldCable.k_temp, 4) : '-']);
+            rows.push(['K Group', hasValue(coldCable.k_group) ? formatEngineeringNumber(coldCable.k_group, 4) : '-']);
+            rows.push(['K Total', hasValue(coldCable.k_total) ? formatEngineeringNumber(coldCable.k_total, 4) : '-']);
+            if (metadata.manual_size_review_status) {
+                rows.push(['Manual Size Review', formatStatusText(metadata.manual_size_review_status)]);
+            }
+            if (metadata.manual_size_review_note) {
+                rows.push(['Manual Size Note', metadata.manual_size_review_note]);
+            }
+            if (Array.isArray(coldCable.review_notes) && coldCable.review_notes.length) {
+                rows.push(['Review Notes', coldCable.review_notes.join('\n')]);
+            }
         }
         return rows;
     }
@@ -1790,7 +1968,7 @@
         const metadata = node.metadata || {};
         const generatedLength = metadata.generated_length_m || metadata.length_m || '';
         const manualLength = metadata.manual_length_m || '';
-        const generatedSize = metadata.generated_cable_size || metadata.cable_size || '';
+        const generatedSize = metadata.generated_cable_size || metadata.cold_cable_calculated_size || metadata.cable_size || '';
         const manualSize = metadata.manual_cable_size || '';
         const remarks = metadata.cable_override_remarks || '';
         const isCableOverride = !!(metadata.cable_override_active || metadata.manual_length_m || metadata.manual_cable_size);

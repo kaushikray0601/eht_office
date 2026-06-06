@@ -1,7 +1,8 @@
 import hashlib
+import re
 
 from .cable_management import apply_cable_overrides_to_payload
-from .models import PowerDistributionBranch
+from .models import ColdCableResult, PowerDistributionBranch
 from .sld_topology import apply_active_topology_edit
 from .tracer_management import apply_tracer_selection_to_payload
 
@@ -226,6 +227,203 @@ def _empty_payload(project_id):
     }
 
 
+def _format_cold_cable_size(core_count, size_mm2):
+    if size_mm2 in (None, ''):
+        return ''
+    return f'{core_count}C x {float(size_mm2):g} mm2'
+
+
+def _parse_cable_size_label(value):
+    match = re.search(r'(?P<core>[34])\s*C\s*(?:x|X)?\s*(?P<size>\d+(?:\.\d+)?)', str(value or ''))
+    if not match:
+        return None
+    return {
+        'core_count': int(match.group('core')),
+        'size_mm2': float(match.group('size')),
+    }
+
+
+def _manual_size_review(node, cold_metadata):
+    metadata = node.get('metadata') or {}
+    manual_size = metadata.get('manual_cable_size')
+    if not manual_size:
+        return {}
+    parsed = _parse_cable_size_label(manual_size)
+    expected_core_count = 4 if node.get('component_type') == 'Cable4C' else 3
+    calculated_size = cold_metadata.get('conductor_size_mm2')
+    if not parsed or calculated_size in (None, ''):
+        return {
+            'manual_size_review_status': 'review_required',
+            'manual_size_review_note': 'Manual cable size could not be compared with the calculated cold cable size.',
+        }
+    if parsed['core_count'] != expected_core_count:
+        return {
+            'manual_size_review_status': 'review_required',
+            'manual_size_review_note': f'Manual cable core count does not match this {expected_core_count}C cable segment.',
+        }
+    if parsed['size_mm2'] + 1e-9 < float(calculated_size):
+        return {
+            'manual_size_review_status': 'undersized',
+            'manual_size_review_note': 'Manual cable size is below the calculated cold cable size.',
+        }
+    return {
+        'manual_size_review_status': 'acceptable',
+        'manual_size_review_note': 'Manual cable size is equal to or larger than the calculated cold cable size.',
+    }
+
+
+def _cold_cable_result_indexes(project_id):
+    by_line_branch = {}
+    cold_results = ColdCableResult.objects.filter(project_id=project_id).select_related(
+        'cable_4c_catalogue',
+        'cable_3c_catalogue',
+    )
+    for result in cold_results:
+        by_line_branch[(str(result.line_uid), result.branch_index)] = result
+        by_line_branch[(str(result.line_id), result.branch_index)] = result
+    return by_line_branch
+
+
+def _cold_cable_result_for_node(node, cold_result_index):
+    branch_index = node.get('branch_index') or 0
+    line_uid = str(node.get('line_uid') or '')
+    if line_uid:
+        result = cold_result_index.get((line_uid, branch_index))
+        if result:
+            return result
+    line_id = str(node.get('line_id') or '')
+    if line_id:
+        result = cold_result_index.get((line_id, branch_index))
+        if result:
+            return result
+    for candidate_line_id in node.get('line_ids') or []:
+        result = cold_result_index.get((str(candidate_line_id), branch_index))
+        if result:
+            return result
+    return None
+
+
+def _cold_cable_segment_for_node(node, result):
+    if node.get('component_type') != 'Cable3C':
+        return None
+    segments = result.cable_3c_segments or []
+    component_id = str(node.get('component_id') or '')
+    display_tag = str(node.get('display_tag') or '')
+    circuit_index = node.get('circuit_index')
+    for segment in segments:
+        if component_id and str(segment.get('component_id') or '') == component_id:
+            return segment
+        if display_tag and str(segment.get('display_tag') or '') == display_tag:
+            return segment
+    for segment in segments:
+        if circuit_index is not None and segment.get('circuit_index') == circuit_index:
+            return segment
+    return None
+
+
+def _cold_cable_metadata_for_node(node, result):
+    component_type = node.get('component_type')
+    if component_type == 'Cable4C':
+        calculated_size = _format_cold_cable_size(4, result.cable_4c_size_mm2)
+        conductor_size = result.cable_4c_size_mm2
+        derated_ampacity = result.cable_4c_ampacity_derated_a
+        ampacity_margin = result.cable_4c_ampacity_margin_pct
+        conductor_temp = result.cable_4c_conductor_temp_c
+        conductor_mass = result.cable_4c_conductor_mass_mt
+        length_m = result.length_4c_m
+        vd_pct = result.cable_4c_vd_pct
+        fault_status = result.fault_protection_4c_status
+        fault_current = result.fault_current_4c_phase_to_phase_a
+    elif component_type == 'Cable3C':
+        segment = _cold_cable_segment_for_node(node, result)
+        if segment:
+            calculated_size = _format_cold_cable_size(3, segment.get('size_mm2'))
+            conductor_size = segment.get('size_mm2')
+            derated_ampacity = segment.get('ampacity_derated_a')
+            ampacity_margin = segment.get('ampacity_margin_pct')
+            conductor_temp = segment.get('conductor_temp_c')
+            conductor_mass = segment.get('conductor_mass_mt')
+            length_m = segment.get('length_m')
+            vd_pct = segment.get('vd_pct')
+            fault_status = segment.get('fault_status') or result.fault_protection_3c_status
+            fault_current = segment.get('fault_current_a')
+            length_basis = segment.get('length_basis') or result.length_basis
+            vd_total_pct = segment.get('vd_total_pct')
+            load_end_voltage = segment.get('load_end_voltage_v')
+            k_temp = segment.get('k_temp')
+            k_group = segment.get('k_group')
+            k_total = segment.get('k_total')
+            review_notes = list(segment.get('review_notes') or [])
+        else:
+            calculated_size = _format_cold_cable_size(3, result.cable_3c_size_mm2)
+            conductor_size = result.cable_3c_size_mm2
+            derated_ampacity = result.cable_3c_ampacity_derated_a
+            ampacity_margin = result.cable_3c_ampacity_margin_pct
+            conductor_temp = result.cable_3c_conductor_temp_c
+            conductor_mass = result.cable_3c_conductor_mass_mt
+            length_m = result.length_3c_m
+            vd_pct = result.cable_3c_vd_pct
+            fault_status = result.fault_protection_3c_status
+            fault_current = result.fault_current_3c_line_to_neutral_a
+            length_basis = result.length_basis
+            vd_total_pct = result.vd_total_pct
+            load_end_voltage = result.load_end_voltage_v
+            k_temp = result.k_temp
+            k_group = result.k_group
+            k_total = result.k_total
+            review_notes = result.review_notes or []
+    else:
+        return None
+
+    return {
+        'calculated_size': calculated_size,
+        'conductor_size_mm2': conductor_size,
+        'sizing_status': result.sizing_status,
+        'vd_status': result.vd_status,
+        'fault_status': fault_status,
+        'length_basis': length_basis if component_type == 'Cable3C' else result.length_basis,
+        'length_m': length_m,
+        'derated_ampacity_a': derated_ampacity,
+        'ampacity_margin_pct': ampacity_margin,
+        'conductor_temp_c': conductor_temp,
+        'conductor_mass_mt': conductor_mass,
+        'vd_pct': vd_pct,
+        'vd_total_pct': vd_total_pct if component_type == 'Cable3C' else result.vd_total_pct,
+        'vd_allowable_pct': result.vd_allowable_pct,
+        'load_end_voltage_v': load_end_voltage if component_type == 'Cable3C' else result.load_end_voltage_v,
+        'fault_current_a': fault_current,
+        'k_temp': k_temp if component_type == 'Cable3C' else result.k_temp,
+        'k_group': k_group if component_type == 'Cable3C' else result.k_group,
+        'k_total': k_total if component_type == 'Cable3C' else result.k_total,
+        'review_notes': review_notes if component_type == 'Cable3C' else result.review_notes or [],
+    }
+
+
+def apply_cold_cable_results_to_payload(project_id, payload):
+    cold_result_index = _cold_cable_result_indexes(project_id)
+    if not cold_result_index:
+        return payload
+
+    for node in payload.get('nodes', []):
+        if node.get('component_type') not in {'Cable4C', 'Cable3C'}:
+            continue
+        result = _cold_cable_result_for_node(node, cold_result_index)
+        if result is None:
+            continue
+        metadata = dict(node.get('metadata') or {})
+        cold_metadata = _cold_cable_metadata_for_node(node, result)
+        if cold_metadata is None:
+            continue
+        metadata['cold_cable'] = cold_metadata
+        metadata['cold_cable_calculated_size'] = cold_metadata['calculated_size']
+        metadata['cold_cable_status'] = cold_metadata['sizing_status']
+        metadata['cold_cable_vd_status'] = cold_metadata['vd_status']
+        metadata['cold_cable_fault_status'] = cold_metadata['fault_status']
+        metadata.update(_manual_size_review(node, cold_metadata))
+        node['metadata'] = metadata
+    return payload
+
+
 def filter_sld_payload_by_line(payload, selected_line_id):
     selected_line_id = (selected_line_id or '').strip()
     if not selected_line_id:
@@ -359,6 +557,7 @@ def build_project_sld_payload(project_id, line_id=None, apply_topology=True):
     if apply_topology:
         payload = apply_cable_overrides_to_payload(project_id, payload)
         payload = apply_tracer_selection_to_payload(project_id, payload)
+    payload = apply_cold_cable_results_to_payload(project_id, payload)
     if selected_line_id:
         filtered_payload, _normalized_line_id = filter_sld_payload_by_line(payload, selected_line_id)
         return filtered_payload or _empty_payload(project_id)

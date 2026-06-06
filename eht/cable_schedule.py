@@ -26,6 +26,8 @@ CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Cable Drum Tag',
     'Cable Route Details',
     'Remarks',
+    'Manual Size Review',
+    'Manual Size Review Note',
     'Rev. No.',
 ]
 
@@ -109,6 +111,16 @@ def _cold_cable_result_for_node(node, cold_results):
 
 
 def _cold_cable_fields(node, cold_results):
+    metadata = _metadata(node)
+    cold_cable = metadata.get('cold_cable') or {}
+    if cold_cable:
+        return {
+            'calculated_cold_cable_size': cold_cable.get('calculated_size') or '',
+            'cold_cable_status': cold_cable.get('sizing_status') or '',
+            'cold_cable_vd_status': cold_cable.get('vd_status') or '',
+            'cold_cable_fault_status': cold_cable.get('fault_status') or '',
+            'cold_cable_conductor_mass_mt': cold_cable.get('conductor_mass_mt'),
+        }
     result = _cold_cable_result_for_node(node, cold_results)
     if result is None:
         return {
@@ -211,6 +223,8 @@ def _cable_schedule_rows(payload, cold_results=None):
             'remarks': metadata.get('cable_override_remarks') or '',
             'revision_no': '0',
             'manual_override_active': bool(metadata.get('cable_override_active')),
+            'manual_size_review_status': metadata.get('manual_size_review_status') or '',
+            'manual_size_review_note': metadata.get('manual_size_review_note') or '',
         })
     return rows
 
@@ -238,6 +252,7 @@ def build_cable_schedule_workspace_data(project_id):
         'total_cable_length_display': f'{ceil(total_cable_length_m):,}',
         'total_conductor_mass_mt': total_conductor_mass_mt,
         'override_count': sum(1 for row in cable_rows if row['manual_override_active']),
+        'manual_size_review_count': sum(1 for row in cable_rows if row.get('manual_size_review_status') in {'undersized', 'review_required'}),
     }
     return {
         'cable_rows': cable_rows,
@@ -265,6 +280,8 @@ def cable_schedule_export_rows(cable_rows):
             'Cable Drum Tag': row.get('cable_drum_tag', ''),
             'Cable Route Details': row.get('cable_route_details', ''),
             'Remarks': row.get('remarks', ''),
+            'Manual Size Review': row.get('manual_size_review_status', ''),
+            'Manual Size Review Note': row.get('manual_size_review_note', ''),
             'Rev. No.': row.get('revision_no', ''),
         }
         for row in cable_rows

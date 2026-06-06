@@ -236,7 +236,7 @@ def fetch_project_data(project_id):
         "cable_grouping_derating": float(project_data.cable_grouping_derating),
         "min_cold_cable_size_mm2": project_data.min_cold_cable_size_mm2,
         "mcb_curve": project_data.mcb_curve,
-        "gfep_provided": project_data.gfep_provided,
+        "rcd_provided": project_data.rcd_provided,
     }
 
 

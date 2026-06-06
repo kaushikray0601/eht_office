@@ -35,7 +35,7 @@ GAS_GROUP_CHOICES = [
     ('IIB', 'IIB'),
     ('IIC', 'IIC'),
 ]
-CABLE_CONDUCTOR_MATERIAL_CHOICES = [('Cu', 'Copper'), ('Al', 'Aluminium')]
+CABLE_CONDUCTOR_MATERIAL_CHOICES = [('Cu', 'Copper')]
 CABLE_INSULATION_TYPE_CHOICES = [('XLPE', 'XLPE'), ('PVC', 'PVC')]
 CABLE_STANDARD_CHOICES = [
     ('IEC_60502_1', 'IEC 60502-1 (international)'),
@@ -145,7 +145,7 @@ class ProjectData(models.Model):
     cable_grouping_derating = models.DecimalField(max_digits=4, decimal_places=3, default=1.0)
     min_cold_cable_size_mm2 = models.CharField(max_length=15, choices=MIN_CABLE_SIZE_CHOICES, default='CALCULATED')
     mcb_curve = models.CharField(max_length=5, choices=MCB_CURVE_CHOICES, default='C')
-    gfep_provided = models.BooleanField(default=True)
+    rcd_provided = models.BooleanField(default=True)
     udf1 = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
     udf2 = models.CharField(max_length=30, null=True, blank=True)
     udf3 = models.CharField(max_length=30, null=True, blank=True)    
@@ -503,6 +503,15 @@ class ColdCableCatalogue(models.Model):
     def __str__(self):
         return f"{self.cable_type_code} {self.core_count}C x {self.conductor_size_mm2:g} mm²"
 
+    def clean(self):
+        errors = {}
+        if self.conductor_material not in dict(CABLE_CONDUCTOR_MATERIAL_CHOICES):
+            errors['conductor_material'] = 'Only copper cold-cable catalogue rows are active in this phase.'
+        if self.insulation_type not in dict(CABLE_INSULATION_TYPE_CHOICES):
+            errors['insulation_type'] = 'Cold-cable insulation type must be XLPE or PVC.'
+        if errors:
+            raise ValidationError(errors)
+
 
 class TracerSelectionOverride(models.Model):
     project = models.ForeignKey(
@@ -713,7 +722,7 @@ class ColdCableResult(models.Model):
     breaker_size_a = models.FloatField(default=0.0)
     circuit_count = models.IntegerField(default=0)
     mcb_curve = models.CharField(max_length=5, choices=MCB_CURVE_CHOICES, default='C')
-    gfep_provided = models.BooleanField(default=True)
+    rcd_provided = models.BooleanField(default=True)
 
     length_4c_m = models.FloatField(null=True, blank=True)
     length_3c_m = models.FloatField(null=True, blank=True)
@@ -743,6 +752,7 @@ class ColdCableResult(models.Model):
     cable_3c_conductor_mass_mt = models.FloatField(null=True, blank=True)
     cable_3c_vd_v = models.FloatField(null=True, blank=True)
     cable_3c_vd_pct = models.FloatField(null=True, blank=True)
+    cable_3c_segments = models.JSONField(default=list, blank=True)
 
     vd_total_pct = models.FloatField(null=True, blank=True)
     vd_allowable_pct = models.FloatField(default=0.0)

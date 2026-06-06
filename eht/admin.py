@@ -25,8 +25,8 @@ class ManagedProjectAdmin(admin.ModelAdmin):
 
 @admin.register(ProjectData)
 class ProjectDataAdmin(admin.ModelAdmin):
-    list_display = ('proj_id', 'vendor', 'voltage', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'gfep_provided')
-    list_filter = ('vendor', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'gfep_provided')
+    list_display = ('proj_id', 'vendor', 'voltage', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'rcd_provided')
+    list_filter = ('vendor', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'rcd_provided')
     search_fields = ('proj_id',)
 
 
