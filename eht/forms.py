@@ -7,6 +7,7 @@ from .models import (
     ProjectData,
     is_default_project_id,
 )
+from .cold_cable_readiness import cold_cable_readiness_message
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Submit, Div, Field, Row, Column
 
@@ -146,8 +147,19 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['cable_standard'].help_text = 'Default basis for LV EHT cold-cable sizing.'
         self.fields['cable_conductor_material'].help_text = 'Used for resistance correction and conductor mass estimate.'
         self.fields['cable_insulation_type'].help_text = 'XLPE uses 90 C and PVC uses 70 C conductor temperature basis.'
+        readiness_basis = {
+            'cable_standard': self.data.get('cable_standard') or getattr(self.instance, 'cable_standard', None) or PROJECT_FORM_COLD_CABLE_DEFAULTS['cable_standard'],
+            'cable_conductor_material': self.data.get('cable_conductor_material') or getattr(self.instance, 'cable_conductor_material', None) or PROJECT_FORM_COLD_CABLE_DEFAULTS['cable_conductor_material'],
+            'cable_insulation_type': self.data.get('cable_insulation_type') or getattr(self.instance, 'cable_insulation_type', None) or PROJECT_FORM_COLD_CABLE_DEFAULTS['cable_insulation_type'],
+        }
         self.fields['cable_install_method'].help_text = (
-            'Selects the matching validated ampacity catalogue rows. Single-core tray methods are not included in this phase.'
+            'Selects matching validated ampacity catalogue rows. '
+            'Single-core tray methods are not included in this phase. '
+            + cold_cable_readiness_message(
+                readiness_basis['cable_standard'],
+                readiness_basis['cable_conductor_material'],
+                readiness_basis['cable_insulation_type'],
+            )
         )
         self.fields['min_cold_cable_size_mm2'].help_text = 'Optional project minimum. Calculated allows the sizing engine to choose freely.'
         self.fields['mcb_curve'].help_text = 'Type C is the default EHT breaker curve for fault-check screening.'

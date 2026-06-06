@@ -68,6 +68,24 @@
                 {{ form.min_cold_cable_size_mm2|as_crispy_field }}
             </div>
         </div>
+        {% if cold_cable_method_readiness %}
+            <div class="alert alert-light border small mt-3 mb-0">
+                <div class="fw-semibold mb-1">Cold cable catalogue readiness</div>
+                {% for method in cold_cable_method_readiness %}
+                    <span class="badge text-bg-{% if method.status == 'ready' %}success{% elif method.status == 'partial' %}warning{% else %}secondary{% endif %} me-1 mb-1">
+                        {{ method.method }}:
+                        {% if method.status == 'ready' %}
+                            ready ({{ method.validated_rows }})
+                        {% elif method.status == 'partial' %}
+                            partial
+                        {% else %}
+                            no rows
+                        {% endif %}
+                    </span>
+                {% endfor %}
+                <div class="text-muted mt-1">Methods with no validated rows remain selectable, but cold-cable sizing will be unsizeable until catalogue rows are added and validated.</div>
+            </div>
+        {% endif %}
         <div class="row g-3 mt-1">
             <div class="col-lg-4">
                 {{ form.mcb_curve|as_crispy_field }}

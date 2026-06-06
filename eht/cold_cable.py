@@ -4,6 +4,7 @@ import math
 from .models import (
     CABLE_GROUPING_DERATING_MAX,
     CABLE_GROUPING_DERATING_MIN,
+    CABLE_INSTALL_METHOD_CHOICES,
     CableScheduleOverride,
     ColdCableCatalogue,
     ColdCableResult,
@@ -500,6 +501,10 @@ def _catalogue_rows(project, core_count):
     return rows
 
 
+def _installation_method_label(method):
+    return dict(CABLE_INSTALL_METHOD_CHOICES).get(method, method)
+
+
 def find_minimum_cable_for_ampacity(project, core_count, required_current_a):
     project = _project(project)
     required_current = float(required_current_a or 0.0)
@@ -514,12 +519,21 @@ def find_minimum_cable_for_ampacity(project, core_count, required_current_a):
 
     rows = list(_catalogue_rows(project, core_count))
     if not rows:
+        method = getattr(project, 'cable_install_method', '')
         return AmpacitySelection(
             catalogue=None,
             core_count=core_count,
             required_current_a=required_current,
             status='unsizeable',
-            review_notes=['No validated cold-cable catalogue rows match the project cable basis.'],
+            review_notes=[
+                (
+                    'No validated cold-cable catalogue rows match the project cable basis '
+                    f'for {core_count}C, {project.cable_standard}/{project.cable_conductor_material}/'
+                    f'{project.cable_insulation_type}, installation method {method} '
+                    f'({_installation_method_label(method)}). Select a catalogue-ready method '
+                    'or add and validate catalogue rows before using this basis.'
+                ),
+            ],
         )
 
     thermal_notes = []
@@ -815,7 +829,9 @@ def _select_3c_segment_for_voltage_drop(project, sizing_input, segment, vd_4c=No
 
     candidates = _ampacity_candidates(project, 3, current)
     if not candidates:
-        return None, ['No ampacity-qualified 3C cable is available for the outgoing branch.']
+        notes = ['No ampacity-qualified 3C cable is available for the outgoing branch.']
+        _append_unique(notes, find_minimum_cable_for_ampacity(project, 3, current).review_notes)
+        return None, notes
 
     vd_4c_pct = vd_4c.vd_pct if vd_4c else 0.0
     notes = []
@@ -1035,10 +1051,16 @@ def optimise_cable_pair(project, sizing_input):
         )
 
     candidates_4c = _ampacity_candidates(project, 4, current)
-    if not candidates_4c or not _ampacity_candidates(project, 3, current):
+    candidates_3c = _ampacity_candidates(project, 3, current)
+    if not candidates_4c or not candidates_3c:
+        review_notes = ['No ampacity-qualified 4C/3C cable pair is available for voltage-drop optimisation.']
+        if not candidates_4c:
+            _append_unique(review_notes, find_minimum_cable_for_ampacity(project, 4, current).review_notes)
+        if not candidates_3c:
+            _append_unique(review_notes, find_minimum_cable_for_ampacity(project, 3, current).review_notes)
         return CablePairOptimisation(
             status='unsizeable',
-            review_notes=['No ampacity-qualified 4C/3C cable pair is available for voltage-drop optimisation.'],
+            review_notes=review_notes,
         )
 
     best = None

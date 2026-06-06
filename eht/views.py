@@ -33,6 +33,7 @@ from .cable_schedule import (
     cable_schedule_export_rows,
 )
 from .cold_cable import size_cold_cables_for_project
+from .cold_cable_readiness import cold_cable_method_readiness
 from .forms import PROJECT_FORM_COLD_CABLE_DEFAULTS, ProjectDataForm
 from .data_service import clear_project_workspace_data
 from .manual_renderer import render_markdown_manual
@@ -995,14 +996,19 @@ def calculation_manual_view(request):
 # --------------Create project data--------------------------------------------------
 def create_project_data(request, project_id=None,):  
     form = handle_project_data(request)
-    return render(request, 'eht/project_data.html', {'form': form})
+    return render(request, 'eht/project_data.html', {'form': form, **_project_form_readiness_context(form)})
 # --------------Edit project data--------------------------------------------------
 def update_project_data(request, project_id=None, *arg, **kwarg):
     form = handle_project_data(request, project_id)
+    readiness_context = _project_form_readiness_context(form)
     if request.headers.get('x-requested-with') == 'XMLHttpRequest':
-        form_html = render_to_string('eht/partials/project_data_form.html', {'form': form, 'project_id': project_id}, request)
+        form_html = render_to_string(
+            'eht/partials/project_data_form.html',
+            {'form': form, 'project_id': project_id, **readiness_context},
+            request,
+        )
         return JsonResponse({'form_html': form_html})    
-    return render (request, 'eht/project_data.html', {'form': form, 'project_id': project_id})
+    return render (request, 'eht/project_data.html', {'form': form, 'project_id': project_id, **readiness_context})
 
 # --------------Download Input data Template--------------------------------------------------
 @login_required
@@ -3068,6 +3074,21 @@ def _format_form_errors(form):
     return "; ".join(errors)
 
 
+def _project_form_readiness_context(form):
+    def value(field_name):
+        bound_value = form[field_name].value() if field_name in form.fields else None
+        return bound_value or getattr(form.instance, field_name, None) or PROJECT_FORM_COLD_CABLE_DEFAULTS[field_name]
+
+    readiness = cold_cable_method_readiness(
+        value('cable_standard'),
+        value('cable_conductor_material'),
+        value('cable_insulation_type'),
+    )
+    return {
+        'cold_cable_method_readiness': list(readiness.values()),
+    }
+
+
 def _save_project_setup_from_upload(request, project_id):
     setup_fields = set(ProjectDataForm.Meta.fields)
     if not any(field in request.POST for field in setup_fields if field != 'proj_id'):
@@ -3195,7 +3216,7 @@ def update_pending_status(project_id):
 # --------------Create project data--------------------------------------------------
 def base(request):  
     form = ProjectDataForm(user=getattr(request, 'user', None))
-    return render(request, 'eht/base.html', {'form': form})
+    return render(request, 'eht/base.html', {'form': form, **_project_form_readiness_context(form)})
 
 def my_login(request):    
     return render(request, 'eht/my_login.html')

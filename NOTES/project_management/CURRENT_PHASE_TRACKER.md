@@ -9,12 +9,13 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 ## Current State
 
 - The previous large cold-cable/SLD code diff is not present in the current
-  workspace state; `git status --short` shows only untracked project-management
-  files, including `CLAUDE.md` and `NOTES/project_management/`.
+  workspace state. Current dirty files are the `CC-P1` code/docs plus
+  untracked project-management/orientation files, including `CLAUDE.md` and
+  `NOTES/project_management/`.
 - Migrations through `0034_rcd_cu_only_cold_cable` apply cleanly in the SQLite
   test database. The default PostgreSQL connection was unavailable during the
   2026-06-07 checkpoint, so default-DB migration status was not reverified.
-- Latest full test status: `272 tests OK` on 2026-06-07.
+- Latest full test status: `275 tests OK` on 2026-06-07.
 - Latest quick health check: `venv/bin/python manage.py check` passed on 2026-06-07.
 
 ## Active Work Queue
@@ -59,12 +60,25 @@ Checkpoint result, 2026-06-07:
 
 ### CC-P1 - Installation-Method Catalogue Readiness
 
-Status: pending
+Status: complete
 
-- [ ] Confirm which cold-cable installation methods have validated catalogue rows.
-- [ ] Improve project setup help/validation so users understand unavailable methods.
-- [ ] Add admin/readiness feedback for catalogue rows by installation method.
-- [ ] Add tests for method with no rows and method with valid rows.
+- [x] Confirm which cold-cable installation methods have validated catalogue rows.
+- [x] Improve project setup help/validation so users understand unavailable methods.
+- [x] Add admin/readiness feedback for catalogue rows by installation method.
+- [x] Add tests for method with no rows and method with valid rows.
+
+Checkpoint result, 2026-06-07:
+
+- Live catalogue inspection: Method E has 4 validated 3C rows and 10 validated
+  4C rows. Methods B2, C, D1, and D2 have no validated rows.
+- Project setup now shows readiness badges and help text for the selected
+  cold-cable basis.
+- Admin now shows project/catalogue readiness for the selected method/basis.
+- Cold-cable sizing preserves explicit unsizeable guidance when the selected
+  method has no validated rows.
+- Calculation manual updated.
+- Targeted `ColdCableFoundationTests` and `ProjectDataViewTests`: 46 tests passed.
+- Full SQLite-mode `eht` suite: 275 tests passed.
 
 ### CC-P2 - Per-Segment 3C Reporting
 

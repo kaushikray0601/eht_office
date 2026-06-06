@@ -34,7 +34,7 @@ production-ready for serious engineering review.
 - [ ] No-RCD behavior upsizes or fails as a hard gate.
 - [ ] Cable mass/tonnage is reported.
 - [ ] Project-default length basis forces review-required status.
-- [ ] Installation-method catalogue readiness is clear.
+- [x] Installation-method catalogue readiness is clear.
 - [ ] Per-segment 3C results are exported/reported.
 - [ ] Phase-balancing visibility is available or explicitly deferred.
 - [ ] Panel/load summary is available or explicitly deferred.

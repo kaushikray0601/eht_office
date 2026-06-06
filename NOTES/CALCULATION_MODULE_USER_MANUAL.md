@@ -932,6 +932,13 @@ The following project setup fields control cold cable sizing:
 | MCB Characteristic Curve | Trip curve type for heating circuit MCBs | Default is Type C. Use Type B for pure resistive SR loads. Type C for MI or SR circuits with cold-start current. |
 | RCD Provided | Whether all heating circuits have a Residual Current Device (RCD) | Default is Yes. All EHT circuits should have RCD protection. If unchecked, the MCB earth-loop check becomes a hard sizing gate instead of a secondary verification. |
 
+The project form shows live cold-cable catalogue readiness by installation
+method for the selected cable standard, conductor material, and insulation type.
+In the current seed catalogue, Method E has validated IEC/Cu/XLPE 3C and 4C
+rows. Methods B2, C, D1, and D2 remain selectable so the project engineering
+basis is visible, but cold-cable sizing will be reported as unsizeable until
+matching catalogue rows are added and validated.
+
 ### 10B.5 Understanding the Voltage Drop Result
 
 The project allowable voltage drop sets the maximum permissible voltage drop

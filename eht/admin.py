@@ -1,5 +1,6 @@
 from django.contrib import admin, messages
 
+from eht.cold_cable_readiness import cold_cable_method_readiness
 from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
 from eht.models import (
     ColdCableCatalogue,
@@ -25,9 +26,33 @@ class ManagedProjectAdmin(admin.ModelAdmin):
 
 @admin.register(ProjectData)
 class ProjectDataAdmin(admin.ModelAdmin):
-    list_display = ('proj_id', 'vendor', 'voltage', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'rcd_provided')
+    list_display = (
+        'proj_id',
+        'vendor',
+        'voltage',
+        'max_cb_size',
+        'cable_standard',
+        'cable_install_method',
+        'cold_cable_catalogue_readiness',
+        'mcb_curve',
+        'rcd_provided',
+    )
     list_filter = ('vendor', 'max_cb_size', 'cable_standard', 'cable_install_method', 'mcb_curve', 'rcd_provided')
     search_fields = ('proj_id',)
+
+    @admin.display(description='Cold-cable catalogue readiness')
+    def cold_cable_catalogue_readiness(self, obj):
+        readiness = cold_cable_method_readiness(
+            obj.cable_standard,
+            obj.cable_conductor_material,
+            obj.cable_insulation_type,
+        ).get(obj.cable_install_method)
+        if readiness is None or readiness['status'] == 'unavailable':
+            return 'No validated rows'
+        if readiness['status'] == 'partial':
+            missing = ', '.join(f'{core_count}C' for core_count in readiness['missing_core_counts'])
+            return f"Partial: {readiness['validated_rows']} row(s), missing {missing}"
+        return f"Ready: {readiness['validated_rows']} row(s)"
 
 
 def _cold_cable_row_ready(row):
@@ -84,6 +109,7 @@ class ColdCableCatalogueAdmin(admin.ModelAdmin):
         'installation_method',
         'ampacity_a',
         'resistance_mohm_per_m',
+        'basis_readiness',
         'is_validated',
     )
     list_filter = (
@@ -96,6 +122,20 @@ class ColdCableCatalogueAdmin(admin.ModelAdmin):
     )
     search_fields = ('vendor', 'catalogue_ref', 'cable_type_code', 'source_document')
     actions = (mark_cold_cable_rows_validated, mark_cold_cable_rows_unvalidated)
+
+    @admin.display(description='Basis readiness')
+    def basis_readiness(self, obj):
+        readiness = cold_cable_method_readiness(
+            obj.cable_standard,
+            obj.conductor_material,
+            obj.insulation_type,
+        ).get(obj.installation_method)
+        if readiness is None or readiness['status'] == 'unavailable':
+            return 'No validated rows'
+        if readiness['status'] == 'partial':
+            missing = ', '.join(f'{core_count}C' for core_count in readiness['missing_core_counts'])
+            return f'Missing {missing}'
+        return 'Ready'
 
 
 @admin.register(ColdCableResult)

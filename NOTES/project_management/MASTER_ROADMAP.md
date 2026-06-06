@@ -97,8 +97,8 @@ Objective: build features that exceed manufacturer tools.
 
 1. `PM-00`: Create project-management control files.
 2. `CC-P0`: Stabilization checkpoint.
-3. `CC-P1`: Installation-method catalogue readiness and UI guidance.
-4. `CC-P2`: Per-segment 3C cold-cable reporting/export.
+3. `CC-P1`: Installation-method catalogue readiness and UI guidance. Complete.
+4. `CC-P2`: Per-segment 3C cold-cable reporting/export. Next.
 5. `CC-P3`: 3PH JB phase-balancing visibility.
 6. `CC-P4`: Panel/load summary.
 7. `SCH-P1`: Procurement-grade cable schedule fields/export.

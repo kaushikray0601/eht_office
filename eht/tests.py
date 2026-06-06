@@ -44,6 +44,7 @@ from eht.cold_cable import (
     size_cold_cable_for_branch,
     size_cold_cables_for_project,
 )
+from eht.cold_cable_readiness import cold_cable_method_readiness
 from eht.data_service import clear_project_workspace_data, fetch_process_lines, store_calculated_results
 from eht.forms import PROJECT_FORM_COLD_CABLE_DEFAULTS, ProjectDataForm
 from eht.models import (
@@ -2795,6 +2796,28 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(row.resistance_mohm_per_m, 1.83)
         self.assertTrue(row.is_validated)
 
+    def test_cold_cable_catalogue_readiness_summarises_methods(self):
+        call_command('populate_cold_cable_catalogue')
+
+        readiness = cold_cable_method_readiness('IEC_60502_1', 'Cu', 'XLPE')
+
+        self.assertEqual(readiness['E']['status'], 'ready')
+        self.assertEqual(readiness['E']['validated_rows'], 14)
+        self.assertEqual(readiness['B2']['status'], 'unavailable')
+        self.assertEqual(readiness['C']['status'], 'unavailable')
+        self.assertEqual(readiness['D1']['status'], 'unavailable')
+        self.assertEqual(readiness['D2']['status'], 'unavailable')
+
+    def test_project_data_form_guides_install_method_catalogue_readiness(self):
+        call_command('populate_cold_cable_catalogue')
+
+        form = ProjectDataForm()
+        help_text = form.fields['cable_install_method'].help_text
+
+        self.assertIn('Validated catalogue readiness for IEC_60502_1/Cu/XLPE', help_text)
+        self.assertIn('ready methods E (14 rows)', help_text)
+        self.assertIn('no validated rows for B2, C, D1, D2', help_text)
+
     def test_resolve_cable_lengths_uses_generated_branch_defaults(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         project = ProjectData.objects.get(proj_id='p1')
@@ -3159,6 +3182,25 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(result.sizing_status, 'unsizeable')
         self.assertEqual(result.vd_status, 'fail')
         self.assertTrue(any('voltage-drop' in note for note in result.review_notes))
+
+    def test_size_cold_cable_for_branch_guides_unavailable_install_method(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p1')
+        project.cable_install_method = 'D1'
+        project.save(update_fields=['cable_install_method'])
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p1')
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.sizing_status, 'unsizeable')
+        notes = ' '.join(result.review_notes)
+        self.assertIn('installation method D1', notes)
+        self.assertIn('Select a catalogue-ready method', notes)
 
     def test_size_cold_cable_for_direct_1ph_branch_skips_optimisation(self):
         call_command('populate_cold_cable_catalogue')
@@ -4744,6 +4786,8 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'action="/create-project-data/"')
 
     def test_base_workspace_renders_cold_cable_project_settings(self):
+        call_command('populate_cold_cable_catalogue')
+
         response = self.client.get(reverse('base'))
 
         self.assertEqual(response.status_code, 200)
@@ -4754,6 +4798,11 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'Minimum cold cable size')
         self.assertContains(response, 'MCB characteristic curve')
         self.assertContains(response, 'RCD / earth fault protection provided')
+        self.assertContains(response, 'Cold cable catalogue readiness')
+        self.assertContains(response, 'E:')
+        self.assertContains(response, 'ready (14)')
+        self.assertContains(response, 'D1:')
+        self.assertContains(response, 'no rows')
 
     def test_update_project_data_workspace_form_posts_to_project_update_route(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -4777,6 +4826,7 @@ class ProjectDataViewTests(TestCase):
         self.assertIn('PLANT_B_001', response.json()['form_html'])
 
     def test_update_project_data_partial_renders_cold_cable_project_settings(self):
+        call_command('populate_cold_cable_catalogue')
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
         make_project_record(proj_id='PLANT_A_001')
 
@@ -4794,6 +4844,9 @@ class ProjectDataViewTests(TestCase):
         self.assertIn('Minimum cold cable size', form_html)
         self.assertIn('MCB characteristic curve', form_html)
         self.assertIn('RCD / earth fault protection provided', form_html)
+        self.assertIn('Cold cable catalogue readiness', form_html)
+        self.assertIn('ready (14)', form_html)
+        self.assertIn('no rows', form_html)
 
     def test_default_project_button_copies_template_values_into_selected_project(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
