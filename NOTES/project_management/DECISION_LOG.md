@@ -27,12 +27,14 @@ stay concise.
 | 2026-06-01 | Aluminium cold-cable path is deferred; Cu-only active path. | EHT branch circuits are usually small Cu cables; Al adds complexity with limited value. | Active |
 | 2026-06-01 | Use RCD terminology instead of GFEP in active UI/docs/code. | RCD is better aligned with IEC/common international terminology. | Active |
 | 2026-06-07 | Create project-management files and Codex memory file. | Reduces context loss, token cost, and planning ambiguity. | Active |
-| 2026-06-07 | Cold-cable installation methods without validated catalogue rows remain selectable but produce visible readiness warnings and explicit unsizeable guidance. | Preserves engineering-basis visibility while preventing silent use of incomplete catalogue data. | Active |
+| 2026-06-07 | Project setup exposes only active Method E plus disabled coming-soon Method D2 for cold-cable installation method. | Keeps the user-facing setup simple while acknowledging the planned direct-buried basis; B2/C/D1 stay hidden until catalogue work is ready. | Active |
+| 2026-06-07 | Cold-cable installation methods without validated catalogue rows produce explicit unsizeable guidance if encountered in stored/admin data. | Prevents silent use of incomplete catalogue data. | Active |
+| 2026-06-07 | Branch-level 3C size is reported as the critical outgoing 3C segment; all outgoing 3C segments are exported separately. | Keeps branch summaries simple while preserving per-segment evidence for unequal route lengths. | Active |
 
 ## Decision Candidates
 
 | Candidate | Needed Before | Notes |
 | --- | --- | --- |
 | How to represent phase-slot ownership for 3PH JB outgoing branches. | `CC-P3` | Must support visibility first, optimization later. |
-| Whether to checkpoint current working tree before `CC-P2`. | End of `CC-P1` | Strongly recommended now that PM setup and CC-P1 tests are green. |
+| Whether to checkpoint current working tree before `CC-P3`. | End of `CC-P2` | Strongly recommended now that PM setup, CC-P1, and CC-P2 tests are green. |
 | When to move to a fresh chat. | After `PM-00`/`CC-P0` | Fresh chat plus `CODEX_MEMORY.md` should improve speed and quality. |

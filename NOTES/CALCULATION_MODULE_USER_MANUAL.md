@@ -932,12 +932,11 @@ The following project setup fields control cold cable sizing:
 | MCB Characteristic Curve | Trip curve type for heating circuit MCBs | Default is Type C. Use Type B for pure resistive SR loads. Type C for MI or SR circuits with cold-start current. |
 | RCD Provided | Whether all heating circuits have a Residual Current Device (RCD) | Default is Yes. All EHT circuits should have RCD protection. If unchecked, the MCB earth-loop check becomes a hard sizing gate instead of a secondary verification. |
 
-The project form shows live cold-cable catalogue readiness by installation
-method for the selected cable standard, conductor material, and insulation type.
-In the current seed catalogue, Method E has validated IEC/Cu/XLPE 3C and 4C
-rows. Methods B2, C, D1, and D2 remain selectable so the project engineering
-basis is visible, but cold-cable sizing will be reported as unsizeable until
-matching catalogue rows are added and validated.
+For the current production-hardening phase, the project form exposes Method E
+as the only active cold-cable installation method. Method D2 direct buried is
+shown as a disabled coming-soon option so the future engineering basis is
+visible without allowing an incomplete catalogue path. Methods B2, C, and D1
+are hidden from project setup until their catalogue basis is ready.
 
 ### 10B.5 Understanding the Voltage Drop Result
 
@@ -956,6 +955,13 @@ The load-end voltage is shown in absolute volts. For SR cable, the heating cable
 power output at this terminal voltage may differ from the design heat delivery
 power calculated at the low-voltage scenario. This cross-check is a manual
 engineering step.
+
+For 3-phase JB branches, the branch-level 3C size is the critical outgoing
+segment size. The result tab and exports also list each outgoing 3C segment so
+shorter and longer outgoing runs can be reviewed separately. The per-segment
+evidence includes circuit index, length basis, selected 3C size, voltage drop,
+load-end voltage, fault current/status, conductor mass, and whether that segment
+sets the branch critical 3C size.
 
 ### 10B.6 Sizing Status
 
@@ -1208,6 +1214,9 @@ Users can review:
 
 - Cable tag.
 - Cable specification and cold cable size calculated by the sizing engine.
+- Cold cable segment role, circuit index, total path voltage drop, load-end
+  voltage, fault current, length basis, and critical 3C segment status where
+  cold-cable sizing data is available.
 - Cable length.
 - Connected from.
 - Connected to.
@@ -1219,6 +1228,10 @@ Users can review:
 
 If manual SLD topology or cable length overrides exist, the cable schedule may
 show the active manual state or a warning that review is required.
+
+The result export includes a separate **Cold Cable 3C Segments** sheet for
+per-outgoing 3C evidence. The cable schedule export also carries segment-level
+columns beside each cable row.
 
 ### 16.1 Manual Cable Size Review
 

@@ -14,9 +14,16 @@ CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Cable Tag',
     'Cable Specification',
     'Calculated Cold Cable Size',
+    'Cold Cable Segment Role',
+    'Cold Cable Circuit Index',
     'Cold Cable Status',
     'Voltage Drop Status',
     'Fault Protection Status',
+    'Total Path VD (%)',
+    'Load-End Voltage (V)',
+    'Fault Current (A)',
+    'Length Basis',
+    'Critical 3C Segment',
     'Conductor Mass (MT)',
     'Cable Length (m)',
     'Connected From',
@@ -113,13 +120,25 @@ def _cold_cable_result_for_node(node, cold_results):
 def _cold_cable_fields(node, cold_results):
     metadata = _metadata(node)
     cold_cable = metadata.get('cold_cable') or {}
+    component_type = node.get('component_type') or ''
     if cold_cable:
+        conductor_size = cold_cable.get('conductor_size_mm2')
         return {
             'calculated_cold_cable_size': cold_cable.get('calculated_size') or '',
             'cold_cable_status': cold_cable.get('sizing_status') or '',
             'cold_cable_vd_status': cold_cable.get('vd_status') or '',
             'cold_cable_fault_status': cold_cable.get('fault_status') or '',
             'cold_cable_conductor_mass_mt': cold_cable.get('conductor_mass_mt'),
+            'cold_cable_segment_role': '4C trunk' if component_type == 'Cable4C' else '3C outgoing',
+            'cold_cable_circuit_index': node.get('circuit_index') or '',
+            'cold_cable_length_basis': cold_cable.get('length_basis') or '',
+            'cold_cable_vd_total_pct': cold_cable.get('vd_total_pct'),
+            'cold_cable_load_end_voltage_v': cold_cable.get('load_end_voltage_v'),
+            'cold_cable_fault_current_a': cold_cable.get('fault_current_a'),
+            'cold_cable_is_critical_3c_segment': (
+                bool(component_type == 'Cable3C' and conductor_size is not None)
+                and _is_critical_3c_segment(conductor_size, _cold_cable_result_for_node(node, cold_results))
+            ),
         }
     result = _cold_cable_result_for_node(node, cold_results)
     if result is None:
@@ -129,23 +148,54 @@ def _cold_cable_fields(node, cold_results):
             'cold_cable_vd_status': '',
             'cold_cable_fault_status': '',
             'cold_cable_conductor_mass_mt': None,
+            'cold_cable_segment_role': '',
+            'cold_cable_circuit_index': '',
+            'cold_cable_length_basis': '',
+            'cold_cable_vd_total_pct': None,
+            'cold_cable_load_end_voltage_v': None,
+            'cold_cable_fault_current_a': None,
+            'cold_cable_is_critical_3c_segment': False,
         }
 
-    if node.get('component_type') == 'Cable4C':
+    if component_type == 'Cable4C':
         size = _format_size(4, result.cable_4c_size_mm2)
         fault_status = result.fault_protection_4c_status
         mass = result.cable_4c_conductor_mass_mt
+        role = '4C trunk'
+        circuit_index = ''
+        fault_current = result.fault_current_4c_phase_to_phase_a
+        is_critical = False
     else:
         size = _format_size(3, result.cable_3c_size_mm2)
         fault_status = result.fault_protection_3c_status
         mass = result.cable_3c_conductor_mass_mt
+        role = '3C outgoing'
+        circuit_index = node.get('circuit_index') or ''
+        fault_current = result.fault_current_3c_line_to_neutral_a
+        is_critical = bool(result.cable_3c_size_mm2)
     return {
         'calculated_cold_cable_size': size,
         'cold_cable_status': result.sizing_status,
         'cold_cable_vd_status': result.vd_status,
         'cold_cable_fault_status': fault_status,
         'cold_cable_conductor_mass_mt': mass,
+        'cold_cable_segment_role': role,
+        'cold_cable_circuit_index': circuit_index,
+        'cold_cable_length_basis': result.length_basis,
+        'cold_cable_vd_total_pct': result.vd_total_pct,
+        'cold_cable_load_end_voltage_v': result.load_end_voltage_v,
+        'cold_cable_fault_current_a': fault_current,
+        'cold_cable_is_critical_3c_segment': is_critical,
     }
+
+
+def _is_critical_3c_segment(conductor_size, result):
+    if result is None or result.cable_3c_size_mm2 is None:
+        return False
+    try:
+        return float(conductor_size) >= float(result.cable_3c_size_mm2)
+    except (TypeError, ValueError):
+        return False
 
 
 def _line_ids(node):
@@ -268,9 +318,16 @@ def cable_schedule_export_rows(cable_rows):
             'Cable Tag': row.get('cable_tag', ''),
             'Cable Specification': row.get('cable_specification', ''),
             'Calculated Cold Cable Size': row.get('calculated_cold_cable_size', ''),
+            'Cold Cable Segment Role': row.get('cold_cable_segment_role', ''),
+            'Cold Cable Circuit Index': row.get('cold_cable_circuit_index', ''),
             'Cold Cable Status': row.get('cold_cable_status', ''),
             'Voltage Drop Status': row.get('cold_cable_vd_status', ''),
             'Fault Protection Status': row.get('cold_cable_fault_status', ''),
+            'Total Path VD (%)': row.get('cold_cable_vd_total_pct', ''),
+            'Load-End Voltage (V)': row.get('cold_cable_load_end_voltage_v', ''),
+            'Fault Current (A)': row.get('cold_cable_fault_current_a', ''),
+            'Length Basis': row.get('cold_cable_length_basis', ''),
+            'Critical 3C Segment': 'Yes' if row.get('cold_cable_is_critical_3c_segment') else '',
             'Conductor Mass (MT)': row.get('cold_cable_conductor_mass_mt', ''),
             'Cable Length (m)': row.get('cable_length_m', ''),
             'Connected From': row.get('connected_from', ''),

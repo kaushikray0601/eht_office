@@ -33,7 +33,6 @@ from .cable_schedule import (
     cable_schedule_export_rows,
 )
 from .cold_cable import size_cold_cables_for_project
-from .cold_cable_readiness import cold_cable_method_readiness
 from .forms import PROJECT_FORM_COLD_CABLE_DEFAULTS, ProjectDataForm
 from .data_service import clear_project_workspace_data
 from .manual_renderer import render_markdown_manual
@@ -996,19 +995,18 @@ def calculation_manual_view(request):
 # --------------Create project data--------------------------------------------------
 def create_project_data(request, project_id=None,):  
     form = handle_project_data(request)
-    return render(request, 'eht/project_data.html', {'form': form, **_project_form_readiness_context(form)})
+    return render(request, 'eht/project_data.html', {'form': form})
 # --------------Edit project data--------------------------------------------------
 def update_project_data(request, project_id=None, *arg, **kwarg):
     form = handle_project_data(request, project_id)
-    readiness_context = _project_form_readiness_context(form)
     if request.headers.get('x-requested-with') == 'XMLHttpRequest':
         form_html = render_to_string(
             'eht/partials/project_data_form.html',
-            {'form': form, 'project_id': project_id, **readiness_context},
+            {'form': form, 'project_id': project_id},
             request,
         )
         return JsonResponse({'form_html': form_html})    
-    return render (request, 'eht/project_data.html', {'form': form, 'project_id': project_id, **readiness_context})
+    return render (request, 'eht/project_data.html', {'form': form, 'project_id': project_id})
 
 # --------------Download Input data Template--------------------------------------------------
 @login_required
@@ -1651,6 +1649,47 @@ def _cold_cable_export_rows(cold_rows):
             'Sizing Status': result.sizing_status,
             'Review Notes': '; '.join(result.review_notes or []),
         })
+    return rows
+
+
+def _cold_cable_3c_segment_export_rows(cold_rows):
+    rows = []
+    for result in cold_rows:
+        critical_size = result.cable_3c_size_mm2
+        for segment in result.cable_3c_segments or []:
+            size = segment.get('size_mm2')
+            try:
+                is_critical = bool(size is not None and critical_size is not None and float(size) >= float(critical_size))
+            except (TypeError, ValueError):
+                is_critical = False
+            rows.append({
+                'Project ID': result.project_id,
+                'Line ID': result.line_id,
+                'Line UID': result.line_uid,
+                'Branch Index': result.branch_index,
+                'Branch Critical 3C Size (mm2)': critical_size,
+                'Segment Display Tag': segment.get('display_tag') or '',
+                'Segment Component ID': segment.get('component_id') or '',
+                'Circuit Index': segment.get('circuit_index'),
+                'Segment Length (m)': segment.get('length_m'),
+                'Length Basis': segment.get('length_basis') or result.length_basis,
+                'Segment 3C Size (mm2)': size,
+                'Critical Segment': 'Yes' if is_critical else '',
+                'Derated Ampacity (A)': segment.get('ampacity_derated_a'),
+                'Ampacity Margin (%)': segment.get('ampacity_margin_pct'),
+                'Conductor Temp (C)': segment.get('conductor_temp_c'),
+                'Conductor Mass (MT)': segment.get('conductor_mass_mt'),
+                '3C VD (%)': segment.get('vd_pct'),
+                'Total Path VD (%)': segment.get('vd_total_pct'),
+                'Load-End Voltage (V)': segment.get('load_end_voltage_v'),
+                'Fault Current L-N (A)': segment.get('fault_current_a'),
+                'Fault Status': segment.get('fault_status') or result.fault_protection_3c_status,
+                'Sizing Status': segment.get('sizing_status') or result.sizing_status,
+                'K Temp': segment.get('k_temp'),
+                'K Group': segment.get('k_group'),
+                'K Total': segment.get('k_total'),
+                'Review Notes': '; '.join(segment.get('review_notes') or []),
+            })
     return rows
 
 
@@ -2707,6 +2746,7 @@ def result_export_view(request):
     mi_rows = []
     selection_rows = []
     cold_cable_rows = _cold_cable_export_rows(result_data['cold_cable_rows'])
+    cold_cable_segment_rows = _cold_cable_3c_segment_export_rows(result_data['cold_cable_rows'])
     for item in result_data['line_results']:
         calculation = item['calculation']
         line = item['line']
@@ -2886,6 +2926,7 @@ def result_export_view(request):
         pd.DataFrame(selection_rows).to_excel(writer, sheet_name='Selection Diagnostics', index=False)
         pd.DataFrame(branch_rows).to_excel(writer, sheet_name='Power Distribution', index=False)
         pd.DataFrame(cold_cable_rows).to_excel(writer, sheet_name='Cold Cable Sizing', index=False)
+        pd.DataFrame(cold_cable_segment_rows).to_excel(writer, sheet_name='Cold Cable 3C Segments', index=False)
         pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
         pd.DataFrame(mi_rows).to_excel(writer, sheet_name='MI Selection', index=False)
 
@@ -3074,21 +3115,6 @@ def _format_form_errors(form):
     return "; ".join(errors)
 
 
-def _project_form_readiness_context(form):
-    def value(field_name):
-        bound_value = form[field_name].value() if field_name in form.fields else None
-        return bound_value or getattr(form.instance, field_name, None) or PROJECT_FORM_COLD_CABLE_DEFAULTS[field_name]
-
-    readiness = cold_cable_method_readiness(
-        value('cable_standard'),
-        value('cable_conductor_material'),
-        value('cable_insulation_type'),
-    )
-    return {
-        'cold_cable_method_readiness': list(readiness.values()),
-    }
-
-
 def _save_project_setup_from_upload(request, project_id):
     setup_fields = set(ProjectDataForm.Meta.fields)
     if not any(field in request.POST for field in setup_fields if field != 'proj_id'):
@@ -3216,7 +3242,7 @@ def update_pending_status(project_id):
 # --------------Create project data--------------------------------------------------
 def base(request):  
     form = ProjectDataForm(user=getattr(request, 'user', None))
-    return render(request, 'eht/base.html', {'form': form, **_project_form_readiness_context(form)})
+    return render(request, 'eht/base.html', {'form': form})
 
 def my_login(request):    
     return render(request, 'eht/my_login.html')

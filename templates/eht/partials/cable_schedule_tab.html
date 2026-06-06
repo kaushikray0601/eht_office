@@ -136,6 +136,19 @@
                                             VD {{ row.cold_cable_vd_status|default:"-" }} /
                                             Fault {{ row.cold_cable_fault_status|default:"-" }}
                                         </div>
+                                        {% if row.cold_cable_segment_role %}
+                                            <div class="small text-muted">
+                                                {{ row.cold_cable_segment_role }}
+                                                {% if row.cold_cable_circuit_index %}#{{ row.cold_cable_circuit_index }}{% endif %}
+                                                {% if row.cold_cable_is_critical_3c_segment %}/ critical 3C{% endif %}
+                                            </div>
+                                        {% endif %}
+                                        {% if row.cold_cable_vd_total_pct %}
+                                            <div class="small text-muted">Total VD {{ row.cold_cable_vd_total_pct|floatformat:2 }}%</div>
+                                        {% endif %}
+                                        {% if row.cold_cable_load_end_voltage_v %}
+                                            <div class="small text-muted">{{ row.cold_cable_load_end_voltage_v|floatformat:1 }} V load end</div>
+                                        {% endif %}
                                         {% if row.cold_cable_conductor_mass_mt %}
                                             <div class="small text-muted">{{ row.cold_cable_conductor_mass_mt|floatformat:4 }} MT</div>
                                         {% endif %}

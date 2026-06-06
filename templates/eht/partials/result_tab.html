@@ -168,9 +168,29 @@
                                         <div class="text-muted">4C N/A</div>
                                     {% endif %}
                                     {% if cold.cable_3c_size_mm2 %}
-                                        <div>3C x {{ cold.cable_3c_size_mm2|floatformat:"-1" }} mm²</div>
+                                        <div>Critical 3C x {{ cold.cable_3c_size_mm2|floatformat:"-1" }} mm²</div>
                                     {% else %}
                                         <div class="text-muted">3C N/A</div>
+                                    {% endif %}
+                                    {% if cold.cable_3c_segments %}
+                                        <div class="small text-muted mt-1">Outgoing 3C segments</div>
+                                        {% for segment in cold.cable_3c_segments %}
+                                            <div class="small">
+                                                {{ segment.display_tag|default:"3C segment" }}
+                                                {% if segment.circuit_index %}#{{ segment.circuit_index }}{% endif %}:
+                                                {% if segment.size_mm2 %}
+                                                    3C x {{ segment.size_mm2|floatformat:"-1" }} mm²
+                                                {% else %}
+                                                    3C N/A
+                                                {% endif %}
+                                                {% if segment.length_m %}
+                                                    / {{ segment.length_m|floatformat:1 }} m
+                                                {% endif %}
+                                                {% if cold.cable_3c_size_mm2 and segment.size_mm2 == cold.cable_3c_size_mm2 %}
+                                                    <span class="text-muted">(critical)</span>
+                                                {% endif %}
+                                            </div>
+                                        {% endfor %}
                                     {% endif %}
                                 </td>
                                 <td>

@@ -29,13 +29,13 @@ production-ready for serious engineering review.
 - [ ] Ampacity sizing works for available catalogue basis.
 - [ ] Voltage drop sizing works for direct 1PH branches.
 - [ ] Voltage drop optimization works for 3PH JB branches.
-- [ ] Per-outgoing 3C sizing works for unequal route lengths.
+- [x] Per-outgoing 3C sizing works for unequal route lengths.
 - [ ] RCD-provided behavior is review-required when MCB earth-loop is weak.
 - [ ] No-RCD behavior upsizes or fails as a hard gate.
 - [ ] Cable mass/tonnage is reported.
 - [ ] Project-default length basis forces review-required status.
-- [x] Installation-method catalogue readiness is clear.
-- [ ] Per-segment 3C results are exported/reported.
+- [x] Installation-method catalogue readiness is clear; setup allows Method E only and shows D2 as coming soon.
+- [x] Per-segment 3C results are exported/reported.
 - [ ] Phase-balancing visibility is available or explicitly deferred.
 - [ ] Panel/load summary is available or explicitly deferred.
 

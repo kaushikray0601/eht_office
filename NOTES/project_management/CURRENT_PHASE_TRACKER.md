@@ -15,7 +15,7 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 - Migrations through `0034_rcd_cu_only_cold_cable` apply cleanly in the SQLite
   test database. The default PostgreSQL connection was unavailable during the
   2026-06-07 checkpoint, so default-DB migration status was not reverified.
-- Latest full test status: `275 tests OK` on 2026-06-07.
+- Latest full test status: `281 tests OK` on 2026-06-07.
 - Latest quick health check: `venv/bin/python manage.py check` passed on 2026-06-07.
 
 ## Active Work Queue
@@ -71,23 +71,35 @@ Checkpoint result, 2026-06-07:
 
 - Live catalogue inspection: Method E has 4 validated 3C rows and 10 validated
   4C rows. Methods B2, C, D1, and D2 have no validated rows.
-- Project setup now shows readiness badges and help text for the selected
-  cold-cable basis.
+- Project setup now exposes Method E as the active selectable method and Method
+  D2 as a disabled coming-soon option. B2, C, and D1 are hidden from setup for
+  now.
 - Admin now shows project/catalogue readiness for the selected method/basis.
 - Cold-cable sizing preserves explicit unsizeable guidance when the selected
   method has no validated rows.
 - Calculation manual updated.
-- Targeted `ColdCableFoundationTests` and `ProjectDataViewTests`: 46 tests passed.
+- Targeted `ColdCableFoundationTests` and `ProjectDataViewTests`: 48 tests passed after the Method E/D2 UI adjustment.
 - Full SQLite-mode `eht` suite: 275 tests passed.
 
 ### CC-P2 - Per-Segment 3C Reporting
 
-Status: pending
+Status: complete
 
-- [ ] Surface each outgoing 3C segment in cold-cable result export.
-- [ ] Surface each outgoing 3C segment in cable schedule.
-- [ ] Add report evidence for critical segment versus all segments.
-- [ ] Add tests for unequal outgoing lengths and unequal selected 3C sizes.
+- [x] Surface each outgoing 3C segment in cold-cable result export.
+- [x] Surface each outgoing 3C segment in cable schedule.
+- [x] Add report evidence for critical segment versus all segments.
+- [x] Add tests for unequal outgoing lengths and unequal selected 3C sizes.
+
+Checkpoint result, 2026-06-07:
+
+- Result tab now shows branch critical 3C size plus each outgoing 3C segment.
+- Cable schedule rows now expose segment role, circuit index, length basis,
+  total path VD, load-end voltage, fault current, and critical-segment status.
+- Cable schedule export includes the same segment columns.
+- Result export includes a dedicated `Cold Cable 3C Segments` sheet.
+- Calculation manual updated.
+- Targeted `ResultAndBoqViewTests` and `ColdCableFoundationTests`: 103 tests passed.
+- Full SQLite-mode `eht` suite: 281 tests passed.
 
 ### CC-P3 - 3PH JB Phase-Balancing Visibility
 

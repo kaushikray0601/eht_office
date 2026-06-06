@@ -5,7 +5,7 @@ Last updated: 2026-06-07
 | ID | Risk | Severity | Probability | Mitigation | Status |
 | --- | --- | --- | --- | --- | --- |
 | R-001 | Large uncommitted working set makes future changes harder to review. | High | High | Run `CC-P0`, then checkpoint/commit when tests are green. | Open |
-| R-002 | Cold-cable installation methods are exposed before catalogue coverage is complete. | Medium | High | Catalogue readiness and explicit unsizeable guidance added in `CC-P1`; catalogue population remains future work. | Mitigated |
+| R-002 | Cold-cable installation methods are exposed before catalogue coverage is complete. | Medium | High | Project setup now exposes only active Method E plus disabled coming-soon D2; explicit unsizeable guidance remains for stored/admin data. Catalogue population remains future work. | Mitigated |
 | R-003 | Tracer PE-path resistance is excluded from 3C earth-loop check, overestimating fault current. | High | High | Keep prominent non-conservative warning; add future catalogue data before enforcing. | Open |
 | R-004 | SLD topology edits are powerful and may create confusing review states for users. | Medium | Medium | Add visual issue badges and impact summary. | Open |
 | R-005 | Cable schedule is still calculation-oriented, not procurement-grade. | Medium | High | Add procurement fields and export polish in `SCH-P1`. | Open |

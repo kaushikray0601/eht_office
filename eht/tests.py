@@ -2766,7 +2766,27 @@ class ColdCableFoundationTests(TestCase):
         install_methods = {value for value, _label in form.fields['cable_install_method'].choices}
 
         self.assertIn('E', install_methods)
+        self.assertIn('D2', install_methods)
+        self.assertNotIn('B2', install_methods)
+        self.assertNotIn('C', install_methods)
+        self.assertNotIn('D1', install_methods)
         self.assertNotIn('F', install_methods)
+
+    def test_project_data_form_shows_d2_as_under_development(self):
+        form = ProjectDataForm()
+        rendered = str(form['cable_install_method'])
+
+        self.assertIn('D2 - Direct buried in ground (coming soon)', rendered)
+        self.assertIn('value="D2" disabled', rendered)
+        self.assertIn('Method E is active for this phase', form.fields['cable_install_method'].help_text)
+        self.assertIn('under development', form.fields['cable_install_method'].help_text)
+
+    def test_project_data_form_rejects_forced_d2_install_method(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        form = ProjectDataForm(data=make_project_form_payload(cable_install_method='D2'))
+
+        self.assertFalse(form.is_valid())
+        self.assertIn('under development', form.errors['cable_install_method'][0])
 
     def test_project_data_rejects_invalid_cold_cable_grouping_derating(self):
         with self.assertRaises(ValidationError):
@@ -2814,9 +2834,9 @@ class ColdCableFoundationTests(TestCase):
         form = ProjectDataForm()
         help_text = form.fields['cable_install_method'].help_text
 
-        self.assertIn('Validated catalogue readiness for IEC_60502_1/Cu/XLPE', help_text)
-        self.assertIn('ready methods E (14 rows)', help_text)
-        self.assertIn('no validated rows for B2, C, D1, D2', help_text)
+        self.assertIn('Method E is active for this phase', help_text)
+        self.assertIn('Method D2 direct buried', help_text)
+        self.assertIn('under development', help_text)
 
     def test_resolve_cable_lengths_uses_generated_branch_defaults(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -3187,7 +3207,7 @@ class ColdCableFoundationTests(TestCase):
         call_command('populate_cold_cable_catalogue')
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         project = ProjectData.objects.get(proj_id='p1')
-        project.cable_install_method = 'D1'
+        project.cable_install_method = 'D2'
         project.save(update_fields=['cable_install_method'])
         branch = PowerDistributionBranch.objects.select_related(
             'distribution',
@@ -3199,7 +3219,7 @@ class ColdCableFoundationTests(TestCase):
 
         self.assertEqual(result.sizing_status, 'unsizeable')
         notes = ' '.join(result.review_notes)
-        self.assertIn('installation method D1', notes)
+        self.assertIn('installation method D2', notes)
         self.assertIn('Select a catalogue-ready method', notes)
 
     def test_size_cold_cable_for_direct_1ph_branch_skips_optimisation(self):
@@ -4786,8 +4806,6 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'action="/create-project-data/"')
 
     def test_base_workspace_renders_cold_cable_project_settings(self):
-        call_command('populate_cold_cable_catalogue')
-
         response = self.client.get(reverse('base'))
 
         self.assertEqual(response.status_code, 200)
@@ -4798,11 +4816,11 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'Minimum cold cable size')
         self.assertContains(response, 'MCB characteristic curve')
         self.assertContains(response, 'RCD / earth fault protection provided')
-        self.assertContains(response, 'Cold cable catalogue readiness')
-        self.assertContains(response, 'E:')
-        self.assertContains(response, 'ready (14)')
-        self.assertContains(response, 'D1:')
-        self.assertContains(response, 'no rows')
+        self.assertContains(response, 'E - Multi-core on open cable tray or ladder')
+        self.assertContains(response, 'D2 - Direct buried in ground (coming soon)')
+        self.assertContains(response, 'value="D2" disabled')
+        self.assertContains(response, 'Method E is active for this phase')
+        self.assertNotContains(response, 'Cold cable catalogue readiness')
 
     def test_update_project_data_workspace_form_posts_to_project_update_route(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -4826,7 +4844,6 @@ class ProjectDataViewTests(TestCase):
         self.assertIn('PLANT_B_001', response.json()['form_html'])
 
     def test_update_project_data_partial_renders_cold_cable_project_settings(self):
-        call_command('populate_cold_cable_catalogue')
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
         make_project_record(proj_id='PLANT_A_001')
 
@@ -4844,9 +4861,10 @@ class ProjectDataViewTests(TestCase):
         self.assertIn('Minimum cold cable size', form_html)
         self.assertIn('MCB characteristic curve', form_html)
         self.assertIn('RCD / earth fault protection provided', form_html)
-        self.assertIn('Cold cable catalogue readiness', form_html)
-        self.assertIn('ready (14)', form_html)
-        self.assertIn('no rows', form_html)
+        self.assertIn('D2 - Direct buried in ground (coming soon)', form_html)
+        self.assertIn('value="D2" disabled', form_html)
+        self.assertIn('Method E is active for this phase', form_html)
+        self.assertNotIn('Cold cable catalogue readiness', form_html)
 
     def test_default_project_button_copies_template_values_into_selected_project(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -4878,6 +4896,45 @@ class ProjectDataViewTests(TestCase):
 
 
 class ResultAndBoqViewTests(TestCase):
+    def _make_variable_3c_cold_cable_project(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p-variable-3c-report', ['LINE-001'])
+        project = ProjectData.objects.get(proj_id='p-variable-3c-report')
+        project.allowablevdrop = 5.0
+        project.save(update_fields=['allowablevdrop'])
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-variable-3c-report')
+        branch.cable_length_db_to_jb = 30.0
+        tagged_components = branch.tagged_components
+        tagged_components['component_details']['MCB']['metadata']['operating_current'] = 8.0
+        tagged_components['component_details']['MCB']['metadata']['per_circuit_operating_current'] = 8.0
+        tagged_components['component_details']['MCB']['metadata']['breaker_size'] = 10.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['cable_length_db_to_jb', 'tagged_components'])
+        cable3c_details = [
+            downstream['component_details']['Cable3C']
+            for downstream in branch.tagged_components['Downstream']
+        ]
+        for detail, length in zip(cable3c_details, [15.0, 150.0]):
+            CableScheduleOverride.objects.create(
+                project=project,
+                component_id=detail['component_id'],
+                component_uid=detail['component_uid'],
+                display_tag=detail['display_tag'],
+                component_type='Cable3C',
+                line_id='LINE-001',
+                line_uid=str(branch.distribution.line.uid),
+                branch_index=branch.branch_index,
+                circuit_index=detail['circuit_index'],
+                generated_length_m=12.0,
+                manual_length_m=length,
+            )
+        result = size_cold_cable_for_branch(branch, project)
+        return project, result
+
     def test_import_input_view_renders_uploaded_line_list(self):
         line = make_calculated_project_snapshot()
 
@@ -5125,6 +5182,17 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, '3C x 2.5 mm2')
         self.assertContains(response, 'Total Cable Copper Tonnage')
 
+    def test_cable_schedule_view_surfaces_each_3c_segment_and_critical_status(self):
+        self._make_variable_3c_cold_cable_project()
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p-variable-3c-report'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '3C outgoing')
+        self.assertContains(response, 'critical 3C')
+        self.assertContains(response, '3C x 2.5 mm2')
+        self.assertContains(response, '3C x 6 mm2')
+
     def test_cable_schedule_summary_totals_branch_conductor_mass_once(self):
         call_command('populate_cold_cable_catalogue')
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -5278,9 +5346,16 @@ class ResultAndBoqViewTests(TestCase):
             'Cable Tag',
             'Cable Specification',
             'Calculated Cold Cable Size',
+            'Cold Cable Segment Role',
+            'Cold Cable Circuit Index',
             'Cold Cable Status',
             'Voltage Drop Status',
             'Fault Protection Status',
+            'Total Path VD (%)',
+            'Load-End Voltage (V)',
+            'Fault Current (A)',
+            'Length Basis',
+            'Critical 3C Segment',
             'Conductor Mass (MT)',
             'Cable Length (m)',
             'Connected From',
@@ -5295,7 +5370,31 @@ class ResultAndBoqViewTests(TestCase):
             'Rev. No.',
         ))
         self.assertTrue(any(row[1] and str(row[1]).startswith('CCAB') for row in rows[1:]))
-        self.assertTrue(any(row[11] == 'LINE-001' for row in rows[1:]))
+        self.assertTrue(any(row[18] == 'LINE-001' for row in rows[1:]))
+
+    def test_cable_schedule_export_includes_per_3c_segment_evidence(self):
+        self._make_variable_3c_cold_cable_project()
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p-variable-3c-report'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        header = rows[0]
+        size_index = header.index('Calculated Cold Cable Size')
+        role_index = header.index('Cold Cable Segment Role')
+        length_index = header.index('Cable Length (m)')
+        critical_index = header.index('Critical 3C Segment')
+        vd_index = header.index('Total Path VD (%)')
+        load_end_index = header.index('Load-End Voltage (V)')
+
+        outgoing_rows = [row for row in rows[1:] if row[role_index] == '3C outgoing']
+        self.assertTrue(any(row[size_index] == '3C x 2.5 mm2' and row[length_index] == 15 for row in outgoing_rows))
+        critical_rows = [row for row in outgoing_rows if row[critical_index] == 'Yes']
+        self.assertEqual(len(critical_rows), 1)
+        self.assertEqual(critical_rows[0][size_index], '3C x 6 mm2')
+        self.assertGreater(critical_rows[0][vd_index], 0)
+        self.assertGreater(critical_rows[0][load_end_index], 0)
 
     def test_cable_schedule_export_uses_applied_topology_rows(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -5322,11 +5421,16 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(BytesIO(response.content))
         rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        header = rows[0]
+        tag_index = header.index('Cable Tag')
+        spec_index = header.index('Cable Specification')
+        length_index = header.index('Cable Length (m)')
+        from_index = header.index('Connected From')
         self.assertTrue(any(
-            row[1] and '-M' in row[1] and row[2] == '4C x 10' and row[8] == 25
+            row[tag_index] and '-M' in row[tag_index] and row[spec_index] == '4C x 10' and row[length_index] == 25
             for row in rows[1:]
         ))
-        self.assertTrue(any(row[9] == 'MCB_001-M' for row in rows[1:]))
+        self.assertTrue(any(row[from_index] == 'MCB_001-M' for row in rows[1:]))
 
     def test_result_export_returns_line_branch_and_alternate_sheets(self):
         line = make_calculated_project_snapshot()
@@ -5346,6 +5450,7 @@ class ResultAndBoqViewTests(TestCase):
             'Selection Diagnostics',
             'Power Distribution',
             'Cold Cable Sizing',
+            'Cold Cable 3C Segments',
             'Alternate Tracers',
             'MI Selection',
         ])
@@ -5370,6 +5475,41 @@ class ResultAndBoqViewTests(TestCase):
         rows = list(workbook['Cold Cable Sizing'].iter_rows(values_only=True))
         self.assertTrue(any(row[1] == line.line_id and row[15] == 2.5 for row in rows[1:]))
         self.assertTrue(any(row[39] and 'project default' in row[39] for row in rows[1:]))
+
+    def test_result_export_includes_per_3c_segment_sheet(self):
+        self._make_variable_3c_cold_cable_project()
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p-variable-3c-report'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cold Cable 3C Segments'].iter_rows(values_only=True))
+        header = rows[0]
+        critical_size_index = header.index('Branch Critical 3C Size (mm2)')
+        segment_size_index = header.index('Segment 3C Size (mm2)')
+        critical_index = header.index('Critical Segment')
+        length_index = header.index('Segment Length (m)')
+        tag_index = header.index('Segment Display Tag')
+
+        self.assertEqual(len(rows), 3)
+        self.assertTrue(any(row[segment_size_index] == 2.5 and row[length_index] == 15 for row in rows[1:]))
+        critical_rows = [row for row in rows[1:] if row[critical_index] == 'Yes']
+        self.assertEqual(len(critical_rows), 1)
+        self.assertEqual(critical_rows[0][critical_size_index], 6)
+        self.assertEqual(critical_rows[0][segment_size_index], 6)
+        self.assertTrue(critical_rows[0][tag_index])
+
+    def test_result_view_surfaces_3c_segments_and_critical_size(self):
+        self._make_variable_3c_cold_cable_project()
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p-variable-3c-report'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Critical 3C x 6 mm²')
+        self.assertContains(response, 'Outgoing 3C segments')
+        self.assertContains(response, '3C x 2.5 mm²')
+        self.assertContains(response, '3C x 6 mm²')
+        self.assertContains(response, '(critical)')
 
     def test_result_view_and_export_surface_mi_selection_records(self):
         line = make_calculated_project_snapshot()

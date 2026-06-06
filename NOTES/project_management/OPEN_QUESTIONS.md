@@ -4,17 +4,18 @@ Last updated: 2026-06-07
 
 ## Immediate Questions
 
-1. Should the current working set be committed/checkpointed before `CC-P2`?
-   - Recommendation: yes, after `CC-P1` tests pass.
+1. Should the current working set be committed/checkpointed before `CC-P3`?
+   - Recommendation: yes, after `CC-P2` tests pass.
 
 2. For cold-cable installation methods without validated catalogue rows, should
    the UI disable the option or allow it and report no catalogue rows?
-   - Resolved in `CC-P1`: keep options visible, show catalogue readiness in
-     project setup/admin, and return explicit unsizeable guidance when selected
-     methods have no validated rows.
+   - Resolved in `CC-P1`: project setup shows Method E as active and Method D2
+     as disabled/coming soon. B2, C, and D1 are hidden from setup for now.
+     Admin/readiness and explicit unsizeable guidance remain for stored or
+     catalogue-maintenance contexts.
 
 3. When should we start a fresh chat?
-   - Resolved for now: continue through `CC-P1`; start a fresh chat for `CC-P2`
+   - Resolved for now: continue through `CC-P2`; start a fresh chat for `CC-P3`
      if the user wants lower token cost and faster execution.
 
 4. When will the MI worked-example comparison (R7 gate) be completed?

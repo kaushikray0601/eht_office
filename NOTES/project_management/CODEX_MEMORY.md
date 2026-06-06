@@ -24,9 +24,9 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. Start `CC-P2`: per-segment 3C reporting/export.
+1. Start `CC-P3`: 3PH JB phase-balancing visibility.
 2. Keep the calculation manual aligned with any behavior changes.
-3. Consider a checkpoint/commit of PM files plus `CC-P1` changes before the next pass.
+3. Consider a checkpoint/commit of PM files plus `CC-P1`/`CC-P2` changes before the next pass.
 
 ## Current Repo State
 
@@ -40,11 +40,14 @@ Immediate next pass:
 - Migrations through `0034_rcd_cu_only_cold_cable` applied cleanly in the
   SQLite-mode test run. The default PostgreSQL connection was unavailable for
   plain `showmigrations` during the 2026-06-07 checkpoint.
-- Latest full test status: `275 tests OK` on 2026-06-07.
+- Latest full test status: `281 tests OK` on 2026-06-07.
 - Latest quick check: `venv/bin/python manage.py check` passed on 2026-06-07.
 - Latest cold-cable catalogue readiness inspection: Method E has validated
   IEC/Cu/XLPE rows only: 4 rows for 3C and 10 rows for 4C. Methods B2, C, D1,
   and D2 have no validated rows.
+- Project setup currently exposes only Method E as selectable. Method D2 direct
+  buried is visible as a disabled coming-soon option. B2, C, and D1 are hidden
+  from project setup until their catalogue basis is ready.
 
 ## Frozen Engineering Decisions
 
@@ -82,16 +85,17 @@ Immediate next pass:
 - Branch-level 3C result stores the critical/largest selected 3C summary.
 - SLD/cable schedule metadata can read per-node 3C segment results.
 - Cable mass is calculated from conductor area, length, core count, and copper density.
+- Per-outgoing 3C segment evidence is visible in the result tab, cable schedule,
+  cable schedule export, and a dedicated `Cold Cable 3C Segments` result-export sheet.
 - Migration `0034_rcd_cu_only_cold_cable` renames GFEP fields to RCD and deletes Al catalogue rows.
-- `CC-P1` adds cold-cable installation-method readiness feedback in project
-  setup and admin, and unavailable methods now produce explicit unsizeable
-  guidance instead of a generic no-catalogue message.
+- `CC-P1` adds cold-cable installation-method readiness feedback in admin and
+  explicit unsizeable guidance instead of a generic no-catalogue message.
+  Project setup is simplified to active Method E plus disabled coming-soon D2.
 
 ## Known Deferred Gaps
 
-- Installation-method catalogue coverage remains limited to Method E seed rows,
-  but readiness is now visible in UI/admin and unsizeable results.
-- Per-segment 3C reporting/export needs improvement.
+- Installation-method catalogue coverage remains limited to Method E seed rows;
+  D2 catalogue work is deferred and shown as coming soon in project setup.
 - 3PH JB phase-balancing visibility is not built.
 - Panel/load summary is not built.
 - Procurement-grade cable schedule fields are not built.
@@ -137,5 +141,5 @@ Recommend a new chat when:
 - The next task is large enough to deserve a clean brief.
 
 Current recommendation: project-management setup and stabilization are complete.
-Consider a fresh chat before `CC-P2` if the user wants maximum speed and low
+Consider a fresh chat before `CC-P3` if the user wants maximum speed and low
 context cost.

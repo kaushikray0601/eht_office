@@ -201,6 +201,7 @@ class SRReportingAlignmentTests(TestCase):
                 'Selection Diagnostics',
                 'Power Distribution',
                 'Cold Cable Sizing',
+                'Cold Cable 3C Segments',
                 'Alternate Tracers',
                 'MI Selection',
             ],

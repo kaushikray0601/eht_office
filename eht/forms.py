@@ -7,9 +7,13 @@ from .models import (
     ProjectData,
     is_default_project_id,
 )
-from .cold_cable_readiness import cold_cable_readiness_message
 from crispy_forms.helper import FormHelper
 from crispy_forms.layout import Layout, Submit, Div, Field, Row, Column
+
+PROJECT_FORM_INSTALL_METHOD_CHOICES = [
+    ('E', 'E - Multi-core on open cable tray or ladder'),
+    ('D2', 'D2 - Direct buried in ground (coming soon)'),
+]
 
 PROJECT_FORM_COLD_CABLE_DEFAULTS = {
     'cable_standard': 'IEC_60502_1',
@@ -21,6 +25,15 @@ PROJECT_FORM_COLD_CABLE_DEFAULTS = {
     'mcb_curve': 'C',
     'rcd_provided': True,
 }
+
+
+class ColdCableInstallMethodSelect(forms.Select):
+    def create_option(self, name, value, label, selected, index, subindex=None, attrs=None):
+        option = super().create_option(name, value, label, selected, index, subindex=subindex, attrs=attrs)
+        if option['value'] == 'D2':
+            option['attrs']['disabled'] = 'disabled'
+            option['attrs']['class'] = 'text-muted'
+        return option
 
 
 class ProjectDataForm(forms.ModelForm):
@@ -147,19 +160,11 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['cable_standard'].help_text = 'Default basis for LV EHT cold-cable sizing.'
         self.fields['cable_conductor_material'].help_text = 'Used for resistance correction and conductor mass estimate.'
         self.fields['cable_insulation_type'].help_text = 'XLPE uses 90 C and PVC uses 70 C conductor temperature basis.'
-        readiness_basis = {
-            'cable_standard': self.data.get('cable_standard') or getattr(self.instance, 'cable_standard', None) or PROJECT_FORM_COLD_CABLE_DEFAULTS['cable_standard'],
-            'cable_conductor_material': self.data.get('cable_conductor_material') or getattr(self.instance, 'cable_conductor_material', None) or PROJECT_FORM_COLD_CABLE_DEFAULTS['cable_conductor_material'],
-            'cable_insulation_type': self.data.get('cable_insulation_type') or getattr(self.instance, 'cable_insulation_type', None) or PROJECT_FORM_COLD_CABLE_DEFAULTS['cable_insulation_type'],
-        }
+        self.fields['cable_install_method'].choices = PROJECT_FORM_INSTALL_METHOD_CHOICES
+        self.fields['cable_install_method'].widget = ColdCableInstallMethodSelect(choices=PROJECT_FORM_INSTALL_METHOD_CHOICES)
         self.fields['cable_install_method'].help_text = (
-            'Selects matching validated ampacity catalogue rows. '
-            'Single-core tray methods are not included in this phase. '
-            + cold_cable_readiness_message(
-                readiness_basis['cable_standard'],
-                readiness_basis['cable_conductor_material'],
-                readiness_basis['cable_insulation_type'],
-            )
+            'Method E is active for this phase. Method D2 direct buried is shown '
+            'for planning only and is under development.'
         )
         self.fields['min_cold_cable_size_mm2'].help_text = 'Optional project minimum. Calculated allows the sizing engine to choose freely.'
         self.fields['mcb_curve'].help_text = 'Type C is the default EHT breaker curve for fault-check screening.'
@@ -199,3 +204,9 @@ class ProjectDataForm(forms.ModelForm):
 
     def clean_sr_max_parallel_runs(self):
         return self.cleaned_data.get('sr_max_parallel_runs') or 4
+
+    def clean_cable_install_method(self):
+        method = self.cleaned_data.get('cable_install_method') or 'E'
+        if method == 'D2':
+            raise forms.ValidationError('Method D2 direct buried is under development and cannot be selected yet.')
+        return method
