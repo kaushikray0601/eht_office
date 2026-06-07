@@ -161,6 +161,14 @@ Immediate next pass:
   should warn that previous separate feeder lengths are no longer valid; default
   the new combined trunk length to the highest length among the selected feeder
   cables and require user review/confirmation.
+- Housekeeping pass after SLD hardening removed live debug/dropdown projects
+  `p-debug-sld`, `p-debug-sld-api`, `p-hard`, and empty orphan `p2` from local
+  PostgreSQL. Current live project selectors should show only `default_project`
+  and `p1`. Ignored `__pycache__` directories were cleaned once; normal checks
+  may recreate them.
+- Tracked SLD review docs (`SLD_DEEP_ANALYSIS.md`,
+  `SLD_RENDERING_REVIEW.md`) and `eht/browser_tests.py` are intentional guard
+  rails and should not be treated as temporary artifacts.
 
 ## Known Deferred Gaps
 
@@ -206,6 +214,12 @@ git diff --check
 venv/bin/python manage.py test eht -v 2 --noinput
 venv/bin/python manage.py test eht.browser_tests -v 2 --noinput
 ```
+
+Current caveat: raw DB-using `venv/bin/python manage.py test ...` can still
+fail during existing PostgreSQL test DB setup with `connection is bad`; the
+same test passes via `manage.py shell -c "from django.core.management import
+call_command; call_command('test', ...)"`. Keep this as `R-012` until the
+plain CLI launcher is fixed.
 
 ## New Chat Guidance
 

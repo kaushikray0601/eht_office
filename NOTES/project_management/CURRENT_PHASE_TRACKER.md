@@ -181,6 +181,11 @@ Checkpoint result, 2026-06-07:
   fails in Django test-command setup with `psycopg.OperationalError: connection
   is bad` even though direct Django connections and programmatic runner setup
   connect to `eht_local_test`; keep this as a test-runner follow-up.
+- Housekeeping follow-up removed local debug/dropdown projects
+  `p-debug-sld`, `p-debug-sld-api`, `p-hard`, and empty orphan `p2`; local
+  project selectors should now show only `default_project` and `p1`. Ignored
+  Python cache directories were cleaned. Tracked SLD review docs and browser
+  regression tests are retained as intentional guard rails.
 - `node --check static/js/sld_workspace.js`: passed.
 - `venv/bin/python manage.py check`: passed.
 - `git diff --check`: passed.
