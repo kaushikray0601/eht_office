@@ -63,7 +63,12 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'eht.middleware.LoginRequiredMiddleware',
 ]
+
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/base/'
+LOGOUT_REDIRECT_URL = '/login/'
 
 ROOT_URLCONF = 'ELECSENSE.urls'
 

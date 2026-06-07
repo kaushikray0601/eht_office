@@ -1,6 +1,8 @@
 import json
 
 from django.contrib import admin, messages
+from django.contrib.auth.admin import UserAdmin as DefaultUserAdmin
+from django.contrib.auth.models import User
 from django.utils.html import format_html
 
 from eht.cold_cable_readiness import cold_cable_method_readiness
@@ -580,3 +582,21 @@ class SelectedMIHeaterAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+admin.site.unregister(User)
+
+
+@admin.register(User)
+class EhtUserAdmin(DefaultUserAdmin):
+    """Extends the default User admin to show eTrace project assignments at a glance."""
+
+    def etrace_projects(self, obj):
+        projects = list(obj.eht_managed_projects.values_list('proj_id', flat=True))
+        if not projects:
+            return format_html('<span style="color:#999;">— no projects assigned —</span>')
+        return ', '.join(projects)
+
+    etrace_projects.short_description = 'eTrace Projects'
+
+    list_display = DefaultUserAdmin.list_display + ('etrace_projects',)

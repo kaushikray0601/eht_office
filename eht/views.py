@@ -10,6 +10,9 @@ from time import perf_counter
 import pandas as pd
 from django.conf import settings
 from django.contrib import messages
+from django.contrib.auth import authenticate
+from django.contrib.auth import login as auth_login
+from django.contrib.auth import logout as auth_logout
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -163,8 +166,7 @@ def _timed_json_response(payload, *, status=200, context_label='response'):
 
 # Create your views here.
 def index(request):
-    context = {'key1': 'value1','key2': 'value2' }
-    return render (request, 'eht/home.html', context)
+    return render(request, 'eht/landing.html')
 
 
 def design_guide_view(request):
@@ -3351,11 +3353,29 @@ def base(request):
     form = ProjectDataForm(user=getattr(request, 'user', None))
     return render(request, 'eht/base.html', {'form': form})
 
-def my_login(request):    
-    return render(request, 'eht/my_login.html')
+def my_login(request):
+    if request.user.is_authenticated:
+        return redirect('base')
+    error = None
+    if request.method == 'POST':
+        username = request.POST.get('username', '').strip()
+        password = request.POST.get('password', '')
+        user = authenticate(request, username=username, password=password)
+        if user is not None:
+            auth_login(request, user)
+            next_url = request.POST.get('next', '').strip() or 'base'
+            return redirect(next_url)
+        error = 'Invalid username or password. Please try again.'
+    return render(request, 'eht/my_login.html', {
+        'error': error,
+        'next': request.GET.get('next', ''),
+    })
 
-def my_logout(request):    
-    return render(request, 'eht/my_logout.html')
 
-def my_register(request):    
-    return render(request, 'eht/my_register.html')
+def my_logout(request):
+    auth_logout(request)
+    return redirect('my_login')
+
+
+def my_register(request):
+    return redirect('my_login')
