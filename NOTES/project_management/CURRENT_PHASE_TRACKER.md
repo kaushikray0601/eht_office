@@ -186,6 +186,10 @@ Checkpoint result, 2026-06-07:
   project selectors should now show only `default_project` and `p1`. Ignored
   Python cache directories were cleaned. Tracked SLD review docs and browser
   regression tests are retained as intentional guard rails.
+- Admin audit visibility added for `SLDTopologyEdit`: Django admin now exposes
+  read-only topology edit history, operation count, compaction status,
+  chain-audit metadata, validation summary, current-baseline comparison, and a
+  safe replay diagnostic without adding user-facing undo/restore controls.
 - `node --check static/js/sld_workspace.js`: passed.
 - `venv/bin/python manage.py check`: passed.
 - `git diff --check`: passed.

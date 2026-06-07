@@ -1,4 +1,7 @@
+import json
+
 from django.contrib import admin, messages
+from django.utils.html import format_html
 
 from eht.cold_cable_readiness import cold_cable_method_readiness
 from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
@@ -13,7 +16,10 @@ from eht.models import (
     ProjectData,
     SelectedMIHeater,
     SLDNodeLayout,
+    SLDTopologyEdit,
 )
+from eht.sld_payload import build_project_sld_payload
+from eht.sld_topology import payload_fingerprint, validate_sld_topology_invariants
 
 
 @admin.register(ManagedProject)
@@ -164,6 +170,212 @@ class SLDNodeLayoutAdmin(admin.ModelAdmin):
     list_display = ('project', 'display_tag', 'component_type', 'line_id', 'branch_index', 'updated_at')
     list_filter = ('project', 'component_type')
     search_fields = ('project__proj_id', 'display_tag', 'component_id', 'line_id', 'component_uid')
+
+
+def _json_pretty(value):
+    return json.dumps(value or {}, indent=2, sort_keys=True, default=str)
+
+
+def _preformatted(value):
+    return format_html(
+        '<pre style="white-space: pre-wrap; max-height: 32rem; overflow: auto;">{}</pre>',
+        value,
+    )
+
+
+@admin.register(SLDTopologyEdit)
+class SLDTopologyEditAdmin(admin.ModelAdmin):
+    list_display = (
+        'id',
+        'project',
+        'edit_type',
+        'status',
+        'operation_count',
+        'compacted_status',
+        'baseline_changed_status',
+        'validation_status',
+        'created_by',
+        'created_at',
+    )
+    list_filter = ('project', 'status', 'edit_type', 'created_at')
+    search_fields = ('project__proj_id', 'edit_type', 'status', 'created_by__username', 'remarks')
+    date_hierarchy = 'created_at'
+    readonly_fields = (
+        'project',
+        'edit_type',
+        'status',
+        'created_by',
+        'remarks',
+        'baseline_fingerprint',
+        'current_baseline_fingerprint',
+        'baseline_changed_status',
+        'operation_count',
+        'compacted_status',
+        'chain_audit_summary',
+        'operation_history',
+        'replay_diagnostic',
+        'validation_summary_pretty',
+        'edit_payload_pretty',
+        'generated_snapshot_pretty',
+        'created_at',
+        'updated_at',
+    )
+    fieldsets = (
+        ('Edit', {
+            'fields': (
+                'project',
+                'edit_type',
+                'status',
+                'created_by',
+                'remarks',
+                'created_at',
+                'updated_at',
+            ),
+        }),
+        ('Replay And Audit', {
+            'fields': (
+                'baseline_fingerprint',
+                'current_baseline_fingerprint',
+                'baseline_changed_status',
+                'operation_count',
+                'compacted_status',
+                'chain_audit_summary',
+                'operation_history',
+                'replay_diagnostic',
+            ),
+        }),
+        ('Validation And Payload', {
+            'classes': ('collapse',),
+            'fields': (
+                'validation_summary_pretty',
+                'edit_payload_pretty',
+                'generated_snapshot_pretty',
+            ),
+        }),
+    )
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def _operations(self, obj):
+        operations = (obj.edit_payload or {}).get('topology_operations')
+        return operations if isinstance(operations, list) else []
+
+    @admin.display(description='Operations')
+    def operation_count(self, obj):
+        return len(self._operations(obj))
+
+    @admin.display(description='Compacted')
+    def compacted_status(self, obj):
+        if not (obj.edit_payload or {}).get('topology_chain_compacted'):
+            return 'No'
+        compaction = (obj.edit_payload or {}).get('topology_chain_compaction') or {}
+        original = compaction.get('original_operation_count') or '-'
+        kept = compaction.get('kept_operation_count') or len(self._operations(obj))
+        dropped = compaction.get('dropped_operation_count') or '-'
+        return f'Yes: kept {kept} of {original}, dropped {dropped}'
+
+    @admin.display(description='Current baseline fingerprint')
+    def current_baseline_fingerprint(self, obj):
+        try:
+            payload = build_project_sld_payload(obj.project_id, apply_topology=False)
+        except Exception as error:
+            return f'Unavailable: {error}'
+        return payload_fingerprint(payload)
+
+    @admin.display(description='Baseline changed')
+    def baseline_changed_status(self, obj):
+        current = self.current_baseline_fingerprint(obj)
+        if not obj.baseline_fingerprint or str(current).startswith('Unavailable:'):
+            return 'Unknown'
+        return 'Yes' if obj.baseline_fingerprint != current else 'No'
+
+    @admin.display(description='Validation')
+    def validation_status(self, obj):
+        return (obj.validation_summary or {}).get('status') or '-'
+
+    @admin.display(description='Chain audit summary')
+    def chain_audit_summary(self, obj):
+        audit = (obj.edit_payload or {}).get('topology_chain_audit') or {}
+        compaction = (obj.edit_payload or {}).get('topology_chain_compaction') or {}
+        if not audit and not compaction:
+            return 'No chain audit metadata recorded.'
+        return _preformatted(_json_pretty({
+            'topology_chain_audit': audit,
+            'topology_chain_compaction': compaction,
+        }))
+
+    @admin.display(description='Operation history')
+    def operation_history(self, obj):
+        operations = self._operations(obj)
+        if not operations:
+            return 'No replayable operation records are stored for this edit.'
+
+        lines = []
+        for index, operation in enumerate(operations, start=1):
+            preview = operation.get('preview') if isinstance(operation, dict) else {}
+            preview = preview if isinstance(preview, dict) else {}
+            lines.append(
+                '\n'.join([
+                    f"#{index} {operation.get('operation_type') or 'unknown'}",
+                    f"  schema_version: {operation.get('schema_version') or '-'}",
+                    f"  inputs: {_json_pretty(operation.get('inputs') or {})}",
+                    f"  warning: {preview.get('warning') or '-'}",
+                    f"  recommended_breaker_rating: {preview.get('recommended_breaker_rating') or '-'}",
+                ])
+            )
+        return _preformatted('\n\n'.join(lines))
+
+    @admin.display(description='Replay diagnostic')
+    def replay_diagnostic(self, obj):
+        operations = self._operations(obj)
+        if not operations:
+            return 'No operation chain is available to replay.'
+        if (obj.edit_payload or {}).get('topology_chain_compacted') and self.baseline_changed_status(obj) == 'Yes':
+            return (
+                'Not replayed: this chain was compacted and the generated baseline changed. '
+                'The edit should remain review-required until an engineer reapplies or resets it.'
+            )
+
+        try:
+            generated_payload = build_project_sld_payload(obj.project_id, apply_topology=False)
+            from eht.sld_topology_workflows import replay_topology_operations
+            replay = replay_topology_operations(obj.project_id, generated_payload, operations)
+        except Exception as error:
+            return f'Replay diagnostic failed before replay: {error}'
+
+        if not replay.get('ok'):
+            return _preformatted(_json_pretty({
+                'ok': False,
+                'failed_operation_index': replay.get('failed_operation_index'),
+                'failed_operation_type': replay.get('failed_operation_type'),
+                'error': replay.get('error') or 'Replay failed.',
+            }))
+
+        invariant_summary = validate_sld_topology_invariants(replay['payload'])
+        return _preformatted(_json_pretty({
+            'ok': True,
+            'operation_count': len(operations),
+            'topology_invariants': invariant_summary,
+        }))
+
+    @admin.display(description='Validation summary')
+    def validation_summary_pretty(self, obj):
+        return _preformatted(_json_pretty(obj.validation_summary))
+
+    @admin.display(description='Edit payload')
+    def edit_payload_pretty(self, obj):
+        return _preformatted(_json_pretty(obj.edit_payload))
+
+    @admin.display(description='Generated snapshot')
+    def generated_snapshot_pretty(self, obj):
+        return _preformatted(_json_pretty(obj.generated_snapshot))
 
 
 class MICableHeaterInline(admin.TabularInline):

@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
+from django.contrib import admin
 from django.core.management import call_command
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
@@ -4915,6 +4916,42 @@ class SldTopologyWorkflowTests(TestCase):
         payload = build_project_sld_payload('p1')
         self.assertFalse(payload['meta'].get('has_topology_edit', False))
         self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 2)
+
+
+class SldTopologyAdminTests(TestCase):
+    def test_sld_topology_edit_admin_shows_readonly_history_and_replay_diagnostic(self):
+        import eht.admin  # noqa: F401 - ensure admin registrations are loaded.
+        from eht.sld_topology_workflows import apply_combine_feeders
+
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        payload = build_project_sld_payload('p1')
+        mcb_ids = [
+            node['component_id']
+            for node in payload['nodes']
+            if node['component_type'] == 'MCB'
+        ]
+
+        result = apply_combine_feeders('p1', mcb_ids)
+
+        self.assertTrue(result['ok'])
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        model_admin = admin.site._registry[SLDTopologyEdit]
+        self.assertEqual(model_admin.operation_count(edit), 1)
+        self.assertIn('combine_feeders', str(model_admin.operation_history(edit)))
+        self.assertIn('&quot;ok&quot;: true', str(model_admin.replay_diagnostic(edit)))
+
+        user = User.objects.create_superuser(
+            username='admin',
+            email='admin@example.com',
+            password='password123',
+        )
+        self.client.force_login(user)
+        response = self.client.get(reverse('admin:eht_sldtopologyedit_change', args=[edit.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Operation history')
+        self.assertContains(response, 'combine_feeders')
+        self.assertContains(response, 'Replay diagnostic')
 
 
 class ProjectDataFormTests(TestCase):

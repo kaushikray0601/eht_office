@@ -169,6 +169,11 @@ Immediate next pass:
 - Tracked SLD review docs (`SLD_DEEP_ANALYSIS.md`,
   `SLD_RENDERING_REVIEW.md`) and `eht/browser_tests.py` are intentional guard
   rails and should not be treated as temporary artifacts.
+- `SLDTopologyEdit` is registered in Django admin as a read-only audit panel.
+  It shows operation history, operation count, compaction state, stale-chain
+  audit metadata, validation JSON, current-baseline fingerprint comparison, and
+  an in-memory replay diagnostic. This is admin visibility only; there is still
+  no user-facing undo/restore-to-operation feature.
 
 ## Known Deferred Gaps
 
