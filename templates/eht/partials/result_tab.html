@@ -146,6 +146,7 @@
                             <th data-field="selected-cables" data-sortable="true">Selected Cables</th>
                             <th data-field="voltage-drop" data-sortable="true">Voltage Drop</th>
                             <th data-field="fault" data-sortable="true">Fault Check</th>
+                            <th data-field="phase-balance" data-sortable="true">Phase Balance</th>
                             <th data-field="mass" data-sortable="true">Mass</th>
                             <th data-field="notes">Notes</th>
                         </tr>
@@ -178,6 +179,9 @@
                                             <div class="small">
                                                 {{ segment.display_tag|default:"3C segment" }}
                                                 {% if segment.circuit_index %}#{{ segment.circuit_index }}{% endif %}:
+                                                {% if segment.phase_label %}
+                                                    {{ segment.phase_label }}
+                                                {% endif %}
                                                 {% if segment.size_mm2 %}
                                                     3C x {{ segment.size_mm2|floatformat:"-1" }} mm²
                                                 {% else %}
@@ -205,6 +209,19 @@
                                 <td>
                                     <div>4C {{ cold.fault_protection_4c_status }}</div>
                                     <div>3C {{ cold.fault_protection_3c_status }}</div>
+                                </td>
+                                <td>
+                                    {% if cold.phase_balance_summary %}
+                                        {% for phase in cold.phase_balance_summary.phase_loads %}
+                                            <div class="small">{{ phase.label }} {{ phase.operating_current_a|floatformat:1 }} A</div>
+                                        {% endfor %}
+                                        <div class="small text-muted">
+                                            Imbalance {{ cold.phase_balance_summary.phase_imbalance_a|floatformat:1 }} A
+                                            ({{ cold.phase_balance_summary.phase_imbalance_pct|floatformat:1 }}%)
+                                        </div>
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if cold.conductor_mass_total_mt %}

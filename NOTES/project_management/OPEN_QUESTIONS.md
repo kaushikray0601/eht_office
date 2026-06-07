@@ -4,8 +4,8 @@ Last updated: 2026-06-07
 
 ## Immediate Questions
 
-1. Should the current working set be committed/checkpointed before `CC-P3`?
-   - Recommendation: yes, after `CC-P2` tests pass.
+1. Should the current working set be committed/checkpointed before `CC-P4`?
+   - Recommendation: yes, now that `CC-P3` and the SLD regression rerun passed.
 
 2. For cold-cable installation methods without validated catalogue rows, should
    the UI disable the option or allow it and report no catalogue rows?
@@ -15,8 +15,8 @@ Last updated: 2026-06-07
      catalogue-maintenance contexts.
 
 3. When should we start a fresh chat?
-   - Resolved for now: continue through `CC-P2`; start a fresh chat for `CC-P3`
-     if the user wants lower token cost and faster execution.
+   - Resolved for now: checkpoint before `CC-P4` if the user wants lower token
+     cost and faster execution.
 
 4. When will the MI worked-example comparison (R7 gate) be completed?
    - This is blocking `is_validated=True` for all MI families, meaning MI
@@ -26,12 +26,10 @@ Last updated: 2026-06-07
 ## Cold Cable Engineering Questions
 
 1. How should phase slots be assigned for 3PH JB outgoing branches?
-   - Fixed round-robin by outgoing order?
-   - User-editable phase assignment?
-   - Inherited from physical JB slot position?
-   - Current basis: phase current is assumed balanced for all outgoing circuits
-     as stated in `CODEX_MEMORY.md`. `CC-P3` adds visibility only, not automatic
-     rebalancing.
+   - Resolved for `CC-P3`: infer L1/L2/L3 by fixed round-robin outgoing circuit
+     index and expose the result for review only.
+   - Future question: should phase slots become user-editable or inherited from
+     a physical JB slot position?
 
 2. How much of the panel/load summary should be calculated now?
    - Basic breaker/load/current counts?
@@ -46,6 +44,11 @@ Last updated: 2026-06-07
    - Current user preference: defer deep short-circuit sizing for now.
 
 ## SLD / Cable Schedule Questions
+
+0. SLD filtered/focused view topology policy:
+   - Resolved 2026-06-07: topology edits are not allowed from filtered SLD
+     views. Cable length overrides and alternate tracer selection remain
+     allowed.
 
 1. What visual issue badges are most important for first SLD production polish?
    - Missing length.
@@ -63,6 +66,16 @@ Last updated: 2026-06-07
 
 3. Should topology edit impact summary be persisted or generated on demand?
    - Recommendation: start generated on demand; persist later if audit requires.
+
+4. Combined-circuit cable re-sizing workflow:
+   - Next SLD feature: combined circuits must recalculate the combined feeder
+     cable size from combined current.
+   - The app should warn that the prior separate feeder cable lengths are no
+     longer valid and default the new combined trunk length to the highest
+     length among the combined feeder cables.
+   - Decision still needed: should the combine apply be blocked until the user
+     explicitly accepts/reviews this default length, or is a warning plus
+     editable default enough for the first production pass?
 
 ## Future Module Questions
 

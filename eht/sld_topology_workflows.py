@@ -5,7 +5,16 @@ from django.db import transaction
 
 from .models import MAX_CB_SIZE, ProcessLineCalculation, ProjectData, SLDTopologyEdit
 from .sld_payload import build_project_sld_payload
-from .sld_topology import TOPOLOGY_OPERATION_SCHEMA_VERSION, payload_fingerprint
+from .sld_topology import (
+    TOPOLOGY_OPERATION_SCHEMA_VERSION,
+    payload_fingerprint,
+    validate_sld_topology_invariants,
+    validate_topology_operation_records,
+)
+
+
+SLD_OPERATION_CHAIN_COMPACT_THRESHOLD = 40
+SLD_OPERATION_CHAIN_KEEP_COUNT = 12
 
 
 def _topology_operation(operation_type, preview, inputs):
@@ -17,22 +26,82 @@ def _topology_operation(operation_type, preview, inputs):
     }
 
 
-def _active_topology_operations(project):
-    active_edit = (
+def _active_topology_edit(project, *, for_update=False):
+    query = (
         SLDTopologyEdit.objects
         .filter(project=project, status='applied')
         .order_by('-created_at', '-id')
-        .first()
     )
+    if for_update:
+        query = query.select_for_update()
+    return query.first()
+
+
+def _active_topology_operations(project):
+    active_edit = _active_topology_edit(project)
     operations = (active_edit.edit_payload or {}).get('topology_operations') if active_edit else []
     return deepcopy(operations) if isinstance(operations, list) else []
 
 
-def _topology_operation_chain(project, operation_type, preview, inputs):
-    return [
-        *_active_topology_operations(project),
+def _replayable_active_topology_operations(project, generated_payload):
+    active_edit = _active_topology_edit(project)
+    operations = (active_edit.edit_payload or {}).get('topology_operations') if active_edit else []
+    operations = deepcopy(operations) if isinstance(operations, list) else []
+    if not operations:
+        return [], {}
+    if (active_edit.edit_payload or {}).get('topology_chain_compacted'):
+        return [], {
+            'source_edit_id': active_edit.id,
+            'source_operation_count': len(operations),
+            'dropped_operation_count': len(operations),
+            'reason': 'compacted_active_chain_cannot_be_replayed_as_inheritance',
+        }
+    replay = replay_topology_operations(project.proj_id, generated_payload, operations)
+    if replay.get('ok'):
+        return operations, {}
+    return [], {
+        'source_edit_id': active_edit.id,
+        'source_operation_count': len(operations),
+        'dropped_operation_count': len(operations),
+        'reason': 'active_chain_failed_replay',
+        'failed_operation_index': replay.get('failed_operation_index'),
+        'failed_operation_type': replay.get('failed_operation_type'),
+        'error': replay.get('error') or '',
+    }
+
+
+def _compact_topology_operation_chain(operations):
+    if len(operations) <= SLD_OPERATION_CHAIN_COMPACT_THRESHOLD:
+        return operations, {}
+    kept = operations[-SLD_OPERATION_CHAIN_KEEP_COUNT:]
+    dropped = len(operations) - len(kept)
+    digest = hashlib.sha256(repr(operations).encode('utf-8')).hexdigest()
+    return kept, {
+        'operation_chain_compacted': True,
+        'original_operation_count': len(operations),
+        'kept_operation_count': len(kept),
+        'dropped_operation_count': dropped,
+        'operation_chain_digest': digest,
+        'reason': 'operation_chain_length_threshold',
+    }
+
+
+def _topology_operation_chain(project, operation_type, preview, inputs, generated_payload=None):
+    if generated_payload is not None:
+        inherited_operations, inheritance_audit = _replayable_active_topology_operations(project, generated_payload)
+    else:
+        inherited_operations, inheritance_audit = _active_topology_operations(project), {}
+    operations = [
+        *inherited_operations,
         _topology_operation(operation_type, preview, inputs),
     ]
+    operations, compaction_audit = _compact_topology_operation_chain(operations)
+    audit = {}
+    if inheritance_audit:
+        audit['inheritance'] = inheritance_audit
+    if compaction_audit:
+        audit['compaction'] = compaction_audit
+    return operations, audit
 
 
 def _next_breaker_size(total_rating):
@@ -235,6 +304,76 @@ def _to_positive_float(value, default=None):
 
 def _manual_trunk_size(value):
     return str(value or '').strip() or '4C'
+
+
+def _lock_project_for_topology_apply(project_id):
+    return ProjectData.objects.select_for_update().get(proj_id=project_id)
+
+
+def _topology_validation_summary(preview, edited_payload, topology_operations):
+    warnings = [preview.get('warning') or 'Manual topology edit requires engineering review.']
+    operation_errors = validate_topology_operation_records(topology_operations)
+    invariant_summary = validate_sld_topology_invariants(edited_payload)
+    errors = [*operation_errors, *invariant_summary.get('errors', [])]
+    warnings.extend(invariant_summary.get('warnings', []))
+    return {
+        'status': 'failed' if errors else 'needs_review',
+        'errors': errors,
+        'warnings': [warning for warning in warnings if warning],
+        'topology_invariants': invariant_summary,
+        'operation_count': len(topology_operations),
+    }
+
+
+def _finalize_edit_payload(
+    edited_payload,
+    topology_operations,
+    preview,
+    *,
+    preview_key,
+    boq_overrides,
+    topology_chain_audit=None,
+):
+    validation_summary = _topology_validation_summary(preview, edited_payload, topology_operations)
+    if validation_summary['errors']:
+        return None, validation_summary
+
+    edit_payload = {
+        'sld_payload': edited_payload,
+        'topology_operations': topology_operations,
+        preview_key: preview,
+        'downstream_summaries': {
+            'boq': boq_overrides,
+            'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
+        },
+        'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
+    }
+    if topology_chain_audit:
+        edit_payload['topology_chain_audit'] = topology_chain_audit
+        compaction = topology_chain_audit.get('compaction') or {}
+        if compaction:
+            edit_payload['topology_chain_compacted'] = True
+            edit_payload['topology_chain_compaction'] = compaction
+    return edit_payload, validation_summary
+
+
+RUNTIME_TOPOLOGY_META_KEYS = {
+    'has_topology_edit',
+    'topology_edit_id',
+    'topology_edit_type',
+    'topology_edit_status',
+    'topology_baseline_changed',
+    'topology_edit_review_required',
+    'topology_edit_replayed_on_current_baseline',
+    'manual_topology_warning',
+}
+
+
+def _fresh_edit_payload_meta(payload):
+    meta = dict((payload or {}).get('meta') or {})
+    for key in RUNTIME_TOPOLOGY_META_KEYS:
+        meta.pop(key, None)
+    return meta
 
 
 def _node_length_m(node):
@@ -570,7 +709,7 @@ def _build_scoped_reset_payload(active_payload, generated_payload, reset_scope):
     edited['nodes'] = nodes
     edited['edges'] = _dedupe_edges([*kept_edges, *generated_edges])
     edited['line_groups'] = line_groups
-    meta = dict(edited.get('meta') or {})
+    meta = _fresh_edit_payload_meta(edited)
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
@@ -818,7 +957,7 @@ def _build_edited_payload(
         })
     edited['edges'] = _dedupe_edges(rewired_edges)
 
-    meta = dict(edited.get('meta') or {})
+    meta = _fresh_edit_payload_meta(edited)
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
@@ -1082,7 +1221,7 @@ def _build_split_payload(payload, source_mcb, split_details, recommended_rating)
             'branch_indices': [entry.get('branch_index')],
         })
 
-    meta = dict(edited.get('meta') or {})
+    meta = _fresh_edit_payload_meta(edited)
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
@@ -1269,7 +1408,7 @@ def _build_downstream_jb_payload(payload, details, trunk_length_m, isolator_loca
 
     edited['edges'] = _dedupe_edges(rewired_edges)
     edited = _collapse_single_outgoing_3ph_jbs(edited)
-    meta = dict(edited.get('meta') or {})
+    meta = _fresh_edit_payload_meta(edited)
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
@@ -1523,7 +1662,7 @@ def _build_attach_to_jb_payload(payload, details, recommended_rating):
     edited['edges'] = _dedupe_edges(rewired_edges)
     edited = _collapse_single_outgoing_3ph_jbs(edited)
 
-    meta = dict(edited.get('meta') or {})
+    meta = _fresh_edit_payload_meta(edited)
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
@@ -1718,7 +1857,7 @@ def _build_branch_move_payload(payload, details, target_trunk_length_m=None, tar
     edited['edges'] = _dedupe_edges(rewired_edges)
     edited = _collapse_single_outgoing_3ph_jbs(edited)
 
-    meta = dict(edited.get('meta') or {})
+    meta = _fresh_edit_payload_meta(edited)
     meta.update({
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
@@ -2290,7 +2429,7 @@ def replay_topology_operations(project_id, generated_payload, operations):
 
 @transaction.atomic
 def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_size='4C', user=None, remarks=''):
-    project = ProjectData.objects.get(proj_id=project_id)
+    project = _lock_project_for_topology_apply(project_id)
     preview = preview_combine_feeders(project_id, component_ids, trunk_length_m=trunk_length_m, cable_size=cable_size)
     if not preview['ok']:
         return preview
@@ -2314,11 +2453,25 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
-    topology_operations = _topology_operation_chain(project, 'combine_feeders', preview, {
+    topology_operations, topology_chain_audit = _topology_operation_chain(project, 'combine_feeders', preview, {
         'component_ids': preview['selected_component_ids'],
         'trunk_length_m': preview['trunk_length_m'],
         'cable_size': preview['cable_size'],
-    })
+    }, generated_payload=baseline_payload)
+    edit_payload, validation_summary = _finalize_edit_payload(
+        edited_payload,
+        topology_operations,
+        preview,
+        preview_key='combine_preview',
+        boq_overrides=boq_overrides,
+        topology_chain_audit=topology_chain_audit,
+    )
+    if edit_payload is None:
+        return {
+            'ok': False,
+            'error': 'Topology edit failed structural validation.',
+            'validation_summary': validation_summary,
+        }
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2328,20 +2481,8 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         remarks=remarks or '',
         baseline_fingerprint=payload_fingerprint(baseline_payload),
         generated_snapshot=baseline_payload,
-        edit_payload={
-            'sld_payload': edited_payload,
-            'topology_operations': topology_operations,
-            'combine_preview': preview,
-            'downstream_summaries': {
-                'boq': boq_overrides,
-                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
-            },
-            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
-        },
-        validation_summary={
-            'status': 'needs_review',
-            'warnings': [preview['warning']],
-        },
+        edit_payload=edit_payload,
+        validation_summary=validation_summary,
     )
     return {
         'ok': True,
@@ -2361,7 +2502,7 @@ def apply_attach_to_jb(
     user=None,
     remarks='',
 ):
-    project = ProjectData.objects.get(proj_id=project_id)
+    project = _lock_project_for_topology_apply(project_id)
     preview = preview_attach_to_jb(
         project_id,
         source_component_id,
@@ -2411,12 +2552,26 @@ def apply_attach_to_jb(
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
-    topology_operations = _topology_operation_chain(project, preview['edit_type'], preview, {
+    topology_operations, topology_chain_audit = _topology_operation_chain(project, preview['edit_type'], preview, {
         'source_component_id': preview['source_component_id'],
         'target_component_id': preview.get('target_component_id') or preview.get('target_jb_component_id'),
         'trunk_length_m': preview.get('target_insert_trunk_length') or trunk_length_m,
         'cable_size': preview.get('target_insert_cable_size') or cable_size,
-    })
+    }, generated_payload=generated_payload)
+    edit_payload, validation_summary = _finalize_edit_payload(
+        edited_payload,
+        topology_operations,
+        preview,
+        preview_key=edit_payload_key,
+        boq_overrides=boq_overrides,
+        topology_chain_audit=topology_chain_audit,
+    )
+    if edit_payload is None:
+        return {
+            'ok': False,
+            'error': 'Topology edit failed structural validation.',
+            'validation_summary': validation_summary,
+        }
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2426,20 +2581,8 @@ def apply_attach_to_jb(
         remarks=remarks or '',
         baseline_fingerprint=payload_fingerprint(generated_payload),
         generated_snapshot=generated_payload,
-        edit_payload={
-            'sld_payload': edited_payload,
-            'topology_operations': topology_operations,
-            edit_payload_key: preview,
-            'downstream_summaries': {
-                'boq': boq_overrides,
-                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
-            },
-            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
-        },
-        validation_summary={
-            'status': 'needs_review',
-            'warnings': [preview['warning']],
-        },
+        edit_payload=edit_payload,
+        validation_summary=validation_summary,
     )
     return {
         'ok': True,
@@ -2459,7 +2602,7 @@ def apply_downstream_jb(
     user=None,
     remarks='',
 ):
-    project = ProjectData.objects.get(proj_id=project_id)
+    project = _lock_project_for_topology_apply(project_id)
     preview = preview_downstream_jb(
         project_id,
         parent_component_id,
@@ -2494,12 +2637,26 @@ def apply_downstream_jb(
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
-    topology_operations = _topology_operation_chain(project, 'downstream_jb', preview, {
+    topology_operations, topology_chain_audit = _topology_operation_chain(project, 'downstream_jb', preview, {
         'parent_component_id': preview['parent_component_id'],
         'branch_component_ids': preview['selected_component_ids'],
         'trunk_length_m': preview['trunk_length_m'],
         'cable_size': preview['cable_size'],
-    })
+    }, generated_payload=generated_payload)
+    edit_payload, validation_summary = _finalize_edit_payload(
+        edited_payload,
+        topology_operations,
+        preview,
+        preview_key='downstream_jb_preview',
+        boq_overrides=boq_overrides,
+        topology_chain_audit=topology_chain_audit,
+    )
+    if edit_payload is None:
+        return {
+            'ok': False,
+            'error': 'Topology edit failed structural validation.',
+            'validation_summary': validation_summary,
+        }
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2509,20 +2666,8 @@ def apply_downstream_jb(
         remarks=remarks or '',
         baseline_fingerprint=payload_fingerprint(generated_payload),
         generated_snapshot=generated_payload,
-        edit_payload={
-            'sld_payload': edited_payload,
-            'topology_operations': topology_operations,
-            'downstream_jb_preview': preview,
-            'downstream_summaries': {
-                'boq': boq_overrides,
-                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
-            },
-            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
-        },
-        validation_summary={
-            'status': 'needs_review',
-            'warnings': [preview['warning']],
-        },
+        edit_payload=edit_payload,
+        validation_summary=validation_summary,
     )
     return {
         'ok': True,
@@ -2534,7 +2679,7 @@ def apply_downstream_jb(
 
 @transaction.atomic
 def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
-    project = ProjectData.objects.get(proj_id=project_id)
+    project = _lock_project_for_topology_apply(project_id)
     preview = preview_split_circuits(project_id, component_ids)
     if not preview['ok']:
         return preview
@@ -2565,9 +2710,23 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
-    topology_operations = _topology_operation_chain(project, 'split_circuits', preview, {
+    topology_operations, topology_chain_audit = _topology_operation_chain(project, 'split_circuits', preview, {
         'component_ids': preview['selected_component_ids'],
-    })
+    }, generated_payload=generated_payload)
+    edit_payload, validation_summary = _finalize_edit_payload(
+        edited_payload,
+        topology_operations,
+        preview,
+        preview_key='split_preview',
+        boq_overrides=boq_overrides,
+        topology_chain_audit=topology_chain_audit,
+    )
+    if edit_payload is None:
+        return {
+            'ok': False,
+            'error': 'Topology edit failed structural validation.',
+            'validation_summary': validation_summary,
+        }
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2577,20 +2736,8 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
         remarks=remarks or '',
         baseline_fingerprint=payload_fingerprint(generated_payload),
         generated_snapshot=generated_payload,
-        edit_payload={
-            'sld_payload': edited_payload,
-            'topology_operations': topology_operations,
-            'split_preview': preview,
-            'downstream_summaries': {
-                'boq': boq_overrides,
-                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
-            },
-            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
-        },
-        validation_summary={
-            'status': 'needs_review',
-            'warnings': [preview['warning']],
-        },
+        edit_payload=edit_payload,
+        validation_summary=validation_summary,
     )
     return {
         'ok': True,
@@ -2602,7 +2749,7 @@ def apply_split_circuits(project_id, component_ids, user=None, remarks=''):
 
 @transaction.atomic
 def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
-    project = ProjectData.objects.get(proj_id=project_id)
+    project = _lock_project_for_topology_apply(project_id)
     generated_payload = build_project_sld_payload(project_id, apply_topology=False)
     active_payload = build_project_sld_payload(project_id)
     if not active_payload.get('meta', {}).get('has_topology_edit'):
@@ -2640,11 +2787,25 @@ def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
         'junction_box_total': _graph_component_count(edited_payload, ['JB3PH', 'JB1PH']),
     }
 
-    topology_operations = _topology_operation_chain(project, 'scoped_reset', preview, {
+    topology_operations, topology_chain_audit = _topology_operation_chain(project, 'scoped_reset', preview, {
         'component_id': component_id,
         'source_mcb_component_id': preview['source_mcb_component_id'],
         'reset_line_ids': preview['reset_line_ids'],
-    })
+    }, generated_payload=generated_payload)
+    edit_payload, validation_summary = _finalize_edit_payload(
+        edited_payload,
+        topology_operations,
+        preview,
+        preview_key='scoped_reset_preview',
+        boq_overrides=boq_overrides,
+        topology_chain_audit=topology_chain_audit,
+    )
+    if edit_payload is None:
+        return {
+            'ok': False,
+            'error': 'Topology edit failed structural validation.',
+            'validation_summary': validation_summary,
+        }
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2654,20 +2815,8 @@ def apply_scoped_reset(project_id, component_id, user=None, remarks=''):
         remarks=remarks or '',
         baseline_fingerprint=payload_fingerprint(generated_payload),
         generated_snapshot=generated_payload,
-        edit_payload={
-            'sld_payload': edited_payload,
-            'topology_operations': topology_operations,
-            'scoped_reset_preview': preview,
-            'downstream_summaries': {
-                'boq': boq_overrides,
-                'result': {'branch_count': _graph_component_count(edited_payload, ['MCB'])},
-            },
-            'cable_schedule_rows': _edited_cable_schedule_rows(edited_payload),
-        },
-        validation_summary={
-            'status': 'needs_review',
-            'warnings': [preview['warning']],
-        },
+        edit_payload=edit_payload,
+        validation_summary=validation_summary,
     )
     return {
         'ok': True,

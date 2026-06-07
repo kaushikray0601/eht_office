@@ -37,6 +37,7 @@ current SR/MI/cold-cable/SLD path is stable.
 - Power distribution topology for SR/MI outputs.
 - SLD generation from persisted power-distribution branches.
 - Controlled SLD topology edits and layout persistence.
+- Browser-side SLD topology controls hardened against stale render state.
 - BOQ and cable schedule foundations.
 - Cold cable ampacity, voltage drop, RCD-aware earth-loop review, and 4C/3C optimization.
 - Per-outgoing 3C cold-cable sizing.
@@ -99,10 +100,11 @@ Objective: build features that exceed manufacturer tools.
 2. `CC-P0`: Stabilization checkpoint.
 3. `CC-P1`: Installation-method catalogue readiness and UI guidance. Complete.
 4. `CC-P2`: Per-segment 3C cold-cable reporting/export. Complete.
-5. `CC-P3`: 3PH JB phase-balancing visibility. Next.
-6. `CC-P4`: Panel/load summary.
-7. `SCH-P1`: Procurement-grade cable schedule fields/export.
-8. `SLD-P1`: Visual issue badges and review indicators.
-9. `SLD-P2`: Topology edit impact summary.
-10. `QA-P1`: Worked examples and verification report alignment.
-11. `RELEASE-P1`: Production readiness sweep.
+5. `SLD-R1`: SLD topology control regression fix. Complete.
+6. `CC-P3`: 3PH JB phase-balancing visibility. Complete.
+7. `CC-P4`: Panel/load summary. Next.
+8. `SCH-P1`: Procurement-grade cable schedule fields/export.
+9. `SLD-P1`: Visual issue badges and review indicators.
+10. `SLD-P2`: Topology edit impact summary.
+11. `QA-P1`: Worked examples and verification report alignment.
+12. `RELEASE-P1`: Production readiness sweep.

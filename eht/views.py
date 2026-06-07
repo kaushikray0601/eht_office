@@ -1568,11 +1568,63 @@ def _branch_value(branch, path, default=''):
 
 
 def _cold_cable_results(project_id):
-    return list(
+    results = list(
         ColdCableResult.objects.filter(project_id=project_id)
         .select_related('distribution', 'distribution__line', 'cable_4c_catalogue', 'cable_3c_catalogue')
         .order_by('line_id', 'branch_index')
     )
+    for result in results:
+        result.phase_balance_summary = _cold_cable_phase_balance_summary(result)
+    return results
+
+
+def _phase_label_from_circuit_index(circuit_index):
+    try:
+        normalized_index = int(circuit_index)
+    except (TypeError, ValueError):
+        return ''
+    if normalized_index < 1:
+        return ''
+    return ('L1', 'L2', 'L3')[(normalized_index - 1) % 3]
+
+
+def _cold_cable_phase_balance_summary(result):
+    segments = result.cable_3c_segments or []
+    if not segments:
+        return None
+
+    phase_loads = {
+        'L1': {'label': 'L1', 'circuit_count': 0, 'operating_current_a': 0.0},
+        'L2': {'label': 'L2', 'circuit_count': 0, 'operating_current_a': 0.0},
+        'L3': {'label': 'L3', 'circuit_count': 0, 'operating_current_a': 0.0},
+    }
+    current = float(result.per_circuit_operating_current_a or 0.0)
+    assigned_count = 0
+    for segment in segments:
+        phase_label = segment.get('phase_label') or _phase_label_from_circuit_index(segment.get('circuit_index'))
+        if phase_label not in phase_loads:
+            continue
+        phase_loads[phase_label]['circuit_count'] += 1
+        phase_loads[phase_label]['operating_current_a'] += current
+        assigned_count += 1
+
+    if not assigned_count:
+        return None
+
+    currents = [item['operating_current_a'] for item in phase_loads.values()]
+    max_current = max(currents)
+    min_current = min(currents)
+    average_current = sum(currents) / len(currents)
+    imbalance_a = max_current - min_current
+    imbalance_pct = (imbalance_a / average_current * 100.0) if average_current else 0.0
+    return {
+        'phase_loads': list(phase_loads.values()),
+        'basis': 'L1/L2/L3 round-robin by outgoing circuit index',
+        'max_phase_current_a': max_current,
+        'min_phase_current_a': min_current,
+        'phase_imbalance_a': imbalance_a,
+        'phase_imbalance_pct': imbalance_pct,
+    }
 
 
 def _cold_cable_result_indexes(cold_rows):
@@ -1607,6 +1659,11 @@ def _attach_cold_cable_results(branch_rows, cold_rows):
 def _cold_cable_export_rows(cold_rows):
     rows = []
     for result in cold_rows:
+        phase_summary = _cold_cable_phase_balance_summary(result)
+        phase_loads = {
+            item['label']: item
+            for item in (phase_summary or {}).get('phase_loads', [])
+        }
         rows.append({
             'Project ID': result.project_id,
             'Line ID': result.line_id,
@@ -1648,6 +1705,12 @@ def _cold_cable_export_rows(cold_rows):
             'Density Basis (kg/m3)': result.conductor_material_density_kg_m3,
             'Sizing Status': result.sizing_status,
             'Review Notes': '; '.join(result.review_notes or []),
+            'Phase Balance Basis': (phase_summary or {}).get('basis') or '',
+            'L1 Current (A)': (phase_loads.get('L1') or {}).get('operating_current_a'),
+            'L2 Current (A)': (phase_loads.get('L2') or {}).get('operating_current_a'),
+            'L3 Current (A)': (phase_loads.get('L3') or {}).get('operating_current_a'),
+            'Phase Imbalance (A)': (phase_summary or {}).get('phase_imbalance_a'),
+            'Phase Imbalance (%)': (phase_summary or {}).get('phase_imbalance_pct'),
         })
     return rows
 
@@ -1671,6 +1734,9 @@ def _cold_cable_3c_segment_export_rows(cold_rows):
                 'Segment Display Tag': segment.get('display_tag') or '',
                 'Segment Component ID': segment.get('component_id') or '',
                 'Circuit Index': segment.get('circuit_index'),
+                'Phase Slot': segment.get('phase_slot'),
+                'Phase Label': segment.get('phase_label') or _phase_label_from_circuit_index(segment.get('circuit_index')),
+                'Phase Basis': segment.get('phase_basis') or '',
                 'Segment Length (m)': segment.get('length_m'),
                 'Length Basis': segment.get('length_basis') or result.length_basis,
                 'Segment 3C Size (mm2)': size,
@@ -2456,6 +2522,17 @@ def _parse_json_request(request):
         return None
 
 
+def _filtered_sld_topology_error(body):
+    if not body or not (body.get('line_id') or '').strip():
+        return None
+    return JsonResponse({
+        'error': (
+            'Topology edits are not allowed in filtered SLD view. '
+            'Clear the line filter before combining, splitting, adding JB, moving, or resetting topology.'
+        ),
+    }, status=400)
+
+
 def sld_topology_combine_preview_view(request):
     if request.method != 'POST':
         return JsonResponse({'error': 'Invalid request method.'}, status=405)
@@ -2463,6 +2540,9 @@ def sld_topology_combine_preview_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     component_ids = body.get('component_ids') or []
@@ -2485,6 +2565,9 @@ def sld_topology_combine_apply_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     component_ids = body.get('component_ids') or []
@@ -2515,6 +2598,9 @@ def sld_topology_split_preview_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     component_ids = body.get('component_ids') or []
@@ -2535,6 +2621,9 @@ def sld_topology_split_apply_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     component_ids = body.get('component_ids') or []
@@ -2561,6 +2650,9 @@ def sld_topology_downstream_jb_preview_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     parent_component_id = body.get('parent_component_id') or ''
@@ -2590,6 +2682,9 @@ def sld_topology_downstream_jb_apply_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     parent_component_id = body.get('parent_component_id') or ''
@@ -2622,6 +2717,9 @@ def sld_topology_attach_jb_preview_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     source_component_id = body.get('source_component_id') or ''
@@ -2651,6 +2749,9 @@ def sld_topology_attach_jb_apply_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology edit payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     source_component_id = body.get('source_component_id') or ''
@@ -2683,6 +2784,9 @@ def sld_topology_reset_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology reset payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     if not project_id:
@@ -2707,6 +2811,9 @@ def sld_topology_reset_selected_view(request):
     body = _parse_json_request(request)
     if body is None:
         return JsonResponse({'error': 'Invalid topology reset payload.'}, status=400)
+    filtered_response = _filtered_sld_topology_error(body)
+    if filtered_response:
+        return filtered_response
 
     project_id = body.get('project_id')
     component_id = body.get('component_id') or ''

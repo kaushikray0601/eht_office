@@ -11,8 +11,12 @@ class ExistingPostgresTestRunner(DiscoverRunner):
     already provisioned but the role shouldn't manage databases.
     """
 
+    def _discard_cached_connection(self, alias):
+        if hasattr(connections._connections, alias):
+            delattr(connections._connections, alias)
+
     def setup_databases(self, *, aliases=None, **kwargs):
-        aliases = set(aliases or connections)
+        aliases = set(connections) if aliases is None else set(aliases)
         old_config = []
 
         for alias in aliases:
@@ -29,30 +33,31 @@ class ExistingPostgresTestRunner(DiscoverRunner):
                     f"Refusing to run tests for alias '{alias}' because TEST.NAME matches NAME."
                 )
 
-            connection.close()
-            old_config.append((connection, live_name))
-            connection.settings_dict['NAME'] = test_name
-            connection.settings_dict['CONN_MAX_AGE'] = 0
+            old_config.append((alias, live_name))
             connections.close_all()
+            connections.databases[alias]['NAME'] = test_name
+            connections.databases[alias]['CONN_MAX_AGE'] = 0
+            self._discard_cached_connection(alias)
+            connection = connections[alias]
 
             if self.verbosity >= 1:
                 self.log(
                     f"Using existing PostgreSQL test database for alias '{alias}' ('{test_name}')."
                 )
-            connection.ensure_connection()
-            connection.close()
             call_command('migrate', database=alias, verbosity=0, interactive=False)
             call_command('flush', database=alias, verbosity=0, interactive=False)
 
         return old_config
 
     def teardown_databases(self, old_config, **kwargs):
-        for connection, live_name in old_config:
+        for alias, live_name in old_config:
+            connection = connections[alias]
             call_command(
                 'flush',
-                database=connection.alias,
+                database=alias,
                 verbosity=0,
                 interactive=False,
             )
             connection.close()
-            connection.settings_dict['NAME'] = live_name
+            connections.databases[alias]['NAME'] = live_name
+            self._discard_cached_connection(alias)

@@ -963,6 +963,21 @@ evidence includes circuit index, length basis, selected 3C size, voltage drop,
 load-end voltage, fault current/status, conductor mass, and whether that segment
 sets the branch critical 3C size.
 
+For 3-phase JB branches, each outgoing 3C circuit is also assigned a visible
+phase slot for review. The current implementation infers slots by outgoing
+circuit index in a fixed round-robin sequence:
+
+- Circuit 1 → L1
+- Circuit 2 → L2
+- Circuit 3 → L3
+- Circuit 4 → L1, and so on
+
+The result tab and result export summarize the inferred L1/L2/L3 current totals
+using the per-circuit operating current. They also show the phase-current
+imbalance as the difference between the highest and lowest inferred phase loads.
+This is visibility/review evidence only; the engine does not yet reorder circuits
+or optimize phase allocation.
+
 ### 10B.6 Sizing Status
 
 Each cold cable result carries one of four statuses:
@@ -993,8 +1008,8 @@ The following items are not calculated in the current cold cable module:
 - Aluminium conductor sizing (deferred; current catalogue path is copper only).
 - Short-circuit withstand verification (minimum cable cross-section for the
   prospective short-circuit current at the MCB).
-- Phase balancing across 3-phase JB outgoing circuits (all circuits currently
-  assumed balanced for the 4-core trunk current).
+- Automatic phase rebalancing or user-editable phase-slot assignment for 3-phase
+  JB outgoing circuits.
 - Route-aware cable length from a 3D model or layout drawing.
 - Panel loading schedule and phase-bus current totals.
 - MI cold-lead integration with upstream cold cable voltage drop budget.

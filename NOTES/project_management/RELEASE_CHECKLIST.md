@@ -12,7 +12,7 @@ production-ready for serious engineering review.
 - [x] `node --check static/js/sld_workspace.js` passes.
 - [x] `git diff --check` passes.
 - [x] Full `eht` test suite passes.
-- [ ] Current migrations are applied to the development database.
+- [x] Current migrations are applied to the development database.
 - [x] No accidental unrelated file changes remain in the release diff.
 
 ## Hot Engineering
@@ -36,7 +36,7 @@ production-ready for serious engineering review.
 - [ ] Project-default length basis forces review-required status.
 - [x] Installation-method catalogue readiness is clear; setup allows Method E only and shows D2 as coming soon.
 - [x] Per-segment 3C results are exported/reported.
-- [ ] Phase-balancing visibility is available or explicitly deferred.
+- [x] Phase-balancing visibility is available or explicitly deferred.
 - [ ] Panel/load summary is available or explicitly deferred.
 
 ## Cable Schedule / BOQ
@@ -50,9 +50,13 @@ production-ready for serious engineering review.
 
 ## SLD
 
-- [ ] Generated SLD renders correctly for representative projects.
+- [x] Generated SLD renders correctly for representative projects.
+- [x] Playwright SLD browser smoke passes in local dev environment, including preview/apply for the four main topology workflows.
+- [x] Frontend SLD render paths use guarded render lifecycle.
 - [ ] Saved layout persists and resets correctly.
-- [ ] Controlled topology edits remain auditable.
+- [x] Controlled topology edits remain auditable.
+- [x] Filtered/focused SLD views block topology edits while preserving cable/tracer overrides.
+- [x] Topology operation records and saved graph invariants are validated before active edits are persisted.
 - [ ] PDF export reflects active topology.
 - [ ] Cold-cable labels fit and do not overlap key symbols.
 - [ ] Review-required and missing-data states are visible.

@@ -30,11 +30,15 @@ stay concise.
 | 2026-06-07 | Project setup exposes only active Method E plus disabled coming-soon Method D2 for cold-cable installation method. | Keeps the user-facing setup simple while acknowledging the planned direct-buried basis; B2/C/D1 stay hidden until catalogue work is ready. | Active |
 | 2026-06-07 | Cold-cable installation methods without validated catalogue rows produce explicit unsizeable guidance if encountered in stored/admin data. | Prevents silent use of incomplete catalogue data. | Active |
 | 2026-06-07 | Branch-level 3C size is reported as the critical outgoing 3C segment; all outgoing 3C segments are exported separately. | Keeps branch summaries simple while preserving per-segment evidence for unequal route lengths. | Active |
+| 2026-06-07 | 3PH JB outgoing phase visibility is inferred as L1/L2/L3 round-robin by outgoing circuit index and stored in per-segment cold-cable JSON. | Provides review visibility without adding a migration or pretending automatic phase optimization exists. | Active |
+| 2026-06-07 | Topology edits are blocked in filtered/focused SLD views; cable length and tracer overrides remain allowed. | Prevents applying full-project topology mutations from a partial graph while preserving line-local engineering overrides. | Active |
+| 2026-06-07 | Long SLD topology operation chains compact fail-closed rather than replaying indefinitely. | Keeps active edits usable while the generated baseline is unchanged; if the generated baseline later changes, compacted edits require review instead of unsafe replay. | Active |
 
 ## Decision Candidates
 
 | Candidate | Needed Before | Notes |
 | --- | --- | --- |
-| How to represent phase-slot ownership for 3PH JB outgoing branches. | `CC-P3` | Must support visibility first, optimization later. |
-| Whether to checkpoint current working tree before `CC-P3`. | End of `CC-P2` | Strongly recommended now that PM setup, CC-P1, and CC-P2 tests are green. |
+| Whether phase slots should become user-editable. | After `CC-P4`/panel summary | Current `CC-P3` basis is inferred visibility only. |
+| Whether combined-circuit length defaults require explicit user confirmation before apply. | Before SLD combined-circuit cable re-sizing | Current direction: default to highest selected feeder length and warn/review; decide whether to block apply until user accepts. |
+| Whether to checkpoint current working tree before `CC-P4`. | End of `CC-P3` | Strongly recommended now that PM setup, CC-P1, CC-P2, SLD-R1, and CC-P3 tests are green. |
 | When to move to a fresh chat. | After `PM-00`/`CC-P0` | Fresh chat plus `CODEX_MEMORY.md` should improve speed and quality. |

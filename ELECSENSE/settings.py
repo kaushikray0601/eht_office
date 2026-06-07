@@ -114,6 +114,7 @@ if USE_POSTGRES:
             "HOST": env("POSTGRES_HOST", default=os.getenv("PGHOST", "129.151.129.146")),
             "PORT": env("POSTGRES_PORT", default=os.getenv("PGPORT", "5432")),
             "CONN_MAX_AGE": env.int("POSTGRES_CONN_MAX_AGE", default=60),
+            "CONN_HEALTH_CHECKS": env.bool("POSTGRES_CONN_HEALTH_CHECKS", default=True),
             "OPTIONS": {
                 "connect_timeout": env.int("POSTGRES_CONNECT_TIMEOUT", default=10),
             },

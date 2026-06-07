@@ -108,6 +108,46 @@
         setSldMessage(root, 'Unable to render SLD', message, false);
     }
 
+    function beginSldRender(root) {
+        if (!root || root.dataset.rendering === 'true') {
+            return false;
+        }
+        root.dataset.rendering = 'true';
+        root.__sldState = null;
+        clearTimeout(root.__sldRenderWatchdog);
+        root.__sldRenderWatchdog = setTimeout(function () {
+            if (root.dataset.rendering === 'true') {
+                console.warn('[SLD] render watchdog fired; clearing stuck rendering state.');
+                root.dataset.rendering = 'false';
+            }
+        }, 20000);
+        return true;
+    }
+
+    function finishSldRender(root) {
+        if (root) {
+            clearTimeout(root.__sldRenderWatchdog);
+            root.dataset.rendering = 'false';
+        }
+    }
+
+    function isSldRendering(root) {
+        return !!(root && root.dataset.rendering === 'true');
+    }
+
+    function ensureSldWorkspaceReady(root) {
+        if (!root) {
+            return false;
+        }
+        if (root.__sldState) {
+            return true;
+        }
+        if (!isSldRendering(root)) {
+            fetchAndRenderSld(root);
+        }
+        return false;
+    }
+
     function formatNodeBody(node) {
         const metadata = node.metadata || {};
         if (node.component_type === 'MCB' && metadata.breaker_size) {
@@ -394,6 +434,7 @@
                 fill: 'transparent',
                 stroke: 'transparent',
                 cursor: 'pointer',
+                pointerEvents: 'all',
             },
             terminalPath: {
                 d: '',
@@ -612,6 +653,8 @@
                     strokeWidth: 2,
                     rx: 0,
                     ry: 0,
+                    cursor: 'pointer',
+                    pointerEvents: 'all',
                 },
                 label: {
                     text: '',
@@ -636,6 +679,8 @@
                 strokeWidth: 1.8,
                 rx: isExternalDetailNode ? 2 : 4,
                 ry: isExternalDetailNode ? 2 : 4,
+                cursor: 'pointer',
+                pointerEvents: 'all',
             },
             label: {
                 text: CABLE_COMPONENTS.has(node.component_type) ? '' : (isExternalDetailNode ? node.display_tag : `${node.display_tag}\n${formatNodeBody(node)}`),
@@ -675,19 +720,39 @@
         return rectangle;
     }
 
-    function createExternalDetailLabel(node, position) {
+    function externalDetailLabelGeometry(node, position) {
         const style = getNodeStyle(node.component_type);
+        const isCable = CABLE_COMPONENTS.has(node.component_type);
+        const labelWidth = isCable ? 98 : style.width + 34;
+        const labelHeight = isCable ? 48 : 44;
+        const labelOffsetY = isCable ? 16 : 10;
+        return {
+            x: position.x - ((labelWidth - style.width) / 2),
+            y: position.y + (style.height / 2) + labelOffsetY,
+            width: labelWidth,
+            height: labelHeight,
+        };
+    }
+
+    function positionExternalDetailLabel(label, node, position) {
+        if (!label || !node || !position) {
+            return;
+        }
+        const geometry = externalDetailLabelGeometry(node, position);
+        label.position(geometry.x, geometry.y);
+        label.resize(geometry.width, geometry.height);
+    }
+
+    function createExternalDetailLabel(node, position) {
+        const geometry = externalDetailLabelGeometry(node, position);
         const metadata = node.metadata || {};
         const isCableOverride = (node.component_type === 'Cable4C' || node.component_type === 'Cable3C')
             && !!(metadata.cable_override_active || metadata.manual_length_m || metadata.manual_cable_size);
         const isCable = CABLE_COMPONENTS.has(node.component_type);
         if (isCable) {
-            const labelWidth = 98;
-            const labelHeight = 48;
             const label = new (getCableDetailLabelElementClass())();
             const detailParts = formatCableExternalDetailParts(node);
-            label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + 14);
-            label.resize(labelWidth, labelHeight);
+            positionExternalDetailLabel(label, node, position);
             label.attr({
                 body: {
                     fill: 'transparent',
@@ -700,7 +765,7 @@
                     fontWeight: SLD_LABEL_FONT_WEIGHT,
                     textAnchor: 'middle',
                     textVerticalAnchor: 'top',
-                    x: labelWidth / 2,
+                    x: geometry.width / 2,
                     y: 0,
                 },
                 sizeLabel: {
@@ -710,7 +775,7 @@
                     fontWeight: SLD_LABEL_FONT_WEIGHT,
                     textAnchor: 'middle',
                     textVerticalAnchor: 'top',
-                    x: labelWidth / 2,
+                    x: geometry.width / 2,
                     y: 14,
                 },
                 vdLabel: {
@@ -720,19 +785,15 @@
                     fontWeight: SLD_LABEL_FONT_WEIGHT,
                     textAnchor: 'middle',
                     textVerticalAnchor: 'top',
-                    x: labelWidth / 2,
+                    x: geometry.width / 2,
                     y: 28,
                 },
             });
             label.prop('sldMeta', { type: 'external-detail-label', ownerComponentId: node.component_id });
             return label;
         }
-        const labelWidth = isCable ? 176 : style.width + 34;
-        const labelHeight = isCable ? 48 : 44;
-        const labelOffsetY = isCable ? 16 : 10;
         const label = new joint.shapes.standard.TextBlock();
-        label.position(position.x - ((labelWidth - style.width) / 2), position.y + (style.height / 2) + labelOffsetY);
-        label.resize(labelWidth, labelHeight);
+        positionExternalDetailLabel(label, node, position);
         label.attr({
             body: {
                 fill: 'transparent',
@@ -745,7 +806,7 @@
                 fontWeight: SLD_LABEL_FONT_WEIGHT,
                 textAnchor: 'middle',
                 textVerticalAnchor: 'top',
-                x: labelWidth / 2,
+                x: geometry.width / 2,
                 y: 0,
             },
         });
@@ -1602,6 +1663,28 @@
         return state && state.attachSourceId && state.attachTargetJbId ? 2 : 0;
     }
 
+    function isTopologyEditDisabledForFocusedLine(root) {
+        return !!(root && root.dataset && root.dataset.selectedLineId);
+    }
+
+    function focusedTopologyEditMessage(root) {
+        const lineId = root && root.dataset ? root.dataset.selectedLineId : '';
+        return lineId
+            ? `Topology edit is not allowed while the SLD is filtered to ${lineId}. Clear the line filter to edit topology.`
+            : 'Topology edit is not allowed in filtered SLD view. Clear the line filter to edit topology.';
+    }
+
+    function warnIfFocusedTopologyEdit(root) {
+        if (!isTopologyEditDisabledForFocusedLine(root)) {
+            return false;
+        }
+        if (typeof window.showToast === 'function') {
+            window.showToast(focusedTopologyEditMessage(root), 'warning');
+        }
+        updateCombineControls(root);
+        return true;
+    }
+
     function formatBreakerRating(value) {
         return value === null || value === undefined || value === '' ? '-' : `${value}A`;
     }
@@ -1651,18 +1734,27 @@
         const selectedCount = isAttachJb ? selectedAttachCount(state) : (selectedSet ? selectedSet.size : 0);
         const preview = isAttachJb ? state.attachJbPreview : (isDownstreamJb ? state.downstreamJbPreview : (isSplit ? state.splitPreview : state.combinePreview));
         const minimumSelection = isSplit ? 1 : 2;
+        const focusedLineEditDisabled = isTopologyEditDisabledForFocusedLine(root);
 
         if (combineButton) {
             combineButton.classList.toggle('active', !!(state && state.combineMode));
+            combineButton.disabled = focusedLineEditDisabled;
+            combineButton.title = focusedLineEditDisabled ? focusedTopologyEditMessage(root) : '';
         }
         if (splitButton) {
             splitButton.classList.toggle('active', isSplit);
+            splitButton.disabled = focusedLineEditDisabled;
+            splitButton.title = focusedLineEditDisabled ? focusedTopologyEditMessage(root) : '';
         }
         if (downstreamButton) {
             downstreamButton.classList.toggle('active', isDownstreamJb);
+            downstreamButton.disabled = focusedLineEditDisabled;
+            downstreamButton.title = focusedLineEditDisabled ? focusedTopologyEditMessage(root) : '';
         }
         if (attachButton) {
             attachButton.classList.toggle('active', isAttachJb);
+            attachButton.disabled = focusedLineEditDisabled;
+            attachButton.title = focusedLineEditDisabled ? focusedTopologyEditMessage(root) : '';
         }
         if (downstreamLengthGroup) {
             const showTrunkInputs = mode === 'combine' || isDownstreamJb || attachCreatesTrunk;
@@ -1684,7 +1776,8 @@
             }
         }
         if (applyButton) {
-            applyButton.disabled = !(preview && preview.ok);
+            applyButton.disabled = focusedLineEditDisabled || !(preview && preview.ok);
+            applyButton.title = focusedLineEditDisabled ? focusedTopologyEditMessage(root) : '';
             const applyLabel = isAttachJb
                 ? 'Apply Attach'
                 : (isDownstreamJb
@@ -1693,7 +1786,9 @@
             applyButton.innerHTML = `<i class="bi bi-check2-circle me-1"></i>${applyLabel}`;
         }
         if (summary && state) {
-            if (!mode) {
+            if (focusedLineEditDisabled) {
+                summary.innerHTML = `<span class="text-warning fw-semibold">Topology edit is disabled in filtered SLD view.</span> Cable length overrides and tracer selection remain available. Clear the line filter to combine, split, add JB, or move feeders.`;
+            } else if (!mode) {
                 summary.textContent = 'Select Combine, Split, Add JB, or Attach to start a topology edit.';
             } else if (isDownstreamJb && !state.downstreamJbParentId) {
                 summary.textContent = 'Select the upstream 3PH JB, then select outgoing branches to move under a new downstream 3PH JB.';
@@ -2312,9 +2407,7 @@
                 if (!label || !element || !node) {
                     return;
                 }
-                const position = element.position();
-                const size = element.size();
-                label.position(position.x - 16, position.y + size.height + 7);
+                positionExternalDetailLabel(label, node, element.position());
             });
 
             Object.keys(state.endLabelByComponentId).forEach(function (componentId) {
@@ -2709,7 +2802,7 @@
         const targetPage = Math.floor(groupIndex / pageSize) + 1;
         if (targetPage !== pager.page) {
             pager.page = targetPage;
-            renderCurrentSldPage(root);
+            safeRenderCurrentSldPage(root, 'component-search-page-change');
         }
     }
 
@@ -3002,6 +3095,21 @@
         updateSldPagerControls(root, pageInfo);
     }
 
+    function safeRenderCurrentSldPage(root, reason) {
+        if (!root || !root.__sldPager) {
+            return false;
+        }
+        try {
+            renderCurrentSldPage(root);
+            return true;
+        } catch (error) {
+            console.error('[SLD] renderCurrentSldPage failed:', reason || 'manual render', error);
+            root.__sldState = null;
+            renderEmptyState(root, 'SLD diagram could not be rendered. Check the browser console for details.');
+            return false;
+        }
+    }
+
     function renderSldGraph(root, payload, savedLayout) {
         if (!payload || !payload.nodes || !payload.nodes.length) {
             renderEmptyState(root, 'No stored graph nodes were returned for this project.');
@@ -3012,6 +3120,7 @@
             return;
         }
 
+        try {
         root.innerHTML = '';
         root.classList.add('sld-diagram-shell--canvas');
         const canvas = document.createElement('div');
@@ -3289,6 +3398,11 @@
         updateCombineControls(root);
         highlightSelection(root, null);
         fitPaperToContent(root);
+        } catch (renderError) {
+            console.error('[SLD] renderSldGraph failed:', renderError);
+            root.__sldState = null;
+            renderEmptyState(root, 'SLD diagram could not be rendered. Check the browser console for details.');
+        }
     }
 
     function fetchSavedLayout(projectId, layoutUrl, selectedLineId) {
@@ -3324,6 +3438,9 @@
         if (!payloadUrl || !layoutUrl || !projectId) {
             return;
         }
+        if (!beginSldRender(root)) {
+            return;
+        }
 
         setSldMessage(root, 'Loading SLD', 'Preparing the stored project graph for rendering.', true);
 
@@ -3346,7 +3463,11 @@
                             pageSize: pageSizeValue(controls.pageSize ? controls.pageSize.value : '10'),
                             page: 1,
                         };
-                        renderCurrentSldPage(root);
+                        try {
+                            safeRenderCurrentSldPage(root, 'initial-load-with-layout');
+                        } finally {
+                            finishSldRender(root);
+                        }
                     })
                     .fail(function () {
                         const controls = getSldPagerControls(root);
@@ -3356,11 +3477,16 @@
                             pageSize: pageSizeValue(controls.pageSize ? controls.pageSize.value : '10'),
                             page: 1,
                         };
-                        renderCurrentSldPage(root);
+                        try {
+                            safeRenderCurrentSldPage(root, 'initial-load-without-layout');
+                        } finally {
+                            finishSldRender(root);
+                        }
                     });
             },
             error: function (xhr) {
                 if (selectedLineId && xhr.status === 404 && clearFocusedLineFilter(root)) {
+                    finishSldRender(root);
                     fetchAndRenderSld(root);
                     return;
                 }
@@ -3369,6 +3495,7 @@
                     errorMessage = xhr.responseJSON.error;
                 }
                 renderEmptyState(root, errorMessage);
+                finishSldRender(root);
             },
         });
     }
@@ -3464,6 +3591,9 @@
         if (!state || !url || !selectedIds || !selectedIds.size) {
             return null;
         }
+        if (warnIfFocusedTopologyEdit(root)) {
+            return null;
+        }
         const panel = root.closest('.sld-panel');
         const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
         const mode = getTopologyMode(state);
@@ -3472,6 +3602,9 @@
             project_id: root.dataset.projectId,
             component_ids: Array.from(selectedIds),
         };
+        if (root.dataset.selectedLineId) {
+            payload.line_id = root.dataset.selectedLineId;
+        }
         if (mode === 'combine') {
             payload.trunk_length_m = lengthInput && lengthInput.value ? lengthInput.value : defaultTrunkLength(root, mode);
             payload.cable_size = manualTrunkCableSize(root);
@@ -3493,6 +3626,9 @@
         if (!state || !url || !state.downstreamJbParentId || selectedDownstreamBranchCount(state) < 2) {
             return null;
         }
+        if (warnIfFocusedTopologyEdit(root)) {
+            return null;
+        }
         const panel = root.closest('.sld-panel');
         const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
         const lengthInput = getDownstreamLengthInput(root);
@@ -3503,6 +3639,9 @@
             trunk_length_m: lengthInput ? lengthInput.value : root.dataset.defaultJbLoopLength,
             cable_size: manualTrunkCableSize(root),
         };
+        if (root.dataset.selectedLineId) {
+            payload.line_id = root.dataset.selectedLineId;
+        }
         if (includeRemarks && remarks) {
             payload.remarks = remarks.value;
         }
@@ -3520,6 +3659,9 @@
         if (!state || !url || !state.attachSourceId || !state.attachTargetJbId) {
             return null;
         }
+        if (warnIfFocusedTopologyEdit(root)) {
+            return null;
+        }
         const panel = root.closest('.sld-panel');
         const remarks = panel ? panel.querySelector('#sld-combine-remarks') : null;
         const lengthInput = getDownstreamLengthInput(root);
@@ -3530,6 +3672,9 @@
             trunk_length_m: lengthInput && lengthInput.value ? lengthInput.value : defaultTrunkLength(root, 'attach_to_jb'),
             cable_size: manualTrunkCableSize(root),
         };
+        if (root.dataset.selectedLineId) {
+            payload.line_id = root.dataset.selectedLineId;
+        }
         if (includeRemarks && remarks) {
             payload.remarks = remarks.value;
         }
@@ -3778,12 +3923,19 @@
         if (!url || !projectId) {
             return;
         }
+        if (warnIfFocusedTopologyEdit(root)) {
+            return;
+        }
+        const payload = { project_id: projectId };
+        if (root.dataset.selectedLineId) {
+            payload.line_id = root.dataset.selectedLineId;
+        }
         $.ajax({
             url: url,
             type: 'POST',
             headers: { 'X-CSRFToken': getSldCsrfToken() },
             contentType: 'application/json',
-            data: JSON.stringify({ project_id: projectId }),
+            data: JSON.stringify(payload),
         }).done(function (response) {
             if (root.__sldState) {
                 if (root.__sldState.topologyPreviewTimer) {
@@ -3832,16 +3984,23 @@
             }
             return;
         }
+        if (warnIfFocusedTopologyEdit(root)) {
+            return;
+        }
+        const payload = {
+            project_id: projectId,
+            component_id: componentId,
+            remarks: remarksInput ? remarksInput.value : '',
+        };
+        if (root.dataset.selectedLineId) {
+            payload.line_id = root.dataset.selectedLineId;
+        }
         $.ajax({
             url: url,
             type: 'POST',
             headers: { 'X-CSRFToken': getSldCsrfToken() },
             contentType: 'application/json',
-            data: JSON.stringify({
-                project_id: projectId,
-                component_id: componentId,
-                remarks: remarksInput ? remarksInput.value : '',
-            }),
+            data: JSON.stringify(payload),
         }).done(function (response) {
             if (root.__sldState) {
                 clearTopologySelectionState(root.__sldState);
@@ -3993,7 +4152,7 @@
 
     $(document).on('click', '#sld-save-layout', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         saveCurrentLayout(root);
@@ -4001,7 +4160,7 @@
 
     $(document).on('click', '#sld-reset-layout', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         resetCurrentLayout(root);
@@ -4009,7 +4168,10 @@
 
     $(document).on('click', '#sld-combine-mode', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root || !root.__sldState) {
+        if (!ensureSldWorkspaceReady(root)) {
+            return;
+        }
+        if (warnIfFocusedTopologyEdit(root)) {
             return;
         }
         root.__sldState.combineMode = !root.__sldState.combineMode;
@@ -4023,7 +4185,10 @@
 
     $(document).on('click', '#sld-split-mode', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root || !root.__sldState) {
+        if (!ensureSldWorkspaceReady(root)) {
+            return;
+        }
+        if (warnIfFocusedTopologyEdit(root)) {
             return;
         }
         root.__sldState.splitMode = !root.__sldState.splitMode;
@@ -4037,7 +4202,10 @@
 
     $(document).on('click', '#sld-downstream-jb-mode', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root || !root.__sldState) {
+        if (!ensureSldWorkspaceReady(root)) {
+            return;
+        }
+        if (warnIfFocusedTopologyEdit(root)) {
             return;
         }
         root.__sldState.downstreamJbMode = !root.__sldState.downstreamJbMode;
@@ -4051,7 +4219,10 @@
 
     $(document).on('click', '#sld-attach-jb-mode', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root || !root.__sldState) {
+        if (!ensureSldWorkspaceReady(root)) {
+            return;
+        }
+        if (warnIfFocusedTopologyEdit(root)) {
             return;
         }
         root.__sldState.attachJbMode = !root.__sldState.attachJbMode;
@@ -4065,7 +4236,7 @@
 
     $(document).on('input change', '#sld-downstream-jb-length, #sld-manual-trunk-size', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root || !root.__sldState) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         clearTopologyPreviewState(root.__sldState);
@@ -4075,49 +4246,49 @@
 
     $(document).on('click', '#sld-combine-apply', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             applyCombineFeeders(root);
         }
     });
 
     $(document).on('click', '#sld-topology-reset', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             resetTopologyEdit(root);
         }
     });
 
     $(document).on('click', '#sld-topology-reset-selected', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             resetSelectedTopologyEdit(root);
         }
     });
 
     $(document).on('click', '#sld-cable-save', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             saveCableOverride(root);
         }
     });
 
     $(document).on('click', '#sld-cable-reset', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             resetCableOverride(root);
         }
     });
 
     $(document).on('click', '#sld-tracer-save', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             saveTracerOverride(root);
         }
     });
 
     $(document).on('click', '#sld-tracer-reset', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (root) {
+        if (ensureSldWorkspaceReady(root)) {
             resetTracerOverride(root);
         }
     });
@@ -4129,7 +4300,7 @@
 
     $(document).on('click', '#sld-fit-view', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         fitPaperToContent(root);
@@ -4137,7 +4308,7 @@
 
     $(document).on('click', '#sld-fit-selected-line', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         fitSelectedLine(root);
@@ -4162,7 +4333,7 @@
 
     $(document).on('click', '#sld-zoom-in', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         zoomPaper(root, 1.12);
@@ -4170,7 +4341,7 @@
 
     $(document).on('click', '#sld-zoom-out', function () {
         const root = document.getElementById('sld-diagram-shell');
-        if (!root) {
+        if (!ensureSldWorkspaceReady(root)) {
             return;
         }
         zoomPaper(root, 0.9);
@@ -4183,7 +4354,7 @@
         }
         root.__sldPager.pageSize = pageSizeValue(this.value);
         root.__sldPager.page = 1;
-        renderCurrentSldPage(root);
+        safeRenderCurrentSldPage(root, 'page-size-change');
     });
 
     $(document).on('click', '#sld-page-prev', function () {
@@ -4192,7 +4363,7 @@
             return;
         }
         root.__sldPager.page = Math.max(1, root.__sldPager.page - 1);
-        renderCurrentSldPage(root);
+        safeRenderCurrentSldPage(root, 'page-prev');
     });
 
     $(document).on('click', '#sld-page-next', function () {
@@ -4201,7 +4372,7 @@
             return;
         }
         root.__sldPager.page += 1;
-        renderCurrentSldPage(root);
+        safeRenderCurrentSldPage(root, 'page-next');
     });
 
     $(document).on('click', '.sld-context-menu button', function () {
@@ -4225,10 +4396,6 @@
         if (!root) {
             return;
         }
-        if (root.dataset.rendering === 'true') {
-            return;
-        }
-        root.dataset.rendering = 'true';
         fetchAndRenderSld(root);
     };
 }());

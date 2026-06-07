@@ -323,6 +323,9 @@ def _cold_cable_segment_for_node(node, result):
 
 def _cold_cable_metadata_for_node(node, result):
     component_type = node.get('component_type')
+    phase_slot = None
+    phase_label = ''
+    phase_basis = ''
     if component_type == 'Cable4C':
         calculated_size = _format_cold_cable_size(4, result.cable_4c_size_mm2)
         conductor_size = result.cable_4c_size_mm2
@@ -354,6 +357,9 @@ def _cold_cable_metadata_for_node(node, result):
             k_group = segment.get('k_group')
             k_total = segment.get('k_total')
             review_notes = list(segment.get('review_notes') or [])
+            phase_slot = segment.get('phase_slot')
+            phase_label = segment.get('phase_label') or ''
+            phase_basis = segment.get('phase_basis') or ''
         else:
             calculated_size = _format_cold_cable_size(3, result.cable_3c_size_mm2)
             conductor_size = result.cable_3c_size_mm2
@@ -395,6 +401,9 @@ def _cold_cable_metadata_for_node(node, result):
         'k_temp': k_temp if component_type == 'Cable3C' else result.k_temp,
         'k_group': k_group if component_type == 'Cable3C' else result.k_group,
         'k_total': k_total if component_type == 'Cable3C' else result.k_total,
+        'phase_slot': phase_slot if component_type == 'Cable3C' else None,
+        'phase_label': phase_label if component_type == 'Cable3C' else '',
+        'phase_basis': phase_basis if component_type == 'Cable3C' else '',
         'review_notes': review_notes if component_type == 'Cable3C' else result.review_notes or [],
     }
 

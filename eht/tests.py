@@ -2,6 +2,7 @@ import json
 import math
 from copy import deepcopy
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
@@ -85,6 +86,9 @@ from eht.pipeline import run_project_calculations
 from eht.heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD
 
 
+BASE_DIR = Path(__file__).resolve().parent.parent
+
+
 def make_line(**overrides):
     line = {
         'uid': 'L1',
@@ -102,6 +106,77 @@ def make_line(**overrides):
     }
     line.update(overrides)
     return line
+
+
+class SldWorkspaceJavaScriptTests(SimpleTestCase):
+    def _source(self):
+        return (BASE_DIR / 'static' / 'js' / 'sld_workspace.js').read_text()
+
+    def test_render_guard_releases_after_render_exceptions(self):
+        source = self._source()
+
+        self.assertIn('function beginSldRender(root)', source)
+        self.assertIn('root.__sldRenderWatchdog = setTimeout', source)
+        self.assertIn('function finishSldRender(root)', source)
+        self.assertIn('clearTimeout(root.__sldRenderWatchdog);', source)
+        self.assertGreaterEqual(source.count('finally {\n                            finishSldRender(root);\n                        }'), 2)
+        self.assertIn("console.error('[SLD] renderSldGraph failed:', renderError);", source)
+        self.assertIn('SLD diagram could not be rendered. Check the browser console for details.', source)
+
+    def test_sld_components_have_explicit_pointer_hit_targets(self):
+        source = self._source()
+
+        self.assertIn("pointerEvents: 'all'", source)
+        self.assertIn("cursor: 'pointer'", source)
+
+    def test_sld_pager_uses_safe_render_gateway(self):
+        source = self._source()
+
+        self.assertIn('function safeRenderCurrentSldPage(root, reason)', source)
+        self.assertEqual(source.count('renderCurrentSldPage(root);'), 1)
+        self.assertIn("safeRenderCurrentSldPage(root, 'page-size-change')", source)
+        self.assertIn("safeRenderCurrentSldPage(root, 'page-prev')", source)
+        self.assertIn("safeRenderCurrentSldPage(root, 'page-next')", source)
+
+    def test_focused_sld_disables_topology_mutation_but_not_overrides(self):
+        source = self._source()
+
+        self.assertIn('function isTopologyEditDisabledForFocusedLine(root)', source)
+        self.assertIn('Topology edit is not allowed in filtered SLD view', source)
+        self.assertIn('payload.line_id = root.dataset.selectedLineId;', source)
+        self.assertIn('function saveCableOverride(root)', source)
+        self.assertIn('function saveTracerOverride(root)', source)
+
+
+class SldTopologyFingerprintTests(SimpleTestCase):
+    def test_payload_fingerprint_ignores_volatile_node_metadata(self):
+        payload = {
+            'schema_version': 1,
+            'nodes': [{
+                'component_id': 'mcb-1',
+                'component_type': 'MCB',
+                'line_uid': 'line-1',
+                'branch_index': 1,
+                'circuit_index': None,
+                'display_tag': 'MCB_001',
+                'metadata': {'breaker_size': 16, 'cold_cable': {'sizing_status': 'ok'}},
+            }],
+            'edges': [],
+            'line_groups': [{'line_uid': 'line-1', 'line_id': 'L1', 'branch_indices': [1]}],
+        }
+        changed_metadata = deepcopy(payload)
+        changed_metadata['nodes'][0]['metadata'] = {
+            'breaker_size': 20,
+            'cold_cable': {
+                'sizing_status': 'review_required',
+                'voltage_drop_percent': 2.5,
+            },
+        }
+        changed_topology = deepcopy(payload)
+        changed_topology['nodes'][0]['component_id'] = 'mcb-2'
+
+        self.assertEqual(payload_fingerprint(payload), payload_fingerprint(changed_metadata))
+        self.assertNotEqual(payload_fingerprint(payload), payload_fingerprint(changed_topology))
 
 
 def make_project_settings(**overrides):
@@ -3454,6 +3529,10 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(cable_nodes[0]['metadata']['cold_cable_calculated_size'], '3C x 2.5 mm2')
         self.assertEqual(cable_nodes[1]['metadata']['cold_cable_calculated_size'], '3C x 6 mm2')
         self.assertEqual(result.cable_3c_size_mm2, 6.0)
+        self.assertEqual(result.cable_3c_segments[0]['phase_label'], 'L1')
+        self.assertEqual(result.cable_3c_segments[1]['phase_label'], 'L2')
+        self.assertEqual(cable_nodes[0]['metadata']['cold_cable']['phase_label'], 'L1')
+        self.assertEqual(cable_nodes[1]['metadata']['cold_cable']['phase_label'], 'L2')
 
 
 class SldTopologyWorkflowTests(TestCase):
@@ -4624,6 +4703,144 @@ class SldTopologyWorkflowTests(TestCase):
         self.assertIn('requires review', payload['meta']['manual_topology_warning'])
         self.assertEqual(sum(1 for node in payload['nodes'] if node['component_type'] == 'MCB'), 2)
 
+    def test_new_topology_edit_drops_unreplayable_active_operation_chain(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002', 'LINE-003'])
+        first_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()[:2]}),
+            content_type='application/json',
+        )
+        self.assertEqual(first_response.status_code, 200)
+
+        stale_edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        stale_edit.baseline_fingerprint = 'stale-baseline'
+        stale_edit.edit_payload['topology_operations'][0]['inputs']['component_ids'] = [
+            'missing-mcb',
+            *stale_edit.edit_payload['topology_operations'][0]['inputs']['component_ids'][1:],
+        ]
+        stale_edit.save(update_fields=['baseline_fingerprint', 'edit_payload'])
+
+        stale_payload = build_project_sld_payload('p1')
+        self.assertTrue(stale_payload['meta']['topology_edit_review_required'])
+
+        second_response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()[:2]}),
+            content_type='application/json',
+        )
+
+        self.assertEqual(second_response.status_code, 200)
+        active_edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        self.assertEqual(active_edit.edit_type, 'combine_feeders')
+        self.assertEqual(len(active_edit.edit_payload['topology_operations']), 1)
+        self.assertNotIn(
+            'missing-mcb',
+            active_edit.edit_payload['topology_operations'][0]['inputs']['component_ids'],
+        )
+        repaired_payload = build_project_sld_payload('p1')
+        self.assertTrue(repaired_payload['meta']['has_topology_edit'])
+        self.assertFalse(repaired_payload['meta'].get('topology_edit_review_required', False))
+        self.assertEqual(SLDTopologyEdit.objects.filter(project_id='p1', status='superseded').count(), 1)
+        self.assertEqual(
+            active_edit.edit_payload['topology_chain_audit']['inheritance']['reason'],
+            'active_chain_failed_replay',
+        )
+
+    def test_topology_mutation_is_rejected_from_filtered_sld_view(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+
+        response = self.client.post(
+            reverse('sld_topology_combine_preview_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'line_id': 'LINE-001',
+                'component_ids': self._mcb_component_ids()[:2],
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('filtered SLD view', response.json()['error'])
+        self.assertFalse(SLDTopologyEdit.objects.filter(project_id='p1').exists())
+
+    def test_saved_topology_invariant_failure_falls_back_to_generated_payload(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        edited = deepcopy(edit.edit_payload)
+        jb_node = next(
+            node for node in edited['sld_payload']['nodes']
+            if node.get('component_type') == 'JB3PH'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        )
+        target_id = next(
+            edge['to_component_id']
+            for edge in edited['sld_payload']['edges']
+            if edge['from_component_id'] == jb_node['component_id']
+        )
+        edited['sld_payload']['edges'].append({
+            'from_component_id': target_id,
+            'to_component_id': jb_node['component_id'],
+            'line_uid': 'cycle',
+            'branch_index': 99,
+            'circuit_index': 1,
+        })
+        edit.edit_payload = edited
+        edit.save(update_fields=['edit_payload'])
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertTrue(payload['meta']['topology_edit_review_required'])
+        self.assertIn('violates topology guard rails', payload['meta']['manual_topology_warning'])
+
+    def test_compacted_topology_chain_requires_review_after_baseline_change(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({'project_id': 'p1', 'component_ids': self._mcb_component_ids()}),
+            content_type='application/json',
+        )
+        self.assertEqual(response.status_code, 200)
+
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        edit.edit_payload['topology_chain_compacted'] = True
+        edit.baseline_fingerprint = 'stale-baseline'
+        edit.save(update_fields=['baseline_fingerprint', 'edit_payload'])
+
+        payload = build_project_sld_payload('p1')
+
+        self.assertTrue(payload['meta']['topology_edit_review_required'])
+        self.assertIn('operation chain was compacted', payload['meta']['manual_topology_warning'])
+
+    def test_long_topology_operation_chain_compaction_keeps_tail_and_audit(self):
+        from eht.sld_topology_workflows import (
+            SLD_OPERATION_CHAIN_COMPACT_THRESHOLD,
+            SLD_OPERATION_CHAIN_KEEP_COUNT,
+            _compact_topology_operation_chain,
+        )
+
+        operations = [
+            {
+                'schema_version': 1,
+                'operation_type': 'split_circuits',
+                'inputs': {'component_ids': [f'mcb-{index}']},
+            }
+            for index in range(SLD_OPERATION_CHAIN_COMPACT_THRESHOLD + 3)
+        ]
+
+        compacted, audit = _compact_topology_operation_chain(operations)
+
+        self.assertEqual(len(compacted), SLD_OPERATION_CHAIN_KEEP_COUNT)
+        self.assertEqual(compacted[0]['inputs']['component_ids'], ['mcb-31'])
+        self.assertTrue(audit['operation_chain_compacted'])
+        self.assertEqual(audit['reason'], 'operation_chain_length_threshold')
+
     def test_invalid_saved_topology_payload_falls_back_to_generated_payload(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         generated_payload = build_project_sld_payload('p1')
@@ -4804,6 +5021,12 @@ class ProjectDataViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'action="/create-project-data/"')
+
+    def test_base_workspace_uses_versioned_sld_script(self):
+        response = self.client.get(reverse('base'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'js/sld_workspace.js?v=sld-r3-hit-targets')
 
     def test_base_workspace_renders_cold_cable_project_settings(self):
         response = self.client.get(reverse('base'))
@@ -5473,8 +5696,15 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(BytesIO(response.content))
         rows = list(workbook['Cold Cable Sizing'].iter_rows(values_only=True))
+        header = rows[0]
+        phase_basis_index = header.index('Phase Balance Basis')
+        phase_l1_index = header.index('L1 Current (A)')
+        phase_imbalance_index = header.index('Phase Imbalance (A)')
         self.assertTrue(any(row[1] == line.line_id and row[15] == 2.5 for row in rows[1:]))
         self.assertTrue(any(row[39] and 'project default' in row[39] for row in rows[1:]))
+        self.assertTrue(any(row[phase_basis_index] and 'round-robin' in row[phase_basis_index] for row in rows[1:]))
+        self.assertTrue(any(row[phase_l1_index] and row[phase_l1_index] > 0 for row in rows[1:]))
+        self.assertTrue(any(row[phase_imbalance_index] is not None for row in rows[1:]))
 
     def test_result_export_includes_per_3c_segment_sheet(self):
         self._make_variable_3c_cold_cable_project()
@@ -5490,9 +5720,13 @@ class ResultAndBoqViewTests(TestCase):
         critical_index = header.index('Critical Segment')
         length_index = header.index('Segment Length (m)')
         tag_index = header.index('Segment Display Tag')
+        phase_label_index = header.index('Phase Label')
+        phase_basis_index = header.index('Phase Basis')
 
         self.assertEqual(len(rows), 3)
         self.assertTrue(any(row[segment_size_index] == 2.5 and row[length_index] == 15 for row in rows[1:]))
+        self.assertEqual([row[phase_label_index] for row in rows[1:]], ['L1', 'L2'])
+        self.assertTrue(all(row[phase_basis_index] == 'round_robin_by_outgoing_circuit_index' for row in rows[1:]))
         critical_rows = [row for row in rows[1:] if row[critical_index] == 'Yes']
         self.assertEqual(len(critical_rows), 1)
         self.assertEqual(critical_rows[0][critical_size_index], 6)
@@ -5510,6 +5744,10 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, '3C x 2.5 mm²')
         self.assertContains(response, '3C x 6 mm²')
         self.assertContains(response, '(critical)')
+        self.assertContains(response, 'L1 8.0 A')
+        self.assertContains(response, 'L2 8.0 A')
+        self.assertContains(response, 'L3 0.0 A')
+        self.assertContains(response, 'Imbalance 8.0 A')
 
     def test_result_view_and_export_surface_mi_selection_records(self):
         line = make_calculated_project_snapshot()
@@ -5722,6 +5960,14 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, reverse('sld_payload_view'))
         self.assertContains(response, reverse('sld_layout_view'))
         self.assertContains(response, reverse('sld_layout_reset_view'))
+        self.assertContains(response, reverse('sld_topology_combine_preview_view'))
+        self.assertContains(response, reverse('sld_topology_combine_apply_view'))
+        self.assertContains(response, reverse('sld_topology_split_preview_view'))
+        self.assertContains(response, reverse('sld_topology_split_apply_view'))
+        self.assertContains(response, reverse('sld_topology_downstream_jb_preview_view'))
+        self.assertContains(response, reverse('sld_topology_downstream_jb_apply_view'))
+        self.assertContains(response, reverse('sld_topology_attach_jb_preview_view'))
+        self.assertContains(response, reverse('sld_topology_attach_jb_apply_view'))
         self.assertContains(response, reverse('sld_topology_reset_view'))
         self.assertContains(response, reverse('sld_validation_view'))
         self.assertContains(response, line.line_id)

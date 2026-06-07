@@ -37,6 +37,19 @@ INSULATION_CONDUCTOR_TEMPERATURE_C = {
 TRACER_PE_FAULT_LOOP_NOTE = (
     'Tracer PE-path resistance is deferred and not included; this overestimates earth-fault current and is non-conservative.'
 )
+PHASE_SLOT_LABELS = ('L1', 'L2', 'L3')
+PHASE_SLOT_BASIS = 'round_robin_by_outgoing_circuit_index'
+
+
+def _phase_slot_for_circuit(circuit_index):
+    try:
+        normalized_index = int(circuit_index)
+    except (TypeError, ValueError):
+        return None, ''
+    if normalized_index < 1:
+        return None, ''
+    slot = ((normalized_index - 1) % len(PHASE_SLOT_LABELS)) + 1
+    return slot, PHASE_SLOT_LABELS[slot - 1]
 
 
 @dataclass
@@ -794,10 +807,14 @@ def _segment_result_payload(segment, selection, conductor_temp_c, vd_3c, vd_4c, 
     vd_total_v = vd_4c_v + vd_3c.vd_v
     vd_total_pct = vd_4c_pct + vd_3c.vd_pct
     mass_mt = _selection_mass_mt(selection, segment.length_m)
+    phase_slot, phase_label = _phase_slot_for_circuit(segment.circuit_index)
     return {
         'component_id': segment.component_id,
         'display_tag': segment.display_tag,
         'circuit_index': segment.circuit_index,
+        'phase_slot': phase_slot,
+        'phase_label': phase_label,
+        'phase_basis': PHASE_SLOT_BASIS if phase_slot else '',
         'length_m': segment.length_m,
         'length_basis': segment.length_basis,
         'catalogue_id': _catalogue_id(selection.catalogue),

@@ -15,6 +15,33 @@ KNOWN_TOPOLOGY_OPERATION_TYPES = {
     'scoped_reset',
 }
 
+OPERATION_INPUT_SCHEMA = {
+    'combine_feeders': {
+        'list_min': {'component_ids': 2},
+        'positive_float': {'trunk_length_m'},
+        'string': {'cable_size'},
+    },
+    'split_circuits': {
+        'list_exact': {'component_ids': 1},
+    },
+    'downstream_jb': {
+        'string': {'parent_component_id'},
+        'list_min': {'branch_component_ids': 2},
+        'positive_float': {'trunk_length_m'},
+        'string': {'cable_size'},
+    },
+    'attach_to_jb': {
+        'string': {'source_component_id', 'target_component_id'},
+    },
+    'move_branch_to_jb': {
+        'string': {'source_component_id', 'target_component_id'},
+    },
+    'scoped_reset': {
+        'string': {'component_id'},
+        'list': {'reset_line_ids'},
+    },
+}
+
 
 def payload_fingerprint(payload):
     stable_payload = {
@@ -27,7 +54,6 @@ def payload_fingerprint(payload):
                 node.get('branch_index'),
                 node.get('circuit_index'),
                 node.get('display_tag'),
-                node.get('metadata') or {},
             )
             for node in payload.get('nodes', [])
         ),
@@ -159,8 +185,41 @@ def _payload_reference_errors(payload):
     return errors
 
 
-def _operation_record_errors(edit_payload):
-    operations = (edit_payload or {}).get('topology_operations')
+def _positive_number(value):
+    try:
+        return float(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _operation_input_errors(operation_type, inputs, index):
+    schema = OPERATION_INPUT_SCHEMA.get(operation_type) or {}
+    errors = []
+    for field in schema.get('string', set()):
+        if not str(inputs.get(field) or '').strip():
+            errors.append(f'Topology operation #{index} is missing input "{field}".')
+    for field in schema.get('positive_float', set()):
+        if not _positive_number(inputs.get(field)):
+            errors.append(f'Topology operation #{index} input "{field}" must be a positive number.')
+    for field in schema.get('list', set()):
+        if not isinstance(inputs.get(field), list):
+            errors.append(f'Topology operation #{index} input "{field}" must be a list.')
+    for field, minimum in schema.get('list_min', {}).items():
+        value = inputs.get(field)
+        if not isinstance(value, list) or len([item for item in value if item]) < minimum:
+            errors.append(f'Topology operation #{index} input "{field}" must contain at least {minimum} value(s).')
+    for field, expected in schema.get('list_exact', {}).items():
+        value = inputs.get(field)
+        if not isinstance(value, list) or len([item for item in value if item]) != expected:
+            errors.append(f'Topology operation #{index} input "{field}" must contain exactly {expected} value(s).')
+    return errors
+
+
+def validate_topology_operation_records(edit_payload_or_operations):
+    if isinstance(edit_payload_or_operations, list):
+        operations = edit_payload_or_operations
+    else:
+        operations = (edit_payload_or_operations or {}).get('topology_operations')
     if operations is None:
         return []
     if not isinstance(operations, list):
@@ -175,9 +234,124 @@ def _operation_record_errors(edit_payload):
             errors.append(f'Topology operation #{index} has an unsupported schema version.')
         if operation.get('operation_type') not in KNOWN_TOPOLOGY_OPERATION_TYPES:
             errors.append(f'Topology operation #{index} has an unknown operation type.')
+            continue
         if not isinstance(operation.get('inputs'), dict):
             errors.append(f'Topology operation #{index} is missing structured inputs.')
+            continue
+        errors.extend(_operation_input_errors(operation.get('operation_type'), operation['inputs'], index))
     return errors
+
+
+def _cycle_errors(payload, node_id_set):
+    outgoing = {node_id: [] for node_id in node_id_set}
+    for edge in payload.get('edges', []):
+        source_id = edge.get('from_component_id')
+        target_id = edge.get('to_component_id')
+        if source_id in node_id_set and target_id in node_id_set:
+            outgoing.setdefault(source_id, []).append(target_id)
+
+    visiting = set()
+    visited = set()
+
+    def visit(node_id, path):
+        if node_id in visiting:
+            return f"Cycle detected in SLD topology at {node_id}."
+        if node_id in visited:
+            return ''
+        visiting.add(node_id)
+        for target_id in outgoing.get(node_id, []):
+            error = visit(target_id, [*path, node_id])
+            if error:
+                return error
+        visiting.remove(node_id)
+        visited.add(node_id)
+        return ''
+
+    errors = []
+    for node_id in sorted(node_id_set):
+        error = visit(node_id, [])
+        if error:
+            errors.append(error)
+            break
+    return errors
+
+
+def validate_sld_topology_invariants(payload):
+    payload = payload or {}
+    errors = _payload_reference_errors(payload)
+    warnings = []
+
+    node_by_id = {
+        node.get('component_id'): node
+        for node in payload.get('nodes', [])
+        if node.get('component_id')
+    }
+    node_id_set = set(node_by_id)
+    incoming = {component_id: 0 for component_id in node_id_set}
+    outgoing = {component_id: 0 for component_id in node_id_set}
+    edge_keys = set()
+    duplicate_edges = set()
+
+    for edge in payload.get('edges', []):
+        source_id = edge.get('from_component_id')
+        target_id = edge.get('to_component_id')
+        key = (
+            source_id,
+            target_id,
+            edge.get('line_uid'),
+            edge.get('branch_index'),
+            edge.get('circuit_index'),
+        )
+        if key in edge_keys:
+            duplicate_edges.add(f"{source_id or '-'} -> {target_id or '-'}")
+        edge_keys.add(key)
+        if source_id in outgoing:
+            outgoing[source_id] += 1
+        if target_id in incoming:
+            incoming[target_id] += 1
+
+    if duplicate_edges:
+        errors.append(f"Duplicate topology edge(s): {', '.join(sorted(duplicate_edges))}.")
+
+    for component_id, node in node_by_id.items():
+        component_type = node.get('component_type')
+        if component_type != 'MCB' and incoming.get(component_id, 0) > 1:
+            errors.append(f"Component {node.get('display_tag') or component_id} has more than one upstream feed.")
+        if component_type == 'JB3PH' and outgoing.get(component_id, 0) > 3:
+            warnings.append(f"3PH JB {node.get('display_tag') or component_id} has more than three outgoing feeders.")
+
+    errors.extend(_cycle_errors(payload, node_id_set))
+
+    source_ids = [
+        component_id
+        for component_id, node in node_by_id.items()
+        if node.get('component_type') == 'MCB' or incoming.get(component_id, 0) == 0
+    ]
+    reachable = set()
+    stack = list(source_ids)
+    outgoing_targets = {}
+    for edge in payload.get('edges', []):
+        outgoing_targets.setdefault(edge.get('from_component_id'), []).append(edge.get('to_component_id'))
+    while stack:
+        component_id = stack.pop()
+        if component_id in reachable or component_id not in node_id_set:
+            continue
+        reachable.add(component_id)
+        stack.extend(outgoing_targets.get(component_id, []))
+    orphan_ids = sorted(node_id_set - reachable)
+    if orphan_ids:
+        warnings.append(f"Topology contains {len(orphan_ids)} component(s) not reachable from a source.")
+
+    status = 'failed' if errors else ('warning' if warnings else 'passed')
+    return {
+        'status': status,
+        'errors': errors,
+        'warnings': warnings,
+    }
+
+
+def _operation_record_errors(edit_payload):
+    return validate_topology_operation_records(edit_payload)
 
 
 def _normalize_review_required_payload(generated_payload, project_id, edit, warning):
@@ -207,12 +381,33 @@ def apply_active_topology_edit(project_id, generated_payload):
         )
 
     if _baseline_changed(edit, generated_payload):
+        if (edit.edit_payload or {}).get('topology_chain_compacted'):
+            return _normalize_review_required_payload(
+                generated_payload,
+                project_id,
+                edit,
+                (
+                    'Manual topology edit requires review because the generated SLD baseline changed after '
+                    'the saved operation chain was compacted. Generated topology is shown until the edit is reviewed.'
+                ),
+            )
         operations = (edit.edit_payload or {}).get('topology_operations')
         if operations:
             from .sld_topology_workflows import replay_topology_operations
 
             replay_result = replay_topology_operations(project_id, generated_payload, operations)
             if replay_result.get('ok'):
+                replay_validation = validate_sld_topology_invariants(replay_result['payload'])
+                if replay_validation['errors']:
+                    return _normalize_review_required_payload(
+                        generated_payload,
+                        project_id,
+                        edit,
+                        (
+                            'Manual topology edit requires review because replay produced an invalid SLD graph: '
+                            f"{' '.join(replay_validation['errors'])}"
+                        ),
+                    )
                 normalized = _normalize_payload(
                     replay_result['payload'],
                     project_id,
@@ -261,6 +456,17 @@ def apply_active_topology_edit(project_id, generated_payload):
                 project_id,
                 edit,
                 'Manual topology edit requires review because its saved graph references are invalid.',
+            )
+        invariant_summary = validate_sld_topology_invariants(edited_payload)
+        if invariant_summary['errors']:
+            return _normalize_review_required_payload(
+                generated_payload,
+                project_id,
+                edit,
+                (
+                    'Manual topology edit requires review because its saved graph violates topology guard rails: '
+                    f"{' '.join(invariant_summary['errors'])}"
+                ),
             )
         return _normalize_payload(edited_payload, project_id, edit, generated_payload=generated_payload)
 

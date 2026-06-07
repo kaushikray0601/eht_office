@@ -13,9 +13,14 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
   untracked project-management/orientation files, including `CLAUDE.md` and
   `NOTES/project_management/`.
 - Migrations through `0034_rcd_cu_only_cold_cable` apply cleanly in the SQLite
-  test database. The default PostgreSQL connection was unavailable during the
-  2026-06-07 checkpoint, so default-DB migration status was not reverified.
+  test database. Local PostgreSQL is healthy; earlier first-attempt failures
+  were Codex command-sandbox local-network restrictions, not a database outage.
+  PostgreSQL-backed Django tests should be run with local Postgres access
+  enabled instead of falling back to SQLite.
 - Latest full test status: `281 tests OK` on 2026-06-07.
+- Latest SLD regression check: `SldTopologyWorkflowTests` 26 tests passed
+  against PostgreSQL test DB `eht_local_test` on 2026-06-07 after browser
+  lifecycle hardening for topology controls.
 - Latest quick health check: `venv/bin/python manage.py check` passed on 2026-06-07.
 
 ## Active Work Queue
@@ -54,9 +59,10 @@ Checkpoint result, 2026-06-07:
 - `node --check static/js/sld_workspace.js`: passed.
 - `git diff --check`: passed.
 - Full `eht` test suite with `USE_POSTGRES=false`: 272 tests passed.
-- Plain `showmigrations` against the default PostgreSQL connection failed
-  because the database connection was unavailable; this did not affect the
-  SQLite-mode test migration run.
+- Plain `showmigrations` against the default PostgreSQL connection failed in
+  the initial Codex sandbox because local Postgres access was blocked there.
+  Re-running with local Postgres access confirmed the default PostgreSQL
+  connection and migrations are usable.
 
 ### CC-P1 - Installation-Method Catalogue Readiness
 
@@ -101,16 +107,110 @@ Checkpoint result, 2026-06-07:
 - Targeted `ResultAndBoqViewTests` and `ColdCableFoundationTests`: 103 tests passed.
 - Full SQLite-mode `eht` suite: 281 tests passed.
 
+### SLD-R1 - Topology Control Regression Fix
+
+Status: complete
+
+- [x] Investigate combine, split, downstream JB, and attach/move failures as a
+      shared browser-control regression.
+- [x] Confirm server-side topology workflows still pass for all four operations.
+- [x] Harden `static/js/sld_workspace.js` render-state lifecycle so controls do
+      not silently no-op when the SLD shell exists without active `__sldState`.
+- [x] Add workspace render-contract coverage for all topology preview/apply URLs.
+
+Checkpoint result, 2026-06-07:
+
+- Root cause: browser-side SLD workspace state could become unavailable while
+  the shell remained present, and topology handlers returned early because the
+  render guard was never released after load/error paths.
+- Follow-up production review fixes added `try/finally` render-guard release,
+  a top-level `renderSldGraph` exception handler, and a render watchdog so
+  runtime exceptions cannot leave topology controls permanently locked.
+- Deeper root cause found on 2026-06-07: after cold-cable engineering, SLD
+  rendering added explicit Cable4C/Cable3C nodes and more schematic SVG
+  path/text drawing. The browser still relied on implicit hit testing of
+  transparent component bodies, so user clicks could fail before any topology
+  preview/apply request was made. Component bodies now declare explicit
+  pointer hit targets.
+- P1-specific root cause found on 2026-06-07: P1 had a stale active topology
+  edit containing 96 historical operation records. The first saved
+  `combine_feeders` operation referenced MCB component IDs that no longer exist
+  in the current generated SLD, so replay failed at operation #1. New edits
+  previously inherited that stale chain, so they applied successfully in the
+  database but rendered as generated/stale again. Apply workflows now inherit
+  active operation records only when that chain replays successfully against
+  the current generated baseline.
+- Cold-cable metadata also made topology fingerprints too sensitive. The SLD
+  baseline fingerprint now ignores volatile node metadata such as cold-cable
+  sizing status and voltage-drop evidence, and tracks graph structure instead.
+- Browser-cache risk was also addressed by versioning the `sld_workspace.js`
+  script URL in `base.html` as `sld-r3-hit-targets`; without this, Chrome could
+  continue running old SLD interaction code after the file was patched.
+- PostgreSQL-backed SLD regression batch: 32 tests passed, including
+  `SldWorkspaceJavaScriptTests`, the versioned-script shell assertion, the SLD
+  workspace render contract, topology fingerprint coverage, stale-chain repair,
+  and all `SldTopologyWorkflowTests`.
+- `eht.browser_tests` now contains an opt-in Playwright SLD browser smoke test
+  that loads `/base/`, opens the SLD tab, waits for live `__sldState`, and
+  toggles Combine, Split, Add JB, and Attach modes. It also selects real
+  rendered SLD cells, verifies preview readiness, applies each topology edit on
+  a fresh project, waits for re-render, and asserts an applied topology record.
+- Local venv Playwright browser smoke passed:
+  `venv/bin/python manage.py test eht.browser_tests -v 2 --noinput` ran 3 tests
+  in 11.943s against PostgreSQL test DB `eht_local_test`.
+- Real P1 dry run passed inside rolled-back transactions: Combine, Split, Add
+  downstream JB, and Attach each returned `ok=True`; each new edit had one clean
+  operation and `baseline_changed=False` / no review-required stale flag. The
+  live P1 active edit remained unchanged after rollback.
+- SLD hardening pass on 2026-06-07 added a single safe frontend render gateway
+  for pager/search render paths, centralized external detail label geometry,
+  disabled topology mutations in filtered/focused SLD views while preserving
+  cable length and tracer overrides, and added backend filtered-view rejection.
+- Backend topology apply now locks the project row, validates operation records
+  and graph invariants before persisting, records stale-chain inheritance drops,
+  and compacts very long operation chains fail-closed: the saved edited payload
+  remains active while the generated baseline is unchanged, but a later baseline
+  change requires review instead of unsafe replay.
+- Combine-feeder hardening now preserves combined-current/recommended-breaker
+  metadata and review warnings as the foundation for the next feature: automatic
+  cold-cable re-sizing after combine, with the new combined trunk length
+  defaulting to the highest selected feeder length and requiring user review.
+- SLD hardening verification: source/pycompile/static checks passed; focused
+  PostgreSQL SLD regression suite passed 38 tests through the programmatic
+  existing-PostgreSQL runner. The normal `manage.py test ...` command still
+  fails in Django test-command setup with `psycopg.OperationalError: connection
+  is bad` even though direct Django connections and programmatic runner setup
+  connect to `eht_local_test`; keep this as a test-runner follow-up.
+- `node --check static/js/sld_workspace.js`: passed.
+- `venv/bin/python manage.py check`: passed.
+- `git diff --check`: passed.
+
 ### CC-P3 - 3PH JB Phase-Balancing Visibility
 
-Status: pending
+Status: complete
 
-- [ ] Define phase-slot semantics for 3PH JB outgoing circuits.
-- [ ] Design phase-slot data model and migration. Phase-balancing visibility
-      requires a schema change to `PowerDistributionBranch` or `ColdCableResult`.
-- [ ] Store/display phase assignment or inferred phase position.
-- [ ] Summarize phase currents and imbalance.
-- [ ] Keep this as visibility/review first, not automatic topology optimization.
+- [x] Define phase-slot semantics for 3PH JB outgoing circuits.
+- [x] Avoid a schema migration by storing inferred phase evidence in existing
+      per-segment `ColdCableResult.cable_3c_segments` JSON.
+- [x] Store/display inferred phase position using L1/L2/L3 round-robin by
+      outgoing circuit index.
+- [x] Summarize phase currents and imbalance in the result tab and result export.
+- [x] Keep this as visibility/review first, not automatic topology optimization.
+
+Checkpoint result, 2026-06-07:
+
+- Per-outgoing 3C segment JSON now includes `phase_slot`, `phase_label`, and
+  `phase_basis`.
+- SLD cold-cable node metadata carries the same phase label for Cable3C nodes.
+- Result tab shows L1/L2/L3 current totals and phase-current imbalance for
+  3PH JB branches.
+- Result export appends phase-balance summary columns to `Cold Cable Sizing`
+  and phase evidence columns to `Cold Cable 3C Segments`.
+- Targeted PostgreSQL-backed tests: 4 tests passed using existing database
+  `eht_local_test`.
+- `venv/bin/python manage.py check`: passed.
+- `node --check static/js/sld_workspace.js`: passed.
+- `git diff --check`: passed.
 
 ### CC-P4 - Panel/Load Summary
 
