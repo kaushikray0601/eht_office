@@ -1,9 +1,10 @@
 import json
 import math
 from copy import deepcopy
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from unittest.mock import patch
+from uuid import uuid4
 
 import pandas as pd
 from django.contrib import admin
@@ -82,6 +83,7 @@ from eht.sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
 from eht.sld_pdf import build_sld_pdf
 from eht.sld_schema import audit_tagged_component_schema
 from eht.sld_topology import payload_fingerprint
+from eht.sld_topology_history import compact_sld_topology_history, compact_topology_edit_record
 from eht.sld_validation import validate_project_sld_payload
 from eht.pipeline import run_project_calculations
 from eht.heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD
@@ -4952,6 +4954,188 @@ class SldTopologyAdminTests(TestCase):
         self.assertContains(response, 'Operation history')
         self.assertContains(response, 'combine_feeders')
         self.assertContains(response, 'Replay diagnostic')
+
+    def test_sld_topology_edit_admin_can_compact_payload_and_delete_only_non_active_history(self):
+        import eht.admin  # noqa: F401 - ensure admin registrations are loaded.
+
+        project = make_project_record(proj_id=f'padmin-{uuid4().hex[:6]}')
+        active = SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            generated_snapshot={'nodes': [{'component_id': 'active'}]},
+            edit_payload={'sld_payload': {'nodes': [{'component_id': 'active'}]}},
+            validation_summary={'status': 'needs_review'},
+        )
+        old_history = SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='superseded',
+            generated_snapshot={'nodes': [{'component_id': 'old'}]},
+            edit_payload={
+                'sld_payload': {'nodes': [{'component_id': 'old'}]},
+                'topology_operations': [{
+                    'schema_version': 1,
+                    'operation_type': 'combine_feeders',
+                    'inputs': {'component_ids': ['MCB-1', 'MCB-2']},
+                    'preview': {'warning': 'Review required.'},
+                }],
+                'cable_schedule_rows': [{'tag': 'CBL-1'}],
+            },
+            validation_summary={'status': 'needs_review'},
+        )
+        needs_review = SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='split_circuits',
+            status='needs_review',
+            generated_snapshot={'nodes': [{'component_id': 'review'}]},
+            edit_payload={'sld_payload': {'nodes': [{'component_id': 'review'}]}},
+            validation_summary={'status': 'needs_review'},
+        )
+        model_admin = admin.site._registry[SLDTopologyEdit]
+
+        class DummyUser:
+            def has_perm(self, _permission):
+                return True
+
+        request = type('Request', (), {'user': DummyUser()})()
+        messages_seen = []
+        original_message_user = model_admin.message_user
+        model_admin.message_user = lambda _request, message, level=None: messages_seen.append((message, level))
+        try:
+            model_admin.compact_selected_history_records(
+                request,
+                SLDTopologyEdit.objects.filter(pk=old_history.pk),
+            )
+            old_history.refresh_from_db()
+            self.assertTrue(old_history.edit_payload['history_payload_compacted'])
+            self.assertFalse(old_history.generated_snapshot)
+            self.assertIn('topology_operation_audit_summary', old_history.edit_payload)
+            self.assertIn('audit_only', str(model_admin.operation_history(old_history)))
+
+            model_admin.emergency_delete_selected_non_active_history_records(
+                request,
+                SLDTopologyEdit.objects.filter(pk__in=[active.pk, old_history.pk, needs_review.pk]),
+            )
+        finally:
+            model_admin.message_user = original_message_user
+
+        self.assertFalse(SLDTopologyEdit.objects.filter(pk=old_history.pk).exists())
+        self.assertTrue(SLDTopologyEdit.objects.filter(pk=active.pk).exists())
+        self.assertTrue(SLDTopologyEdit.objects.filter(pk=needs_review.pk).exists())
+        self.assertTrue(any('Skipped 2 protected' in message for message, _level in messages_seen))
+
+
+class SldTopologyHistoryRetentionTests(TestCase):
+    def _project_id(self, prefix):
+        return f'{prefix}-{uuid4().hex[:6]}'
+
+    def _create_history_row(self, project, index, *, status='superseded'):
+        return SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status=status,
+            baseline_fingerprint=f'fingerprint-{index}',
+            generated_snapshot={
+                'schema_version': SLD_GRAPH_SCHEMA_VERSION,
+                'nodes': [{'component_id': f'MCB-{index}', 'metadata': {'large': 'x' * 2000}}],
+            },
+            edit_payload={
+                'sld_payload': {
+                    'nodes': [{'component_id': f'MCB-{index}', 'metadata': {'large': 'y' * 2000}}],
+                    'edges': [],
+                },
+                'topology_operations': [{
+                    'schema_version': 1,
+                    'operation_type': 'combine_feeders',
+                    'inputs': {'component_ids': [f'MCB-{index}', f'MCB-{index + 1}']},
+                    'preview': {
+                        'warning': 'Manual topology edit requires engineering review.',
+                        'recommended_breaker_rating': 16,
+                    },
+                }],
+                'cable_schedule_rows': [{'line_id': f'LINE-{index}', 'large': 'z' * 2000}],
+            },
+            validation_summary={'status': 'needs_review', 'operation_count': 1},
+        )
+
+    def test_compaction_turns_old_history_into_audit_only_payload(self):
+        project = make_project_record(proj_id=self._project_id('hcmp'))
+        edit = self._create_history_row(project, 1)
+        original_size = len(json.dumps(edit.generated_snapshot)) + len(json.dumps(edit.edit_payload))
+
+        result = compact_topology_edit_record(edit, reason='unit_test')
+
+        edit.refresh_from_db()
+        self.assertTrue(result['ok'])
+        self.assertTrue(result['changed'])
+        self.assertGreater(result['saved_size_bytes'], 0)
+        self.assertFalse(edit.generated_snapshot)
+        self.assertTrue(edit.edit_payload['history_payload_compacted'])
+        self.assertEqual(edit.edit_payload['history_payload_compaction']['reason'], 'unit_test')
+        self.assertEqual(edit.edit_payload['topology_operation_audit_summary'][0]['operation_type'], 'combine_feeders')
+        self.assertNotIn('sld_payload', edit.edit_payload)
+        self.assertLess(len(json.dumps(edit.edit_payload)), original_size)
+
+    def test_retention_keeps_latest_full_history_and_compacts_older_rows(self):
+        project_id = self._project_id('hret')
+        project = make_project_record(proj_id=project_id)
+        oldest = self._create_history_row(project, 1)
+        middle = self._create_history_row(project, 2)
+        newest = self._create_history_row(project, 3)
+        active = self._create_history_row(project, 4, status='applied')
+
+        dry_run = compact_sld_topology_history(project_id=project_id, keep_full=1, keep_reset=0, dry_run=True)
+        for edit in (oldest, middle, newest, active):
+            edit.refresh_from_db()
+            self.assertNotIn('history_payload_compacted', edit.edit_payload)
+        self.assertEqual(dry_run['candidate_count'], 2)
+
+        summary = compact_sld_topology_history(project_id=project_id, keep_full=1, keep_reset=0)
+
+        self.assertEqual(summary['compacted_count'], 2)
+        oldest.refresh_from_db()
+        middle.refresh_from_db()
+        newest.refresh_from_db()
+        active.refresh_from_db()
+        self.assertTrue(oldest.edit_payload['history_payload_compacted'])
+        self.assertTrue(middle.edit_payload['history_payload_compacted'])
+        self.assertNotIn('history_payload_compacted', newest.edit_payload)
+        self.assertNotIn('history_payload_compacted', active.edit_payload)
+
+    def test_management_command_is_dry_run_until_execute_flag_is_used(self):
+        project_id = self._project_id('hcmd')
+        project = make_project_record(proj_id=project_id)
+        oldest = self._create_history_row(project, 1)
+        newest = self._create_history_row(project, 2)
+        output = StringIO()
+
+        call_command(
+            'compact_sld_topology_history',
+            '--project-id',
+            project_id,
+            '--keep-full',
+            '1',
+            stdout=output,
+        )
+        oldest.refresh_from_db()
+        newest.refresh_from_db()
+        self.assertNotIn('history_payload_compacted', oldest.edit_payload)
+        self.assertNotIn('history_payload_compacted', newest.edit_payload)
+
+        call_command(
+            'compact_sld_topology_history',
+            '--project-id',
+            project_id,
+            '--keep-full',
+            '1',
+            '--execute',
+        )
+
+        oldest.refresh_from_db()
+        newest.refresh_from_db()
+        self.assertTrue(oldest.edit_payload['history_payload_compacted'])
+        self.assertNotIn('history_payload_compacted', newest.edit_payload)
 
 
 class ProjectDataFormTests(TestCase):

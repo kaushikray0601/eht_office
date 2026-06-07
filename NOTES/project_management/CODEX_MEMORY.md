@@ -174,6 +174,16 @@ Immediate next pass:
   audit metadata, validation JSON, current-baseline fingerprint comparison, and
   an in-memory replay diagnostic. This is admin visibility only; there is still
   no user-facing undo/restore-to-operation feature.
+- SLD topology history retention is implemented. Old `superseded` and `reset`
+  rows can be compacted to audit-only payloads while active `applied` and
+  `needs_review` rows remain protected. Django admin shows payload size and
+  payload-compaction status, provides a selected-row compaction action, and has
+  a guarded emergency delete action for non-active history rows only. The
+  `compact_sld_topology_history` management command defaults to dry-run and
+  requires `--execute` to mutate records. Local live cleanup on 2026-06-07
+  compacted 100 old rows and saved about 57.5 MB of JSON payload; follow-up
+  dry-run reported 0 remaining candidates under the keep-full 20 / keep-reset
+  10 policy.
 
 ## Known Deferred Gaps
 

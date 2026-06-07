@@ -190,6 +190,15 @@ Checkpoint result, 2026-06-07:
   read-only topology edit history, operation count, compaction status,
   chain-audit metadata, validation summary, current-baseline comparison, and a
   safe replay diagnostic without adding user-facing undo/restore controls.
+- SLD topology history retention added on 2026-06-07: old superseded/reset rows
+  can be compacted to audit-only payloads through admin selected-row action or
+  the dry-run-by-default `compact_sld_topology_history` management command.
+  Active `applied` and `needs_review` rows are protected from compaction and
+  emergency deletion. Admin now shows payload size and payload-compaction
+  status, and includes a guarded emergency delete action for non-active old
+  history records only. Local live cleanup compacted 100 old rows and saved
+  about 57.5 MB of JSON payload; a follow-up dry-run reported 0 remaining
+  candidates under the keep-full 20 / keep-reset 10 policy.
 - `node --check static/js/sld_workspace.js`: passed.
 - `venv/bin/python manage.py check`: passed.
 - `git diff --check`: passed.

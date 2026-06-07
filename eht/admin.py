@@ -20,6 +20,11 @@ from eht.models import (
 )
 from eht.sld_payload import build_project_sld_payload
 from eht.sld_topology import payload_fingerprint, validate_sld_topology_invariants
+from eht.sld_topology_history import (
+    DELETABLE_HISTORY_STATUSES,
+    compact_topology_edit_record,
+    topology_edit_payload_size_kb,
+)
 
 
 @admin.register(ManagedProject)
@@ -192,6 +197,8 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
         'status',
         'operation_count',
         'compacted_status',
+        'payload_size',
+        'history_payload_compacted_status',
         'baseline_changed_status',
         'validation_status',
         'created_by',
@@ -211,6 +218,8 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
         'baseline_changed_status',
         'operation_count',
         'compacted_status',
+        'payload_size',
+        'history_payload_compacted_status',
         'chain_audit_summary',
         'operation_history',
         'replay_diagnostic',
@@ -239,6 +248,8 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
                 'baseline_changed_status',
                 'operation_count',
                 'compacted_status',
+                'payload_size',
+                'history_payload_compacted_status',
                 'chain_audit_summary',
                 'operation_history',
                 'replay_diagnostic',
@@ -253,18 +264,35 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
             ),
         }),
     )
+    actions = (
+        'compact_selected_history_records',
+        'emergency_delete_selected_non_active_history_records',
+    )
 
     def has_add_permission(self, request):
         return False
 
     def has_change_permission(self, request, obj=None):
-        return False
+        return request.user.has_perm('eht.change_sldtopologyedit')
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        if not request.user.has_perm('eht.delete_sldtopologyedit'):
+            return False
+        if obj is None:
+            return True
+        return obj.status in DELETABLE_HISTORY_STATUSES
+
+    def get_actions(self, request):
+        actions = super().get_actions(request)
+        actions.pop('delete_selected', None)
+        return actions
 
     def _operations(self, obj):
         operations = (obj.edit_payload or {}).get('topology_operations')
+        return operations if isinstance(operations, list) else []
+
+    def _operation_audit_summary(self, obj):
+        operations = (obj.edit_payload or {}).get('topology_operation_audit_summary')
         return operations if isinstance(operations, list) else []
 
     @admin.display(description='Operations')
@@ -280,6 +308,20 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
         kept = compaction.get('kept_operation_count') or len(self._operations(obj))
         dropped = compaction.get('dropped_operation_count') or '-'
         return f'Yes: kept {kept} of {original}, dropped {dropped}'
+
+    @admin.display(description='Payload KB')
+    def payload_size(self, obj):
+        return topology_edit_payload_size_kb(obj)
+
+    @admin.display(description='Payload compacted')
+    def history_payload_compacted_status(self, obj):
+        compaction = (obj.edit_payload or {}).get('history_payload_compaction') or {}
+        if not (obj.edit_payload or {}).get('history_payload_compacted'):
+            return 'No'
+        size = compaction.get('original_size_bytes')
+        if size:
+            return f"Yes: original {round(size / 1024, 1)} KB"
+        return 'Yes'
 
     @admin.display(description='Current baseline fingerprint')
     def current_baseline_fingerprint(self, obj):
@@ -314,6 +356,11 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
     @admin.display(description='Operation history')
     def operation_history(self, obj):
         operations = self._operations(obj)
+        if not operations and self._operation_audit_summary(obj):
+            return _preformatted(_json_pretty({
+                'audit_only': True,
+                'operations': self._operation_audit_summary(obj),
+            }))
         if not operations:
             return 'No replayable operation records are stored for this edit.'
 
@@ -335,6 +382,8 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
     @admin.display(description='Replay diagnostic')
     def replay_diagnostic(self, obj):
         operations = self._operations(obj)
+        if (obj.edit_payload or {}).get('history_payload_compacted'):
+            return 'Not replayed: this old history row was compacted to audit-only payload storage.'
         if not operations:
             return 'No operation chain is available to replay.'
         if (obj.edit_payload or {}).get('topology_chain_compacted') and self.baseline_changed_status(obj) == 'Yes':
@@ -376,6 +425,42 @@ class SLDTopologyEditAdmin(admin.ModelAdmin):
     @admin.display(description='Generated snapshot')
     def generated_snapshot_pretty(self, obj):
         return _preformatted(_json_pretty(obj.generated_snapshot))
+
+    @admin.action(description='Compact selected old topology history records')
+    def compact_selected_history_records(self, request, queryset):
+        compacted = 0
+        skipped = 0
+        saved_bytes = 0
+        for edit in queryset:
+            result = compact_topology_edit_record(edit, reason='admin_selected_history_compaction')
+            if result.get('ok') and result.get('changed'):
+                compacted += 1
+                saved_bytes += result.get('saved_size_bytes') or 0
+            else:
+                skipped += 1
+
+        self.message_user(
+            request,
+            f'Compacted {compacted} topology history row(s), skipped {skipped}; '
+            f'freed approximately {round(saved_bytes / 1024, 1)} KB of JSON payload.',
+        )
+
+    @admin.action(
+        permissions=['delete'],
+        description='Emergency delete selected non-active topology history records',
+    )
+    def emergency_delete_selected_non_active_history_records(self, request, queryset):
+        deletable = queryset.filter(status__in=DELETABLE_HISTORY_STATUSES)
+        skipped = queryset.exclude(status__in=DELETABLE_HISTORY_STATUSES).count()
+        deleted_count = deletable.count()
+        deletable.delete()
+
+        self.message_user(
+            request,
+            f'Emergency-deleted {deleted_count} non-active topology history row(s). '
+            f'Skipped {skipped} protected applied/needs-review row(s).',
+            level=messages.WARNING if deleted_count else messages.INFO,
+        )
 
 
 class MICableHeaterInline(admin.TabularInline):
