@@ -963,7 +963,7 @@ def _build_edited_payload(
         'edge_count': len(edited['edges']),
         'combine_feeder_count': len(selected_nodes),
         'manual_topology_warning': (
-            'Manual feeder combine applied with a 4C trunk cable and 3PH junction box before the original outgoing feeder cables. Detailed cable sizing remains subject to later cable design rules.'
+            'Manual feeder combine applied with a Feeder Cable and Distribution JB before the original outgoing feeder cables. Review the recalculated cold-cable sizing before issue.'
         ),
     })
     edited['meta'] = meta
@@ -1413,7 +1413,7 @@ def _build_downstream_jb_payload(payload, details, trunk_length_m, isolator_loca
         'node_count': len(edited['nodes']),
         'edge_count': len(edited['edges']),
         'manual_topology_warning': (
-            'Manual downstream 3PH junction box inserted to keep 3PH JB outgoing feeders within the configured engineering limit. Review the new trunk cable length and downstream cable schedule before issue.'
+            'Manual downstream Distribution JB inserted to keep outgoing feeders within the configured engineering limit. Review the new Feeder Cable length and downstream cable schedule before issue.'
         ),
     })
     edited['meta'] = meta
@@ -1881,7 +1881,7 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
     if trunk_length is None:
         return {
             'ok': False,
-            'error': 'Enter a valid positive 4C trunk cable length for the combined feeder.',
+            'error': 'Enter a valid positive Feeder Cable length for the combined feeder.',
         }
     normalized_cable_size = _manual_trunk_size(cable_size)
     payload = build_project_sld_payload(project_id)
@@ -1966,7 +1966,7 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
             for node in selected_nodes
         }),
         'warning': (
-            'This workflow combines feeders through a manual 4C trunk cable and 3PH junction box. Review cable sizing before issue.'
+            'This workflow combines feeders through a manual Feeder Cable and Distribution JB. Review recalculated cold-cable sizing before issue.'
         ),
     }
 
@@ -2051,12 +2051,12 @@ def preview_downstream_jb(project_id, parent_component_id, branch_component_ids,
     if not details:
         return {
             'ok': False,
-            'error': 'Select one upstream 3PH junction box.',
+            'error': 'Select one upstream Distribution JB.',
         }
     if details['invalid_ids']:
         return {
             'ok': False,
-            'error': 'Selected outgoing branches must be directly fed from the selected 3PH junction box.',
+            'error': 'Selected outgoing branches must be directly fed from the selected Distribution JB.',
             'invalid_component_ids': details['invalid_ids'],
         }
     selected_edges = details['selected_edges']
@@ -2113,7 +2113,7 @@ def preview_downstream_jb(project_id, parent_component_id, branch_component_ids,
             if line_id
         }),
         'warning': (
-            'This workflow inserts a downstream 3PH junction box and moves selected outgoing branches under it. Confirm the new 4C trunk cable length before issue.'
+            'This workflow inserts a downstream Distribution JB and moves selected outgoing branches under it. Confirm the new Feeder Cable length before issue.'
         ),
     }
 
@@ -2156,7 +2156,7 @@ def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id
             if target_trunk_length is None:
                 return {
                     'ok': False,
-                    'error': 'Enter a valid positive 4C trunk cable length for the promoted target MCB.',
+                    'error': 'Enter a valid positive Feeder Cable length for the promoted target MCB.',
                 }
         return {
             'ok': True,
@@ -2201,9 +2201,9 @@ def preview_attach_to_jb(project_id, source_component_id, target_jb_component_id
             'target_insert_cable_size': _manual_trunk_size(cable_size),
             'affected_lines': affected_lines,
             'warning': (
-                'This workflow promotes the target MCB with a manual 4C trunk and 3PH JB before moving the selected branch. Review cable routing and breaker rating before issue.'
+                'This workflow promotes the target MCB with a manual Feeder Cable and Distribution JB before moving the selected branch. Review cable routing and breaker rating before issue.'
                 if details['target_mcb_existing_child']
-                else 'This workflow moves one downstream branch between 3PH JBs. Review cable routing and breaker rating before issue.'
+                else 'This workflow moves one downstream branch between Distribution JBs. Review cable routing and breaker rating before issue.'
             ),
         }
 

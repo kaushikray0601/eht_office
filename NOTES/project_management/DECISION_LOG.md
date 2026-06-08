@@ -1,6 +1,6 @@
 # Decision Log
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 This log records current product and engineering decisions that should guide
 implementation. Historical debate can remain in older notes; this file should
@@ -13,7 +13,8 @@ stay concise.
 | 2026-05-29 | SR remains the default hot-cable path. | SR is the normal first-choice technology for current workflow. | Active |
 | 2026-05-29 | MI fallback is automatic only when SR catalogue suitability limits are exceeded. | Keeps project setup simple and avoids manual SR/MI technology choice. | Active |
 | 2026-05-29 | Constant Power tracer is a separate future module. | Avoids mixing a distinct technology into the SR/MI cold-cable phase. | Active |
-| 2026-05-29 | SR parallel runs and MI multi-sets are represented as independently protected branches. | MVP clarity for SLD, cable schedule, and breaker protection. | Active |
+| 2026-05-29 | MI multi-sets are represented as independently protected branches. | MI heater sets remain individually protected for fault isolation and vendor-practice alignment. | Active |
+| 2026-05-29 | SR parallel runs were temporarily represented as independently protected branches. | Superseded by the 2026-06-08 cold-cable rebuild decision to use shared MCB groups for SR parallel runs. | Superseded |
 | 2026-05-29 | SLD tracer overrides are review-only. | Current override does not recalculate load, BOQ, breaker, or cable schedule. | Active |
 | 2026-05-29 | SR Allowed Spiral Factor default is 1.0; selector evaluates straight-run duty ratio as heat-delivery evidence, not as a command to install fractional cable length. | Reflects shift to straight-run default; duty ratio below 1.0 means margin, not shortened cable. | Active |
 | 2026-05-29 | MI `is_validated` is a hard catalogue gate; unvalidated MI families are rejected even if rows exist. | Prevents selection from unreviewed catalogue data. | Active |
@@ -33,12 +34,19 @@ stay concise.
 | 2026-06-07 | 3PH JB outgoing phase visibility is inferred as L1/L2/L3 round-robin by outgoing circuit index and stored in per-segment cold-cable JSON. | Provides review visibility without adding a migration or pretending automatic phase optimization exists. | Active |
 | 2026-06-07 | Topology edits are blocked in filtered/focused SLD views; cable length and tracer overrides remain allowed. | Prevents applying full-project topology mutations from a partial graph while preserving line-local engineering overrides. | Active |
 | 2026-06-07 | Long SLD topology operation chains compact fail-closed rather than replaying indefinitely. | Keeps active edits usable while the generated baseline is unchanged; if the generated baseline later changes, compacted edits require review instead of unsafe replay. | Active |
+| 2026-06-08 | Cold-cable rebuild uses single-phase EHT distribution: SR parallel runs share one 2-pole MCB per run group, while MI multi-sets keep individual MCBs. | Aligns SLD/current topology with common EHT practice and avoids the previous 1PH/3PH hybrid mismatch. | Active |
+| 2026-06-08 | Rename cold-cable concepts to FeederCable, BranchCable, DistributionJB, and BranchJB. | Removes misleading 4C/3PH terminology while preserving the current SLD topology shape. | Active |
+| 2026-06-08 | EHT DB fault rating is a mandatory project setting defaulting to 15 kA, with preset choices 10/15/25/40/50 kA plus an Other value >= 1 kA. It means the three-phase prospective short-circuit current at the EHT DB busbar. | Source impedance must be calculated from project short-circuit data rather than assumed zero. | Active |
+| 2026-06-08 | Single-phase cold-cable VD and fault checks evaluate the complete terminal path: FeederCable plus BranchCable. | Voltage drop must use `2 x I x R x L`; L-PE earth-loop fault current must include source, phase, and PE path resistance. | Active |
+| 2026-06-08 | BranchCable ampacity must be at least the upstream MCB rating in the MVP. | Avoids tap-conductor exceptions and keeps protection coordination conservative and reviewable. | Active |
+| 2026-06-08 | Each ColdCableResult stores complete path evidence, but BOQ/cable schedule totals must deduplicate shared FeederCable quantities. | Keeps per-branch evidence self-contained while preventing material double-counting for shared feeders. | Active |
+| 2026-06-08 | Existing ColdCableResult rows must be deleted during the rebuild migration. | Old results were produced under the superseded 3PH/4C/current-basis model and should not silently survive. | Active |
 
 ## Decision Candidates
 
 | Candidate | Needed Before | Notes |
 | --- | --- | --- |
-| Whether phase slots should become user-editable. | After `CC-P4`/panel summary | Current `CC-P3` basis is inferred visibility only. |
+| Whether phase slots should become user-editable. | After single-phase cold-cable rebuild | Current `CC-P3` phase visibility will be retired or reinterpreted when 3PH/4C terminology is removed from active cold-cable output. |
 | Whether combined-circuit length defaults require explicit user confirmation before apply. | Before SLD combined-circuit cable re-sizing | Current direction: default to highest selected feeder length and warn/review; decide whether to block apply until user accepts. |
 | Whether to checkpoint current working tree before `CC-P4`. | End of `CC-P3` | Strongly recommended now that PM setup, CC-P1, CC-P2, SLD-R1, and CC-P3 tests are green. |
 | When to move to a fresh chat. | After `PM-00`/`CC-P0` | Fresh chat plus `CODEX_MEMORY.md` should improve speed and quality. |

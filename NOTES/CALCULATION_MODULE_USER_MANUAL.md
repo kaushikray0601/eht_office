@@ -222,8 +222,9 @@ Important distinction:
 | Wind speed (kmph) | Project wind speed. | Used in the current heat-loss correction. |
 | Caution Label Interval (m) | Spacing basis for caution labels. | Used to calculate caution label quantity. |
 | Local Isolator Location | Defines incoming/outgoing/both/no local isolator basis. | Used to count local isolators and generate SLD component arrangement. |
+| EHT DB fault rating (kA) | Three-phase prospective short-circuit current at the EHT distribution board busbar. | Defaults to 15 kA. Presets are 10, 15, 25, 40, and 50 kA; custom values must be at least 1 kA. The cold-cable rebuild uses this to calculate source impedance for L-PE fault-loop checks. |
 | Cable Length (DB to JB) (m) | Assumed cable length from distribution board to junction box. | Used in power distribution, BOQ, cable schedule, and SLD generation. |
-| Loop Length (JB to JB) (m) | Assumed loop length between 3-phase JB and 1-phase JBs. | Used when multiple circuits are grouped under a 3-phase junction box. |
+| Loop Length (JB to JB) (m) | Assumed downstream branch length between distribution and branch junction boxes. | Used when one MCB feeds multiple downstream branches through a Distribution JB. |
 
 The local isolator requirement is synchronized from Local Isolator Location. If
 the location is set to no isolator, the local isolator requirement is treated as
@@ -625,21 +626,16 @@ The module calculates allowed current per circuit:
 For a single SR run, the number of circuits is calculated from line maximum
 current divided by the allowed current per circuit, rounded up.
 
-For multiple straight SR runs in the current MVP, each physical SR run is
-treated as independently protected. Therefore two straight SR runs create two
-one-circuit branches, three straight runs create three branches, and so on.
-This is a conservative design basis for fault isolation and review clarity.
-
-This SR multi-run topology intentionally mirrors the clarity of the MI
-multi-set topology. It does not yet optimize grouped feeders or shared upstream
-field junction boxes. Those optimizations belong with the cold-cable sizing,
-voltage-drop, and panel-coordination module because they depend on cable size,
-route length, voltage drop, and protective-device coordination.
+For multiple straight SR runs, the cold-cable rebuild basis is one shared
+2-pole MCB per run group. The MCB feeds a Feeder Cable to the field, then an
+optional Distribution JB feeds Branch Cables to the downstream Branch JBs and
+SR runs. This replaces the earlier temporary independent-MCB simplification for
+SR parallel runs.
 
 For SR parallel runs, the current values shown in the SLD inspector distinguish
-between per-circuit current and total line current. This distinction is
-important before the cold-cable module is developed because each straight run
-may become a separate protected feeder path.
+between per-circuit current and total group current. This distinction is
+important because the shared MCB and Feeder Cable are sized on the combined
+group current, while each Branch Cable still carries its own downstream load.
 
 ### 10.3 Breaker Size
 
@@ -853,23 +849,25 @@ the current module.
 Voltage drop formulas:
 
 - Single-phase 3-core: `VD (V) = 2 × I × R(T) × L`
-- Three-phase 4-core trunk: `VD (V) = sqrt(3) × I_phase × R(T) × L`
 
-The total path voltage drop is the sum of trunk and outgoing segment drops.
-The load-end voltage is: `V_load = V_nominal - VD_4C - VD_3C`.
+The single-phase cold-cable rebuild evaluates the complete terminal path:
+`VD_total = VD_feeder + VD_branch`. The load-end voltage is:
+`V_load = V_nominal - VD_total`.
 
-#### Step 4 — Optimisation for Three-Phase Distribution Branches
+#### Step 4 — Optimisation for Feeder/Branch Distribution Paths
 
-When the SLD topology includes a 4-core trunk cable feeding a 3-phase JB
-with outgoing 3-core branches, the engine systematically searches all
-ampacity-qualified cable combinations and selects the pair that minimises
-total conductor volume, which is directly proportional to copper tonnage:
+When the SLD topology includes one shared MCB feeding multiple downstream
+branches, the rebuild sizes a shared Feeder Cable plus per-branch Branch
+Cables. The optimizer must search ampacity-qualified combinations and select
+the minimum material solution that still satisfies terminal voltage drop and
+fault-loop requirements.
 
-`Conductor_volume_proxy = 4 × A_4C × L_4C + N_out × 3 × A_3C × L_3C`
+The quantity basis is:
+`Conductor_volume_proxy = 3 × A_feeder × L_feeder + Σ(3 × A_branch × L_branch)`
 
-where `A_4C` and `A_3C` are the selected conductor cross-sections, `L_4C` and
-`L_3C` are the respective cable lengths, and `N_out` is the number of active
-outgoing circuits from the 3-phase JB.
+where shared Feeder Cable material is counted once, and Branch Cable material
+is counted once per downstream branch. This deduplication is mandatory for the
+BOQ and cable schedule.
 
 This optimisation distributes the voltage drop budget between the trunk and
 outgoing cables to find the most material-efficient combination that still
@@ -877,17 +875,21 @@ satisfies the total path VD constraint. A lower trunk VD leaves more budget
 for the outgoing cables, and vice versa — the optimiser finds the minimum-mass
 pair, not just the minimum-size pair.
 
-For direct single-phase branches (MCB to 3-core cable to 1-phase JB), no
+For direct single-phase branches (MCB to Feeder Cable to Branch JB), no
 optimisation is needed. The full project VD allowance is available for the
 single cable segment.
 
-#### Step 5 — Fault Protection (Phase-to-Phase on 4-Core Trunk)
+#### Step 5 — Fault Protection (L-PE Earth Loop)
 
-The MCB must trip instantaneously if a phase-to-phase short circuit develops
-at the far end of the 4-core trunk.
+The MCB must trip for an L-PE earth fault at the remote end of the cold-cable
+path. The single-phase rebuild uses the complete path:
 
-The worst-case fault current is:
-`I_fault = V_line_to_line / (2 × R(T) × L)`
+`Z_loop = Z_source + R_phase_feeder + R_PE_feeder + R_phase_branch + R_PE_branch`
+
+`I_fault = V_phase / Z_loop`
+
+`Z_source` is calculated from the project three-phase EHT DB fault rating:
+`Z_source = V_phase / (three_phase_fault_rating_kA × 1000)`.
 
 For the MCB to trip instantaneously (within 0.4 seconds per IEC 60364-4-41):
 `I_fault >= k_curve × I_breaker`
@@ -895,8 +897,8 @@ For the MCB to trip instantaneously (within 0.4 seconds per IEC 60364-4-41):
 where `k_curve` is the lower bound of the MCB characteristic range:
 Type B → 3×, Type C → 5×, Type D → 10×.
 
-If the fault current does not meet the threshold, the engine upsizes the 4-core
-cable until the check passes.
+If the fault current does not meet the threshold, the rebuild upsizes the
+Feeder/Branch cable path as needed, subject to the current RCD/hard-gate rules.
 
 #### Step 6 — Earth Fault on Single-Phase Outgoing Circuits
 
@@ -943,34 +945,29 @@ are hidden from project setup until their catalogue basis is ready.
 The project allowable voltage drop sets the maximum permissible voltage drop
 between the MCB and the heating cable cold-end connection.
 
-For a direct circuit (MCB → 3-core cable → 1-phase JB → tracer), the full
+For a direct circuit (MCB → Feeder Cable → Branch JB → tracer), the full
 allowable drop is available for the single cable run.
 
-For a distributed circuit (MCB → 4-core trunk → 3-phase JB → 3-core outgoing
-→ 1-phase JB → tracer), the voltage drop is shared across two cable segments.
-The engine optimises how the allowance is distributed by finding the cable pair
-with minimum conductor volume that keeps the sum of both drops within the limit.
+For a distributed circuit (MCB → Feeder Cable → Distribution JB → Branch Cable
+→ Branch JB → tracer), the voltage drop is shared across the feeder and branch
+segments. The rebuild optimises how the allowance is distributed by finding the
+cable path with minimum conductor volume that keeps the sum of both drops
+within the limit.
 
 The load-end voltage is shown in absolute volts. For SR cable, the heating cable
 power output at this terminal voltage may differ from the design heat delivery
 power calculated at the low-voltage scenario. This cross-check is a manual
 engineering step.
 
-For 3-phase JB branches, the branch-level 3C size is the critical outgoing
-segment size. The result tab and exports also list each outgoing 3C segment so
-shorter and longer outgoing runs can be reviewed separately. The per-segment
-evidence includes circuit index, length basis, selected 3C size, voltage drop,
-load-end voltage, fault current/status, conductor mass, and whether that segment
-sets the branch critical 3C size.
+For distributed branches, the branch-level Branch Cable size is the critical
+downstream segment size. The result tab and exports also list each downstream
+segment so shorter and longer outgoing runs can be reviewed separately. The
+per-segment evidence includes circuit index, length basis, selected cable size,
+voltage drop, load-end voltage, fault current/status, conductor mass, and
+whether that segment sets the branch critical size.
 
-For 3-phase JB branches, each outgoing 3C circuit is also assigned a visible
-phase slot for review. The current implementation infers slots by outgoing
-circuit index in a fixed round-robin sequence:
-
-- Circuit 1 → L1
-- Circuit 2 → L2
-- Circuit 3 → L3
-- Circuit 4 → L1, and so on
+The older round-robin phase-slot evidence belongs to the superseded 3PH/4C
+model and will be retired or reinterpreted during the single-phase rebuild.
 
 The result tab and result export summarize the inferred L1/L2/L3 current totals
 using the per-circuit operating current. They also show the phase-current
@@ -1011,7 +1008,9 @@ The following items are not calculated in the current cold cable module:
 - Automatic phase rebalancing or user-editable phase-slot assignment for 3-phase
   JB outgoing circuits.
 - Route-aware cable length from a 3D model or layout drawing.
-- Panel loading schedule and phase-bus current totals.
+- Upstream main-breaker coordination, spare-capacity checks, and phase-bus
+  current totals. The Result tab/export now include a branch-based Panel / Load
+  Summary for review, but it is not a final upstream panel coordination study.
 - MI cold-lead integration with upstream cold cable voltage drop budget.
 
 These limitations are noted as review notes on affected results.
@@ -1169,6 +1168,9 @@ The result Excel export contains:
 | Line Results | Main per-line calculation summary. |
 | Selection Diagnostics | Lines where heat loss was calculated but SR tracer selection failed. |
 | Power Distribution | Branch-level power-distribution rows. |
+| Panel Load Summary | Branch-based panel/source loading summary: MCB count, circuit count, load current, connected load, breaker distribution, and cold-cable review counts. |
+| Cold Cable Sizing | Branch-level cold-cable sizing, voltage-drop, fault-check, phase-balance, and mass evidence. |
+| Cold Cable 3C Segments | Per-outgoing 3C segment evidence, including inferred L1/L2/L3 phase labels. |
 | Alternate Tracers | Valid alternate tracer options by line. |
 | MI Selection | Selected, alternative, and rejected MI records by line. |
 
@@ -1247,6 +1249,13 @@ show the active manual state or a warning that review is required.
 The result export includes a separate **Cold Cable 3C Segments** sheet for
 per-outgoing 3C evidence. The cable schedule export also carries segment-level
 columns beside each cable row.
+
+The Result tab and result export include a **Panel / Load Summary**. This is a
+review summary grouped by panel/source metadata when such metadata exists; until
+formal panel objects are modelled, branches are grouped under the project main
+distribution. The summary totals MCBs, circuits, load current, connected load,
+breaker ratings, and cold-cable selected/review-required/unsizeable counts. It
+does not yet compare against an upstream main breaker or panel spare capacity.
 
 ### 16.1 Manual Cable Size Review
 
@@ -1483,11 +1492,11 @@ MI automatic fallback, but users should understand these limitations:
 - Multi-set MI remaining energized capacity after one breaker trip is not a
   guaranteed N-1 thermal design unless a future project basis explicitly sizes
   for that case.
-- Cold cable sizing is implemented for ampacity, voltage drop, fault protection,
-  and earth loop. Remaining limitations: tracer PE-path in earth loop (non-
-  conservative, review note applied); aluminium conductor sizing deferred;
-  short-circuit withstand check not yet implemented; phase balancing across
-  3-phase JB circuits assumed balanced; route-aware lengths not yet available
+- Cold cable sizing is being rebuilt from the earlier 3PH/4C terminology to
+  single-phase FeederCable/BranchCable terminology. Remaining limitations:
+  tracer PE-path in earth loop (non-conservative until catalogue data exists);
+  aluminium conductor sizing deferred; armored/2C cable deferred; short-circuit
+  withstand check not yet implemented; route-aware lengths not yet available
   from 3D model.
 
 ## 21. Recommended User Practice
@@ -1589,8 +1598,8 @@ The following architectural decisions were made deliberately:
   MI sheath alloy.
 - Multi-set MI uses identical heater sets only in the MVP. Mixed heater
   optimization is intentionally deferred.
-- Multi-set MI is represented as independent one-circuit branches, not as an
-  SR-style grouped 3PH branch.
+- Multi-set MI is represented as independent one-circuit branches, not as a
+  shared-MCB SR parallel-run group.
 - The current result page and export expose MI assumptions and deferred checks
   directly to the user.
 - Cold-lead terminal-capacity checks are not faked. The current schema does not
@@ -1677,19 +1686,20 @@ The current implemented SR status is:
 | Installation basis | Straight tracing is preferred. Spiral installation remains possible only when the project intentionally permits it. |
 | Maximum run count | The MVP supports up to four parallel SR runs. |
 | Small-bore guidance | Pipe-size guidance is a review warning, not a hard rejection, because unusual projects may intentionally accept tighter arrangements. |
-| Protection | Each straight SR run is modeled as independently protected for review clarity and fault isolation. |
+| Protection | SR parallel runs use one shared 2-pole MCB per run group in the cold-cable rebuild. MI multi-sets remain individually protected. |
 | Duty ratio | Duty ratio is heat-delivery evidence, not a command to install fractional cable length. |
 | Catalogue power basis | Existing SR power output still uses fitted A/B/C catalogue coefficients. |
 | Future SR data basis | Vendor curve-point interpolation is preferred for future hardening, with A/B/C retained as compatibility fallback. |
-| Feeder grouping | Upstream grouping and shared field-junction-box optimization are deferred to cold-cable engineering. |
+| Feeder grouping | Upstream grouping is part of the single-phase cold-cable rebuild: FeederCable quantities are shared, while BranchCable quantities remain per downstream branch. |
 
 ### 23.3 Known Limitations Specific to SR Parallel Runs
 
 Known SR limitations after Pass 19 are:
 
-- Parallel SR runs are electrically represented as independent protected
-  branches. The MVP does not yet optimize grouped feeders or shared upstream
-  distribution.
+- The current stored cold-cable result schema still contains legacy 4C/3PH
+  fields until the single-phase rebuild migration retires them.
+- Shared FeederCable quantities must be deduplicated in BOQ and cable schedule
+  totals even though each branch result stores complete path evidence.
 - Physical installation space around small-bore pipe is not calculated.
   Pipe-size guidance is a warning only.
 - The selected SR run count does not yet drive a detailed RTD/control-zone
@@ -1740,10 +1750,10 @@ deferred coordination and capacity items below.
 | Activity | Reason | Status |
 | --- | --- | --- |
 | Cold cable sizing module | Cable size, voltage drop, and installation deliverables | **Complete** — see Section 10B |
-| Voltage-drop optimization | Minimize feeder/cold cable conductor tonnage via VD allocation | **Complete** — paired 4C/3C optimisation in engine |
+| Voltage-drop optimization | Minimize feeder/cold cable conductor tonnage via VD allocation | **Rebuild next** — replace paired 4C/3C optimisation with single-phase FeederCable/BranchCable optimisation |
 | Consume active SLD topology in cable sizing | Manual topology edits affect cable quantities and sizing | **Complete** — topology and manual overrides consumed |
 | Consume SR/MI independent branch topology | Cold-cable sizing respects the stabilized branch/circuit model | **Complete** |
-| Panel/load coordination summary | Needed for upstream electrical review | P3 — deferred |
+| Panel/load coordination summary | Needed for upstream electrical review | **Complete** — branch-based Result tab and export summary; upstream spare-capacity coordination remains deferred |
 | Physical JB/cold-lead capacity data model | Needed before terminal-capacity gates can be honest | P2 — deferred |
 
 ### 24.3 Priority P2 - MI Engineering Enhancements
@@ -1793,7 +1803,7 @@ deferred coordination and capacity items below.
 | Conductivity method | Basis used to evaluate insulation conductivity. |
 | Spiral factor | Legacy project limit used to compare required heat against available SR heat delivery. In the straight-run workflow it is read as an allowed duty limit unless spiral installation is explicitly permitted. |
 | SR duty ratio | Required heat loss divided by available low-voltage SR heat delivery after considering the selected SR run count. |
-| SR parallel run | Additional full-length straight SR trace installed along the same process line, currently modeled as an independently protected branch. |
+| SR parallel run | Additional full-length straight SR trace installed along the same process line. In the cold-cable rebuild, SR parallel runs share one MCB per run group. |
 | Heated tracer length | Tracer length used for heat delivery, including design length margin but excluding termination allowance. |
 | Ordered SR length | Total SR cable quantity including termination allowance. |
 | Termination allowance | Installation allowance added per circuit, excluded from heat delivery and current. |
@@ -1808,10 +1818,12 @@ deferred coordination and capacity items below.
 | K_temp | Temperature derating factor applied to catalogue ampacity to correct for site ambient temperature above the catalogue reference temperature. Formula: sqrt((T_max_conductor - T_site) / (T_max_conductor - T_ref)). |
 | K_group | Grouping derating factor entered by the user to account for cable spacing and laying arrangement. Multiplied with K_temp to give the total derating applied to catalogue ampacity. |
 | RCD | Residual Current Device. A protective device that trips at low earth fault current, typically 30 mA for industrial equipment protection. When an RCD is present on a heating circuit, the MCB earth-loop check for the 3-core outgoing circuit is a secondary verification, not a primary sizing gate. All EHT circuits should be designed with RCD protection as a primary requirement. |
-| Load-end voltage | The supply voltage minus the total series voltage drop across the cold cable path (trunk + outgoing). Reported in absolute volts as evidence that adequate voltage reaches the heating cable cold end. |
-| Conductor volume proxy | The cost function used in the 3-phase JB cable pair optimisation: 4 x A_4C x L_4C + N_out x 3 x A_3C x L_3C. Minimising this proxy minimises conductor cross-section times length, which is directly proportional to copper tonnage and procurement cost. |
-| 3phJB branch | A power distribution branch where an MCB feeds a 4-core trunk cable to a 3-phase junction box, which in turn feeds 3-core outgoing cables to individual 1-phase junction boxes and tracers. Requires the paired optimisation algorithm. |
-| 1phJB branch | A power distribution branch where an MCB feeds a 3-core cable directly to a 1-phase junction box and tracer, with no intermediate 3-phase junction box. Uses the simpler direct sizing algorithm. |
+| Load-end voltage | The supply voltage minus the total series voltage drop across the cold cable path (FeederCable plus BranchCable where applicable). Reported in absolute volts as evidence that adequate voltage reaches the heating cable cold end. |
+| Conductor volume proxy | The material-optimisation cost function. For the single-phase rebuild: 3 x A_feeder x L_feeder + sum(3 x A_branch x L_branch), with shared FeederCable material counted once. |
+| FeederCable | Cold cable from the MCB/EHT DB outgoing circuit to the field DistributionJB or directly to the BranchJB. |
+| BranchCable | Cold cable from a DistributionJB to a downstream BranchJB/heating cable branch. |
+| DistributionJB | Field distribution junction box used only when one MCB feeds two or more downstream branches. |
+| BranchJB | Field branch/connection junction box at the heating cable branch. |
 | CP cable | Constant power heating cable — fixed wattage per metre regardless of temperature. A planned future module in EHT Office. |
 
 ## 26. Calculation Verification Report
@@ -1841,7 +1853,7 @@ The report is organised into five sections:
 | B — Thermal Calculation | Conductivity method, polynomial evaluation, wind correction factor, safety factor, base heat loss, and design heat loss per metre. |
 | C — Tracer Selection | SR catalogue filtering basis, voltage correction factor, low-voltage heat delivery, duty ratio, parallel run count, alternate tracers, and MI heater selection where applicable. |
 | D — Electrical Sizing | Circuit count formula, breaker size, per-circuit current, starting current, and total connected load. |
-| E — Cold Cable Sizing | One or more detailed sub-steps per feeder branch: K_temp derating, K_group and ampacity selection, 4C trunk voltage drop (where applicable), 3C outgoing voltage drop, VD optimisation result, fault protection check, earth fault loop check, and branch summary. |
+| E — Cold Cable Sizing | One or more detailed sub-steps per feeder branch: K_temp derating, K_group and ampacity selection, FeederCable/BranchCable voltage drop, VD optimisation result, L-PE fault-loop check, and branch summary. |
 
 ### 26.3 Terminal Voltage Cross-Check
 

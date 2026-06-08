@@ -121,6 +121,83 @@
                 </div>
             {% endif %}
 
+            {% if panel_summary_rows %}
+            <div class="workspace-section mb-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h6 class="mb-0">Panel / Load Summary</h6>
+                    <span class="text-muted small">
+                        {{ panel_summary_totals.mcb_count }} MCB{{ panel_summary_totals.mcb_count|pluralize }} |
+                        {{ panel_summary_totals.load_current_a|floatformat:2 }} A |
+                        {{ panel_summary_totals.connected_load_kw|floatformat:2 }} kW
+                    </span>
+                </div>
+                <p class="text-muted small mb-2">{{ panel_summary_totals.basis }}</p>
+                <table
+                    class="table table-striped table-hover align-middle"
+                    data-toggle="table"
+                    data-classes="table table-striped table-hover align-middle"
+                    data-search="true"
+                    data-pagination="true"
+                    data-page-size="5"
+                    data-page-list="[5, 10, 25, 50, 100, all]"
+                    data-show-columns="true"
+                    data-sort-name="source"
+                >
+                    <thead class="table-light">
+                        <tr>
+                            <th data-field="source" data-sortable="true">Source</th>
+                            <th data-field="lines" data-sortable="true">Lines</th>
+                            <th data-field="mcbs" data-sortable="true">MCBs</th>
+                            <th data-field="circuits" data-sortable="true">Circuits</th>
+                            <th data-field="load-current" data-sortable="true">Load Current</th>
+                            <th data-field="load-kw" data-sortable="true">Connected Load</th>
+                            <th data-field="breakers" data-sortable="true">Breakers</th>
+                            <th data-field="cold-cable" data-sortable="true">Cold Cable</th>
+                            <th data-field="basis">Basis</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for panel in panel_summary_rows %}
+                            <tr>
+                                <td>
+                                    <div class="fw-semibold">{{ panel.source_label }}</div>
+                                    <div class="small text-muted">{{ panel.source_type }}</div>
+                                </td>
+                                <td>
+                                    {{ panel.line_count }}
+                                    <div class="small text-muted">{{ panel.line_ids_display|default:"-" }}</div>
+                                </td>
+                                <td>{{ panel.mcb_count }}</td>
+                                <td>{{ panel.circuit_count }}</td>
+                                <td>{{ panel.load_current_a|floatformat:2 }} A</td>
+                                <td>{{ panel.connected_load_kw|floatformat:2 }} kW</td>
+                                <td>
+                                    <div>{{ panel.breaker_distribution_display }}</div>
+                                    <div class="small text-muted">
+                                        Sum {{ panel.breaker_capacity_a|floatformat:0 }} A |
+                                        Max {{ panel.largest_breaker_a|floatformat:0 }} A
+                                    </div>
+                                </td>
+                                <td>
+                                    <div>Selected {{ panel.selected_count }}</div>
+                                    <div class="small {% if panel.review_required_count %}text-warning{% else %}text-muted{% endif %}">
+                                        Review {{ panel.review_required_count }}
+                                    </div>
+                                    <div class="small {% if panel.unsizeable_count %}text-danger{% else %}text-muted{% endif %}">
+                                        Unsizeable {{ panel.unsizeable_count }}
+                                    </div>
+                                    {% if panel.missing_cold_cable_count %}
+                                        <div class="small text-muted">Not sized {{ panel.missing_cold_cable_count }}</div>
+                                    {% endif %}
+                                </td>
+                                <td class="small">{{ panel.load_basis_display }}</td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
             {% if cold_cable_rows %}
             <div class="workspace-section mb-4">
                 <div class="d-flex justify-content-between align-items-center mb-2">
@@ -164,28 +241,28 @@
                                 </td>
                                 <td>
                                     {% if cold.cable_4c_size_mm2 %}
-                                        <div>4C x {{ cold.cable_4c_size_mm2|floatformat:"-1" }} mm²</div>
+                                        <div>Feeder {{ cold.cable_4c_size_mm2|floatformat:"-1" }} mm²</div>
                                     {% else %}
-                                        <div class="text-muted">4C N/A</div>
+                                        <div class="text-muted">Feeder N/A</div>
                                     {% endif %}
                                     {% if cold.cable_3c_size_mm2 %}
-                                        <div>Critical 3C x {{ cold.cable_3c_size_mm2|floatformat:"-1" }} mm²</div>
+                                        <div>Critical Branch {{ cold.cable_3c_size_mm2|floatformat:"-1" }} mm²</div>
                                     {% else %}
-                                        <div class="text-muted">3C N/A</div>
+                                        <div class="text-muted">Branch N/A</div>
                                     {% endif %}
                                     {% if cold.cable_3c_segments %}
-                                        <div class="small text-muted mt-1">Outgoing 3C segments</div>
+                                        <div class="small text-muted mt-1">Branch Cable segments</div>
                                         {% for segment in cold.cable_3c_segments %}
                                             <div class="small">
-                                                {{ segment.display_tag|default:"3C segment" }}
+                                                {{ segment.display_tag|default:"Branch segment" }}
                                                 {% if segment.circuit_index %}#{{ segment.circuit_index }}{% endif %}:
                                                 {% if segment.phase_label %}
                                                     {{ segment.phase_label }}
                                                 {% endif %}
                                                 {% if segment.size_mm2 %}
-                                                    3C x {{ segment.size_mm2|floatformat:"-1" }} mm²
+                                                    Branch {{ segment.size_mm2|floatformat:"-1" }} mm²
                                                 {% else %}
-                                                    3C N/A
+                                                    Branch N/A
                                                 {% endif %}
                                                 {% if segment.length_m %}
                                                     / {{ segment.length_m|floatformat:1 }} m
@@ -207,8 +284,10 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    <div>4C {{ cold.fault_protection_4c_status }}</div>
-                                    <div>3C {{ cold.fault_protection_3c_status }}</div>
+                                    <div>L-PE loop {{ cold.fault_loop_status }}</div>
+                                    {% if cold.fault_current_l_pe_a %}
+                                        <div class="small text-muted">{{ cold.fault_current_l_pe_a|floatformat:1 }} A</div>
+                                    {% endif %}
                                 </td>
                                 <td>
                                     {% if cold.phase_balance_summary %}
@@ -243,6 +322,14 @@
                         {% endfor %}
                     </tbody>
                 </table>
+            </div>
+            {% elif branch_rows %}
+            <div class="alert alert-warning border-0 shadow-sm mb-4" role="alert">
+                <div class="fw-semibold">Cold cable sizing needs recalculation</div>
+                <div class="small">
+                    Existing cold-cable results were cleared during the single-phase Feeder/Branch rebuild.
+                    Re-run the calculation for this project before issuing cable schedules or SLD cold-cable evidence.
+                </div>
             </div>
             {% endif %}
 

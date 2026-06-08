@@ -1,6 +1,6 @@
 # Risk Register
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 | ID | Risk | Severity | Probability | Mitigation | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -16,3 +16,6 @@ Last updated: 2026-06-07
 | R-010 | Future Constant Power and 3D work could distract from closing current production path. | Medium | Medium | Keep them deferred until Phase A release checklist is substantially complete. | Open |
 | R-011 | MI auto-fallback cannot fire in production because `is_validated=False` for all catalogue families. Users see MI rejection records, not MI selection, until at least one family is validated. | High | High | R7 vendor comparison gate - KR to close before any MI-sensitive project is calculated in production. | Open |
 | R-012 | Normal Django `manage.py test` command can fail during existing PostgreSQL test DB setup even when direct connections work. | Medium | Medium | Direct runner and `call_command('test', ...)` pass against `eht_local_test`; raw CLI still fails in setup. Keep standard command failure as a follow-up before relying on it as CI gate. | Open |
+| R-013 | Existing ColdCableResult rows were calculated under the superseded 3PH/4C/current-basis model and may silently contaminate new outputs if retained. | High | High | `CC-P5` migration deletes existing ColdCableResult rows and the result tab prompts recalculation when branch rows exist without cold-cable results. | Mitigated |
+| R-014 | Shared FeederCable material may be double-counted when each branch stores complete path evidence. | High | Medium | Store complete path per branch for audit, but deduplicate FeederCable quantities in cable schedule summary totals by stable cable tag; CC-P4 summary already deduplicates shared MCB capacity. | Mitigated |
+| R-015 | Destructive database maintenance commands can accidentally target the local development database instead of the test database. | High | Low | Do not run `flush`, `loaddata`, or other destructive maintenance commands outside the Django test runner without explicit user approval and a backup/restore plan. Local PostgreSQL was accidentally flushed once during CC-P5 verification. | Open |

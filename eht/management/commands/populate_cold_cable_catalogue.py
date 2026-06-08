@@ -70,6 +70,7 @@ class Command(BaseCommand):
         created_count = 0
         updated_count = 0
         for row in IEC_CU_XLPE_METHOD_E_ROWS:
+            row_defaults = {**defaults, **row, 'pe_conductor_size_mm2': row['conductor_size_mm2']}
             lookup = {
                 'cable_standard': defaults['cable_standard'],
                 'conductor_material': defaults['conductor_material'],
@@ -80,7 +81,7 @@ class Command(BaseCommand):
             }
             obj, created = ColdCableCatalogue.objects.update_or_create(
                 **lookup,
-                defaults={**defaults, **row},
+                defaults=row_defaults,
             )
             if created:
                 created_count += 1

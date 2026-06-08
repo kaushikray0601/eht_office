@@ -51,7 +51,7 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
         )
         max_current_voltage = float(selected_tracer.get('Max_Current_Voltage', voltage))
         sr_parallel_run_count = max(1, int(selected_tracer.get('SR_Parallel_Run_Count') or 1))
-        sr_independent_parallel_runs = sr_parallel_run_count > 1
+        sr_grouped_parallel_runs = sr_parallel_run_count > 1
         per_run_tracer_length = float(
             selected_tracer.get('SR_Per_Run_Tracer_Length')
             or (tracer_length / sr_parallel_run_count)
@@ -61,7 +61,7 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
         )
    
         # Compute line-level currents before circuit splitting.
-        if sr_independent_parallel_runs:
+        if sr_grouped_parallel_runs:
             per_run_maximum_current = (
                 (tracer_A_const * min_amb_temp**2 + tracer_B_const * min_amb_temp + tracer_C_const)
                 * (per_run_tracer_length_with_margin * max_current_voltage_correction)
@@ -88,7 +88,7 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
             raise ValueError("Maximum breaker size and loading restriction must allow positive current.")
 
         # Compute No. of Circuits Required from line current, then size each circuit.
-        if sr_independent_parallel_runs:
+        if sr_grouped_parallel_runs:
             no_of_circuits = sr_parallel_run_count
             per_circuit_max_current = per_run_maximum_current
             per_circuit_operating_current = per_run_operating_current
@@ -98,7 +98,11 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
             per_circuit_operating_current = line_operating_current / no_of_circuits
 
         # Breaker Size Selection
-        required_breaker_current = per_circuit_max_current / margin_on_max_cb_size
+        required_breaker_current = (
+            line_maximum_current / margin_on_max_cb_size
+            if sr_grouped_parallel_runs
+            else per_circuit_max_current / margin_on_max_cb_size
+        )
         breaker_size = _select_breaker_size(required_breaker_current, max_cb_size)
         
         # Compute Operating Load
@@ -134,7 +138,7 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
             'sr_constructability_warning': selected_tracer.get('SR_Constructability_Warning', ''),
             'sr_per_run_tracer_length': per_run_tracer_length,
             'sr_per_run_tracer_length_with_margin': per_run_tracer_length_with_margin,
-            'sr_independent_parallel_runs': sr_independent_parallel_runs,
+            'sr_independent_parallel_runs': False,
             'termination_margin_length': termination_margin_length,
             'termination_margin_per_circuit_m': termination_margin_per_circuit_m,
             'termination_margin_basis': {
@@ -149,7 +153,8 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
                 'allowed_current_per_circuit': allowed_current_per_circuit,
                 'required_breaker_current': required_breaker_current,
                 'sr_parallel_run_count': sr_parallel_run_count,
-                'sr_independent_parallel_runs': sr_independent_parallel_runs,
+                'sr_independent_parallel_runs': False,
+                'sr_grouped_parallel_runs': sr_grouped_parallel_runs,
             },
             'voltage_scenarios': {
                 'operating_voltage': voltage,
@@ -259,18 +264,17 @@ def _mi_heater_set_metadata(power_params, heater_set_index):
 
 
 def _sr_parallel_run_metadata(power_params, run_index):
-    if not power_params.get('sr_independent_parallel_runs'):
+    sr_parallel_run_count = int(power_params.get('sr_parallel_run_count') or 1)
+    if sr_parallel_run_count <= 1:
         return {}
 
-    return {
+    metadata = {
         'heating_cable_type': 'SR',
         'sr_parallel_group_id': (
             f"{power_params.get('project_id') or 'project'}:"
             f"{power_params.get('uid')}:SR:{power_params.get('selected_tracer', 'tracer')}"
         ),
-        'sr_parallel_run_index': run_index,
-        'sr_parallel_run_count': power_params.get('sr_parallel_run_count', 1),
-        'sr_independent_protection': True,
+        'sr_parallel_run_count': sr_parallel_run_count,
         'sr_parallel_run_basis': power_params.get('sr_parallel_run_basis', ''),
         'per_run_tracer_length_m': power_params.get('sr_per_run_tracer_length_with_margin'),
         'per_run_operating_current': power_params.get('operating_current'),
@@ -278,6 +282,18 @@ def _sr_parallel_run_metadata(power_params, run_index):
         'line_operating_current': power_params.get('line_operating_current'),
         'line_max_current': power_params.get('line_max_current'),
     }
+    if power_params.get('sr_independent_parallel_runs'):
+        metadata.update({
+            'sr_parallel_run_index': run_index,
+            'sr_independent_protection': True,
+            'sr_shared_mcb': False,
+        })
+    else:
+        metadata.update({
+            'sr_shared_mcb': True,
+            'sr_independent_protection': False,
+        })
+    return metadata
 
 
 def compute_power_distribution(power_params, project_settings, tag_factory=None):
@@ -312,12 +328,13 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
     # Process circuits in batches of 3
     while remaining_circuits > 0:
         branch_index += 1
-        circuits_in_this_batch = 1 if (mi_independent_sets or sr_independent_runs) else min(3, remaining_circuits)
+        circuits_in_this_batch = 1 if (mi_independent_sets or sr_independent_runs) else min(4, remaining_circuits)
         remaining_circuits -= circuits_in_this_batch
 
         branch_type = "3phJB" if circuits_in_this_batch > 1 else "1phJB"
         connected_to = (
-            "3x 1phJB" if circuits_in_this_batch == 3
+            "4x 1phJB" if circuits_in_this_batch == 4
+            else "3x 1phJB" if circuits_in_this_batch == 3
             else "2x 1phJB" if circuits_in_this_batch == 2
             else "Tracer"
         )
@@ -339,8 +356,11 @@ def compute_power_distribution(power_params, project_settings, tag_factory=None)
         if sr_metadata:
             tagged_components["heating_cable_type"] = "SR"
             tagged_components["sr_parallel_group_id"] = sr_metadata["sr_parallel_group_id"]
-            tagged_components["sr_parallel_run_index"] = sr_metadata["sr_parallel_run_index"]
             tagged_components["sr_parallel_run_count"] = sr_metadata["sr_parallel_run_count"]
+            tagged_components["sr_parallel_run_basis"] = sr_metadata.get("sr_parallel_run_basis", "")
+            tagged_components["sr_shared_mcb"] = sr_metadata.get("sr_shared_mcb", False)
+            if "sr_parallel_run_index" in sr_metadata:
+                tagged_components["sr_parallel_run_index"] = sr_metadata["sr_parallel_run_index"]
 
         mcb_component = tag_factory.create_component(
             "MCB",

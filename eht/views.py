@@ -96,6 +96,7 @@ PROJECT_DATA_TEMPLATE_FIELDS = [
     'area_class',
     'temp_class',
     'voltage',
+    'eht_db_fault_rating_ka',
     'max_cb_size',
     'restrict_cb_current',
     'vendor',
@@ -290,7 +291,7 @@ def verification_report_view(request):
                 conductor_material=cc.cable_4c_catalogue.conductor_material,
                 insulation_type=cc.cable_4c_catalogue.insulation_type,
                 installation_method=cc.cable_4c_catalogue.installation_method,
-                core_count=4, is_validated=True,
+                core_count=3, is_validated=True,
             ).order_by('conductor_size_mm2'))
             cat3c = list(ColdCableCatalogue.objects.filter(
                 cable_standard=cc.cable_3c_catalogue.cable_standard,
@@ -310,12 +311,13 @@ def verification_report_view(request):
             for label, f4, f3 in [('25/75', 0.25, 0.75), ('50/50', 0.50, 0.50), ('75/25', 0.75, 0.25)]:
                 b4 = vd_all_v * f4
                 b3 = vd_all_v * f3
-                s4 = next((r for r in cat4c if r.ampacity_a * k_tot >= I
-                            and math.sqrt(3) * I * R_op(r, T4) * L_4c <= b4), None)
+                feeder_current = float(cc.per_circuit_operating_current_a or 0) * max(1, int(cc.circuit_count or 1))
+                s4 = next((r for r in cat4c if r.ampacity_a * k_tot >= float(cc.breaker_size_a or feeder_current)
+                            and 2 * feeder_current * R_op(r, T4) * L_4c <= b4), None)
                 s3 = next((r for r in cat3c if r.ampacity_a * k_tot >= I
                             and 2 * I * R_op(r, T3) * L_3c <= b3), None)
                 if s4 and s3:
-                    vol = 4 * s4.conductor_size_mm2 * L_4c + N_out * 3 * s3.conductor_size_mm2 * L_3c
+                    vol = 3 * s4.conductor_size_mm2 * L_4c + N_out * 3 * s3.conductor_size_mm2 * L_3c
                     saving = round((vol - opt_vol) / vol * 100, 1) if vol > 0 else 0
                     baselines.append({'label': label, 'size_4c': s4.conductor_size_mm2,
                                       'size_3c': s3.conductor_size_mm2,
@@ -391,14 +393,14 @@ def verification_report_view(request):
         subs_amp = (
             f'K_total = K_temp × K_group = {k_t} × {k_g} = {k_tot}\n'
             f'A_available = A_catalogue × K_total\n\n'
-            + (f'4C trunk {c4} mm²: A_available = {amp4} A  (margin {m4}% above {I} A)\n' if is_3ph else '')
-            + f'3C outgoing {c3} mm²: A_available = {amp3} A  (margin {m3}% above {I} A)'
+            + (f'Feeder Cable {c4} mm²: A_available = {amp4} A  (margin {m4}% above breaker/group-current basis)\n' if is_3ph else '')
+            + f'Branch Cable {c3} mm²: A_available = {amp3} A  (margin {m3}% above breaker/branch-current basis)'
         )
         result.append(_es(0,
             'Ampacity — Grouping Derating and Minimum Size Selection',
             symbolic='A_available = A_catalogue × K_temp × K_group  ≥  I_operating',
             substitution=subs_amp,
-            result_value=(f'{c3} mm² (3C)' + (f'  +  {c4} mm² (4C trunk)' if is_3ph else '')),
+            result_value=(f'{c3} mm² Branch Cable' + (f'  +  {c4} mm² Feeder Cable' if is_3ph else '')),
             result_unit='',
             result_label=(
                 f'Sized on operating current {I} A/circuit (not starting current — MCB already handles starting).  '
@@ -415,7 +417,7 @@ def verification_report_view(request):
         ))
         n += 1
 
-        # E3: 4C Trunk Voltage Drop (3phJB only)
+        # E3: Feeder Cable Voltage Drop (distribution branches only)
         if is_3ph and cat4:
             T_op4 = f2(cc.cable_4c_conductor_temp_c) or T_max4
             R20_4 = f2(cat4.resistance_mohm_per_m, 3)
@@ -425,19 +427,19 @@ def verification_report_view(request):
                 f'R(T) = R_20 × (1 + α × (T_op − 20))\n'
                 f'     = {R20_4} mΩ/m × (1 + 0.00393 × ({T_op4} − 20))\n'
                 f'     = {round(R_op4 * 1000, 4) if R_op4 else "?"} mΩ/m  at T_op = {T_op4} °C\n\n'
-                f'VD_4C = √3 × I × R(T) × L_4C\n'
-                f'      = √3 × {I} × {round(R_op4, 6) if R_op4 else "?"} × {L4}\n'
+                f'VD_feeder = 2 × I_group × R(T) × L_feeder\n'
+                f'          = 2 × ({I} × {cc.circuit_count}) × {round(R_op4, 6) if R_op4 else "?"} × {L4}\n'
                 f'      = {vd4_v} V  ({vd4}% of {fmt(proj_voltage, 0)} V)'
             )
             result.append(_es(0,
-                f'4C Trunk Cable — Voltage Drop  [{c4} mm² Cu, {L4} m]',
-                symbolic='VD_4C = √3 · I · R(T) · L     [3-phase balanced, PF = 1.0, sin φ = 0]',
+                f'Feeder Cable — Voltage Drop  [{c4} mm² Cu, {L4} m]',
+                symbolic='VD_feeder = 2 · I_group · R(T) · L     [single-phase, PF = 1.0]',
                 substitution=subs_vd4,
                 result_value=f'{vd4_v} V  ({vd4}%)',
                 result_unit='',
                 result_label=(
-                    f'Factor √3 applies to balanced 3-phase geometry.  '
-                    f'VD_4C uses the phase current (= per-circuit operating current under balanced load assumption).'
+                    f'Single-phase factor 2 covers phase and neutral conductors. '
+                    f'VD_feeder uses the combined downstream group operating current.'
                 ),
                 evidence=[
                     {'icon': 'bi-lightning-charge', 'label': f'Conductor operating temp T_op = {T_op4} °C  ·  α_Cu = 0.00393 /°C  (IEC 60228)'},
@@ -450,7 +452,7 @@ def verification_report_view(request):
             ))
             n += 1
 
-        # E4: 3C Outgoing Voltage Drop
+        # E4: Branch Cable Voltage Drop
         if cat3:
             T_op3 = f2(cc.cable_3c_conductor_temp_c) or T_max3
             R20_3 = f2(cat3.resistance_mohm_per_m, 3)
@@ -459,14 +461,14 @@ def verification_report_view(request):
             subs_vd3 = (
                 f'R(T) = {R20_3} mΩ/m × (1 + 0.00393 × ({T_op3} − 20))\n'
                 f'     = {round(R_op3 * 1000, 4) if R_op3 else "?"} mΩ/m  at T_op = {T_op3} °C\n\n'
-                f'VD_3C = 2 × I × R(T) × L_3C\n'
+                f'VD_branch = 2 × I_branch × R(T) × L_branch\n'
                 f'      = 2 × {I} × {round(R_op3, 6) if R_op3 else "?"} × {L3}\n'
                 f'      = {vd3_v} V  ({vd3}% of {fmt(proj_voltage, 0)} V)\n\n'
-                f'Total path VD = {vd4 or 0}% (4C) + {vd3}% (3C) = {vd_tot}%  ≤  {vd_all}% allowable'
+                f'Total path VD = {vd4 or 0}% (Feeder) + {vd3}% (Branch) = {vd_tot}%  ≤  {vd_all}% allowable'
             )
             result.append(_es(0,
-                f'3C Outgoing Cable — Voltage Drop  [{c3} mm² Cu, {L3} m per circuit]',
-                symbolic='VD_3C = 2 · I · R(T) · L     [1-phase; factor 2 = outgoing + return conductors]',
+                f'Branch Cable — Voltage Drop  [{c3} mm² Cu, {L3} m per branch]',
+                symbolic='VD_branch = 2 · I_branch · R(T) · L     [single-phase; factor 2 = phase + neutral]',
                 substitution=subs_vd3,
                 result_value=f'Total path VD = {vd_tot}%',
                 result_unit=f'(allowable: {vd_all}%)  →  {cc.vd_status.upper()}',
@@ -479,12 +481,12 @@ def verification_report_view(request):
             ))
             n += 1
 
-        # E5: VD Optimisation (3phJB only)
+        # E5: VD Optimisation (distribution branches only)
         if is_3ph and cc.optimization_run:
             cmp     = _vd_split_comparison(cc)
             opt_vol = f2(cc.conductor_volume_proxy, 0)
             mass_mt = f2(cc.conductor_mass_total_mt, 4)
-            cost_eq = f'4 × {c4} mm² × {L4} m  +  {cc.circuit_count} × 3 × {c3} mm² × {L3} m  =  {opt_vol} mm²·m'
+            cost_eq = f'3 × {c4} mm² × {L4} m  +  {cc.circuit_count} × 3 × {c3} mm² × {L3} m  =  {opt_vol} mm²·m'
             savings_lines = []
             if cmp and cmp.get('baselines'):
                 for b in cmp['baselines']:
@@ -494,81 +496,54 @@ def verification_report_view(request):
                         sp = b['saving_pct']
                         dir_note = f'optimised uses {sp}% less material' if sp > 0 else f'optimised is {abs(sp)}% heavier (but still global minimum)'
                         savings_lines.append(
-                            f"  {b['label']} split → {b['size_4c']} mm² (4C) + {b['size_3c']} mm² (3C) = {b['volume']} mm²·m  ({dir_note})"
+                            f"  {b['label']} split → {b['size_4c']} mm² Feeder + {b['size_3c']} mm² Branch = {b['volume']} mm²·m  ({dir_note})"
                         )
             subs_opt = cost_eq + ('\n\nComparison vs fixed VD-split baselines:\n' + '\n'.join(savings_lines) if savings_lines else '')
             result.append(_es(0,
-                'VD Distribution Optimisation — Minimum Conductor Tonnage',
+                'Feeder/Branch VD Optimisation — Minimum Conductor Tonnage',
                 symbolic=(
-                    'minimise { 4·A_4C·L_4C + N_out·3·A_3C·L_3C }\n'
-                    'subject to:  VD_4C + VD_3C ≤ VD_allowable  and  A_4C, A_3C ≥ ampacity gate'
+                    'minimise { 3·A_feeder·L_feeder + Σ(3·A_branch·L_branch) }\n'
+                    'subject to:  VD_feeder + VD_branch ≤ VD_allowable  and  ampacity ≥ upstream MCB rating'
                 ),
                 substitution=subs_opt,
                 result_value=f'{mass_mt} metric tonnes',
                 result_unit='conductor (this branch)',
                 result_label=(
-                    f'Optimised solution: {c4} mm² trunk + {c3} mm² outgoing.  '
-                    'The engine systematically searches every valid (4C, 3C) catalogue pair and selects the minimum-mass '
+                    f'Optimised solution: {c4} mm² Feeder + {c3} mm² Branch.  '
+                    'The engine systematically searches every valid Feeder/Branch catalogue pair and selects the minimum-mass '
                     'combination, allowing the voltage drop to split across the two cable segments in whatever ratio produces '
                     'the lowest total conductor volume — not a fixed proportional split.'
                 ),
                 evidence=[
-                    {'icon': 'bi-graph-down', 'label': 'Nested discrete search: for each ampacity-qualified 4C size, find smallest qualifying 3C; select pair with lowest conductor volume proxy'},
+                    {'icon': 'bi-graph-down', 'label': 'Nested discrete search: for each ampacity-qualified Feeder size, find smallest qualifying Branch size; select pair with lowest conductor volume proxy'},
                     {'icon': 'bi-info-circle', 'label': 'Fixed-split (25/50/75) baselines shown above constrain VD allocation arbitrarily. Optimiser finds true minimum-mass solution at any feasible split.'},
                 ],
                 std_refs=[],
             ))
             n += 1
 
-        # E6: 4C Fault Protection
-        if is_3ph and cat4:
-            i_f4   = f2(cc.fault_current_4c_phase_to_phase_a, 1)
-            mcb_k  = {'B': 3, 'C': 5, 'D': 10}.get(cc.mcb_curve, 5)
-            thr4   = round(float(brk or 0) * mcb_k, 1) if brk else None
-            st4    = cc.fault_protection_4c_status
-            result.append(_es(0,
-                f'4C Trunk — Phase-to-Phase Fault Protection  [{st4.upper()}]',
-                symbolic='I_fault_4C = V_line·√3 / (2·R(T)·L)  ≥  k_curve × I_breaker',
-                substitution=(
-                    f'I_fault = {fmt(proj_voltage, 0)} V × √3 / (2 × R_4C_at_T × {L4} m)\n'
-                    f'        = {i_f4} A\n\n'
-                    f'Threshold: Type {cc.mcb_curve} lower bound {mcb_k}× → {mcb_k} × {brk} A = {thr4} A\n'
-                    f'RCD does NOT protect against phase-to-phase faults on the 4C trunk — MCB instantaneous trip is the sole protection path.'
-                ),
-                result_value=f'{i_f4} A',
-                result_unit=f'vs threshold {thr4} A  →  {st4.upper()}',
-                result_label='MCB must trip instantaneously (<50 ms) to satisfy 0.4 s disconnection requirement (IEC 60364-4-41 Table 41.1, TN system U₀ = 230 V)',
-                evidence=[
-                    {'icon': 'bi-shield-exclamation', 'label': f'MCB curve Type {cc.mcb_curve}  ·  Breaker = {brk} A  ·  Lower bound factor {mcb_k}×'},
-                ],
-                std_refs=[
-                    {'label': 'IEC 60364-4-41 Table 41.1 — Max 0.4 s disconnection for TN systems, U₀ = 230 V'},
-                    {'label': 'IEC 60898-1 — MCB characteristic curves B (3×), C (5×), D (10×) instantaneous lower bounds'},
-                ],
-            ))
-            n += 1
-
-        # E7: 3C Earth Fault Loop
+        # E6: L-PE Fault Loop
         if cat3:
-            i_f3  = f2(cc.fault_current_3c_line_to_neutral_a, 1)
+            i_f3  = f2(cc.fault_current_l_pe_a, 1)
             mcb_k3= {'B': 3, 'C': 5, 'D': 10}.get(cc.mcb_curve, 5)
             thr3  = round(float(brk or 0) * mcb_k3, 1) if brk else None
-            st3   = cc.fault_protection_3c_status
+            st3   = cc.fault_loop_status
             rcd  = 'RCD earth-fault protection is provided — MCB check is secondary verification.' if cc.rcd_provided else 'No RCD provided — MCB is sole earth-fault protection; hard sizing gate.'
+            basis = cc.fault_loop_basis or {}
             result.append(_es(0,
-                f'3C Outgoing — Earth Fault Loop Check  [{st3.upper()}]',
-                symbolic='I_fault_3C = V_phase / (2·R(T)·L)  [cold cable only; tracer PE impedance deferred]',
+                f'L-PE Fault Loop Check  [{st3.upper()}]',
+                symbolic='I_fault = V_phase / (Z_source + R_phase_feeder + R_PE_feeder + R_phase_branch + R_PE_branch)',
                 substitution=(
-                    f'I_fault = {fmt(proj_voltage, 0)} V / (2 × R_3C_at_T × {L3} m)\n'
+                    f'Z_source = {f2(basis.get("source_impedance_ohm"), 6)} Ω from three-phase EHT DB fault rating {basis.get("eht_db_fault_rating_ka", "—")} kA\n'
+                    f'I_fault = {fmt(proj_voltage, 0)} V / Z_loop\n'
                     f'        = {i_f3} A  vs threshold {thr3} A  →  {st3.upper()}\n\n'
-                    f'{rcd}\n'
-                    'Note: tracer PE-path resistance (SR braid / MI sheath) is deferred and not included in this loop. The result overestimates earth-fault current and is non-conservative; review note applied.'
+                    f'{rcd}'
                 ),
                 result_value=f'{i_f3} A',
                 result_unit=f'vs {thr3} A  →  {st3.upper()}',
                 result_label=rcd,
                 evidence=[
-                    {'icon': 'bi-info-circle', 'label': 'Tracer PE-path deferred pending SR/MI catalogue data. Current result overestimates fault current — engineering review note applied to this result.'},
+                    {'icon': 'bi-shield-check', 'label': 'Fault loop includes project source impedance plus Feeder/Branch phase and PE conductor resistance.'},
                 ],
                 std_refs=[
                     {'label': 'IEC 60364-4-41 — Earth fault disconnection time, TN systems'},
@@ -581,9 +556,9 @@ def verification_report_view(request):
         result.append(_es(0,
             f'Branch {cc.branch_index} Summary — Status: {cc.sizing_status.upper()}',
             table=[
-                ('Branch type',            '3-phase JB (4C trunk + 3C outgoing)' if is_3ph else 'Direct 1-phase (3C only)'),
-                ('4C Trunk',               f'{c4} mm² Cu · {L4} m · {vd4}% VD · fault: {cc.fault_protection_4c_status}' if is_3ph else 'N/A'),
-                ('3C Outgoing',            f'{c3} mm² Cu · {L3} m/circuit · {vd3}% VD · earth loop: {cc.fault_protection_3c_status}'),
+                ('Branch type',            'Distribution JB (Feeder + Branch Cables)' if is_3ph else 'Direct single-phase Feeder Cable'),
+                ('Feeder Cable',           f'{c4} mm² Cu · {L4} m · {vd4}% VD' if is_3ph else 'N/A'),
+                ('Branch Cable',           f'{c3} mm² Cu · {L3} m/branch · {vd3}% VD · L-PE loop: {cc.fault_loop_status}'),
                 ('Total path VD',          f'{vd_tot}%  (allowable: {vd_all}%)  →  {cc.vd_status.upper()}'),
                 ('Load-end voltage',       f'{v_end} V'),
                 ('Operating current',      f'{I} A/circuit  ·  Breaker: {brk} A  ·  MCB Type {cc.mcb_curve}'),
@@ -1240,6 +1215,11 @@ def _build_result_workspace_data(project_id):
     branch_rows = attach_cable_override_summaries(branch_rows, sld_payload)
     cold_cable_rows = _cold_cable_results(project_id)
     branch_rows = _attach_cold_cable_results(branch_rows, cold_cable_rows)
+    panel_summary_rows, panel_summary_totals = _build_panel_load_summary(
+        project_id,
+        branch_rows,
+        ProjectData.objects.filter(proj_id=project_id).first(),
+    )
     active_tracer_overrides = {
         str(override.line_id): override
         for override in TracerSelectionOverride.objects.filter(
@@ -1354,6 +1334,12 @@ def _build_result_workspace_data(project_id):
         'cold_cable_review_count': sum(1 for item in cold_cable_rows if item.sizing_status == 'review_required'),
         'cold_cable_unsizeable_count': sum(1 for item in cold_cable_rows if item.sizing_status == 'unsizeable'),
         'cold_cable_total_mass_mt': sum(item.conductor_mass_total_mt or 0 for item in cold_cable_rows),
+        'panel_source_count': panel_summary_totals['source_count'],
+        'panel_mcb_count': panel_summary_totals['mcb_count'],
+        'panel_load_current_a': panel_summary_totals['load_current_a'],
+        'panel_connected_load_kw': panel_summary_totals['connected_load_kw'],
+        'panel_review_required_count': panel_summary_totals['review_required_count'],
+        'panel_unsizeable_count': panel_summary_totals['unsizeable_count'],
     }
     summary = apply_active_summary_overrides(
         project_id,
@@ -1367,6 +1353,8 @@ def _build_result_workspace_data(project_id):
         'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
         'cold_cable_rows': cold_cable_rows,
+        'panel_summary_rows': panel_summary_rows,
+        'panel_summary_totals': panel_summary_totals,
         'summary': summary,
     }
 
@@ -1569,6 +1557,215 @@ def _branch_value(branch, path, default=''):
     return value
 
 
+def _number_or_zero(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _branch_tagged_components(branch):
+    tagged = _branch_value(branch, ['tagged_components'], {})
+    return tagged if isinstance(tagged, dict) else {}
+
+
+def _branch_component_metadata(branch, component_key):
+    tagged = _branch_tagged_components(branch)
+    component_details = tagged.get('component_details') if isinstance(tagged.get('component_details'), dict) else {}
+    component = component_details.get(component_key) if isinstance(component_details.get(component_key), dict) else {}
+    metadata = component.get('metadata') if isinstance(component.get('metadata'), dict) else {}
+    return metadata
+
+
+def _branch_panel_source(branch, project_id):
+    tagged = _branch_tagged_components(branch)
+    mcb_metadata = _branch_component_metadata(branch, 'MCB')
+    source_id = (
+        mcb_metadata.get('panel_id')
+        or mcb_metadata.get('panel')
+        or mcb_metadata.get('source_panel')
+        or tagged.get('panel_id')
+        or tagged.get('source_panel')
+        or f'{project_id}:MAIN'
+    )
+    source_label = (
+        mcb_metadata.get('panel_label')
+        or mcb_metadata.get('source_label')
+        or tagged.get('panel_label')
+        or tagged.get('source_label')
+        or f'Project {project_id} main distribution'
+    )
+    source_type = 'metadata' if source_id != f'{project_id}:MAIN' else 'project_default'
+    return source_id, source_label, source_type
+
+
+def _branch_breaker_size(branch):
+    cold_result = _branch_value(branch, ['cold_cable_result'], None)
+    if cold_result and cold_result.breaker_size_a:
+        return _number_or_zero(cold_result.breaker_size_a)
+    return _number_or_zero(_branch_component_metadata(branch, 'MCB').get('breaker_size'))
+
+
+def _branch_load_current(branch):
+    cold_result = _branch_value(branch, ['cold_cable_result'], None)
+    if cold_result:
+        if cold_result.per_circuit_operating_current_a:
+            circuit_count = _number_or_zero(cold_result.circuit_count) or _number_or_zero(_branch_value(branch, ['circuit_count'], 0)) or 1
+            return (
+                _number_or_zero(cold_result.per_circuit_operating_current_a) * circuit_count,
+                'cold_cable_result.per_circuit_operating_current_a x circuit_count',
+            )
+        if cold_result.line_operating_current_a:
+            return _number_or_zero(cold_result.line_operating_current_a), 'cold_cable_result.line_operating_current_a'
+
+    metadata = _branch_component_metadata(branch, 'MCB')
+    if metadata.get('operating_current') not in (None, ''):
+        circuit_count = _number_or_zero(_branch_value(branch, ['circuit_count'], 0)) or 1
+        return (
+            _number_or_zero(metadata.get('operating_current')) * circuit_count,
+            'MCB metadata operating_current x branch circuit_count',
+        )
+    if metadata.get('line_operating_current') not in (None, ''):
+        return _number_or_zero(metadata.get('line_operating_current')), 'MCB metadata line_operating_current'
+    return 0.0, 'not_available'
+
+
+def _panel_status_counts(cold_result):
+    counts = {
+        'selected_count': 0,
+        'review_required_count': 0,
+        'unsizeable_count': 0,
+        'missing_cold_cable_count': 0,
+    }
+    if not cold_result:
+        counts['missing_cold_cable_count'] = 1
+        return counts
+    if cold_result.sizing_status == 'selected':
+        counts['selected_count'] = 1
+    elif cold_result.sizing_status == 'unsizeable':
+        counts['unsizeable_count'] = 1
+    else:
+        counts['review_required_count'] = 1
+    return counts
+
+
+def _build_panel_load_summary(project_id, branch_rows, project_setup=None):
+    voltage = _number_or_zero(getattr(project_setup, 'voltage', None)) or 230.0
+    groups = {}
+    for branch in branch_rows:
+        source_id, source_label, source_type = _branch_panel_source(branch, project_id)
+        group = groups.setdefault(source_id, {
+            'project_id': project_id,
+            'source_id': source_id,
+            'source_label': source_label,
+            'source_type': source_type,
+            'branch_count': 0,
+            'mcb_count': 0,
+            'mcb_tags': set(),
+            'circuit_count': 0,
+            'line_ids': set(),
+            'load_current_a': 0.0,
+            'connected_load_kw': 0.0,
+            'breaker_capacity_a': 0.0,
+            'largest_breaker_a': 0.0,
+            'breaker_distribution': {},
+            'selected_count': 0,
+            'review_required_count': 0,
+            'unsizeable_count': 0,
+            'missing_cold_cable_count': 0,
+            'load_basis': set(),
+        })
+        tagged = _branch_tagged_components(branch)
+        mcb_tag = tagged.get('MCB')
+        mcb_key = str(mcb_tag or f'branch:{group["branch_count"]}')
+        branch_current, load_basis = _branch_load_current(branch)
+        breaker_size = _branch_breaker_size(branch)
+        cold_result = _branch_value(branch, ['cold_cable_result'], None)
+        line_id = _branch_value(branch, ['distribution', 'line', 'line_id'], '') or _branch_value(branch, ['line_id'], '')
+        status_counts = _panel_status_counts(cold_result)
+
+        group['branch_count'] += 1
+        is_new_mcb = bool(mcb_key and mcb_key not in group['mcb_tags'])
+        if is_new_mcb:
+            group['mcb_tags'].add(mcb_key)
+        group['circuit_count'] += int(_number_or_zero(_branch_value(branch, ['circuit_count'], 0)))
+        if line_id:
+            group['line_ids'].add(str(line_id))
+        group['load_current_a'] += branch_current
+        group['connected_load_kw'] += (branch_current * voltage) / 1000.0
+        if is_new_mcb:
+            group['breaker_capacity_a'] += breaker_size
+            group['largest_breaker_a'] = max(group['largest_breaker_a'], breaker_size)
+        if is_new_mcb and breaker_size:
+            breaker_key = f'{breaker_size:g} A'
+            group['breaker_distribution'][breaker_key] = group['breaker_distribution'].get(breaker_key, 0) + 1
+        for key, value in status_counts.items():
+            group[key] += value
+        group['load_basis'].add(load_basis)
+
+    rows = []
+    for group in groups.values():
+        breaker_distribution = ', '.join(
+            f'{size}: {count}'
+            for size, count in sorted(
+                group['breaker_distribution'].items(),
+                key=lambda item: _number_or_zero(item[0].split()[0]),
+            )
+        )
+        rows.append({
+            **group,
+            'mcb_count': len(group['mcb_tags']),
+            'line_count': len(group['line_ids']),
+            'line_ids_display': ', '.join(sorted(group['line_ids'])),
+            'breaker_distribution_display': breaker_distribution or '-',
+            'load_basis_display': '; '.join(sorted(group['load_basis'])) or 'not_available',
+        })
+    rows.sort(key=lambda item: item['source_label'])
+
+    totals = {
+        'source_count': len(rows),
+        'branch_count': sum(row['branch_count'] for row in rows),
+        'mcb_count': sum(row['mcb_count'] for row in rows),
+        'circuit_count': sum(row['circuit_count'] for row in rows),
+        'load_current_a': sum(row['load_current_a'] for row in rows),
+        'connected_load_kw': sum(row['connected_load_kw'] for row in rows),
+        'breaker_capacity_a': sum(row['breaker_capacity_a'] for row in rows),
+        'selected_count': sum(row['selected_count'] for row in rows),
+        'review_required_count': sum(row['review_required_count'] for row in rows),
+        'unsizeable_count': sum(row['unsizeable_count'] for row in rows),
+        'missing_cold_cable_count': sum(row['missing_cold_cable_count'] for row in rows),
+        'basis': 'Grouped by panel/source metadata when present; otherwise by project main distribution.',
+    }
+    return rows, totals
+
+
+def _panel_load_summary_export_rows(panel_rows):
+    rows = []
+    for row in panel_rows:
+        rows.append({
+            'Project ID': row['project_id'],
+            'Source ID': row['source_id'],
+            'Source Label': row['source_label'],
+            'Source Type': row['source_type'],
+            'Line Count': row['line_count'],
+            'Line IDs': row['line_ids_display'],
+            'Branch Count': row['branch_count'],
+            'MCB Count': row['mcb_count'],
+            'Circuit Count': row['circuit_count'],
+            'Total Load Current (A)': row['load_current_a'],
+            'Connected Load (kW)': row['connected_load_kw'],
+            'Breaker Capacity Sum (A)': row['breaker_capacity_a'],
+            'Largest Breaker (A)': row['largest_breaker_a'],
+            'Breaker Distribution': row['breaker_distribution_display'],
+            'Cold Cable Selected': row['selected_count'],
+            'Cold Cable Review Required': row['review_required_count'],
+            'Cold Cable Unsizeable': row['unsizeable_count'],
+            'Cold Cable Missing': row['missing_cold_cable_count'],
+            'Load Basis': row['load_basis_display'],
+        })
+    return rows
+
+
 def _cold_cable_results(project_id):
     results = list(
         ColdCableResult.objects.filter(project_id=project_id)
@@ -1680,29 +1877,29 @@ def _cold_cable_export_rows(cold_rows):
             'MCB Curve': result.mcb_curve,
             'RCD Provided': result.rcd_provided,
             'Length Basis': result.length_basis,
-            '4C Length (m)': result.length_4c_m,
-            '3C Length (m)': result.length_3c_m,
-            '4C Size (mm2)': result.cable_4c_size_mm2,
-            '3C Size (mm2)': result.cable_3c_size_mm2,
-            '4C Derated Ampacity (A)': result.cable_4c_ampacity_derated_a,
-            '3C Derated Ampacity (A)': result.cable_3c_ampacity_derated_a,
-            '4C Conductor Temp (C)': result.cable_4c_conductor_temp_c,
-            '3C Conductor Temp (C)': result.cable_3c_conductor_temp_c,
+            'Feeder Cable Length (m)': result.length_4c_m,
+            'Branch Cable Length (m)': result.length_3c_m,
+            'Feeder Cable Size (mm2)': result.cable_4c_size_mm2,
+            'Branch Cable Size (mm2)': result.cable_3c_size_mm2,
+            'Feeder Cable Derated Ampacity (A)': result.cable_4c_ampacity_derated_a,
+            'Branch Cable Derated Ampacity (A)': result.cable_3c_ampacity_derated_a,
+            'Feeder Cable Conductor Temp (C)': result.cable_4c_conductor_temp_c,
+            'Branch Cable Conductor Temp (C)': result.cable_3c_conductor_temp_c,
             'K Temp': result.k_temp,
             'K Group': result.k_group,
             'K Total': result.k_total,
             'VD Allowable (%)': result.vd_allowable_pct,
-            '4C VD (%)': result.cable_4c_vd_pct,
-            '3C VD (%)': result.cable_3c_vd_pct,
+            'Feeder Cable VD (%)': result.cable_4c_vd_pct,
+            'Branch Cable VD (%)': result.cable_3c_vd_pct,
             'Total VD (%)': result.vd_total_pct,
             'Load-End Voltage (V)': result.load_end_voltage_v,
             'VD Status': result.vd_status,
-            '4C Fault Current L-L (A)': result.fault_current_4c_phase_to_phase_a,
-            '4C Fault Status': result.fault_protection_4c_status,
-            '3C Fault Current L-N (A)': result.fault_current_3c_line_to_neutral_a,
-            '3C Fault Status': result.fault_protection_3c_status,
-            '4C Conductor Mass (MT)': result.cable_4c_conductor_mass_mt,
-            '3C Conductor Mass (MT)': result.cable_3c_conductor_mass_mt,
+            'L-PE Fault Current (A)': result.fault_current_l_pe_a,
+            'L-PE Fault Loop Status': result.fault_loop_status,
+            'Source Impedance (ohm)': (result.fault_loop_basis or {}).get('source_impedance_ohm'),
+            'EHT DB Fault Rating (kA)': (result.fault_loop_basis or {}).get('eht_db_fault_rating_ka'),
+            'Feeder Cable Conductor Mass (MT)': result.cable_4c_conductor_mass_mt,
+            'Branch Cable Conductor Mass (MT)': result.cable_3c_conductor_mass_mt,
             'Total Conductor Mass (MT)': result.conductor_mass_total_mt,
             'Density Basis (kg/m3)': result.conductor_material_density_kg_m3,
             'Sizing Status': result.sizing_status,
@@ -1732,7 +1929,7 @@ def _cold_cable_3c_segment_export_rows(cold_rows):
                 'Line ID': result.line_id,
                 'Line UID': result.line_uid,
                 'Branch Index': result.branch_index,
-                'Branch Critical 3C Size (mm2)': critical_size,
+                'Branch Critical Size (mm2)': critical_size,
                 'Segment Display Tag': segment.get('display_tag') or '',
                 'Segment Component ID': segment.get('component_id') or '',
                 'Circuit Index': segment.get('circuit_index'),
@@ -1741,17 +1938,17 @@ def _cold_cable_3c_segment_export_rows(cold_rows):
                 'Phase Basis': segment.get('phase_basis') or '',
                 'Segment Length (m)': segment.get('length_m'),
                 'Length Basis': segment.get('length_basis') or result.length_basis,
-                'Segment 3C Size (mm2)': size,
+                'Branch Segment Size (mm2)': size,
                 'Critical Segment': 'Yes' if is_critical else '',
                 'Derated Ampacity (A)': segment.get('ampacity_derated_a'),
                 'Ampacity Margin (%)': segment.get('ampacity_margin_pct'),
                 'Conductor Temp (C)': segment.get('conductor_temp_c'),
                 'Conductor Mass (MT)': segment.get('conductor_mass_mt'),
-                '3C VD (%)': segment.get('vd_pct'),
+                'Branch VD (%)': segment.get('vd_pct'),
                 'Total Path VD (%)': segment.get('vd_total_pct'),
                 'Load-End Voltage (V)': segment.get('load_end_voltage_v'),
-                'Fault Current L-N (A)': segment.get('fault_current_a'),
-                'Fault Status': segment.get('fault_status') or result.fault_protection_3c_status,
+                'L-PE Fault Current (A)': segment.get('fault_current_a'),
+                'L-PE Fault Loop Status': segment.get('fault_status') or result.fault_loop_status,
                 'Sizing Status': segment.get('sizing_status') or result.sizing_status,
                 'K Temp': segment.get('k_temp'),
                 'K Group': segment.get('k_group'),
@@ -1767,6 +1964,21 @@ def result_view(request):
     line_results = []
     branch_rows = []
     cold_cable_rows = []
+    panel_summary_rows = []
+    panel_summary_totals = {
+        'source_count': 0,
+        'branch_count': 0,
+        'mcb_count': 0,
+        'circuit_count': 0,
+        'load_current_a': 0,
+        'connected_load_kw': 0,
+        'breaker_capacity_a': 0,
+        'selected_count': 0,
+        'review_required_count': 0,
+        'unsizeable_count': 0,
+        'missing_cold_cable_count': 0,
+        'basis': '',
+    }
     selection_issue_rows = []
     mi_result_rows = []
     summary = {
@@ -1788,6 +2000,8 @@ def result_view(request):
         mi_result_rows = result_data['mi_result_rows']
         branch_rows = result_data['branch_rows']
         cold_cable_rows = result_data['cold_cable_rows']
+        panel_summary_rows = result_data['panel_summary_rows']
+        panel_summary_totals = result_data['panel_summary_totals']
         summary = result_data['summary']
 
     context.update({
@@ -1796,6 +2010,8 @@ def result_view(request):
         'mi_result_rows': mi_result_rows,
         'branch_rows': branch_rows,
         'cold_cable_rows': cold_cable_rows,
+        'panel_summary_rows': panel_summary_rows,
+        'panel_summary_totals': panel_summary_totals,
         'result_summary': summary,
         'mi_mvp_basis_notes': MI_MVP_RESULT_BASIS_NOTES if summary.get('mi_result_count') else [],
         'has_results': bool(line_results or selection_issue_rows or mi_result_rows),
@@ -2854,6 +3070,7 @@ def result_export_view(request):
     alternate_rows = []
     mi_rows = []
     selection_rows = []
+    panel_summary_rows = _panel_load_summary_export_rows(result_data['panel_summary_rows'])
     cold_cable_rows = _cold_cable_export_rows(result_data['cold_cable_rows'])
     cold_cable_segment_rows = _cold_cable_3c_segment_export_rows(result_data['cold_cable_rows'])
     for item in result_data['line_results']:
@@ -3034,8 +3251,9 @@ def result_export_view(request):
         pd.DataFrame(line_rows).to_excel(writer, sheet_name='Line Results', index=False)
         pd.DataFrame(selection_rows).to_excel(writer, sheet_name='Selection Diagnostics', index=False)
         pd.DataFrame(branch_rows).to_excel(writer, sheet_name='Power Distribution', index=False)
+        pd.DataFrame(panel_summary_rows).to_excel(writer, sheet_name='Panel Load Summary', index=False)
         pd.DataFrame(cold_cable_rows).to_excel(writer, sheet_name='Cold Cable Sizing', index=False)
-        pd.DataFrame(cold_cable_segment_rows).to_excel(writer, sheet_name='Cold Cable 3C Segments', index=False)
+        pd.DataFrame(cold_cable_segment_rows).to_excel(writer, sheet_name='Cold Cable Branch Segments', index=False)
         pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
         pd.DataFrame(mi_rows).to_excel(writer, sheet_name='MI Selection', index=False)
 
@@ -3225,7 +3443,8 @@ def _format_form_errors(form):
 
 
 def _save_project_setup_from_upload(request, project_id):
-    setup_fields = set(ProjectDataForm.Meta.fields)
+    fault_rating_form_fields = {'eht_db_fault_rating_ka_preset', 'eht_db_fault_rating_ka_custom'}
+    setup_fields = set(ProjectDataForm.Meta.fields) | fault_rating_form_fields
     if not any(field in request.POST for field in setup_fields if field != 'proj_id'):
         return None
 
@@ -3241,6 +3460,17 @@ def _save_project_setup_from_upload(request, project_id):
             post_data[field_name] = getattr(instance, field_name, default_value) or default_value
     if 'rcd_provided' not in post_data and getattr(instance, 'rcd_provided', True):
         post_data['rcd_provided'] = 'on'
+    if 'eht_db_fault_rating_ka_preset' not in post_data:
+        current_fault_rating = getattr(instance, 'eht_db_fault_rating_ka', 15) or 15
+        current_fault_rating_text = f'{float(current_fault_rating):g}'
+        if current_fault_rating_text in {'10', '15', '25', '40', '50'}:
+            post_data['eht_db_fault_rating_ka_preset'] = current_fault_rating_text
+            post_data.setdefault('eht_db_fault_rating_ka_custom', '')
+        else:
+            post_data['eht_db_fault_rating_ka_preset'] = 'OTHER'
+            post_data['eht_db_fault_rating_ka_custom'] = current_fault_rating_text
+    else:
+        post_data.setdefault('eht_db_fault_rating_ka_custom', '')
     form = ProjectDataForm(post_data, instance=instance, user=getattr(request, 'user', None))
     if not form.is_valid():
         raise ValidationError(f"Project setup could not be saved before calculation. {_format_form_errors(form)}")

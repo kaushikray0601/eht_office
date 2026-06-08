@@ -1,8 +1,10 @@
 import json
 import math
 from copy import deepcopy
+from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
@@ -33,8 +35,7 @@ from eht.cold_cable import (
     build_cold_cable_sizing_input,
     calculate_k_temp,
     calculate_vd,
-    check_fault_3c,
-    check_fault_4c,
+    check_fault_l_pe,
     ColdCableSizingInput,
     conductor_density_kg_m3,
     conductor_operating_temperature,
@@ -44,6 +45,7 @@ from eht.cold_cable import (
     mcb_instantaneous_factor,
     optimise_cable_pair,
     resolve_cable_lengths,
+    SOURCE_IMPEDANCE_ASSUMED_ZERO_NOTE,
     size_cold_cable_for_branch,
     size_cold_cables_for_project,
 )
@@ -78,6 +80,7 @@ from eht.models import (
     TracerSelectionOverride,
     is_default_project_id,
 )
+from eht.views import _build_panel_load_summary
 from eht.sld_layout import get_project_sld_layout
 from eht.sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
 from eht.sld_pdf import build_sld_pdf
@@ -304,6 +307,8 @@ def make_project_form_payload(**overrides):
         'area_class': 'SAFE',
         'temp_class': 'T3',
         'voltage': '230.00',
+        'eht_db_fault_rating_ka_preset': '15',
+        'eht_db_fault_rating_ka_custom': '',
         'max_cb_size': '10',
         'restrict_cb_current': '80.00',
         'allowablevdrop': '5.00',
@@ -1458,7 +1463,7 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         self.assertEqual(power_params['breaker_size'], 6)
         self.assertAlmostEqual(power_params['voltage_scenarios']['max_current_voltage'], 253.0, places=6)
 
-    def test_compute_power_params_keeps_parallel_sr_runs_on_independent_breakers(self):
+    def test_compute_power_params_groups_parallel_sr_runs_on_shared_mcb(self):
         selected_tracer = {
             'V_UID': 'SR-70',
             'Tracer_Family': 'Self Regulating',
@@ -1483,18 +1488,21 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         distribution = compute_power_distribution(power_params, make_project_settings())
 
         self.assertEqual(power_params['no_of_circuits'], 2)
-        self.assertTrue(power_params['sr_independent_parallel_runs'])
+        self.assertFalse(power_params['sr_independent_parallel_runs'])
         self.assertAlmostEqual(power_params['line_max_current'], 1540.0 / 230.0, places=6)
         self.assertAlmostEqual(power_params['max_current'], 770.0 / 230.0, places=6)
         self.assertEqual(distribution['total_circuits'], 2)
-        self.assertEqual(len(distribution['branches']), 2)
-        self.assertEqual(distribution['branches'][0]['type'], '1phJB')
+        self.assertEqual(len(distribution['branches']), 1)
+        branch = distribution['branches'][0]
+        self.assertEqual(branch['type'], '3phJB')
+        self.assertEqual(branch['circuit_count'], 2)
+        self.assertEqual(branch['tagged_components']['heating_cable_type'], 'SR')
+        self.assertEqual(branch['tagged_components']['sr_parallel_run_count'], 2)
+        self.assertEqual(branch['tagged_components']['sr_parallel_run_basis'], 'SR_PARALLEL_STRAIGHT_RUN_SELECTION_MVP_V1')
+        self.assertTrue(branch['tagged_components']['sr_shared_mcb'])
+        self.assertNotIn('sr_parallel_run_index', branch['tagged_components'])
         self.assertEqual(
-            distribution['branches'][0]['tagged_components']['heating_cable_type'],
-            'SR',
-        )
-        self.assertEqual(
-            distribution['branches'][1]['tagged_components']['sr_parallel_run_index'],
+            branch['tagged_components']['component_details']['MCB']['metadata']['sr_parallel_run_count'],
             2,
         )
 
@@ -3258,10 +3266,10 @@ class ColdCableFoundationTests(TestCase):
         result = optimise_cable_pair(project, sizing_input)
 
         self.assertEqual(result.status, 'selected')
-        self.assertEqual(result.selection_4c.catalogue.conductor_size_mm2, 6.0)
-        self.assertEqual(result.selection_3c.catalogue.conductor_size_mm2, 2.5)
+        self.assertEqual(result.selection_4c.catalogue.conductor_size_mm2, 10.0)
+        self.assertEqual(result.selection_3c.catalogue.conductor_size_mm2, 16.0)
         self.assertLessEqual(result.vd_total_pct, 5.0)
-        self.assertEqual(result.conductor_volume_proxy, 3750.0)
+        self.assertEqual(result.conductor_volume_proxy, 5460.0)
 
     def test_size_cold_cable_for_branch_marks_total_voltage_drop_unsizeable(self):
         call_command('populate_cold_cable_catalogue')
@@ -3324,22 +3332,32 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(mcb_instantaneous_factor('C'), 5.0)
         self.assertEqual(mcb_instantaneous_factor('D'), 10.0)
 
-    def test_fault_checks_return_expected_pass_fail_statuses(self):
+    def test_l_pe_fault_loop_check_returns_expected_pass_fail_statuses(self):
         call_command('populate_cold_cable_catalogue')
-        row = ColdCableCatalogue.objects.get(core_count=4, conductor_size_mm2=2.5)
+        row = ColdCableCatalogue.objects.get(core_count=3, conductor_size_mm2=2.5)
 
-        passing = check_fault_4c(row, 30.0, 230.0, 10.0, 'C', conductor_temp_c=90.0)
-        failing = check_fault_4c(row, 600.0, 230.0, 10.0, 'C', conductor_temp_c=90.0)
-        rcd_review = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', True, conductor_temp_c=90.0)
-        no_rcd_fail = check_fault_3c(row, 600.0, 230.0, 10.0, 'C', False, conductor_temp_c=90.0)
+        passing = check_fault_l_pe(
+            row, 30.0, row, 10.0, 230.0, 10.0, 'C', True,
+            feeder_conductor_temp_c=90.0,
+            branch_conductor_temp_c=90.0,
+        )
+        rcd_review = check_fault_l_pe(
+            row, 600.0, row, 600.0, 230.0, 10.0, 'C', True,
+            feeder_conductor_temp_c=90.0,
+            branch_conductor_temp_c=90.0,
+        )
+        no_rcd_fail = check_fault_l_pe(
+            row, 600.0, row, 600.0, 230.0, 10.0, 'C', False,
+            feeder_conductor_temp_c=90.0,
+            branch_conductor_temp_c=90.0,
+        )
 
         self.assertEqual(passing.status, 'pass')
         self.assertGreaterEqual(passing.fault_current_a, passing.threshold_current_a)
-        self.assertEqual(failing.status, 'fail')
         self.assertEqual(rcd_review.status, 'review_required')
         self.assertEqual(no_rcd_fail.status, 'fail')
 
-    def test_size_cold_cable_for_branch_upsizes_4c_for_fault_threshold(self):
+    def test_size_cold_cable_for_branch_flags_feeder_l_pe_fault_review_with_rcd(self):
         call_command('populate_cold_cable_catalogue')
         make_rich_sld_project_snapshot('p-fault-4c', ['LINE-001'])
         project = ProjectData.objects.get(proj_id='p-fault-4c')
@@ -3362,11 +3380,29 @@ class ColdCableFoundationTests(TestCase):
 
         result = size_cold_cable_for_branch(branch, project)
 
-        self.assertEqual(result.fault_protection_4c_status, 'pass')
-        self.assertGreater(result.cable_4c_size_mm2, 2.5)
+        self.assertEqual(result.fault_loop_status, 'review_required')
+        self.assertEqual(result.cable_4c_size_mm2, 2.5)
         self.assertEqual(result.cable_3c_size_mm2, 2.5)
         self.assertEqual(result.cable_4c_conductor_temp_c, 90.0)
-        self.assertGreaterEqual(result.fault_current_4c_phase_to_phase_a, result.breaker_size_a * 10.0)
+        self.assertLess(result.fault_current_l_pe_a, result.breaker_size_a * 10.0)
+        self.assertEqual(result.fault_loop_basis['basis'], 'single_phase_l_pe_complete_cold_cable_path')
+
+    def test_size_cold_cable_assumes_zero_source_impedance_when_project_fault_rating_invalid(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p-source-missing', ['LINE-001'])
+        ProjectData.objects.filter(proj_id='p-source-missing').update(eht_db_fault_rating_ka=0)
+        project = ProjectData.objects.get(proj_id='p-source-missing')
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-source-missing')
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.fault_loop_basis['source_impedance_ohm'], 0.0)
+        self.assertEqual(result.fault_loop_basis['source_impedance_note'], SOURCE_IMPEDANCE_ASSUMED_ZERO_NOTE)
+        self.assertIn(SOURCE_IMPEDANCE_ASSUMED_ZERO_NOTE, result.review_notes)
 
     def test_size_cold_cable_for_3c_fault_review_required_with_rcd(self):
         call_command('populate_cold_cable_catalogue')
@@ -3390,9 +3426,9 @@ class ColdCableFoundationTests(TestCase):
         result = size_cold_cable_for_branch(branch, project)
 
         self.assertEqual(result.sizing_status, 'review_required')
-        self.assertEqual(result.fault_protection_3c_status, 'review_required')
+        self.assertEqual(result.fault_loop_status, 'review_required')
         self.assertEqual(result.vd_status, 'pass')
-        self.assertTrue(any('Tracer PE-path resistance' in note for note in result.review_notes))
+        self.assertTrue(any('Source impedance' in note for note in result.review_notes))
 
     def test_size_cold_cable_for_3c_fault_upsizes_without_rcd_when_larger_cable_can_pass(self):
         call_command('populate_cold_cable_catalogue')
@@ -3417,7 +3453,7 @@ class ColdCableFoundationTests(TestCase):
         result = size_cold_cable_for_branch(branch, project)
 
         self.assertEqual(result.sizing_status, 'review_required')
-        self.assertEqual(result.fault_protection_3c_status, 'pass')
+        self.assertEqual(result.fault_loop_status, 'pass')
         self.assertEqual(result.cable_3c_size_mm2, 6.0)
 
     def test_size_cold_cable_for_3c_fault_hard_fails_without_rcd(self):
@@ -3443,7 +3479,7 @@ class ColdCableFoundationTests(TestCase):
         result = size_cold_cable_for_branch(branch, project)
 
         self.assertEqual(result.sizing_status, 'unsizeable')
-        self.assertEqual(result.fault_protection_3c_status, 'fail')
+        self.assertEqual(result.fault_loop_status, 'fail')
         self.assertTrue(any('without RCD' in note for note in result.review_notes))
 
     def test_size_cold_cable_for_branch_stores_ampacity_result(self):
@@ -3477,8 +3513,8 @@ class ColdCableFoundationTests(TestCase):
         )
         self.assertEqual(result.vd_status, 'pass')
         self.assertIsNotNone(result.vd_total_pct)
-        self.assertEqual(result.fault_protection_4c_status, 'pass')
-        self.assertEqual(result.fault_protection_3c_status, 'pass')
+        self.assertEqual(result.fault_loop_status, 'pass')
+        self.assertIsNotNone(result.fault_current_l_pe_a)
         self.assertTrue(result.optimization_run)
         self.assertTrue(any('project default' in note for note in result.review_notes))
 
@@ -3539,6 +3575,14 @@ class ColdCableFoundationTests(TestCase):
 
 
 class SldTopologyWorkflowTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_superuser(
+            username=f'sld-{uuid4().hex[:8]}',
+            email='sld@example.com',
+            password='password123',
+        )
+        self.client.force_login(self.user)
+
     def _mcb_component_ids(self):
         payload = build_project_sld_payload('p1')
         return [
@@ -5165,10 +5209,40 @@ class ProjectDataFormTests(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         project = form.save()
         self.assertEqual(project.proj_id, 'PLANT_A_001')
+        self.assertEqual(project.eht_db_fault_rating_ka, Decimal('15'))
+        self.assertAlmostEqual(project.eht_db_source_impedance_ohm, 230.0 / 15000.0, places=8)
         self.assertEqual(project.req_local_isolator, 'required')
         self.assertNotIn('tracer_family', form.fields)
         self.assertNotIn('req_local_isolator', form.fields)
         self.assertEqual(form.fields['proj_id'].help_text, 'Projects are managed in Django admin.')
+
+    def test_form_accepts_custom_eht_db_fault_rating(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        form = ProjectDataForm(data=make_project_form_payload(
+            eht_db_fault_rating_ka_preset='OTHER',
+            eht_db_fault_rating_ka_custom='18.50',
+        ))
+
+        self.assertTrue(form.is_valid(), form.errors)
+        project = form.save()
+        self.assertEqual(project.eht_db_fault_rating_ka, Decimal('18.50'))
+        self.assertAlmostEqual(project.eht_db_source_impedance_ohm, 230.0 / 18500.0, places=8)
+
+    def test_form_rejects_missing_or_too_small_custom_eht_db_fault_rating(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        missing = ProjectDataForm(data=make_project_form_payload(
+            eht_db_fault_rating_ka_preset='OTHER',
+            eht_db_fault_rating_ka_custom='',
+        ))
+        too_small = ProjectDataForm(data=make_project_form_payload(
+            eht_db_fault_rating_ka_preset='OTHER',
+            eht_db_fault_rating_ka_custom='0.50',
+        ))
+
+        self.assertFalse(missing.is_valid())
+        self.assertIn('eht_db_fault_rating_ka_custom', missing.errors)
+        self.assertFalse(too_small.is_valid())
+        self.assertIn('eht_db_fault_rating_ka_custom', too_small.errors)
 
     def test_form_accepts_small_standard_breaker_ratings(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
@@ -5216,8 +5290,19 @@ class ProjectDataFormTests(TestCase):
         with self.assertRaises(ValidationError):
             make_project_record(proj_id='p-invalid', voltage=0)
 
+        with self.assertRaises(ValidationError):
+            make_project_record(proj_id='p-bad-fr', eht_db_fault_rating_ka=0.5)
+
 
 class ProjectDataViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_superuser(
+            username='project-admin',
+            email='project-admin@example.com',
+            password='password123',
+        )
+        self.client.force_login(self.user)
+
     def test_create_project_data_view_persists_registered_project_id(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
         response = self.client.post(reverse('create_project_data'), data=make_project_form_payload())
@@ -5254,6 +5339,9 @@ class ProjectDataViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Cold cable standard')
+        self.assertContains(response, 'EHT DB fault rating')
+        self.assertContains(response, '15 kA')
+        self.assertContains(response, 'Other EHT DB fault rating')
         self.assertContains(response, 'Cold cable conductor material')
         self.assertContains(response, 'Cold cable installation method')
         self.assertContains(response, 'Cable grouping derating factor')
@@ -5299,6 +5387,9 @@ class ProjectDataViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         form_html = response.json()['form_html']
         self.assertIn('Cold cable standard', form_html)
+        self.assertIn('EHT DB fault rating', form_html)
+        self.assertIn('15 kA', form_html)
+        self.assertIn('Other EHT DB fault rating', form_html)
         self.assertIn('Cold cable conductor material', form_html)
         self.assertIn('Cold cable installation method', form_html)
         self.assertIn('Cable grouping derating factor', form_html)
@@ -5340,6 +5431,14 @@ class ProjectDataViewTests(TestCase):
 
 
 class ResultAndBoqViewTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_superuser(
+            username=f'results-{uuid4().hex[:8]}',
+            email='results@example.com',
+            password='password123',
+        )
+        self.client.force_login(self.user)
+
     def _make_variable_3c_cold_cable_project(self):
         call_command('populate_cold_cable_catalogue')
         make_rich_sld_project_snapshot('p-variable-3c-report', ['LINE-001'])
@@ -5446,8 +5545,102 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Cold Cable Sizing')
         self.assertContains(response, 'Cold cable engineering')
-        self.assertContains(response, '3C x 2.5 mm²')
+        self.assertContains(response, 'Critical Branch 2.5 mm²')
         self.assertContains(response, 'MT')
+
+    def test_result_view_surfaces_panel_load_summary(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Panel / Load Summary')
+        self.assertContains(response, 'Project p1 main distribution')
+        self.assertContains(response, 'Grouped by panel/source metadata when present')
+        self.assertContains(response, 'Selected 0')
+        self.assertContains(response, 'Review 2')
+        self.assertContains(response, 'Unsizeable 0')
+
+    def test_panel_summary_uses_branch_current_before_line_total_fallback(self):
+        branch_template = {
+            'distribution': {'line': {'line_id': 'LINE-SHARED'}},
+            'circuit_count': 1,
+            'tagged_components': {
+                'MCB': 'MCB-SHARED',
+                'component_details': {
+                    'MCB': {
+                        'metadata': {
+                            'operating_current': 10.0,
+                            'line_operating_current': 20.0,
+                            'breaker_size': 16.0,
+                        },
+                    },
+                },
+            },
+        }
+        branches = []
+        for branch_index in [0, 1]:
+            branch = deepcopy(branch_template)
+            branch['branch_index'] = branch_index
+            branch['cold_cable_result'] = SimpleNamespace(
+                per_circuit_operating_current_a=10.0,
+                line_operating_current_a=20.0,
+                circuit_count=1,
+                breaker_size_a=16.0,
+                sizing_status='selected',
+            )
+            branches.append(branch)
+
+        _rows, totals = _build_panel_load_summary('p1', branches, SimpleNamespace(voltage=230.0))
+
+        self.assertEqual(totals['branch_count'], 2)
+        self.assertEqual(totals['mcb_count'], 1)
+        self.assertAlmostEqual(totals['load_current_a'], 20.0)
+        self.assertAlmostEqual(totals['connected_load_kw'], 4.6)
+        self.assertAlmostEqual(totals['breaker_capacity_a'], 16.0)
+
+    def test_panel_summary_uses_line_current_when_per_circuit_current_is_zero(self):
+        branch = {
+            'distribution': {'line': {'line_id': 'LINE-FALLBACK'}},
+            'branch_index': 1,
+            'circuit_count': 2,
+            'tagged_components': {'MCB': 'MCB-FALLBACK'},
+            'cold_cable_result': SimpleNamespace(
+                per_circuit_operating_current_a=0.0,
+                line_operating_current_a=18.0,
+                circuit_count=2,
+                breaker_size_a=20.0,
+                sizing_status='selected',
+            ),
+        }
+
+        rows, totals = _build_panel_load_summary('p1', [branch], SimpleNamespace(voltage=230.0))
+
+        self.assertAlmostEqual(totals['load_current_a'], 18.0)
+        self.assertEqual(rows[0]['load_basis_display'], 'cold_cable_result.line_operating_current_a')
+
+    def test_panel_summary_multiplies_per_circuit_current_by_circuit_count(self):
+        branch = {
+            'distribution': {'line': {'line_id': 'LINE-MULTI'}},
+            'branch_index': 1,
+            'circuit_count': 2,
+            'tagged_components': {'MCB': 'MCB-MULTI'},
+            'cold_cable_result': SimpleNamespace(
+                per_circuit_operating_current_a=10.0,
+                line_operating_current_a=99.0,
+                circuit_count=2,
+                breaker_size_a=25.0,
+                sizing_status='selected',
+            ),
+        }
+
+        rows, totals = _build_panel_load_summary('p1', [branch], SimpleNamespace(voltage=230.0))
+
+        self.assertAlmostEqual(totals['load_current_a'], 20.0)
+        self.assertAlmostEqual(totals['connected_load_kw'], 4.6)
+        self.assertEqual(rows[0]['load_basis_display'], 'cold_cable_result.per_circuit_operating_current_a x circuit_count')
 
     def test_verification_report_lists_only_available_working_projects(self):
         user = User.objects.create_user(username='planner', password='password123')
@@ -5480,7 +5673,8 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Calculation Verification Report')
         self.assertContains(response, line.line_id)
         self.assertContains(response, 'Cold Cable Sizing')
-        self.assertContains(response, 'VD_4C = √3')
+        self.assertContains(response, 'VD_feeder = 2')
+        self.assertContains(response, 'L-PE Fault Loop Check')
 
     def test_verification_report_does_not_truncate_cold_cable_branches(self):
         call_command('populate_cold_cable_catalogue')
@@ -5622,7 +5816,7 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'Calculated Cold Cable')
-        self.assertContains(response, '4C x 2.5 mm2')
+        self.assertContains(response, 'Feeder Cable')
         self.assertContains(response, '3C x 2.5 mm2')
         self.assertContains(response, 'Total Cable Copper Tonnage')
 
@@ -5632,8 +5826,8 @@ class ResultAndBoqViewTests(TestCase):
         response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p-variable-3c-report'})
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, '3C outgoing')
-        self.assertContains(response, 'critical 3C')
+        self.assertContains(response, 'Branch Cable')
+        self.assertContains(response, 'critical Branch')
         self.assertContains(response, '3C x 2.5 mm2')
         self.assertContains(response, '3C x 6 mm2')
 
@@ -5761,7 +5955,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'MCB_001-M')
         self.assertContains(response, '4C x 10')
         self.assertContains(response, '25.00')
-        self.assertContains(response, 'MCB to first 3PhJB')
+        self.assertContains(response, 'MCB to Distribution JB')
 
     def test_cable_schedule_export_requires_project_id(self):
         response = self.client.get(reverse('cable_schedule_export_view'))
@@ -5799,7 +5993,7 @@ class ResultAndBoqViewTests(TestCase):
             'Load-End Voltage (V)',
             'Fault Current (A)',
             'Length Basis',
-            'Critical 3C Segment',
+            'Critical Branch Segment',
             'Conductor Mass (MT)',
             'Cable Length (m)',
             'Connected From',
@@ -5828,11 +6022,11 @@ class ResultAndBoqViewTests(TestCase):
         size_index = header.index('Calculated Cold Cable Size')
         role_index = header.index('Cold Cable Segment Role')
         length_index = header.index('Cable Length (m)')
-        critical_index = header.index('Critical 3C Segment')
+        critical_index = header.index('Critical Branch Segment')
         vd_index = header.index('Total Path VD (%)')
         load_end_index = header.index('Load-End Voltage (V)')
 
-        outgoing_rows = [row for row in rows[1:] if row[role_index] == '3C outgoing']
+        outgoing_rows = [row for row in rows[1:] if row[role_index] == 'Branch Cable']
         self.assertTrue(any(row[size_index] == '3C x 2.5 mm2' and row[length_index] == 15 for row in outgoing_rows))
         critical_rows = [row for row in outgoing_rows if row[critical_index] == 'Yes']
         self.assertEqual(len(critical_rows), 1)
@@ -5893,8 +6087,9 @@ class ResultAndBoqViewTests(TestCase):
             'Line Results',
             'Selection Diagnostics',
             'Power Distribution',
+            'Panel Load Summary',
             'Cold Cable Sizing',
-            'Cold Cable 3C Segments',
+            'Cold Cable Branch Segments',
             'Alternate Tracers',
             'MI Selection',
         ])
@@ -5906,6 +6101,25 @@ class ResultAndBoqViewTests(TestCase):
         self.assertTrue(any(row[1] == line.line_id for row in line_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in branch_rows[1:]))
         self.assertTrue(any(row[1] == line.line_id for row in alternate_rows[1:]))
+
+    def test_result_export_includes_panel_load_summary_sheet(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(reverse('result_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Panel Load Summary'].iter_rows(values_only=True))
+        header = rows[0]
+        data = rows[1]
+        self.assertEqual(data[header.index('Source Label')], 'Project p1 main distribution')
+        self.assertEqual(data[header.index('MCB Count')], 2)
+        self.assertEqual(data[header.index('Cold Cable Selected')], 0)
+        self.assertEqual(data[header.index('Cold Cable Review Required')], 2)
+        self.assertEqual(data[header.index('Cold Cable Unsizeable')], 0)
+        self.assertGreater(data[header.index('Connected Load (kW)')], 0)
 
     def test_result_export_includes_cold_cable_sizing_sheet(self):
         call_command('populate_cold_cable_catalogue')
@@ -5934,10 +6148,10 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(BytesIO(response.content))
-        rows = list(workbook['Cold Cable 3C Segments'].iter_rows(values_only=True))
+        rows = list(workbook['Cold Cable Branch Segments'].iter_rows(values_only=True))
         header = rows[0]
-        critical_size_index = header.index('Branch Critical 3C Size (mm2)')
-        segment_size_index = header.index('Segment 3C Size (mm2)')
+        critical_size_index = header.index('Branch Critical Size (mm2)')
+        segment_size_index = header.index('Branch Segment Size (mm2)')
         critical_index = header.index('Critical Segment')
         length_index = header.index('Segment Length (m)')
         tag_index = header.index('Segment Display Tag')
@@ -5960,10 +6174,10 @@ class ResultAndBoqViewTests(TestCase):
         response = self.client.get(reverse('result_view'), {'project_id': 'p-variable-3c-report'})
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'Critical 3C x 6 mm²')
-        self.assertContains(response, 'Outgoing 3C segments')
-        self.assertContains(response, '3C x 2.5 mm²')
-        self.assertContains(response, '3C x 6 mm²')
+        self.assertContains(response, 'Critical Branch 6 mm²')
+        self.assertContains(response, 'Branch Cable segments')
+        self.assertContains(response, 'Branch 2.5 mm²')
+        self.assertContains(response, 'Branch 6 mm²')
         self.assertContains(response, '(critical)')
         self.assertContains(response, 'L1 8.0 A')
         self.assertContains(response, 'L2 8.0 A')

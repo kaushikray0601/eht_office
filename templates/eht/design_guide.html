@@ -353,18 +353,18 @@
             <div class="dg-step-body">
                 <div>
                     <p>Once the SLD topology is committed, the cold cable engine reads every <code>PowerDistributionBranch</code> in the project and sizes the upstream power cable for each feeder segment. Inputs come directly from the confirmed SR/MI results — per-circuit operating current, breaker size, and circuit count — requiring no manual re-entry.</p>
-                    <p style="margin-top:10px;">For <strong>3-phase JB branches</strong> (4-core trunk to JB, then 3-core outgoing runs), the engine searches all ampacity-qualified cable combinations and selects the pair that minimises total conductor volume — effectively minimising copper tonnage — while keeping the combined path voltage drop within the project limit. For <strong>direct 1-phase branches</strong>, a single 3-core cable is sized against the full VD allowance.</p>
-                    <p style="margin-top:10px;">Fault protection is verified separately: the 4-core trunk is checked for phase-to-phase fault clearance against the MCB instantaneous trip threshold (Type B/C/D curve × breaker rating), and the 3-core outgoing circuit is checked for earth fault loop with RCD handling. If an RCD is provided, a marginally failing earth loop becomes <em>Review Required</em> rather than a hard rejection.</p>
+                    <p style="margin-top:10px;">For <strong>Distribution JB branches</strong>, the engine searches all ampacity-qualified Feeder Cable and Branch Cable combinations and selects the pair that minimises total conductor volume while keeping the complete terminal-path voltage drop within the project limit. For <strong>direct Branch JB paths</strong>, a single Feeder Cable is sized against the full path current and route length.</p>
+                    <p style="margin-top:10px;">Fault protection is verified as a complete single-phase L-PE loop: project source impedance from the three-phase EHT DB fault rating plus Feeder/Branch phase and PE conductor resistance. If an RCD is provided, a marginal MCB instantaneous result becomes <em>Review Required</em> rather than a hard rejection.</p>
                 </div>
                 <div class="dg-step-outputs">
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> K_temp = √((T_max−T_site)/(T_max−T_ref))</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> K_group from project setup (clamped range)</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Derated ampacity = Catalogue_A × K_temp × K_group</div>
-                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> VD_1ph = 2×I×R(T)×L · VD_3ph = √3×I×R(T)×L</div>
-                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Total path VD (4C+3C) + load-end voltage</div>
-                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> 3-phase JB: min. conductor volume optimisation</div>
-                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Fault check — 4C phase-to-phase (MCB B/C/D)</div>
-                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Earth loop — 3C with RCD-aware gate</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> VD = 2×I×R(T)×L for single-phase Feeder/Branch paths</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Total path VD (Feeder+Branch) + load-end voltage</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Distribution JB: min. conductor volume optimisation</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> L-PE fault loop — source + Feeder/Branch PE path</div>
+                    <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> RCD-aware MCB fault-loop gate</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Conductor mass (metric tonnes) per branch</div>
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Status: Selected / Review Required / Unsizeable</div>
                 </div>
@@ -507,7 +507,7 @@
                     <tr><td>CB<sub>max</sub></td><td>Maximum circuit breaker size from project setup (A)</td></tr>
                     <tr><td>f<sub>load</sub></td><td>Maximum CB loading factor (decimal) — e.g. 0.80 for 80%</td></tr>
                 </table>
-                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> For multiple SR parallel runs: each run is modelled as an independently protected branch, not grouped.</p>
+                <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> For SR parallel runs in the cold-cable rebuild: one shared 2-pole MCB feeds the run group through a Feeder Cable and optional Distribution JB.</p>
             </div>
             <p class="dg-formula-hint"><i class="bi bi-hand-index"></i> Click to toggle variable definitions</p>
         </div>
@@ -538,8 +538,7 @@
             <div class="dg-formula-tag purple">Cold Cable — Step 7</div>
             <h3>Cold Cable Voltage Drop</h3>
             <div class="dg-formula-eq">
-                VD<sub>1ph</sub> = 2 × <span class="var-amber">I</span> × <span class="var-green">R(T)</span> × <span class="var-muted">L</span><br>
-                VD<sub>3ph</sub> = √3 × <span class="var-amber">I</span> × <span class="var-green">R(T)</span> × <span class="var-muted">L</span>
+                VD<sub>1ph</sub> = 2 × <span class="var-amber">I</span> × <span class="var-green">R(T)</span> × <span class="var-muted">L</span>
             </div>
             <p class="dg-formula-desc">Voltage drop for resistive EHT loads (PF = 1.0). Temperature-corrected resistance at cable operating temperature.</p>
             <div class="dg-formula-expand">
@@ -550,8 +549,7 @@
                     <tr><td>L</td><td>Cable route length (m)</td></tr>
                     <tr><td>α</td><td>Temperature coefficient of resistance: Cu = 0.00393/°C</td></tr>
                     <tr><td>T<sub>op</sub></td><td>Cable operating temperature: 70°C (PVC), 90°C (XLPE)</td></tr>
-                    <tr><td>Factor 2</td><td>Both conductors in 1-phase loop (outgoing + return) carry the same current</td></tr>
-                    <tr><td>Factor √3</td><td>Balanced 3-phase geometry for 4-core trunk feeder</td></tr>
+                    <tr><td>Factor 2</td><td>Both conductors in the single-phase path (phase + neutral) carry the same current</td></tr>
                 </table>
                 <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> IEC 60364-5-52 · EHT loads are pure resistive (PF=1.0), IEEE 515-2017 §4 · VD% = VD(V)/V_nominal × 100</p>
             </div>
@@ -563,18 +561,15 @@
             <div class="dg-formula-tag purple">Cold Cable — Step 7</div>
             <h3>MCB Fault Protection Check</h3>
             <div class="dg-formula-eq">
-                I<sub>fault,4C</sub> = <span class="var-amber">V<sub>line</sub></span>×√3 / (2×<span class="var-green">R</span>×<span class="var-muted">L</span>)<br>
-                I<sub>fault,3C</sub> = <span class="var-amber">V<sub>phase</sub></span> / (2×<span class="var-green">R</span>×<span class="var-muted">L</span>)
+                I<sub>fault,L-PE</sub> = <span class="var-amber">V<sub>phase</sub></span> / (Z<sub>source</sub> + R<sub>phase,feeder</sub> + R<sub>PE,feeder</sub> + R<sub>phase,branch</sub> + R<sub>PE,branch</sub>)
             </div>
-            <p class="dg-formula-desc">Worst-case fault current at cable far end must exceed MCB instantaneous trip threshold (k × I<sub>breaker</sub>).</p>
+            <p class="dg-formula-desc">Worst-case L-PE fault current at the tracer terminal is checked against the MCB instantaneous trip threshold (k × I<sub>breaker</sub>) with RCD-aware review handling.</p>
             <div class="dg-formula-expand">
                 <table class="dg-var-table">
-                    <tr><td>I<sub>fault,4C</sub></td><td>Phase-to-phase fault current at end of 4C trunk (A)</td></tr>
-                    <tr><td>I<sub>fault,3C</sub></td><td>Line-to-neutral fault current at end of 3C outgoing (A)</td></tr>
-                    <tr><td>V<sub>line</sub></td><td>Line-to-line voltage (V) — e.g. 400 V</td></tr>
+                    <tr><td>I<sub>fault,L-PE</sub></td><td>Line-to-PE earth fault current at the tracer terminal (A)</td></tr>
                     <tr><td>V<sub>phase</sub></td><td>Phase-to-neutral voltage (V) — e.g. 230 V</td></tr>
-                    <tr><td>R</td><td>Phase conductor resistance at operating temp per unit length (Ω/m)</td></tr>
-                    <tr><td>L</td><td>Cable length (m)</td></tr>
+                    <tr><td>Z<sub>source</sub></td><td>Source impedance calculated from the project three-phase EHT DB fault rating</td></tr>
+                    <tr><td>R<sub>phase</sub>, R<sub>PE</sub></td><td>Temperature-corrected conductor resistance across the complete Feeder/Branch path</td></tr>
                     <tr><td>k (curve)</td><td>MCB instantaneous factor: Type B = 3×, Type C = 5×, Type D = 10× (lower bound)</td></tr>
                 </table>
                 <p class="dg-formula-ref"><i class="bi bi-journal-bookmark-fill"></i> IEC 60364-4-41 Table 41.1 — max 0.4 s disconnection for TN systems at 230 V · IEC 60898-1 MCB characteristic curves B/C/D</p>
@@ -661,11 +656,11 @@
                 <li><i class="bi bi-check-circle-fill"></i> Temperature derating: K_temp = sqrt((T_max-T_site)/(T_max-T_ref)) — IEC 60364-5-52</li>
                 <li><i class="bi bi-check-circle-fill"></i> Derated ampacity = A_catalogue × K_temp × K_group (grouping derating)</li>
                 <li><i class="bi bi-check-circle-fill"></i> Conductor R(T) = R₂₀ × (1 + α(T-20)) — IEC 60228</li>
-                <li><i class="bi bi-check-circle-fill"></i> VD: 2×I×R(T)×L (1-phase) · √3×I×R(T)×L (3-phase) · PF = 1.0</li>
-                <li><i class="bi bi-check-circle-fill"></i> <strong>Conductor volume optimisation</strong> — minimises copper tonnage by distributing VD budget across 4C trunk and 3C outgoing pair</li>
-                <li><i class="bi bi-check-circle-fill"></i> Series VD check: trunk + outgoing VD ≤ project limit; load-end voltage reported in V</li>
-                <li><i class="bi bi-check-circle-fill"></i> 4C trunk fault check: MCB B/C/D instantaneous trip verification (IEC 60364-4-41)</li>
-                <li><i class="bi bi-check-circle-fill"></i> 3C earth loop: Residual Current Device (RCD)-aware sizing gate</li>
+                <li><i class="bi bi-check-circle-fill"></i> VD: 2×I×R(T)×L for single-phase Feeder/Branch paths · PF = 1.0</li>
+                <li><i class="bi bi-check-circle-fill"></i> <strong>Conductor volume optimisation</strong> — minimises copper tonnage by distributing VD budget across Feeder Cable and Branch Cable pairs</li>
+                <li><i class="bi bi-check-circle-fill"></i> Series VD check: Feeder + Branch VD ≤ project limit; load-end voltage reported in V</li>
+                <li><i class="bi bi-check-circle-fill"></i> L-PE fault loop: EHT DB source impedance + Feeder/Branch phase and PE resistance</li>
+                <li><i class="bi bi-check-circle-fill"></i> RCD-aware MCB instantaneous sizing gate</li>
                 <li><i class="bi bi-check-circle-fill"></i> Conductor mass per branch (metric tonnes) — material takeoff</li>
                 <li><i class="bi bi-clock"></i> Tracer PE-path in earth loop (pending SR/MI catalogue data)</li>
             </ul>

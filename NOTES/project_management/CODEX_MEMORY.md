@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -24,18 +24,22 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. Start `CC-P4`: panel/load summary.
-2. Keep the calculation manual aligned with any behavior changes.
-3. Consider a checkpoint/commit of PM files plus `CC-P1`/`CC-P2`/`CC-P3` and
+1. Finish `CC-P4` foundation correction.
+2. Start `CC-P5`: single-phase cold-cable rebuild.
+3. Then proceed to `SLD-P2`: combine-circuit impact summary and cold-cable
+   recalculation.
+4. Then proceed to `SLD-P1`: visual review badges.
+5. Keep the calculation manual aligned with any behavior changes.
+6. Consider a checkpoint/commit of PM files plus `CC-P1`/`CC-P2`/`CC-P3` and
    SLD regression-fix changes before the next pass.
 
 ## Current Repo State
 
 - Working directory: `/home/kr/mydev/eht_office`.
-- Current date at creation: 2026-06-07.
-- Current dirty files include `CC-P1` code/docs plus the untracked
-  project-management/orientation files: `CLAUDE.md` and
-  `NOTES/project_management/`.
+- Current date at latest update: 2026-06-08.
+- Current dirty files include accumulated Phase A work: cold-cable/panel
+  summary code, SLD/manual docs, project-management files, and the
+  `0035_projectdata_eht_db_fault_rating` migration.
 - The previous large cold-cable/SLD code diff is not present in the current
   workspace state.
 - Migrations through `0034_rcd_cu_only_cold_cable` applied cleanly in the
@@ -47,6 +51,7 @@ Immediate next pass:
   against PostgreSQL test DB `eht_local_test` on 2026-06-07 after hardening
   browser-side SLD render-state lifecycle.
 - Latest quick check: `venv/bin/python manage.py check` passed on 2026-06-07.
+- Latest quick check: `venv/bin/python manage.py check` passed on 2026-06-08.
 - Latest PostgreSQL-backed targeted test status: 4 `CC-P3` result/cold-cable
   tests OK on 2026-06-07 using existing database `eht_local_test`.
 - Latest cold-cable catalogue readiness inspection: Method E has validated
@@ -62,8 +67,9 @@ Immediate next pass:
 - MI is automatic only when SR catalogue suitability limits are exceeded.
 - Users do not manually choose SR versus MI in project setup.
 - Constant Power tracer is a future separate hot-engineering module.
-- SR parallel runs and MI multi-sets are represented as independently protected
-  branches for MVP clarity.
+- SR parallel runs now use one shared 2-pole MCB per run group for cold-cable
+  rebuild purposes.
+- MI multi-sets remain represented as independently protected branches.
 - SLD alternate tracer overrides are review-only and do not recalculate load,
   BOQ, breaker size, or cable schedule yet.
 - SR A/B/C polynomial method remains active; vendor curve-point interpolation is deferred.
@@ -73,12 +79,16 @@ Immediate next pass:
 - Cold cable uses RCD terminology, not GFEP terminology.
 - Cold cable sizing uses operating current, not starting current.
 - Cold cable voltage-drop basis: PF = 1.0; reactance term ignored.
-- 1PH VD formula: `2 x I x R x L`.
-- 3PH trunk VD formula: `sqrt(3) x I_phase x R x L`.
-- For 3PH JB trunk, `I_phase = per_circuit_operating_current`.
-- 3PH JB outgoing phase visibility uses inferred L1/L2/L3 round-robin by
-  outgoing circuit index. This is review evidence only, not automatic
-  rebalancing.
+- Active cold-cable rebuild basis is single-phase: `FeederCable` from MCB to
+  optional `DistributionJB`, then `BranchCable` to `BranchJB`/tracer.
+- Single-phase VD formula: `2 x I x R x L`, evaluated across the full terminal
+  path (`VD_feeder + VD_branch`).
+- L-PE fault loop basis:
+  `Z_loop = Z_source + R_phase_feeder + R_PE_feeder + R_phase_branch + R_PE_branch`.
+- EHT DB fault rating is mandatory, defaults to 15 kA, and accepts presets
+  10/15/25/40/50 kA plus Other >= 1 kA. It is the three-phase prospective
+  short-circuit current at the EHT DB busbar. Source impedance is
+  `V_phase / (three_phase_fault_rating_ka x 1000)`.
 - Cable conductor temperature basis: XLPE = 90 C, PVC = 70 C.
 - Copper resistance temperature coefficient: `0.00393 / C`.
 - Ampacity derating: `K_temp x K_group`.
@@ -95,11 +105,25 @@ Immediate next pass:
 - Branch-level 3C result stores the critical/largest selected 3C summary.
 - SLD/cable schedule metadata can read per-node 3C segment results.
 - Cable mass is calculated from conductor area, length, core count, and copper density.
-- Per-outgoing 3C segment evidence is visible in the result tab, cable schedule,
-  cable schedule export, and a dedicated `Cold Cable 3C Segments` result-export sheet.
+- Per-branch Branch Cable segment evidence is visible in the result tab, cable
+  schedule, cable schedule export, and a dedicated `Cold Cable Branch Segments`
+  result-export sheet.
 - `CC-P3` adds `phase_slot`, `phase_label`, and `phase_basis` to per-outgoing
   3C segment JSON, propagates the phase label into SLD Cable3C metadata, and
   shows L1/L2/L3 phase-current totals plus imbalance in result UI/export.
+- `CC-P4` adds a branch-based Panel / Load Summary to the Result tab and result
+  export. It groups by panel/source metadata when present; otherwise it groups
+  under the project main distribution. It reports MCB count, circuit count,
+  load current, connected load, breaker distribution, and cold-cable selected /
+  review-required / unsizeable / not-sized counts. It is review evidence only;
+  upstream main-breaker spare-capacity checks and bus phase totals remain
+  deferred.
+- 2026-06-08 CC-P4 correction: panel/load summary now uses branch current
+  (`per_circuit_operating_current_a x circuit_count`) before line-total
+  fallback data, and deduplicates shared MCB count/breaker capacity by MCB tag.
+- `ProjectData.eht_db_fault_rating_ka` and
+  `ProjectData.eht_db_source_impedance_ohm` are in place as the source
+  impedance foundation for `CC-P5`.
 - Migration `0034_rcd_cu_only_cold_cable` renames GFEP fields to RCD and deletes Al catalogue rows.
 - `CC-P1` adds cold-cable installation-method readiness feedback in admin and
   explicit unsizeable guidance instead of a generic no-catalogue message.
@@ -156,11 +180,35 @@ Immediate next pass:
     `manage.py test ...` still fails in the test-command setup connection path
     with `psycopg.OperationalError: connection is bad`, despite direct Django
     connection/migrate and the programmatic runner succeeding.
+- `CC-P5` rebuild is implemented: SR parallel runs share one 2-pole MCB per run
+  group; cold-cable sizing uses single-phase Feeder Cable + Branch Cable paths,
+  terminal-path `VD = 2 x I x R x L`, project three-phase EHT DB fault rating
+  source impedance, and complete L-PE loop evidence. Migration
+  `0036_single_phase_cold_cable_fault_loop` deletes stale `ColdCableResult`
+  rows and replaces old 4C phase-to-phase result fields with
+  `fault_current_l_pe_a`, `fault_loop_status`, and `fault_loop_basis`.
+  If migrated/invalid data makes source impedance unavailable, the engine uses
+  `Z_source = 0.0` and writes an explicit review note.
+- Claude review follow-up after CC-P5: form/manual/docs now explicitly say the
+  EHT DB fault rating is the three-phase PSCC at the DB busbar; tests now cover
+  panel-summary fallback from zero per-circuit current to line current and
+  multi-circuit per-circuit multiplication.
+- Second Claude review follow-up after CC-P5: migration
+  `0037_remove_legacy_3c_fault_fields` removes the legacy 3C line-to-neutral
+  fault fields; SR shared-MCB branches now retain group-level tagged metadata
+  (`sr_parallel_run_count`, `sr_parallel_run_basis`, `sr_shared_mcb`) without a
+  per-run index.
 - Upcoming SLD combine feature: when circuits are combined, the new combined
-  4C trunk must trigger cold-cable re-sizing based on combined current. The UI
-  should warn that previous separate feeder lengths are no longer valid; default
-  the new combined trunk length to the highest length among the selected feeder
-  cables and require user review/confirmation.
+  Feeder Cable must trigger cold-cable re-sizing based on combined current. The
+  UI should warn that previous separate feeder lengths are no longer valid;
+  default the new combined Feeder Cable length to the highest length among the
+  selected feeder cables and require user review/confirmation.
+- Local dev DB caveat from 2026-06-08: during CC-P5 verification, Codex
+  accidentally executed a destructive `flush` against the local PostgreSQL
+  development database. Current local PostgreSQL content is not a trustworthy
+  representation of the user's original `p1` state; do not infer production
+  data behavior from the sparse local DB until the user approves a restore or
+  recreates/imports project data.
 - Housekeeping pass after SLD hardening removed live debug/dropdown projects
   `p-debug-sld`, `p-debug-sld-api`, `p-hard`, and empty orphan `p2` from local
   PostgreSQL. Current live project selectors should show only `default_project`
@@ -190,8 +238,15 @@ Immediate next pass:
 - Installation-method catalogue coverage remains limited to Method E seed rows;
   D2 catalogue work is deferred and shown as coming soon in project setup.
 - Automatic phase rebalancing/user-editable phase slots are not built.
-- Panel/load summary is not built.
+- Upstream main-breaker coordination/spare-capacity checking is not built. The
+  CC-P4 branch-based panel/load summary is available for review evidence.
 - Procurement-grade cable schedule fields are not built.
+- Cold-cable engine still needs the `CC-P5` rebuild from 3PH/4C terminology to
+  single-phase FeederCable/BranchCable terminology.
+- Existing `ColdCableResult` rows must be deleted in the rebuild migration; do
+  not preserve stale derived results from the superseded model.
+- BOQ/cable schedule must deduplicate shared FeederCable quantities even though
+  each branch result stores complete path evidence.
 - SLD visual issue badges are not built.
 - Topology edit impact summary is not built.
 - Browser-level SLD smoke coverage exists in `eht.browser_tests` and is green

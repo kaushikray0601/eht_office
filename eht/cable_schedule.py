@@ -6,8 +6,10 @@ from .sld_payload import build_project_sld_payload
 
 CABLE_COMPONENT_TYPES = {'Cable3C', 'Cable4C'}
 CABLE_ROLE_LABELS = {
-    'MCB_TO_JB3PH': 'MCB to first 3PhJB',
-    'JB3PH_TO_JB3PH': '3PhJB to downstream 3PhJB',
+    'MCB_TO_JB3PH': 'MCB to Distribution JB',
+    'JB3PH_TO_JB3PH': 'Distribution JB to downstream Distribution JB',
+    'JB_TO_1PHJB': 'Distribution JB to Branch JB',
+    'MCB_TO_1PHJB': 'MCB to Branch JB',
 }
 CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Sr. No',
@@ -23,7 +25,7 @@ CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Load-End Voltage (V)',
     'Fault Current (A)',
     'Length Basis',
-    'Critical 3C Segment',
+    'Critical Branch Segment',
     'Conductor Mass (MT)',
     'Cable Length (m)',
     'Connected From',
@@ -129,7 +131,7 @@ def _cold_cable_fields(node, cold_results):
             'cold_cable_vd_status': cold_cable.get('vd_status') or '',
             'cold_cable_fault_status': cold_cable.get('fault_status') or '',
             'cold_cable_conductor_mass_mt': cold_cable.get('conductor_mass_mt'),
-            'cold_cable_segment_role': '4C trunk' if component_type == 'Cable4C' else '3C outgoing',
+            'cold_cable_segment_role': 'Feeder Cable' if component_type == 'Cable4C' else 'Branch Cable',
             'cold_cable_circuit_index': node.get('circuit_index') or '',
             'cold_cable_length_basis': cold_cable.get('length_basis') or '',
             'cold_cable_vd_total_pct': cold_cable.get('vd_total_pct'),
@@ -158,20 +160,20 @@ def _cold_cable_fields(node, cold_results):
         }
 
     if component_type == 'Cable4C':
-        size = _format_size(4, result.cable_4c_size_mm2)
-        fault_status = result.fault_protection_4c_status
+        size = _format_size(3, result.cable_4c_size_mm2)
+        fault_status = result.fault_loop_status
         mass = result.cable_4c_conductor_mass_mt
-        role = '4C trunk'
+        role = 'Feeder Cable'
         circuit_index = ''
-        fault_current = result.fault_current_4c_phase_to_phase_a
+        fault_current = result.fault_current_l_pe_a
         is_critical = False
     else:
         size = _format_size(3, result.cable_3c_size_mm2)
-        fault_status = result.fault_protection_3c_status
+        fault_status = result.fault_loop_status
         mass = result.cable_3c_conductor_mass_mt
-        role = '3C outgoing'
+        role = 'Branch Cable'
         circuit_index = node.get('circuit_index') or ''
-        fault_current = result.fault_current_3c_line_to_neutral_a
+        fault_current = result.fault_current_l_pe_a
         is_critical = bool(result.cable_3c_size_mm2)
     return {
         'calculated_cold_cable_size': size,
@@ -220,16 +222,16 @@ def _purpose(node, incoming_edges, outgoing_edges, node_by_id):
     component_type = node.get('component_type')
     if component_type == 'Cable3C':
         if 'JB3PH' in source_types:
-            return '3PhJB to 1PhJB'
+            return 'Distribution JB to Branch JB'
         if 'MCB' in source_types:
-            return 'MCB to 1PhJB'
-        return '1Ph branch cable'
+            return 'MCB to Branch JB'
+        return 'Branch Cable'
     if component_type == 'Cable4C':
         if 'JB3PH' in source_types:
-            return '3PhJB to downstream 3PhJB'
+            return 'Distribution JB to downstream Distribution JB'
         if 'MCB' in source_types or {'Isolator3PH', 'JB3PH'} & target_types:
-            return 'MCB to first 3PhJB'
-        return '3Ph trunk cable'
+            return 'MCB to Distribution JB'
+        return 'Feeder Cable'
     return ''
 
 
@@ -290,8 +292,12 @@ def build_cable_schedule_workspace_data(project_id):
         cold_results[(str(result.line_id), result.branch_index)] = result
     cable_rows = _cable_schedule_rows(sld_payload, cold_results)
 
-    total_cable_length_m = sum(row['cable_length_m'] for row in cable_rows)
-    total_conductor_mass_mt = sum(result.conductor_mass_total_mt or 0 for result in cold_result_rows)
+    unique_cable_rows = {}
+    for row in cable_rows:
+        dedupe_key = row.get('cable_tag') or f"{row.get('line_ids', '')}:{row.get('sr_no', '')}"
+        unique_cable_rows.setdefault(dedupe_key, row)
+    total_cable_length_m = sum(row['cable_length_m'] for row in unique_cable_rows.values())
+    total_conductor_mass_mt = sum(row.get('cold_cable_conductor_mass_mt') or 0 for row in unique_cable_rows.values())
     summary = {
         'row_count': len(cable_rows),
         'source_label': 'Manual SLD topology' if sld_meta.get('has_topology_edit') and allow_topology_overrides else 'Generated calculation',
@@ -327,7 +333,7 @@ def cable_schedule_export_rows(cable_rows):
             'Load-End Voltage (V)': row.get('cold_cable_load_end_voltage_v', ''),
             'Fault Current (A)': row.get('cold_cable_fault_current_a', ''),
             'Length Basis': row.get('cold_cable_length_basis', ''),
-            'Critical 3C Segment': 'Yes' if row.get('cold_cable_is_critical_3c_segment') else '',
+            'Critical Branch Segment': 'Yes' if row.get('cold_cable_is_critical_3c_segment') else '',
             'Conductor Mass (MT)': row.get('cold_cable_conductor_mass_mt', ''),
             'Cable Length (m)': row.get('cable_length_m', ''),
             'Connected From': row.get('connected_from', ''),

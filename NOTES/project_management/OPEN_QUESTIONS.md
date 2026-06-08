@@ -1,6 +1,6 @@
 # Open Questions
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 ## Immediate Questions
 
@@ -32,9 +32,11 @@ Last updated: 2026-06-07
      a physical JB slot position?
 
 2. How much of the panel/load summary should be calculated now?
-   - Basic breaker/load/current counts?
-   - Phase current imbalance?
-   - Panel spare capacity?
+   - Resolved for `CC-P4`: provide branch-based review evidence now: source
+     grouping, MCB count, circuit count, load current, connected load, breaker
+     distribution, and cold-cable selected/review/unsizeable/not-sized counts.
+   - Future question: when formal panel objects/main breakers exist, add spare
+     capacity checks and bus phase-current totals.
 
 3. When should tracer PE-path resistance be added?
    - Requires SR braid/shield and MI sheath/armour resistance data.
@@ -42,6 +44,18 @@ Last updated: 2026-06-07
 
 4. Should short-circuit withstand be a production gate now or advanced option later?
    - Current user preference: defer deep short-circuit sizing for now.
+
+5. What source impedance basis should the cold-cable rebuild use?
+   - Resolved 2026-06-08: use mandatory project setup field
+     `EHT DB fault rating`, default 15 kA, presets 10/15/25/40/50 kA plus
+     Other >= 1 kA. This is the three-phase prospective short-circuit current
+     at the EHT DB busbar. Calculate
+     `Z_source = V_phase / (three_phase_fault_rating_ka x 1000)`.
+
+6. How should shared FeederCable quantities be stored and counted?
+   - Resolved 2026-06-08: each branch result stores complete FeederCable +
+     BranchCable evidence for traceability, but cable schedule and BOQ totals
+     must deduplicate shared FeederCable material by stable feeder/group ID.
 
 ## SLD / Cable Schedule Questions
 
@@ -73,9 +87,8 @@ Last updated: 2026-06-07
    - The app should warn that the prior separate feeder cable lengths are no
      longer valid and default the new combined trunk length to the highest
      length among the combined feeder cables.
-   - Decision still needed: should the combine apply be blocked until the user
-     explicitly accepts/reviews this default length, or is a warning plus
-     editable default enough for the first production pass?
+   - Current direction: build this after `CC-P5`, so the warning and automatic
+     recalculation use the new single-phase FeederCable/BranchCable engine.
 
 ## Future Module Questions
 

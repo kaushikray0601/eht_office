@@ -1,3 +1,5 @@
+from decimal import Decimal, InvalidOperation
+
 from django import forms
 
 from .models import (
@@ -13,6 +15,15 @@ from crispy_forms.layout import Layout, Submit, Div, Field, Row, Column
 PROJECT_FORM_INSTALL_METHOD_CHOICES = [
     ('E', 'E - Multi-core on open cable tray or ladder'),
     ('D2', 'D2 - Direct buried in ground (coming soon)'),
+]
+
+EHT_DB_FAULT_RATING_PRESET_CHOICES = [
+    ('10', '10 kA'),
+    ('15', '15 kA'),
+    ('25', '25 kA'),
+    ('40', '40 kA'),
+    ('50', '50 kA'),
+    ('OTHER', 'Other'),
 ]
 
 PROJECT_FORM_COLD_CABLE_DEFAULTS = {
@@ -38,6 +49,21 @@ class ColdCableInstallMethodSelect(forms.Select):
 
 class ProjectDataForm(forms.ModelForm):
     proj_id = forms.ChoiceField(label="Project ID")
+    eht_db_fault_rating_ka_preset = forms.ChoiceField(
+        label='EHT DB fault rating',
+        choices=EHT_DB_FAULT_RATING_PRESET_CHOICES,
+        initial='15',
+        required=True,
+        help_text='Three-phase prospective short-circuit current at the EHT distribution board busbar (kA). Used to estimate source impedance for L-PE fault-loop checks.',
+    )
+    eht_db_fault_rating_ka_custom = forms.DecimalField(
+        label='Other EHT DB fault rating (kA)',
+        required=False,
+        min_value=Decimal('1'),
+        max_digits=6,
+        decimal_places=2,
+        help_text='Required only when Other is selected. Minimum accepted value is 1 kA.',
+    )
 
     class Meta:
         model = ProjectData
@@ -118,6 +144,45 @@ class ProjectDataForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         user = kwargs.pop('user', None)
         super(ProjectDataForm, self).__init__(*args, **kwargs)
+        self.order_fields([
+            'proj_id',
+            'vendor',
+            'startup_t',
+            'min_amb_t',
+            'max_amb_t',
+            'voltage',
+            'eht_db_fault_rating_ka_preset',
+            'eht_db_fault_rating_ka_custom',
+            'max_cb_size',
+            'restrict_cb_current',
+            'allowablevdrop',
+            'cable_standard',
+            'cable_conductor_material',
+            'cable_insulation_type',
+            'cable_install_method',
+            'cable_grouping_derating',
+            'min_cold_cable_size_mm2',
+            'mcb_curve',
+            'rcd_provided',
+            'spiral_factor',
+            'spiral_wrap_allowed',
+            'sr_parallel_run_basis',
+            'sr_max_parallel_runs',
+            'margin_on_tracer_lengths',
+            'voltage_var_factor',
+            'res_tol',
+            'termination_margin',
+            'heat_loss_sf',
+            'heat_loss_method',
+            'rtd_thrm',
+            'wind_speed',
+            'caution_label_interval',
+            'isolator_location',
+            'ckt_ln',
+            'loop_ln',
+            'area_class',
+            'temp_class',
+        ])
         self.helper = FormHelper()  
         self.helper.form_method = 'post'
         # self.helper.add_input(Submit('submit', 'Save Project Data'))
@@ -148,6 +213,7 @@ class ProjectDataForm(forms.ModelForm):
             'max': f'{CABLE_GROUPING_DERATING_MAX:.1f}',
             'step': '0.001',
         })
+        self._set_fault_rating_initials()
         self.fields['sr_parallel_run_basis'].help_text = (
             'Pipe-size guided uses 1/2/3/4 preferred straight runs for <1, <2, <3, and >=3 inch lines.'
         )
@@ -210,3 +276,43 @@ class ProjectDataForm(forms.ModelForm):
         if method == 'D2':
             raise forms.ValidationError('Method D2 direct buried is under development and cannot be selected yet.')
         return method
+
+    def _set_fault_rating_initials(self):
+        if self.is_bound:
+            return
+        value = getattr(self.instance, 'eht_db_fault_rating_ka', None) or Decimal('15')
+        try:
+            normalized = Decimal(str(value)).normalize()
+        except InvalidOperation:
+            normalized = Decimal('15')
+        preset_values = {Decimal(choice_value) for choice_value, _label in EHT_DB_FAULT_RATING_PRESET_CHOICES if choice_value != 'OTHER'}
+        if normalized in preset_values:
+            self.fields['eht_db_fault_rating_ka_preset'].initial = f'{normalized:g}'
+            self.fields['eht_db_fault_rating_ka_custom'].initial = None
+        else:
+            self.fields['eht_db_fault_rating_ka_preset'].initial = 'OTHER'
+            self.fields['eht_db_fault_rating_ka_custom'].initial = normalized
+
+    def clean(self):
+        cleaned_data = super().clean()
+        preset = cleaned_data.get('eht_db_fault_rating_ka_preset') or '15'
+        custom = cleaned_data.get('eht_db_fault_rating_ka_custom')
+        if preset == 'OTHER':
+            if custom is None:
+                self.add_error('eht_db_fault_rating_ka_custom', 'Enter an EHT DB fault rating when Other is selected.')
+                return cleaned_data
+            rating = custom
+        else:
+            try:
+                rating = Decimal(str(preset))
+            except InvalidOperation:
+                self.add_error('eht_db_fault_rating_ka_preset', 'Select a valid EHT DB fault rating.')
+                return cleaned_data
+        if rating < Decimal('1'):
+            self.add_error('eht_db_fault_rating_ka_custom' if preset == 'OTHER' else 'eht_db_fault_rating_ka_preset', 'EHT DB fault rating must be at least 1 kA.')
+        cleaned_data['eht_db_fault_rating_ka'] = rating
+        return cleaned_data
+
+    def save(self, commit=True):
+        self.instance.eht_db_fault_rating_ka = self.cleaned_data.get('eht_db_fault_rating_ka') or Decimal('15')
+        return super().save(commit=commit)

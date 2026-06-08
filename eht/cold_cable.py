@@ -34,8 +34,11 @@ INSULATION_CONDUCTOR_TEMPERATURE_C = {
     'PVC': 70.0,
     'XLPE': 90.0,
 }
-TRACER_PE_FAULT_LOOP_NOTE = (
-    'Tracer PE-path resistance is deferred and not included; this overestimates earth-fault current and is non-conservative.'
+SOURCE_IMPEDANCE_BASIS_NOTE = (
+    'Source impedance is calculated from the project three-phase EHT DB fault rating.'
+)
+SOURCE_IMPEDANCE_ASSUMED_ZERO_NOTE = (
+    'Z_source assumed 0.0 - EHT DB fault rating not set.'
 )
 PHASE_SLOT_LABELS = ('L1', 'L2', 'L3')
 PHASE_SLOT_BASIS = 'round_robin_by_outgoing_circuit_index'
@@ -380,9 +383,9 @@ def resolve_cable_lengths(branch, project):
 
     warnings = []
     if branch_type == '3phJB' and not length_4c_m:
-        warnings.append('4C trunk cable length is missing.')
+        warnings.append('Feeder Cable length is missing.')
     if not length_3c_segments or any(not segment.length_m for segment in length_3c_segments):
-        warnings.append('One or more 3C outgoing cable lengths are missing.')
+        warnings.append('One or more Branch Cable lengths are missing.')
 
     return ColdCableLengthResolution(
         project_id=project_id,
@@ -692,35 +695,85 @@ def _fault_resistance_mohm_per_m(row, conductor_temp_c=None):
     return get_conductor_resistance_at_temp(row, conductor_temp)
 
 
-def check_fault_4c(row_4c, length_4c_m, nominal_voltage_v, breaker_size_a, mcb_curve, conductor_temp_c=None):
-    length = float(length_4c_m or 0.0)
-    if length <= 0:
-        return FaultProtectionResult(status='not_calculated', review_notes=['4C cable length is required for fault check.'])
-    threshold = _fault_threshold_current(breaker_size_a, mcb_curve)
-    r_ohm_per_m = _fault_resistance_mohm_per_m(row_4c, conductor_temp_c) / 1000.0
-    fault_current = float(nominal_voltage_v) * math.sqrt(3) / (2 * r_ohm_per_m * length)
-    return FaultProtectionResult(
-        status='pass' if fault_current >= threshold else 'fail',
-        fault_current_a=fault_current,
-        threshold_current_a=threshold,
-    )
+def _source_impedance_value_and_notes(project):
+    source_impedance = getattr(project, 'eht_db_source_impedance_ohm', None)
+    try:
+        if source_impedance is None:
+            fault_rating_ka = float(getattr(project, 'eht_db_fault_rating_ka', 0) or 0)
+            voltage = float(getattr(project, 'voltage', 0) or 0)
+            if fault_rating_ka <= 0 or voltage <= 0:
+                raise ValueError
+            source_impedance = voltage / (fault_rating_ka * 1000.0)
+        source_impedance = float(source_impedance)
+        if source_impedance < 0:
+            raise ValueError
+    except (TypeError, ValueError, ZeroDivisionError):
+        return 0.0, [SOURCE_IMPEDANCE_ASSUMED_ZERO_NOTE]
+    return source_impedance, [SOURCE_IMPEDANCE_BASIS_NOTE]
 
 
-def check_fault_3c(row_3c, length_3c_m, nominal_voltage_v, breaker_size_a, mcb_curve, rcd_provided, conductor_temp_c=None):
-    length = float(length_3c_m or 0.0)
-    if length <= 0:
-        return FaultProtectionResult(status='not_calculated', review_notes=['3C cable length is required for fault check.'])
+def _source_impedance_ohm(project):
+    return _source_impedance_value_and_notes(project)[0]
+
+
+def _source_impedance_review_notes(project):
+    return _source_impedance_value_and_notes(project)[1]
+
+
+def _pe_resistance_mohm_per_m(row, conductor_temp_c=None):
+    phase_resistance = _fault_resistance_mohm_per_m(row, conductor_temp_c)
+    phase_size = float(getattr(row, 'conductor_size_mm2', 0) or 0)
+    pe_size = float(getattr(row, 'pe_conductor_size_mm2', 0) or phase_size)
+    if phase_size <= 0 or pe_size <= 0:
+        return phase_resistance
+    return phase_resistance * (phase_size / pe_size)
+
+
+def _l_pe_segment_resistance_ohm(row, length_m, conductor_temp_c=None):
+    if not row or not length_m:
+        return 0.0
+    phase_r = _fault_resistance_mohm_per_m(row, conductor_temp_c) / 1000.0
+    pe_r = _pe_resistance_mohm_per_m(row, conductor_temp_c) / 1000.0
+    return (phase_r + pe_r) * float(length_m)
+
+
+def check_fault_l_pe(
+    feeder_row,
+    feeder_length_m,
+    branch_row,
+    branch_length_m,
+    nominal_voltage_v,
+    breaker_size_a,
+    mcb_curve,
+    rcd_provided,
+    source_impedance_ohm=0.0,
+    source_impedance_review_notes=None,
+    feeder_conductor_temp_c=None,
+    branch_conductor_temp_c=None,
+):
+    feeder_length = float(feeder_length_m or 0.0)
+    branch_length = float(branch_length_m or 0.0)
+    if not feeder_row and not branch_row:
+        return FaultProtectionResult(status='not_calculated', review_notes=['Cold-cable path is required for L-PE fault-loop check.'])
+    if feeder_row and feeder_length <= 0:
+        return FaultProtectionResult(status='not_calculated', review_notes=['Feeder Cable length is required for L-PE fault-loop check.'])
+    if branch_row and branch_length <= 0:
+        return FaultProtectionResult(status='not_calculated', review_notes=['Branch Cable length is required for L-PE fault-loop check.'])
+
     threshold = _fault_threshold_current(breaker_size_a, mcb_curve)
-    r_ohm_per_m = _fault_resistance_mohm_per_m(row_3c, conductor_temp_c) / 1000.0
-    fault_current = float(nominal_voltage_v) / (2 * r_ohm_per_m * length)
+    z_source = float(source_impedance_ohm or 0.0)
+    z_feeder = _l_pe_segment_resistance_ohm(feeder_row, feeder_length, feeder_conductor_temp_c)
+    z_branch = _l_pe_segment_resistance_ohm(branch_row, branch_length, branch_conductor_temp_c)
+    z_loop = z_source + z_feeder + z_branch
+    fault_current = None if z_loop <= 0 else float(nominal_voltage_v) / z_loop
     status = 'pass'
-    if fault_current < threshold:
+    if fault_current is None or fault_current < threshold:
         status = 'review_required' if rcd_provided else 'fail'
     return FaultProtectionResult(
         status=status,
         fault_current_a=fault_current,
         threshold_current_a=threshold,
-        review_notes=[TRACER_PE_FAULT_LOOP_NOTE],
+        review_notes=list(source_impedance_review_notes or [SOURCE_IMPEDANCE_BASIS_NOTE]),
     )
 
 
@@ -744,14 +797,11 @@ def _project_grouping_derating(project):
 def _cable_cost_proxy(sizing_input, selection_4c=None, selection_3c=None):
     cost = 0.0
     if selection_4c and sizing_input.length_4c_m:
-        cost += 4 * selection_4c.catalogue.conductor_size_mm2 * float(sizing_input.length_4c_m)
+        cost += 3 * selection_4c.catalogue.conductor_size_mm2 * float(sizing_input.length_4c_m)
     if selection_3c and sizing_input.length_3c_m:
-        cost += (
-            max(1, int(sizing_input.circuit_count or 1))
-            * 3
-            * selection_3c.catalogue.conductor_size_mm2
-            * float(sizing_input.length_3c_m)
-        )
+        segment_lengths = [segment.length_m for segment in _active_3c_segments(sizing_input) if segment.length_m]
+        total_branch_length = sum(segment_lengths) if segment_lengths else float(sizing_input.length_3c_m)
+        cost += 3 * selection_3c.catalogue.conductor_size_mm2 * total_branch_length
     return cost or None
 
 
@@ -801,7 +851,7 @@ def _catalogue_id(row):
     return row.pk if row and row.pk is not None else None
 
 
-def _segment_result_payload(segment, selection, conductor_temp_c, vd_3c, vd_4c, fault, nominal_voltage):
+def _segment_result_payload(segment, selection, conductor_temp_c, vd_3c, vd_4c, fault, nominal_voltage, fault_loop_basis=None):
     vd_4c_v = vd_4c.vd_v if vd_4c else 0.0
     vd_4c_pct = vd_4c.vd_pct if vd_4c else 0.0
     vd_total_v = vd_4c_v + vd_3c.vd_v
@@ -829,6 +879,7 @@ def _segment_result_payload(segment, selection, conductor_temp_c, vd_3c, vd_4c, 
         'load_end_voltage_v': nominal_voltage - vd_total_v,
         'fault_current_a': fault.fault_current_a,
         'fault_status': fault.status,
+        'fault_loop_basis': fault_loop_basis or {},
         'sizing_status': 'review_required' if fault.status == 'review_required' else 'selected',
         'k_temp': selection.k_temp,
         'k_group': selection.k_group,
@@ -837,17 +888,69 @@ def _segment_result_payload(segment, selection, conductor_temp_c, vd_3c, vd_4c, 
     }
 
 
-def _select_3c_segment_for_voltage_drop(project, sizing_input, segment, vd_4c=None):
+def _branch_group_current(sizing_input):
+    branch_current = float(sizing_input.per_circuit_operating_current_a or 0.0)
+    circuit_count = max(1, int(sizing_input.circuit_count or 1))
+    return branch_current * circuit_count
+
+
+def _branch_ampacity_required_current(sizing_input):
+    return max(
+        float(sizing_input.per_circuit_operating_current_a or 0.0),
+        float(sizing_input.breaker_size_a or 0.0),
+    )
+
+
+def _feeder_ampacity_required_current(sizing_input):
+    return max(
+        _branch_group_current(sizing_input),
+        float(sizing_input.breaker_size_a or 0.0),
+    )
+
+
+def _fault_loop_basis(project, sizing_input, feeder_selection, feeder_length_m, branch_selection, branch_length_m, fault):
+    return {
+        'basis': 'single_phase_l_pe_complete_cold_cable_path',
+        'voltage_v': float(project.voltage),
+        'eht_db_fault_rating_ka': float(getattr(project, 'eht_db_fault_rating_ka', 15) or 15),
+        'source_impedance_ohm': _source_impedance_ohm(project),
+        'source_impedance_note': '; '.join(_source_impedance_review_notes(project)),
+        'breaker_size_a': float(sizing_input.breaker_size_a or 0.0),
+        'mcb_curve': project.mcb_curve,
+        'threshold_current_a': fault.threshold_current_a if fault else None,
+        'feeder_length_m': feeder_length_m,
+        'feeder_size_mm2': (
+            feeder_selection.catalogue.conductor_size_mm2
+            if feeder_selection and feeder_selection.catalogue else None
+        ),
+        'feeder_pe_size_mm2': (
+            feeder_selection.catalogue.pe_conductor_size_mm2
+            if feeder_selection and feeder_selection.catalogue else None
+        ),
+        'branch_length_m': branch_length_m,
+        'branch_size_mm2': (
+            branch_selection.catalogue.conductor_size_mm2
+            if branch_selection and branch_selection.catalogue else None
+        ),
+        'branch_pe_size_mm2': (
+            branch_selection.catalogue.pe_conductor_size_mm2
+            if branch_selection and branch_selection.catalogue else None
+        ),
+    }
+
+
+def _select_3c_segment_for_voltage_drop(project, sizing_input, segment, vd_4c=None, feeder_candidate=None):
     current = float(sizing_input.per_circuit_operating_current_a or 0.0)
+    required_current = _branch_ampacity_required_current(sizing_input)
     nominal_voltage = float(project.voltage)
     allowable_vd_pct = float(project.allowablevdrop)
     if not segment.length_m:
-        return None, ['3C outgoing cable length is missing.']
+        return None, ['Branch Cable length is missing.']
 
-    candidates = _ampacity_candidates(project, 3, current)
+    candidates = _ampacity_candidates(project, 3, required_current)
     if not candidates:
-        notes = ['No ampacity-qualified 3C cable is available for the outgoing branch.']
-        _append_unique(notes, find_minimum_cable_for_ampacity(project, 3, current).review_notes)
+        notes = ['No ampacity-qualified Branch Cable is available for the downstream branch.']
+        _append_unique(notes, find_minimum_cable_for_ampacity(project, 3, required_current).review_notes)
         return None, notes
 
     vd_4c_pct = vd_4c.vd_pct if vd_4c else 0.0
@@ -862,18 +965,32 @@ def _select_3c_segment_for_voltage_drop(project, sizing_input, segment, vd_4c=No
         )
         if vd_4c_pct + vd_3c.vd_pct > allowable_vd_pct:
             continue
-        fault = check_fault_3c(
+        fault = check_fault_l_pe(
+            feeder_candidate.selection.catalogue if feeder_candidate else None,
+            sizing_input.length_4c_m if feeder_candidate else None,
             candidate.selection.catalogue,
             segment.length_m,
             nominal_voltage,
             sizing_input.breaker_size_a,
             project.mcb_curve,
             project.rcd_provided,
-            conductor_temp_c=candidate.conductor_temp_c,
+            source_impedance_ohm=_source_impedance_ohm(project),
+            source_impedance_review_notes=_source_impedance_review_notes(project),
+            feeder_conductor_temp_c=feeder_candidate.conductor_temp_c if feeder_candidate else None,
+            branch_conductor_temp_c=candidate.conductor_temp_c,
         )
         _append_unique(notes, fault.review_notes)
         if fault.status == 'fail':
             continue
+        fault_basis = _fault_loop_basis(
+            project,
+            sizing_input,
+            feeder_candidate.selection if feeder_candidate else None,
+            sizing_input.length_4c_m if feeder_candidate else None,
+            candidate.selection,
+            segment.length_m,
+            fault,
+        )
         return _segment_result_payload(
             segment,
             candidate.selection,
@@ -882,14 +999,14 @@ def _select_3c_segment_for_voltage_drop(project, sizing_input, segment, vd_4c=No
             vd_4c,
             fault,
             nominal_voltage,
+            fault_loop_basis=fault_basis,
         ), notes
 
     failure_note = (
-        'No 3C cable satisfies ampacity, voltage-drop, and fault-protection constraints '
-        'for one outgoing branch.'
+        'No Branch Cable satisfies ampacity, voltage-drop, and L-PE fault-loop constraints for one downstream branch.'
     )
     if not project.rcd_provided:
-        failure_note = 'No 3C cable satisfies the breaker instantaneous fault threshold without RCD protection.'
+        failure_note = 'No Branch Cable satisfies the breaker instantaneous L-PE fault threshold without RCD protection.'
     notes.append(failure_note)
     return None, notes
 
@@ -916,146 +1033,24 @@ def _critical_3c_segment(segment_results):
     )
 
 
-def _apply_4c_fault_check(project, sizing_input, sizing_result):
-    if not sizing_result.selection_4c or not sizing_input.length_4c_m:
-        return sizing_result
-
-    current = float(sizing_input.per_circuit_operating_current_a or 0.0)
-    nominal_voltage = float(project.voltage)
-    allowable_vd_pct = float(project.allowablevdrop)
-    selected_size = sizing_result.selection_4c.catalogue.conductor_size_mm2
-    candidates = [
-        candidate for candidate in _ampacity_candidates(project, 4, current)
-        if candidate.selection.catalogue.conductor_size_mm2 >= selected_size
-    ]
-    for candidate in candidates:
-        vd_4c = calculate_vd(
-            current,
-            candidate.resistance_mohm_per_m_at_temp,
-            sizing_input.length_4c_m,
-            '3phase',
-            nominal_voltage,
-        )
-        vd_total_pct = vd_4c.vd_pct + (sizing_result.vd_3c.vd_pct if sizing_result.vd_3c else 0.0)
-        if vd_total_pct > allowable_vd_pct:
-            continue
-        fault = check_fault_4c(
-            candidate.selection.catalogue,
-            sizing_input.length_4c_m,
-            nominal_voltage,
-            sizing_input.breaker_size_a,
-            project.mcb_curve,
-            conductor_temp_c=candidate.conductor_temp_c,
-        )
-        if fault.status == 'pass':
-            sizing_result.selection_4c = candidate.selection
-            sizing_result.conductor_temp_4c_c = candidate.conductor_temp_c
-            sizing_result.vd_4c = vd_4c
-            sizing_result.vd_total_pct = vd_total_pct
-            sizing_result.load_end_voltage_v = nominal_voltage - vd_4c.vd_v - (sizing_result.vd_3c.vd_v if sizing_result.vd_3c else 0.0)
-            sizing_result.conductor_volume_proxy = _cable_cost_proxy(
-                sizing_input,
-                sizing_result.selection_4c,
-                sizing_result.selection_3c,
-            )
-            sizing_result.fault_4c = fault
-            return sizing_result
-
-    sizing_result.status = 'unsizeable'
-    sizing_result.fault_4c = FaultProtectionResult(status='fail')
-    _append_unique(sizing_result.review_notes, ['No 4C cable satisfies the breaker instantaneous fault threshold.'])
-    return sizing_result
-
-
-def _apply_3c_fault_check(project, sizing_input, sizing_result):
-    if not sizing_result.selection_3c or not sizing_input.length_3c_m:
-        return sizing_result
-
-    current = float(sizing_input.per_circuit_operating_current_a or 0.0)
-    nominal_voltage = float(project.voltage)
-    allowable_vd_pct = float(project.allowablevdrop)
-    selected_size = sizing_result.selection_3c.catalogue.conductor_size_mm2
-
-    if project.rcd_provided:
-        conductor_temp = sizing_result.conductor_temp_3c_c
-        fault = check_fault_3c(
-            sizing_result.selection_3c.catalogue,
-            sizing_input.length_3c_m,
-            nominal_voltage,
-            sizing_input.breaker_size_a,
-            project.mcb_curve,
-            True,
-            conductor_temp_c=conductor_temp,
-        )
-        sizing_result.fault_3c = fault
-        _append_unique(sizing_result.review_notes, fault.review_notes)
-        if fault.status == 'review_required' and sizing_result.status == 'selected':
-            sizing_result.status = 'review_required'
-        return sizing_result
-
-    candidates = [
-        candidate for candidate in _ampacity_candidates(project, 3, current)
-        if candidate.selection.catalogue.conductor_size_mm2 >= selected_size
-    ]
-    for candidate in candidates:
-        vd_3c = calculate_vd(
-            current,
-            candidate.resistance_mohm_per_m_at_temp,
-            sizing_input.length_3c_m,
-            '1phase',
-            nominal_voltage,
-        )
-        vd_total_pct = (sizing_result.vd_4c.vd_pct if sizing_result.vd_4c else 0.0) + vd_3c.vd_pct
-        if vd_total_pct > allowable_vd_pct:
-            continue
-        fault = check_fault_3c(
-            candidate.selection.catalogue,
-            sizing_input.length_3c_m,
-            nominal_voltage,
-            sizing_input.breaker_size_a,
-            project.mcb_curve,
-            False,
-            conductor_temp_c=candidate.conductor_temp_c,
-        )
-        _append_unique(sizing_result.review_notes, fault.review_notes)
-        if fault.status == 'pass':
-            sizing_result.selection_3c = candidate.selection
-            sizing_result.conductor_temp_3c_c = candidate.conductor_temp_c
-            sizing_result.vd_3c = vd_3c
-            sizing_result.vd_total_pct = vd_total_pct
-            sizing_result.load_end_voltage_v = nominal_voltage - (sizing_result.vd_4c.vd_v if sizing_result.vd_4c else 0.0) - vd_3c.vd_v
-            sizing_result.conductor_volume_proxy = _cable_cost_proxy(
-                sizing_input,
-                sizing_result.selection_4c,
-                sizing_result.selection_3c,
-            )
-            sizing_result.fault_3c = fault
-            return sizing_result
-
-    sizing_result.status = 'unsizeable'
-    sizing_result.fault_3c = FaultProtectionResult(status='fail', review_notes=[TRACER_PE_FAULT_LOOP_NOTE])
-    _append_unique(sizing_result.review_notes, [
-        TRACER_PE_FAULT_LOOP_NOTE,
-        'No 3C cable satisfies the breaker instantaneous fault threshold without RCD protection.',
-    ])
-    return sizing_result
-
-
 def apply_fault_protection_checks(project, sizing_input, sizing_result):
+    """Fault-loop checks are now part of segment selection.
+
+    Keeping this boundary lets older call sites stay stable while preventing a
+    second pass from reintroducing obsolete 4C phase-to-phase logic.
+    """
     if sizing_result.status not in {'selected', 'review_required'}:
         return sizing_result
-    if sizing_result.segment_3c_results:
-        return sizing_result
-    sizing_result = _apply_4c_fault_check(project, sizing_input, sizing_result)
-    if sizing_result.status == 'unsizeable':
-        return sizing_result
-    return _apply_3c_fault_check(project, sizing_input, sizing_result)
+    return sizing_result
 
 
 def optimise_cable_pair(project, sizing_input):
     project = _project(project)
-    current = float(sizing_input.per_circuit_operating_current_a or 0.0)
-    if current <= 0:
+    branch_current = float(sizing_input.per_circuit_operating_current_a or 0.0)
+    feeder_current = _branch_group_current(sizing_input)
+    feeder_required_current = _feeder_ampacity_required_current(sizing_input)
+    branch_required_current = _branch_ampacity_required_current(sizing_input)
+    if branch_current <= 0 or feeder_current <= 0:
         return CablePairOptimisation(
             status='unsizeable',
             review_notes=['Operating current must be greater than zero for voltage-drop sizing.'],
@@ -1064,17 +1059,17 @@ def optimise_cable_pair(project, sizing_input):
     if not sizing_input.length_4c_m or any(not segment.length_m for segment in segments):
         return CablePairOptimisation(
             status='length_missing',
-            review_notes=['4C and all 3C outgoing cable lengths are required for 3phJB voltage-drop optimisation.'],
+            review_notes=['Feeder Cable and all Branch Cable lengths are required for distribution voltage-drop optimisation.'],
         )
 
-    candidates_4c = _ampacity_candidates(project, 4, current)
-    candidates_3c = _ampacity_candidates(project, 3, current)
+    candidates_4c = _ampacity_candidates(project, 3, feeder_required_current)
+    candidates_3c = _ampacity_candidates(project, 3, branch_required_current)
     if not candidates_4c or not candidates_3c:
-        review_notes = ['No ampacity-qualified 4C/3C cable pair is available for voltage-drop optimisation.']
+        review_notes = ['No ampacity-qualified FeederCable/BranchCable pair is available for voltage-drop optimisation.']
         if not candidates_4c:
-            _append_unique(review_notes, find_minimum_cable_for_ampacity(project, 4, current).review_notes)
+            _append_unique(review_notes, find_minimum_cable_for_ampacity(project, 3, feeder_required_current).review_notes)
         if not candidates_3c:
-            _append_unique(review_notes, find_minimum_cable_for_ampacity(project, 3, current).review_notes)
+            _append_unique(review_notes, find_minimum_cable_for_ampacity(project, 3, branch_required_current).review_notes)
         return CablePairOptimisation(
             status='unsizeable',
             review_notes=review_notes,
@@ -1085,48 +1080,39 @@ def optimise_cable_pair(project, sizing_input):
     allowable_vd_pct = float(project.allowablevdrop)
     for candidate_4c in candidates_4c:
         vd_4c = calculate_vd(
-            current,
+            feeder_current,
             candidate_4c.resistance_mohm_per_m_at_temp,
             sizing_input.length_4c_m,
-            '3phase',
+            '1phase',
             nominal_voltage,
         )
         if vd_4c.vd_pct >= allowable_vd_pct:
             continue
-        fault_4c = check_fault_4c(
-            candidate_4c.selection.catalogue,
-            sizing_input.length_4c_m,
-            nominal_voltage,
-            sizing_input.breaker_size_a,
-            project.mcb_curve,
-            conductor_temp_c=candidate_4c.conductor_temp_c,
-        )
-        if fault_4c.status != 'pass':
-            continue
 
         segment_results = []
         review_notes = list(candidate_4c.selection.review_notes)
-        option_cost = 4 * candidate_4c.selection.catalogue.conductor_size_mm2 * float(sizing_input.length_4c_m)
+        option_cost = 3 * candidate_4c.selection.catalogue.conductor_size_mm2 * float(sizing_input.length_4c_m)
         for segment in segments:
             segment_result, segment_notes = _select_3c_segment_for_voltage_drop(
                 project,
                 sizing_input,
                 segment,
                 vd_4c=vd_4c,
+                feeder_candidate=candidate_4c,
             )
             _append_unique(review_notes, segment_notes)
             if segment_result is None:
                 break
             segment_results.append(segment_result)
             option_cost += _segment_cost_proxy(
-                _selection_from_segment_result(project, segment_result, current),
+                _selection_from_segment_result(project, segment_result, branch_required_current),
                 segment.length_m,
             )
         if len(segment_results) != len(segments):
             continue
 
         critical_segment = _critical_3c_segment(segment_results)
-        selection_3c = _selection_from_segment_result(project, critical_segment, current)
+        selection_3c = _selection_from_segment_result(project, critical_segment, branch_required_current)
         status = 'review_required' if any(item.get('sizing_status') == 'review_required' for item in segment_results) else 'selected'
         option = CablePairOptimisation(
             status=status,
@@ -1142,10 +1128,11 @@ def optimise_cable_pair(project, sizing_input):
             vd_total_pct=max(item.get('vd_total_pct') or 0 for item in segment_results),
             load_end_voltage_v=min(item.get('load_end_voltage_v') or nominal_voltage for item in segment_results),
             conductor_volume_proxy=option_cost,
-            fault_4c=fault_4c,
+            fault_4c=None,
             fault_3c=FaultProtectionResult(
                 status=critical_segment.get('fault_status'),
                 fault_current_a=critical_segment.get('fault_current_a'),
+                threshold_current_a=(critical_segment.get('fault_loop_basis') or {}).get('threshold_current_a'),
             ) if critical_segment else None,
             segment_3c_results=segment_results,
             review_notes=review_notes,
@@ -1157,7 +1144,7 @@ def optimise_cable_pair(project, sizing_input):
         return CablePairOptimisation(
             status='unsizeable',
             review_notes=[
-                'No 4C/3C cable combination satisfies ampacity and total voltage-drop constraints.'
+                'No FeederCable/BranchCable combination satisfies ampacity, total voltage-drop, and L-PE fault-loop constraints.'
             ],
         )
     return best
@@ -1166,6 +1153,7 @@ def optimise_cable_pair(project, sizing_input):
 def select_direct_3c_cable(project, sizing_input):
     project = _project(project)
     current = float(sizing_input.per_circuit_operating_current_a or 0.0)
+    required_current = _feeder_ampacity_required_current(sizing_input)
     if current <= 0:
         return CablePairOptimisation(
             status='unsizeable',
@@ -1176,13 +1164,13 @@ def select_direct_3c_cable(project, sizing_input):
     if not segment.length_m:
         return CablePairOptimisation(
             status='length_missing',
-            review_notes=['3C cable length is required for direct 1phJB voltage-drop sizing.'],
+            review_notes=['Feeder Cable length is required for direct single-phase voltage-drop sizing.'],
         )
 
     nominal_voltage = float(project.voltage)
     segment_result, segment_notes = _select_3c_segment_for_voltage_drop(project, sizing_input, segment)
     if segment_result is not None:
-        selection_3c = _selection_from_segment_result(project, segment_result, current)
+        selection_3c = _selection_from_segment_result(project, segment_result, required_current)
         return CablePairOptimisation(
             status=segment_result.get('sizing_status') or 'selected',
             selection_3c=selection_3c,
@@ -1205,7 +1193,7 @@ def select_direct_3c_cable(project, sizing_input):
             status='fail' if not project.rcd_provided else 'not_calculated',
             review_notes=segment_notes,
         ),
-        review_notes=segment_notes or ['No 3C cable satisfies ampacity and voltage-drop constraints for the direct branch.'],
+            review_notes=segment_notes or ['No Feeder Cable satisfies ampacity, voltage-drop, and L-PE fault-loop constraints for the direct branch.'],
     )
 
 
@@ -1254,6 +1242,13 @@ def _fault_status(fault_result):
 
 def _fault_current(fault_result):
     return fault_result.fault_current_a if fault_result else None
+
+
+def _critical_fault_loop_basis(sizing_result):
+    if not sizing_result or not sizing_result.segment_3c_results:
+        return {}
+    critical_segment = _critical_3c_segment(sizing_result.segment_3c_results)
+    return (critical_segment or {}).get('fault_loop_basis') or {}
 
 
 def size_cold_cable_for_branch(branch, project):
@@ -1334,10 +1329,9 @@ def size_cold_cable_for_branch(branch, project):
         'conductor_volume_proxy': sizing_result.conductor_volume_proxy if sizing_result else None,
         'conductor_material_density_kg_m3': conductor_density,
         'conductor_mass_total_mt': _total_mass_mt(cable_4c_mass_mt, cable_3c_mass_mt),
-        'fault_current_4c_phase_to_phase_a': _fault_current(sizing_result.fault_4c) if sizing_result else None,
-        'fault_protection_4c_status': _fault_status(sizing_result.fault_4c) if sizing_result else 'not_calculated',
-        'fault_current_3c_line_to_neutral_a': _fault_current(sizing_result.fault_3c) if sizing_result else None,
-        'fault_protection_3c_status': _fault_status(sizing_result.fault_3c) if sizing_result else 'not_calculated',
+        'fault_current_l_pe_a': _fault_current(sizing_result.fault_3c) if sizing_result else None,
+        'fault_loop_status': _fault_status(sizing_result.fault_3c) if sizing_result else 'not_calculated',
+        'fault_loop_basis': _critical_fault_loop_basis(sizing_result),
         'sizing_status': sizing_status,
         'review_notes': review_notes,
     }

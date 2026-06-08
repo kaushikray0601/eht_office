@@ -106,6 +106,7 @@ class ProjectData(models.Model):
     area_class = models.CharField(max_length=20)
     temp_class = models.CharField(max_length=20)
     voltage = models.DecimalField(max_digits=5, decimal_places=2)
+    eht_db_fault_rating_ka = models.DecimalField(max_digits=6, decimal_places=2, default=15)
     max_cb_size = models.IntegerField(choices=MAX_CB_SIZE, default=10)
     restrict_cb_current = models.DecimalField(max_digits=5, decimal_places=2)
     vendor = models.CharField(max_length=30, choices=SELECT_VENDOR, default='THR')
@@ -157,6 +158,8 @@ class ProjectData(models.Model):
         for field in ['voltage', 'spiral_factor', 'caution_label_interval', 'ckt_ln']:
             if getattr(self, field) is not None and getattr(self, field) <= 0:
                 errors[field] = 'Value must be greater than zero.'
+        if self.eht_db_fault_rating_ka is not None and self.eht_db_fault_rating_ka < 1:
+            errors['eht_db_fault_rating_ka'] = 'EHT DB fault rating must be at least 1 kA.'
         for field in ['margin_on_tracer_lengths', 'voltage_var_factor', 'res_tol', 'termination_margin', 'wind_speed', 'loop_ln', 'allowablevdrop']:
             if getattr(self, field) is not None and getattr(self, field) < 0:
                 errors[field] = 'Value cannot be negative.'
@@ -185,6 +188,14 @@ class ProjectData(models.Model):
 
     def __str__(self):
         return self.proj_id
+
+    @property
+    def eht_db_source_impedance_ohm(self):
+        """Single-phase source impedance from the three-phase EHT DB fault rating."""
+        try:
+            return float(self.voltage) / (float(self.eht_db_fault_rating_ka) * 1000.0)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return None
     
 
 
@@ -475,6 +486,7 @@ class ColdCableCatalogue(models.Model):
     ampacity_temp_ref_c = models.FloatField(default=30.0)
     max_conductor_temp_c = models.FloatField(default=90.0)
     resistance_mohm_per_m = models.FloatField()
+    pe_conductor_size_mm2 = models.FloatField(null=True, blank=True)
     reactance_mohm_per_m = models.FloatField(default=0.08)
     source_document = models.CharField(max_length=200, blank=True, default='')
     source_date = models.DateField(null=True, blank=True)
@@ -764,10 +776,9 @@ class ColdCableResult(models.Model):
     conductor_material_density_kg_m3 = models.FloatField(null=True, blank=True)
     conductor_mass_total_mt = models.FloatField(null=True, blank=True)
 
-    fault_current_4c_phase_to_phase_a = models.FloatField(null=True, blank=True)
-    fault_protection_4c_status = models.CharField(max_length=20, choices=FAULT_STATUS_CHOICES, default='not_calculated')
-    fault_current_3c_line_to_neutral_a = models.FloatField(null=True, blank=True)
-    fault_protection_3c_status = models.CharField(max_length=20, choices=FAULT_STATUS_CHOICES, default='not_calculated')
+    fault_current_l_pe_a = models.FloatField(null=True, blank=True)
+    fault_loop_status = models.CharField(max_length=20, choices=FAULT_STATUS_CHOICES, default='not_calculated')
+    fault_loop_basis = models.JSONField(default=dict, blank=True)
 
     sizing_status = models.CharField(max_length=20, choices=SIZING_STATUS_CHOICES)
     review_notes = models.JSONField(default=list, blank=True)

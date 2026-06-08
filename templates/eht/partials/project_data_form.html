@@ -29,16 +29,24 @@
                 {{ form.voltage|as_crispy_field }}
               </div>
               <div class="col-lg-4">
+                {{ form.eht_db_fault_rating_ka_preset|as_crispy_field }}
+              </div>
+              <div class="col-lg-4">
+                {{ form.eht_db_fault_rating_ka_custom|as_crispy_field }}
+              </div>
+        </div>
+        <div class="row g-3 mt-1">
+              <div class="col-lg-4">
                 {{ form.max_cb_size|as_crispy_field }}
               </div>
               <div class="col-lg-4">
                 {{ form.restrict_cb_current|as_crispy_field }}
               </div>
-        </div>
-        <div class="row g-3 mt-1">
-            <div class="col-lg-4">
+              <div class="col-lg-4">
                 {{ form.allowablevdrop|as_crispy_field }}
               </div>
+        </div>
+        <div class="row g-3 mt-1">
               <div class="col-lg-4">
                 {{ form.voltage_var_factor|as_crispy_field }}
               </div>

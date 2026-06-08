@@ -1,9 +1,13 @@
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 
 
 class CalculationManualGuideTests(TestCase):
     def test_calculation_manual_view_renders_visual_guide_and_manual_content(self):
+        user = User.objects.create_user(username='manual-reviewer', password='password123')
+        self.client.force_login(user)
+
         response = self.client.get(reverse('calculation_manual_view'))
 
         self.assertEqual(response.status_code, 200)

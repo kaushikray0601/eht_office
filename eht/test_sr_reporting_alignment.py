@@ -1,6 +1,7 @@
 import json
 from io import BytesIO
 
+from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
 from openpyxl import load_workbook
@@ -173,6 +174,14 @@ def make_reporting_snapshot(project_id='p1'):
 
 
 class SRReportingAlignmentTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_superuser(
+            username='sr-reviewer',
+            email='sr-reviewer@example.com',
+            password='test-password',
+        )
+        self.client.force_login(self.user)
+
     def test_result_view_surfaces_heat_loss_basis_and_selection_diagnostics(self):
         _selected_line, rejected_line = make_reporting_snapshot()
 
@@ -200,8 +209,9 @@ class SRReportingAlignmentTests(TestCase):
                 'Line Results',
                 'Selection Diagnostics',
                 'Power Distribution',
+                'Panel Load Summary',
                 'Cold Cable Sizing',
-                'Cold Cable 3C Segments',
+                'Cold Cable Branch Segments',
                 'Alternate Tracers',
                 'MI Selection',
             ],

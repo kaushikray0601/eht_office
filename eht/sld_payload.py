@@ -9,8 +9,8 @@ from .tracer_management import apply_tracer_selection_to_payload
 
 COMPONENT_DISPLAY_NAMES = {
     'MCB': 'MCB',
-    'Cable4C': '4C Cable',
-    'Cable3C': '3C Cable',
+    'Cable4C': 'Feeder Cable',
+    'Cable3C': 'Branch Cable',
     'Isolator3PH': '3PH Isolator',
     'Isolator1PH': '1PH Isolator',
     'JB3PH': '3PH JB',
@@ -327,7 +327,7 @@ def _cold_cable_metadata_for_node(node, result):
     phase_label = ''
     phase_basis = ''
     if component_type == 'Cable4C':
-        calculated_size = _format_cold_cable_size(4, result.cable_4c_size_mm2)
+        calculated_size = _format_cold_cable_size(3, result.cable_4c_size_mm2)
         conductor_size = result.cable_4c_size_mm2
         derated_ampacity = result.cable_4c_ampacity_derated_a
         ampacity_margin = result.cable_4c_ampacity_margin_pct
@@ -335,8 +335,8 @@ def _cold_cable_metadata_for_node(node, result):
         conductor_mass = result.cable_4c_conductor_mass_mt
         length_m = result.length_4c_m
         vd_pct = result.cable_4c_vd_pct
-        fault_status = result.fault_protection_4c_status
-        fault_current = result.fault_current_4c_phase_to_phase_a
+        fault_status = result.fault_loop_status
+        fault_current = result.fault_current_l_pe_a
     elif component_type == 'Cable3C':
         segment = _cold_cable_segment_for_node(node, result)
         if segment:
@@ -348,7 +348,7 @@ def _cold_cable_metadata_for_node(node, result):
             conductor_mass = segment.get('conductor_mass_mt')
             length_m = segment.get('length_m')
             vd_pct = segment.get('vd_pct')
-            fault_status = segment.get('fault_status') or result.fault_protection_3c_status
+            fault_status = segment.get('fault_status') or result.fault_loop_status
             fault_current = segment.get('fault_current_a')
             length_basis = segment.get('length_basis') or result.length_basis
             vd_total_pct = segment.get('vd_total_pct')
@@ -369,8 +369,8 @@ def _cold_cable_metadata_for_node(node, result):
             conductor_mass = result.cable_3c_conductor_mass_mt
             length_m = result.length_3c_m
             vd_pct = result.cable_3c_vd_pct
-            fault_status = result.fault_protection_3c_status
-            fault_current = result.fault_current_3c_line_to_neutral_a
+            fault_status = result.fault_loop_status
+            fault_current = result.fault_current_l_pe_a
             length_basis = result.length_basis
             vd_total_pct = result.vd_total_pct
             load_end_voltage = result.load_end_voltage_v

@@ -1,6 +1,6 @@
 # Current Phase Tracker
 
-Last updated: 2026-06-07
+Last updated: 2026-06-08
 
 ## Active Phase
 
@@ -102,7 +102,8 @@ Checkpoint result, 2026-06-07:
 - Cable schedule rows now expose segment role, circuit index, length basis,
   total path VD, load-end voltage, fault current, and critical-segment status.
 - Cable schedule export includes the same segment columns.
-- Result export includes a dedicated `Cold Cable 3C Segments` sheet.
+- Result export included a dedicated per-segment sheet; renamed by `CC-P5` to
+  `Cold Cable Branch Segments`.
 - Calculation manual updated.
 - Targeted `ResultAndBoqViewTests` and `ColdCableFoundationTests`: 103 tests passed.
 - Full SQLite-mode `eht` suite: 281 tests passed.
@@ -223,7 +224,7 @@ Checkpoint result, 2026-06-07:
 - Result tab shows L1/L2/L3 current totals and phase-current imbalance for
   3PH JB branches.
 - Result export appends phase-balance summary columns to `Cold Cable Sizing`
-  and phase evidence columns to `Cold Cable 3C Segments`.
+  and phase evidence columns to the branch-segment evidence sheet.
 - Targeted PostgreSQL-backed tests: 4 tests passed using existing database
   `eht_local_test`.
 - `venv/bin/python manage.py check`: passed.
@@ -232,12 +233,85 @@ Checkpoint result, 2026-06-07:
 
 ### CC-P4 - Panel/Load Summary
 
-Status: pending
+Status: complete
 
-- [ ] Aggregate MCB count, breaker sizes, load current, and connected load.
-- [ ] Group by panel/source where source identity exists.
-- [ ] Surface review-required/unsizeable counts.
-- [ ] Add result/export sheet.
+- [x] Aggregate MCB count, breaker sizes, load current, and connected load.
+- [x] Group by panel/source where source identity exists; otherwise group under project main distribution.
+- [x] Surface review-required/unsizeable cold-cable counts.
+- [x] Add Result tab section and result-export sheet.
+- [x] Correct branch-current aggregation so branch current is calculated from
+      `per_circuit_operating_current_a x circuit_count` before using line-total
+      fallback data.
+- [x] Count shared MCB/breaker capacity once when one MCB feeds multiple
+      downstream branches.
+- [x] Add three-phase EHT DB fault rating project setting foundation for source
+      impedance.
+
+Checkpoint result, 2026-06-07:
+
+- Result tab now includes **Panel / Load Summary** with source label, line count,
+  MCB count, circuit count, load current, connected load, breaker distribution,
+  cold-cable selected/review/unsizeable/not-sized counts, and load basis.
+- Result Excel export now includes a `Panel Load Summary` sheet.
+- This is branch-based review evidence only. It does not yet compare against an
+  upstream panel main breaker, spare capacity, or bus phase totals.
+- 2026-06-08 correction: the summary now treats branch current and shared-MCB
+  count as separate concepts. Loads are summed per downstream branch; MCB count,
+  breaker distribution, and breaker-capacity sum are deduplicated by MCB tag.
+- 2026-06-08 foundation: `ProjectData.eht_db_fault_rating_ka` defaults to 15 kA
+  as the three-phase EHT DB prospective short-circuit current and feeds
+  `ProjectData.eht_db_source_impedance_ohm` for the L-PE fault-loop rebuild.
+- `ResultAndBoqViewTests`: 66 tests passed through the programmatic
+  existing-PostgreSQL runner after adapting the class to Claude's new
+  login-required middleware.
+- `eht.test_manual_guide`: 1 test passed after making the manual view test
+  authenticate under Claude's new login-required middleware.
+- `venv/bin/python manage.py check`: passed.
+- `venv/bin/python -m py_compile eht/views.py eht/tests.py eht/test_manual_guide.py`: passed.
+- `git diff --check`: passed.
+
+### CC-P5 - Single-Phase Cold-Cable Rebuild
+
+Status: complete
+
+- [x] Delete stale ColdCableResult rows in migration.
+- [x] Retire misleading 4C phase-to-phase fault result fields.
+- [x] Add L-PE fault-loop fields and basis evidence.
+- [x] Add ColdCableCatalogue PE conductor size and seed equal-core rows.
+- [x] Rebuild sizing around FeederCable + BranchCable complete paths.
+- [x] Deduplicate shared FeederCable material in cable schedule totals.
+- [x] Update SLD/UI labels from 3PH/4C terminology to Feeder/Branch naming.
+- [x] Add upgrade notice prompting cold-cable recalculation when branch rows
+      exist without cold-cable results.
+- [x] Update design guide active text and regression tests.
+
+Checkpoint result, 2026-06-08:
+
+- Migration `0036_single_phase_cold_cable_fault_loop` applied locally.
+- Result export sheet renamed to `Cold Cable Branch Segments`.
+- Verification report and design guide active text now show single-phase
+  Feeder/Branch VD and L-PE loop basis.
+- Follow-up review patch clarified three-phase PSCC wording, added
+  `Z_source = 0.0` fallback review notes for invalid migrated project data, and
+  added panel-summary tests for line-current fallback and multi-circuit branches.
+- Follow-up verification: `ColdCableFoundationTests`, `ProjectDataFormTests`,
+  `ProjectDataViewTests`, and `ResultAndBoqViewTests` passed 130 tests.
+- Second review patch updated the stale SR parallel-run test to the shared-MCB
+  model, added shared SR group metadata (`sr_parallel_run_count`,
+  `sr_parallel_run_basis`, `sr_shared_mcb`) to generated branch tags, and added
+  migration `0037_remove_legacy_3c_fault_fields`.
+- Follow-up verification: `PowerDistributionCalculationTests`,
+  `ColdCableFoundationTests`, `ResultAndBoqViewTests`, and
+  `SldTopologyWorkflowTests` passed 147 tests.
+- `ColdCableFoundationTests`: 39 tests passed.
+- `ProjectDataFormTests`, `ProjectDataViewTests`, `ResultAndBoqViewTests`:
+  88 tests passed.
+- `SldTopologyWorkflowTests` and `SldWorkspaceJavaScriptTests`: 35 tests passed.
+- SR reporting alignment export gate: 1 test passed.
+- `venv/bin/python manage.py check`: passed.
+- `venv/bin/python manage.py makemigrations --check --dry-run`: passed.
+- `venv/bin/python -m py_compile` on touched Python modules: passed.
+- `git diff --check`: passed.
 
 ### SCH-P1 - Procurement-Grade Cable Schedule
 
