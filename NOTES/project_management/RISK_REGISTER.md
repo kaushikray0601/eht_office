@@ -1,6 +1,6 @@
 # Risk Register
 
-Last updated: 2026-06-08
+Last updated: 2026-06-11
 
 | ID | Risk | Severity | Probability | Mitigation | Status |
 | --- | --- | --- | --- | --- | --- |
@@ -18,4 +18,6 @@ Last updated: 2026-06-08
 | R-012 | Normal Django `manage.py test` command can fail during existing PostgreSQL test DB setup even when direct connections work. | Medium | Medium | Direct runner and `call_command('test', ...)` pass against `eht_local_test`; raw CLI still fails in setup. Keep standard command failure as a follow-up before relying on it as CI gate. | Open |
 | R-013 | Existing ColdCableResult rows were calculated under the superseded 3PH/4C/current-basis model and may silently contaminate new outputs if retained. | High | High | `CC-P5` migration deletes existing ColdCableResult rows and the result tab prompts recalculation when branch rows exist without cold-cable results. | Mitigated |
 | R-014 | Shared FeederCable material may be double-counted when each branch stores complete path evidence. | High | Medium | Store complete path per branch for audit, but deduplicate FeederCable quantities in cable schedule summary totals by stable cable tag; CC-P4 summary already deduplicates shared MCB capacity. | Mitigated |
-| R-015 | Destructive database maintenance commands can accidentally target the local development database instead of the test database. | High | Low | Do not run `flush`, `loaddata`, or other destructive maintenance commands outside the Django test runner without explicit user approval and a backup/restore plan. Local PostgreSQL was accidentally flushed once during CC-P5 verification. | Open |
+| R-015 | Destructive database maintenance commands can accidentally target the local development database instead of the test database. | High | Medium | Mandatory Database Safety Protocol adopted 2026-06-11 in `CODEX_MEMORY.md`: `flush`/`DELETE`/`TRUNCATE`/`DROP`/QuerySet deletes on `eht_local` or catalogue tables require explicit written KR approval; active DB name must be verified and stated before every DB-modifying command. `eht_local` was flushed during CC-P5; catalogue restoration completed 2026-06-11. | Mitigated |
+| R-016 | `eht/tmp/elecEHT_Vendor.csv` has diverged from the validated vendor table: 178 unverified rows not in the DB, 89 validated DB rows missing from the CSV. Running `import_data_from_file` would corrupt the restored vendor catalogue. | High | Medium | Do NOT import the vendor CSV. Warning recorded in `CODEX_MEMORY.md`. KR to decide whether to validate and add the 178 new rows; regenerate the CSV from the DB after that decision. | Open |
+| R-017 | SQLite test mode is broken: migration `0037_remove_legacy_3c_fault_fields` uses PostgreSQL-specific `DROP COLUMN IF EXISTS`, so `USE_POSTGRES=false` fails at migration setup. Combined with R-012, only the programmatic PostgreSQL runner is a reliable full-suite gate. | Medium | High | `TEST-P1`: fix migration 0037 for SQLite or formally retire SQLite test mode; document the single supported test path. | Open |

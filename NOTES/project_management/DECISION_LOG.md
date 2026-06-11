@@ -1,6 +1,6 @@
 # Decision Log
 
-Last updated: 2026-06-08
+Last updated: 2026-06-11
 
 This log records current product and engineering decisions that should guide
 implementation. Historical debate can remain in older notes; this file should
@@ -41,6 +41,8 @@ stay concise.
 | 2026-06-08 | BranchCable ampacity must be at least the upstream MCB rating in the MVP. | Avoids tap-conductor exceptions and keeps protection coordination conservative and reviewable. | Active |
 | 2026-06-08 | Each ColdCableResult stores complete path evidence, but BOQ/cable schedule totals must deduplicate shared FeederCable quantities. | Keeps per-branch evidence self-contained while preventing material double-counting for shared feeders. | Active |
 | 2026-06-08 | Existing ColdCableResult rows must be deleted during the rebuild migration. | Old results were produced under the superseded 3PH/4C/current-basis model and should not silently survive. | Active |
+| 2026-06-11 | Mandatory Database Safety Protocol: `flush`, `DELETE`/`TRUNCATE`/`DROP`, and QuerySet deletes against `eht_local` or any catalogue/reference table require explicit written KR approval; the active database name must be verified and stated before every database-modifying command. | The local development database was accidentally flushed during CC-P5 verification; catalogue restoration cost a full working session. | Active |
+| 2026-06-11 | `eht/tmp/elecEHT_Vendor.csv` must not be imported via `import_data_from_file` until KR rules on its 178 unverified rows. | The CSV has diverged from the validated vendor table in both directions and an import would corrupt the restored catalogue. | Active |
 
 ## Decision Candidates
 

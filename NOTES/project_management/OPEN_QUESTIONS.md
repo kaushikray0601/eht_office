@@ -1,11 +1,24 @@
 # Open Questions
 
-Last updated: 2026-06-08
+Last updated: 2026-06-11
 
 ## Immediate Questions
 
 1. Should the current working set be committed/checkpointed before `CC-P4`?
-   - Recommendation: yes, now that `CC-P3` and the SLD regression rerun passed.
+   - Resolved: Phase A work through `CC-P5` is committed; worktree clean at
+     `46d47d5` (2026-06-11).
+
+1a. Should the 178 unverified rows in `eht/tmp/elecEHT_Vendor.csv` (Constant
+    Wattage Thermon/nVent = 91, Krus-Zapad MI = 87) be validated and added to
+    the vendor catalogue?
+   - Owner: KR. Until decided, the CSV must not be imported (see R-016); it
+     is also missing 89 validated rows that are in the database.
+
+1b. Should SQLite test mode be fixed (migration `0037` compatibility) or
+    formally retired?
+   - Owner: KR + Codex in `TEST-P1`. Retiring simplifies to one supported
+     test path (PostgreSQL programmatic runner) but loses the isolated
+     no-Postgres check; fixing keeps both at small migration-maintenance cost.
 
 2. For cold-cable installation methods without validated catalogue rows, should
    the UI disable the option or allow it and report no catalogue rows?

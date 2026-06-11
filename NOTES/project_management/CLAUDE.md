@@ -1,7 +1,7 @@
 # CLAUDE.md — Architect / Reviewer Orientation
 
 **Role:** Claude is the architect, auditor, reviewer, and adversarial critic.  
-**Last updated:** 2026-06-07
+**Last updated:** 2026-06-11
 
 ---
 
@@ -52,7 +52,7 @@ All project control files live in `NOTES/project_management/`. Read them in this
 | User Manual (`NOTES/CALCULATION_MODULE_USER_MANUAL.md`) | Up to date; staged for commit |
 | Constant wattage | Not started (Phase B) |
 
-**Test baseline:** 272 green (2026-06-07). Run: `python manage.py test eht --verbosity=0`
+**Test baseline:** 305 tests — 297 green, 8 known test-maintenance failures (2026-06-11; see `TEST-P1` in the tracker). SQLite test mode is broken by migration `0037`; run the full suite against PostgreSQL via the programmatic runner documented in `CODEX_MEMORY.md`.
 
 ---
 
@@ -95,3 +95,4 @@ Do not code from review findings until KR approves. Record findings in chat or a
 | Date | Change |
 |---|---|
 | 2026-06-07 | Created at project root, then moved to NOTES/project_management/. |
+| 2026-06-11 | Session sync: test baseline 305/297+8, SQLite mode broken (0037), DB restoration complete, Database Safety Protocol and vendor CSV warning recorded in CODEX_MEMORY.md, TEST-P1/DB-R1 added to tracker. |

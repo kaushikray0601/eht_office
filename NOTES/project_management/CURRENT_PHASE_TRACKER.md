@@ -1,6 +1,6 @@
 # Current Phase Tracker
 
-Last updated: 2026-06-08
+Last updated: 2026-06-11
 
 ## Active Phase
 
@@ -8,20 +8,20 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 
 ## Current State
 
-- The previous large cold-cable/SLD code diff is not present in the current
-  workspace state. Current dirty files are the `CC-P1` code/docs plus
-  untracked project-management/orientation files, including `CLAUDE.md` and
-  `NOTES/project_management/`.
-- Migrations through `0034_rcd_cu_only_cold_cable` apply cleanly in the SQLite
-  test database. Local PostgreSQL is healthy; earlier first-attempt failures
-  were Codex command-sandbox local-network restrictions, not a database outage.
-  PostgreSQL-backed Django tests should be run with local Postgres access
-  enabled instead of falling back to SQLite.
-- Latest full test status: `281 tests OK` on 2026-06-07.
-- Latest SLD regression check: `SldTopologyWorkflowTests` 26 tests passed
-  against PostgreSQL test DB `eht_local_test` on 2026-06-07 after browser
-  lifecycle hardening for topology controls.
-- Latest quick health check: `venv/bin/python manage.py check` passed on 2026-06-07.
+- Worktree is clean; all Phase A work through `CC-P5` is committed (HEAD
+  `46d47d5`).
+- Latest full test status (verified 2026-06-11, PostgreSQL `eht_local_test`,
+  programmatic runner): 305 tests, 297 pass, 8 fail. All 8 failures are
+  test-maintenance items, not application defects — see `TEST-P1`.
+- SQLite test mode is broken by migration `0037` (PostgreSQL-specific
+  `DROP COLUMN IF EXISTS`); all tests must run against PostgreSQL until
+  `TEST-P1` fixes or retires SQLite mode.
+- `eht_local` catalogue restoration after the CC-P5 accidental flush completed
+  2026-06-11 — see `DB-R1`.
+- Database Safety Protocol is now mandatory for all database-modifying
+  commands — see `CODEX_MEMORY.md`.
+- Latest quick health check: `venv/bin/python manage.py check` passed on
+  2026-06-11.
 
 ## Active Work Queue
 
@@ -313,6 +313,40 @@ Checkpoint result, 2026-06-08:
 - `venv/bin/python -m py_compile` on touched Python modules: passed.
 - `git diff --check`: passed.
 
+### DB-R1 - Development Database Restoration
+
+Status: complete
+
+- [x] Restore SR + MI tracer library: 130 rows from backup table
+      `eht_eleceht_vendor_backup_temp`.
+- [x] Restore ASME B36 pipe sizes: 200 rows from `eht/tmp/elecEHT_ASMEB36.csv`.
+- [x] Restore thermal conductivity: 5 rows from
+      `eht/tmp/elecEHT_ThermalConductivity.csv`.
+- [x] Confirm cold cable catalogue intact: 14 rows (migration-seeded).
+- [x] Record vendor CSV divergence warning: `eht/tmp/elecEHT_Vendor.csv` must
+      NOT be imported (178 unverified rows not in DB; 89 validated DB rows
+      missing from the CSV).
+- [x] Adopt mandatory Database Safety Protocol in `CODEX_MEMORY.md`.
+
+Checkpoint result, 2026-06-11: restoration complete; KR still reviewing
+whether the 178 unverified CSV rows (Constant Wattage Thermon/nVent = 91,
+Krus-Zapad MI = 87) should be added to the catalogue.
+
+### TEST-P1 - Test Baseline Repair
+
+Status: pending (next pass)
+
+- [ ] Add `self.client.force_login(self.user)` to `SldLayoutTests.setUp`
+      (same pattern as `ResultAndBoqViewTests`) — fixes 7 failures.
+- [ ] Update `'4C x 2.5 mm2'` to `'3C x 2.5 mm2'` in
+      `SldPayloadTests.test_build_project_sld_payload_adds_cold_cable_metadata_to_cable_nodes`
+      — fixes 1 failure.
+- [ ] Fix migration `0037` SQLite incompatibility (PostgreSQL-specific
+      `DROP COLUMN IF EXISTS` in `SeparateDatabaseAndState`) OR formally
+      retire SQLite test mode (KR decision).
+- [ ] Confirm full test baseline >= 305 green via the PostgreSQL programmatic
+      runner.
+
 ### SCH-P1 - Procurement-Grade Cable Schedule
 
 Status: pending
@@ -333,10 +367,17 @@ Status: pending
 - [ ] Badge stale/review-required topology.
 - [ ] Add tests for metadata and basic rendering strings.
 
-### SLD-P2 - Topology Edit Impact Summary
+### SLD-P2 - Combined-Circuit Cold-Cable Resizing and Impact Summary
 
-Status: pending
+Status: pending (after TEST-P1)
 
+- [ ] When circuits are combined, trigger cold-cable re-sizing of the new
+      combined FeederCable from combined current, using the CC-P5 single-phase
+      FeederCable/BranchCable engine.
+- [ ] Warn that prior separate feeder cable lengths are invalid; default the
+      combined length to the max of the combined cables' lengths; require
+      user review. (Foundation metadata `combined_current` and
+      `recommended_breaker_rating` is already stored in the combine preview.)
 - [ ] Show affected MCBs and breaker rating changes.
 - [ ] Show cable length/size/mass deltas where known.
 - [ ] Show affected BOQ/schedule rows.

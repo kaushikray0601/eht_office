@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-06-08
+Last updated: 2026-06-11
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -10,6 +10,26 @@ compression, pauses, or new chats. Keep this file short and current.
 Make the current SR/MI + cold cable + SLD + BOQ/cable schedule path
 production-ready before starting Constant Power tracer or major 3D/model-routing
 work.
+
+## Database Safety Protocol (MANDATORY — no exceptions)
+
+Adopted 2026-06-11 after the accidental CC-P5 flush of `eht_local`:
+
+- `manage.py flush` is banned without explicit written KR approval.
+- No `DELETE`, `TRUNCATE`, or `DROP` against `eht_local` without explicit
+  written KR approval.
+- No `.objects.all().delete()` or `QuerySet.delete()` on any
+  catalogue/reference table without KR approval.
+- Before every database-modifying command, verify the active database name and
+  state it explicitly.
+- This applies every time, with no exceptions.
+
+VENDOR CSV WARNING: `eht/tmp/elecEHT_Vendor.csv` (219 rows) is a post-research
+working file, NOT a database mirror. It contains 178 rows that are NOT in the
+current database (91 Constant Wattage Thermon/nVent + 87 Krus-Zapad MI, all
+unverified) and is MISSING 89 validated rows that ARE in the database. Do NOT
+run `import_data_from_file` against the vendor table — it will corrupt it.
+KR is reviewing whether to add the 178 unverified rows.
 
 ## Product Vision
 
@@ -24,29 +44,47 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. Finish `CC-P4` foundation correction.
-2. Start `CC-P5`: single-phase cold-cable rebuild.
-3. Then proceed to `SLD-P2`: combine-circuit impact summary and cold-cable
-   recalculation.
-4. Then proceed to `SLD-P1`: visual review badges.
-5. Keep the calculation manual aligned with any behavior changes.
-6. Consider a checkpoint/commit of PM files plus `CC-P1`/`CC-P2`/`CC-P3` and
-   SLD regression-fix changes before the next pass.
+1. `TEST-P1`: fix the 8 failing tests — add
+   `self.client.force_login(self.user)` to `SldLayoutTests.setUp` (same
+   pattern as `ResultAndBoqViewTests`), update the `'4C x 2.5 mm2'` assertion
+   to `'3C x 2.5 mm2'` in `SldPayloadTests`, and fix or formally retire the
+   migration `0037` SQLite incompatibility. Target >= 305 green.
+2. Then `SLD-P2`: combined-circuit cold-cable resizing — combined FeederCable
+   must re-size from combined current; warn that prior separate feeder lengths
+   are invalid; default combined length to the max of the combined cables'
+   lengths and require user review.
+3. Then `SLD-P1`: visual review badges.
+4. Keep the calculation manual aligned with any behavior changes.
 
 ## Current Repo State
 
 - Working directory: `/home/kr/mydev/eht_office`.
-- Current date at latest update: 2026-06-08.
-- Current dirty files include accumulated Phase A work: cold-cable/panel
-  summary code, SLD/manual docs, project-management files, and the
-  `0035_projectdata_eht_db_fault_rating` migration.
-- The previous large cold-cable/SLD code diff is not present in the current
-  workspace state.
-- Migrations through `0034_rcd_cu_only_cold_cable` applied cleanly in the
-  SQLite-mode test run. Local PostgreSQL is healthy; first-attempt failures from
-  Codex were command-sandbox local-network restrictions. Use local Postgres
-  access for PostgreSQL-backed Django commands instead of falling back to SQLite.
-- Latest full test status: `281 tests OK` on 2026-06-07.
+- Current date at latest update: 2026-06-11.
+- Worktree is clean. Phase A work through `CC-P5` plus auth middleware and SLD
+  admin/retention features is committed; HEAD is `46d47d5`.
+- Latest full test status (verified 2026-06-11 against PostgreSQL
+  `eht_local_test` via the programmatic runner): 305 tests, 297 pass, 8 fail.
+  All 8 failures are test-maintenance items, NOT application defects:
+  - 7 x `SldLayoutTests`: views now return HTTP 302 because the tests predate
+    the login-required middleware; `setUp` needs
+    `self.client.force_login(self.user)` (same fix already applied to
+    `ResultAndBoqViewTests`).
+  - 1 x `SldPayloadTests.test_build_project_sld_payload_adds_cold_cable_metadata_to_cable_nodes`:
+    asserts `'4C x 2.5 mm2'` but `CC-P5` renamed the label to `'3C x 2.5 mm2'`.
+- SQLite test mode is BROKEN: migration `0037_remove_legacy_3c_fault_fields`
+  uses PostgreSQL-specific `DROP COLUMN IF EXISTS` inside
+  `SeparateDatabaseAndState`, so `USE_POSTGRES=false` fails at migration setup.
+  All tests must run against PostgreSQL until `0037` is fixed or SQLite test
+  mode is formally retired (`TEST-P1` decision).
+- Local PostgreSQL is healthy; first-attempt failures from Codex were
+  command-sandbox local-network restrictions. Use local Postgres access for
+  PostgreSQL-backed Django commands.
+- `eht_local` restoration after the CC-P5 accidental flush is COMPLETE
+  (2026-06-11): SR + MI tracer library 130 rows restored from backup table
+  `eht_eleceht_vendor_backup_temp`; ASME B36 pipe sizes 200 rows restored from
+  `eht/tmp/elecEHT_ASMEB36.csv`; thermal conductivity 5 rows restored from
+  `eht/tmp/elecEHT_ThermalConductivity.csv`; cold cable catalogue 14 rows
+  intact (migration-seeded, unaffected).
 - Latest SLD topology regression status: `SldTopologyWorkflowTests` 26 tests OK
   against PostgreSQL test DB `eht_local_test` on 2026-06-07 after hardening
   browser-side SLD render-state lifecycle.
@@ -205,10 +243,9 @@ Immediate next pass:
   selected feeder cables and require user review/confirmation.
 - Local dev DB caveat from 2026-06-08: during CC-P5 verification, Codex
   accidentally executed a destructive `flush` against the local PostgreSQL
-  development database. Current local PostgreSQL content is not a trustworthy
-  representation of the user's original `p1` state; do not infer production
-  data behavior from the sparse local DB until the user approves a restore or
-  recreates/imports project data.
+  development database. Catalogue/reference restoration completed 2026-06-11
+  (see Current Repo State). This incident is the origin of the mandatory
+  Database Safety Protocol section above.
 - Housekeeping pass after SLD hardening removed live debug/dropdown projects
   `p-debug-sld`, `p-debug-sld-api`, `p-hard`, and empty orphan `p2` from local
   PostgreSQL. Current live project selectors should show only `default_project`
@@ -273,16 +310,24 @@ Immediate next pass:
 
 Local PostgreSQL is the normal development database. In Codex-managed commands,
 PostgreSQL-backed tests need local Postgres access enabled; otherwise the
-command sandbox can produce a false connection failure. Use SQLite only for
-explicit isolation checks.
+command sandbox can produce a false connection failure. SQLite test mode
+(`USE_POSTGRES=false`) is currently broken by migration `0037` and must not be
+used until `TEST-P1` fixes or retires it.
 
 ```bash
 venv/bin/python manage.py check
-env USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run
 node --check static/js/sld_workspace.js
 git diff --check
-venv/bin/python manage.py test eht -v 2 --noinput
 venv/bin/python manage.py test eht.browser_tests -v 2 --noinput
+
+# Full suite — PostgreSQL-backed programmatic runner (required; see R-012)
+venv/bin/python manage.py shell -c "
+from django.test.utils import get_runner
+from django.conf import settings
+TestRunner = get_runner(settings)
+runner = TestRunner(verbosity=1, keepdb=True)
+print('Failures:', runner.run_tests(['eht']))
+"
 ```
 
 Current caveat: raw DB-using `venv/bin/python manage.py test ...` can still
@@ -301,6 +346,6 @@ Recommend a new chat when:
 - Context replay becomes more expensive than reading this memory file.
 - The next task is large enough to deserve a clean brief.
 
-Current recommendation: project-management setup, stabilization, `CC-P1`,
-`CC-P2`, SLD-R1, and `CC-P3` are complete. Consider a checkpoint/commit before
-starting `CC-P4`.
+Current recommendation: `CC-P0` through `CC-P5` and `SLD-R1` are complete and
+committed (HEAD `46d47d5`); database restoration is complete. Next work:
+`TEST-P1` (fix the 8 failing tests), then `SLD-P2`.
