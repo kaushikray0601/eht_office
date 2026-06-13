@@ -153,6 +153,23 @@ class SldWorkspaceJavaScriptTests(SimpleTestCase):
         self.assertIn('function saveCableOverride(root)', source)
         self.assertIn('function saveTracerOverride(root)', source)
 
+    def test_sld_review_badges_render_from_existing_metadata(self):
+        source = self._source()
+
+        self.assertIn('function reviewBadgesForNode(node, payloadMeta)', source)
+        self.assertIn("code: 'length'", source)
+        self.assertIn("label: 'Length'", source)
+        self.assertIn("code: 'cold_cable'", source)
+        self.assertIn("label: coldTone === 'danger' ? 'Cold Cable' : 'CC Review'", source)
+        self.assertIn("code: 'manual'", source)
+        self.assertIn("label: 'Manual'", source)
+        self.assertIn("code: 'topology'", source)
+        self.assertIn("label: topologyTone === 'danger' ? 'Topology Review' : 'Topology'", source)
+        self.assertIn('function createReviewBadgeLabel(node, position, payloadMeta)', source)
+        self.assertIn('reviewBadgeLabelByComponentId', source)
+        self.assertIn("metadata.manual_size_review_status === 'undersized'", source)
+        self.assertIn('positionReviewBadgeLabel(label, node, element.position(), (state.payload || {}).meta || {})', source)
+
 
 class SldTopologyFingerprintTests(SimpleTestCase):
     def test_payload_fingerprint_ignores_volatile_node_metadata(self):
@@ -2283,9 +2300,9 @@ class SldPayloadTests(TestCase):
         cable4c = next(node for node in payload['nodes'] if node['component_type'] == 'Cable4C')
         cable3c = next(node for node in payload['nodes'] if node['component_type'] == 'Cable3C')
 
-        self.assertEqual(cable4c['metadata']['cold_cable_calculated_size'], '4C x 2.5 mm2')
+        self.assertEqual(cable4c['metadata']['cold_cable_calculated_size'], '3C x 2.5 mm2')
         self.assertEqual(cable3c['metadata']['cold_cable_calculated_size'], '3C x 2.5 mm2')
-        self.assertEqual(cable4c['metadata']['cold_cable']['calculated_size'], '4C x 2.5 mm2')
+        self.assertEqual(cable4c['metadata']['cold_cable']['calculated_size'], '3C x 2.5 mm2')
         self.assertEqual(cable3c['metadata']['cold_cable']['calculated_size'], '3C x 2.5 mm2')
         self.assertIn(cable3c['metadata']['cold_cable_status'], {'selected', 'review_required'})
         self.assertEqual(cable3c['metadata']['cold_cable_vd_status'], 'pass')
@@ -2588,6 +2605,14 @@ class SldValidationTests(TestCase):
 
 
 class SldLayoutTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_superuser(
+            username=f'sld-layout-{uuid4().hex[:8]}',
+            email='sld-layout@example.com',
+            password='password123',
+        )
+        self.client.force_login(self.user)
+
     def test_sld_layout_view_saves_loads_and_resets_component_positions(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
         payload = build_project_sld_payload('p1')
@@ -3782,6 +3807,65 @@ class SldTopologyWorkflowTests(TestCase):
             ],
             [trunk_cable['component_id']],
         )
+
+    def test_combine_feeders_apply_recalculates_manual_trunk_cold_cable_impact(self):
+        call_command('populate_cold_cable_catalogue')
+        make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
+        size_cold_cables_for_project('p1')
+        generated_payload = build_project_sld_payload('p1')
+        original_feeder_lengths = [
+            (node.get('metadata') or {}).get('length_m')
+            for node in generated_payload['nodes']
+            if node['component_type'] == 'Cable4C'
+        ]
+        component_ids = self._mcb_component_ids()
+
+        response = self.client.post(
+            reverse('sld_topology_combine_apply_view'),
+            data=json.dumps({
+                'project_id': 'p1',
+                'component_ids': component_ids,
+                'remarks': 'Combine and recalculate cold cable.',
+            }),
+            content_type='application/json',
+        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload['ok'])
+        self.assertEqual(payload['preview']['trunk_length_basis'], 'max_selected_feeder_length')
+        self.assertEqual(payload['preview']['trunk_length_m'], max(original_feeder_lengths))
+        impact = payload['cold_cable_impact']
+        self.assertEqual(impact['status'], 'review_required')
+        self.assertIn(impact['sizing_engine_status'], {'selected', 'review_required'})
+        self.assertTrue(impact['calculated_feeder_size'].startswith('3C x '))
+        self.assertEqual(impact['feeder_length_basis'], 'max_selected_feeder_length')
+        self.assertEqual(impact['previous_feeder_length_max_m'], max(original_feeder_lengths))
+        self.assertEqual(impact['downstream_segment_count'], 2)
+        self.assertEqual(len(impact['affected_schedule_rows']), 1)
+        self.assertGreater(impact['combined_operating_current_a'], 0)
+        self.assertGreater(impact['new_feeder_conductor_mass_mt'], 0)
+        self.assertTrue(any('route and schedule review' in note for note in impact['review_notes']))
+
+        edit = SLDTopologyEdit.objects.get(project_id='p1', status='applied')
+        self.assertEqual(edit.edit_payload['cold_cable_impact_summary']['calculated_feeder_size'], impact['calculated_feeder_size'])
+        self.assertEqual(
+            edit.edit_payload['downstream_summaries']['cold_cable']['status'],
+            'review_required',
+        )
+
+        edited_payload = build_project_sld_payload('p1')
+        self.assertEqual(edited_payload['meta']['combined_feeder_cold_cable_status'], 'review_required')
+        manual_trunk = next(
+            node for node in edited_payload['nodes']
+            if node['component_type'] == 'Cable4C'
+            and (node.get('metadata') or {}).get('manual_topology_edit') == 'combine_feeders'
+        )
+        trunk_metadata = manual_trunk['metadata']
+        self.assertEqual(trunk_metadata['cold_cable_impact_role'], 'combined_feeder_trunk')
+        self.assertEqual(trunk_metadata['cold_cable_status'], 'review_required')
+        self.assertEqual(trunk_metadata['cold_cable_calculated_size'], impact['calculated_feeder_size'])
+        self.assertEqual(trunk_metadata['cold_cable']['sizing_engine_status'], impact['sizing_engine_status'])
 
     def test_single_outgoing_3ph_collapse_does_not_bypass_to_tracer(self):
         from eht.sld_topology_workflows import _collapse_single_outgoing_3ph_jbs

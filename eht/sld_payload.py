@@ -416,10 +416,12 @@ def apply_cold_cable_results_to_payload(project_id, payload):
     for node in payload.get('nodes', []):
         if node.get('component_type') not in {'Cable4C', 'Cable3C'}:
             continue
+        metadata = dict(node.get('metadata') or {})
+        if metadata.get('manual_topology_edit') and metadata.get('cold_cable'):
+            continue
         result = _cold_cable_result_for_node(node, cold_result_index)
         if result is None:
             continue
-        metadata = dict(node.get('metadata') or {})
         cold_metadata = _cold_cable_metadata_for_node(node, result)
         if cold_metadata is None:
             continue

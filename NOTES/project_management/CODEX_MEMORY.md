@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -44,38 +44,36 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. `TEST-P1`: fix the 8 failing tests — add
-   `self.client.force_login(self.user)` to `SldLayoutTests.setUp` (same
-   pattern as `ResultAndBoqViewTests`), update the `'4C x 2.5 mm2'` assertion
-   to `'3C x 2.5 mm2'` in `SldPayloadTests`, and fix or formally retire the
-   migration `0037` SQLite incompatibility. Target >= 305 green.
-2. Then `SLD-P2`: combined-circuit cold-cable resizing — combined FeederCable
-   must re-size from combined current; warn that prior separate feeder lengths
-   are invalid; default combined length to the max of the combined cables'
-   lengths and require user review.
-3. Then `SLD-P1`: visual review badges.
+1. `SCH-P1`: procurement-grade cable schedule fields/export.
+2. Then `QA-P1`: worked examples and verification alignment.
+3. Then `RELEASE-P1`: production readiness sweep.
 4. Keep the calculation manual aligned with any behavior changes.
 
 ## Current Repo State
 
 - Working directory: `/home/kr/mydev/eht_office`.
-- Current date at latest update: 2026-06-11.
-- Worktree is clean. Phase A work through `CC-P5` plus auth middleware and SLD
-  admin/retention features is committed; HEAD is `46d47d5`.
-- Latest full test status (verified 2026-06-11 against PostgreSQL
-  `eht_local_test` via the programmatic runner): 305 tests, 297 pass, 8 fail.
-  All 8 failures are test-maintenance items, NOT application defects:
-  - 7 x `SldLayoutTests`: views now return HTTP 302 because the tests predate
-    the login-required middleware; `setUp` needs
-    `self.client.force_login(self.user)` (same fix already applied to
-    `ResultAndBoqViewTests`).
-  - 1 x `SldPayloadTests.test_build_project_sld_payload_adds_cold_cable_metadata_to_cable_nodes`:
-    asserts `'4C x 2.5 mm2'` but `CC-P5` renamed the label to `'3C x 2.5 mm2'`.
-- SQLite test mode is BROKEN: migration `0037_remove_legacy_3c_fault_fields`
-  uses PostgreSQL-specific `DROP COLUMN IF EXISTS` inside
-  `SeparateDatabaseAndState`, so `USE_POSTGRES=false` fails at migration setup.
-  All tests must run against PostgreSQL until `0037` is fixed or SQLite test
-  mode is formally retired (`TEST-P1` decision).
+- Current date at latest update: 2026-06-12.
+- Phase A work through `CC-P5` plus auth middleware and SLD admin/retention
+  features is committed; HEAD is `dc8c741`. Current dirty work includes
+  `TEST-P1`, `SLD-P2`, `SLD-P1`, project-management documentation updates,
+  and Claude's vendor-validation notes.
+- Latest full SQLite test status (verified 2026-06-12 with
+  `USE_POSTGRES=false`): 307 tests passed. SQLite quick testing is restored.
+- Latest full PostgreSQL test status (verified 2026-06-12 against
+  `eht_local_test` via the programmatic runner): 306 tests passed,
+  `Failures: 0`.
+- `TEST-P1` is complete: `SldLayoutTests` now authenticate under the
+  login-required middleware, the SLD cold-cable label assertion matches the
+  CC-P5 single-phase terminology, and migration `0037` is SQLite-compatible.
+- `SLD-P2` is complete: combine-feeder apply now recalculates the manual
+  combined FeederCable trunk from operating-current impact evidence, defaults
+  missing combined length to the maximum selected feeder length, forces route
+  review, persists cold-cable impact evidence in `SLDTopologyEdit.edit_payload`,
+  and preserves the calculated trunk metadata in the active SLD payload.
+- `SLD-P1` is complete: SLD workspace shows compact review badges for missing
+  cable length, cold-cable review/unsizeable states, manual overrides, and
+  manual topology review/stale states. Full SQLite suite passed 307 tests on
+  2026-06-12.
 - Local PostgreSQL is healthy; first-attempt failures from Codex were
   command-sandbox local-network restrictions. Use local Postgres access for
   PostgreSQL-backed Django commands.
@@ -85,11 +83,16 @@ Immediate next pass:
   `eht/tmp/elecEHT_ASMEB36.csv`; thermal conductivity 5 rows restored from
   `eht/tmp/elecEHT_ThermalConductivity.csv`; cold cable catalogue 14 rows
   intact (migration-seeded, unaffected).
-- Latest SLD topology regression status: `SldTopologyWorkflowTests` 26 tests OK
-  against PostgreSQL test DB `eht_local_test` on 2026-06-07 after hardening
-  browser-side SLD render-state lifecycle.
-- Latest quick check: `venv/bin/python manage.py check` passed on 2026-06-07.
-- Latest quick check: `venv/bin/python manage.py check` passed on 2026-06-08.
+- Claude's KR-instructed MI vendor-validation pass on 2026-06-12 found the
+  originally seeded MI catalogue data was not R7-valid. The MI catalogue was
+  backed up and reseeded from official vendor documents under
+  `NOTES/vendor_validation/`; all MI families are currently
+  `is_validated=False` pending KR row-by-row review via Django admin.
+- Latest SLD topology regression status: `SldTopologyWorkflowTests` 32 tests OK
+  in SQLite mode on 2026-06-12 after `SLD-P2`.
+- Latest broader SLD/payload/result/topology/JS regression status:
+  `SldPayloadTests`, `ResultAndBoqViewTests`, `SldTopologyWorkflowTests`, and
+  `SldWorkspaceJavaScriptTests` 120 tests OK in SQLite mode on 2026-06-12.
 - Latest PostgreSQL-backed targeted test status: 4 `CC-P3` result/cold-cable
   tests OK on 2026-06-07 using existing database `eht_local_test`.
 - Latest cold-cable catalogue readiness inspection: Method E has validated
@@ -277,15 +280,10 @@ Immediate next pass:
 - Automatic phase rebalancing/user-editable phase slots are not built.
 - Upstream main-breaker coordination/spare-capacity checking is not built. The
   CC-P4 branch-based panel/load summary is available for review evidence.
-- Procurement-grade cable schedule fields are not built.
-- Cold-cable engine still needs the `CC-P5` rebuild from 3PH/4C terminology to
-  single-phase FeederCable/BranchCable terminology.
-- Existing `ColdCableResult` rows must be deleted in the rebuild migration; do
-  not preserve stale derived results from the superseded model.
-- BOQ/cable schedule must deduplicate shared FeederCable quantities even though
-  each branch result stores complete path evidence.
-- SLD visual issue badges are not built.
-- Topology edit impact summary is not built.
+- MI R7 row-by-row validation is pending after Claude's 2026-06-12 official
+  document review/reseed. MI auto-fallback remains gated by
+  `MICableFamily.is_validated=False` until KR approves rows via Django admin.
+- Procurement-grade cable schedule fields/export are not built.
 - Browser-level SLD smoke coverage exists in `eht.browser_tests` and is green
   in the local dev setup after installing Playwright's Linux browser
   dependencies in the venv workflow.
@@ -308,19 +306,20 @@ Immediate next pass:
 
 ## Testing Commands
 
-Local PostgreSQL is the normal development database. In Codex-managed commands,
+SQLite is the quick/default test path. Local PostgreSQL remains the development
+database and PostgreSQL-backed safety check. In Codex-managed commands,
 PostgreSQL-backed tests need local Postgres access enabled; otherwise the
-command sandbox can produce a false connection failure. SQLite test mode
-(`USE_POSTGRES=false`) is currently broken by migration `0037` and must not be
-used until `TEST-P1` fixes or retires it.
+command sandbox can produce a false connection failure.
 
 ```bash
 venv/bin/python manage.py check
+USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run
+USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput
 node --check static/js/sld_workspace.js
 git diff --check
 venv/bin/python manage.py test eht.browser_tests -v 2 --noinput
 
-# Full suite — PostgreSQL-backed programmatic runner (required; see R-012)
+# Full suite — PostgreSQL-backed programmatic runner (backup/safety path)
 venv/bin/python manage.py shell -c "
 from django.test.utils import get_runner
 from django.conf import settings
@@ -330,11 +329,9 @@ print('Failures:', runner.run_tests(['eht']))
 "
 ```
 
-Current caveat: raw DB-using `venv/bin/python manage.py test ...` can still
-fail during existing PostgreSQL test DB setup with `connection is bad`; the
-same test passes via `manage.py shell -c "from django.core.management import
-call_command; call_command('test', ...)"`. Keep this as `R-012` until the
-plain CLI launcher is fixed.
+Current caveat: raw DB-using `venv/bin/python manage.py test ...` can fail in
+the Codex sandbox unless local PostgreSQL access is explicitly enabled. SQLite
+tests do not need that access.
 
 ## New Chat Guidance
 
@@ -346,6 +343,6 @@ Recommend a new chat when:
 - Context replay becomes more expensive than reading this memory file.
 - The next task is large enough to deserve a clean brief.
 
-Current recommendation: `CC-P0` through `CC-P5` and `SLD-R1` are complete and
-committed (HEAD `46d47d5`); database restoration is complete. Next work:
-`TEST-P1` (fix the 8 failing tests), then `SLD-P2`.
+Current recommendation: `CC-P0` through `CC-P5`, `SLD-R1`, `DB-R1`,
+`TEST-P1`, `SLD-P2`, and `SLD-P1` are complete. Next work: `SCH-P1`
+procurement-grade cable schedule fields/export.

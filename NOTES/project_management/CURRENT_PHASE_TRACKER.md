@@ -1,6 +1,6 @@
 # Current Phase Tracker
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## Active Phase
 
@@ -8,20 +8,19 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 
 ## Current State
 
-- Worktree is clean; all Phase A work through `CC-P5` is committed (HEAD
-  `46d47d5`).
-- Latest full test status (verified 2026-06-11, PostgreSQL `eht_local_test`,
-  programmatic runner): 305 tests, 297 pass, 8 fail. All 8 failures are
-  test-maintenance items, not application defects — see `TEST-P1`.
-- SQLite test mode is broken by migration `0037` (PostgreSQL-specific
-  `DROP COLUMN IF EXISTS`); all tests must run against PostgreSQL until
-  `TEST-P1` fixes or retires SQLite mode.
+- Phase A work through `CC-P5` is committed (HEAD `dc8c741`). Current dirty
+  work includes `TEST-P1`, `SLD-P2`, `SLD-P1`, project-management
+  documentation updates, and Claude's vendor-validation notes.
+- Latest full SQLite test status (verified 2026-06-12 with `USE_POSTGRES=false`):
+  307 tests passed. SQLite quick testing is restored.
+- Latest full PostgreSQL test status (verified 2026-06-12 against
+  `eht_local_test` via the programmatic runner): 306 tests passed.
 - `eht_local` catalogue restoration after the CC-P5 accidental flush completed
   2026-06-11 — see `DB-R1`.
 - Database Safety Protocol is now mandatory for all database-modifying
   commands — see `CODEX_MEMORY.md`.
 - Latest quick health check: `venv/bin/python manage.py check` passed on
-  2026-06-11.
+  2026-06-12.
 
 ## Active Work Queue
 
@@ -332,56 +331,138 @@ Checkpoint result, 2026-06-11: restoration complete; KR still reviewing
 whether the 178 unverified CSV rows (Constant Wattage Thermon/nVent = 91,
 Krus-Zapad MI = 87) should be added to the catalogue.
 
+### VDV-P1 - Vendor Data Validation (KR-instructed, Claude-executed)
+
+Status: MI complete; SR validation complete (report only — corrections pending KR)
+
+- [x] Download official vendor documents (Thermon TEP0020-0714, nVent
+      DOC2210-HAX-EN-1704 + H56870-1810, Chromalox mod-mi G-25) and archive
+      in `NOTES/vendor_validation/source_docs/`.
+- [x] Validate all 72 seeded MI heater rows: only 5 fully correct; 3 real
+      codes with wrong resistance; 64 nonexistent codes. Evidence:
+      `NOTES/vendor_validation/MI_VENDOR_DATA_VALIDATION_2026-06-12.md`.
+- [x] KR approvals 2026-06-12: revoke validation; reseed from official
+      tables; nVent governed by EMEA DOC2210 (brazed-unit limits);
+      no derived cold-lead data.
+- [x] Backup + reseed executed against `eht_local`: 72 official heaters,
+      177 cold-lead options, corrected family limits, all families
+      `is_validated=False`.
+- [x] 15 `SelectedMIHeater` snapshots orphaned (computed from fabricated
+      data) — recalculation required.
+- [ ] KR row-by-row review of reseeded data, then `is_validated=True` via
+      Django admin (R7 gate / R-011).
+- [x] SR catalogue validation against vendor data (report only), 2026-06-12:
+      25 of 58 SR rows verified good (Thermon HTSX/VSX, Chromalox SRM/E,
+      SST BTC/BTX); 8 nVent rows fabricated (impossible power classes,
+      exposure 204 vs real 85 C); 9 rows attributed to families that do not
+      exist at Eltherm/Heat Trace/Pentair; 16 Krus-Zapad rows unverifiable
+      online (KR to supply source). Evidence:
+      `NOTES/vendor_validation/SR_VENDOR_DATA_VALIDATION_2026-06-12.md`.
+- [ ] KR decisions on SR corrective plan (nVent replacement, unsourced-vendor
+      rows, Krus-Zapad source, SR `is_validated` gate recommendation).
+
 ### TEST-P1 - Test Baseline Repair
 
-Status: pending (next pass)
+Status: complete
 
-- [ ] Add `self.client.force_login(self.user)` to `SldLayoutTests.setUp`
+- [x] Add `self.client.force_login(self.user)` to `SldLayoutTests.setUp`
       (same pattern as `ResultAndBoqViewTests`) — fixes 7 failures.
-- [ ] Update `'4C x 2.5 mm2'` to `'3C x 2.5 mm2'` in
+- [x] Update `'4C x 2.5 mm2'` to `'3C x 2.5 mm2'` in
       `SldPayloadTests.test_build_project_sld_payload_adds_cold_cable_metadata_to_cable_nodes`
       — fixes 1 failure.
-- [ ] Fix migration `0037` SQLite incompatibility (PostgreSQL-specific
-      `DROP COLUMN IF EXISTS` in `SeparateDatabaseAndState`) OR formally
-      retire SQLite test mode (KR decision).
-- [ ] Confirm full test baseline >= 305 green via the PostgreSQL programmatic
+- [x] Fix migration `0037` SQLite incompatibility by replacing
+      PostgreSQL-specific `DROP COLUMN IF EXISTS` SQL with a schema-editor
+      column drop guarded by introspection.
+- [x] Confirm full test baseline >= 305 green via the PostgreSQL programmatic
       runner.
+
+Checkpoint result, 2026-06-12:
+
+- `USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
+  305 tests passed. Migration `0037` applies cleanly on SQLite.
+- PostgreSQL programmatic runner against `eht_local_test`: 305 tests passed,
+  `Failures: 0`.
+- Targeted `SldLayoutTests` and `SldPayloadTests`: 21 tests passed.
+- `venv/bin/python manage.py check`: passed.
+- `USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run`:
+  passed, no changes detected.
+- `node --check static/js/sld_workspace.js`: passed.
+- `git diff --check`: passed.
+
+### SLD-P2 - Combined-Circuit Cold-Cable Resizing and Impact Summary
+
+Status: complete
+
+- [x] When circuits are combined, trigger cold-cable re-sizing of the new
+      combined FeederCable from combined current, using the CC-P5 single-phase
+      FeederCable/BranchCable engine.
+- [x] Warn that prior separate feeder cable lengths are invalid; default the
+      combined length to the max of the combined cables' lengths; require
+      user review. (Foundation metadata `combined_current` and
+      `recommended_breaker_rating` is already stored in the combine preview.)
+- [x] Show affected MCBs and breaker rating changes.
+- [x] Show cable length/size/mass deltas where known.
+- [x] Show affected BOQ/schedule rows.
+- [x] Persist impact evidence.
+
+Checkpoint result, 2026-06-12:
+
+- Combined feeder apply now builds a graph-level cold-cable impact summary for
+  the manual FeederCable trunk. The impact stores calculated size, status,
+  VD/fault evidence, conductor mass, length deltas, affected lines, and affected
+  cable schedule rows in `SLDTopologyEdit.edit_payload`.
+- If no combined trunk length is entered, the preview defaults to the maximum
+  selected feeder cable length and marks the length basis for review.
+- Applied combined-trunk metadata is kept on the manual `Cable4C` node and is
+  protected from stale persisted branch cold-cable results.
+- Targeted regression:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht.tests.SldTopologyWorkflowTests -v 2 --noinput`:
+  32 tests passed.
+- Broader SLD/payload/result/JS regression:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht.tests.SldPayloadTests eht.tests.ResultAndBoqViewTests eht.tests.SldWorkspaceJavaScriptTests -v 2 --noinput`:
+  87 tests passed.
+- Full SQLite suite:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
+  306 tests passed.
+- Full PostgreSQL-backed suite against `eht_local_test` through the
+  programmatic runner: 306 tests passed, `Failures: 0`.
+
+### SLD-P1 - Visual Review Badges
+
+Status: complete
+
+- [x] Badge missing cable length.
+- [x] Badge cold cable review-required or unsizeable.
+- [x] Badge manual override.
+- [x] Badge stale/review-required topology.
+- [x] Add tests for metadata and basic rendering strings.
+
+Checkpoint result, 2026-06-12:
+
+- SLD workspace now derives compact visual review badges from existing payload
+  metadata for missing cable length, cold-cable review/unsizeable states,
+  manual cable/tracer overrides, and manual topology review/stale states.
+- Badges move with their owning component and are refreshed after layout
+  changes.
+- Focused JS/source coverage:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht.tests.SldWorkspaceJavaScriptTests -v 2 --noinput`:
+  5 tests passed.
+- Broader SLD/payload/result/topology regression:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht.tests.SldPayloadTests eht.tests.ResultAndBoqViewTests eht.tests.SldTopologyWorkflowTests eht.tests.SldWorkspaceJavaScriptTests -v 2 --noinput`:
+  120 tests passed.
+- Full SQLite suite:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
+  307 tests passed.
 
 ### SCH-P1 - Procurement-Grade Cable Schedule
 
-Status: pending
+Status: pending (next pass)
 
 - [ ] Add route/reference fields.
 - [ ] Add drum tag / cable lot fields.
 - [ ] Add installation area/basis fields.
 - [ ] Add revision/review status.
 - [ ] Improve Excel export for procurement review.
-
-### SLD-P1 - Visual Review Badges
-
-Status: pending
-
-- [ ] Badge missing cable length.
-- [ ] Badge cold cable review-required or unsizeable.
-- [ ] Badge manual override.
-- [ ] Badge stale/review-required topology.
-- [ ] Add tests for metadata and basic rendering strings.
-
-### SLD-P2 - Combined-Circuit Cold-Cable Resizing and Impact Summary
-
-Status: pending (after TEST-P1)
-
-- [ ] When circuits are combined, trigger cold-cable re-sizing of the new
-      combined FeederCable from combined current, using the CC-P5 single-phase
-      FeederCable/BranchCable engine.
-- [ ] Warn that prior separate feeder cable lengths are invalid; default the
-      combined length to the max of the combined cables' lengths; require
-      user review. (Foundation metadata `combined_current` and
-      `recommended_breaker_rating` is already stored in the combine preview.)
-- [ ] Show affected MCBs and breaker rating changes.
-- [ ] Show cable length/size/mass deltas where known.
-- [ ] Show affected BOQ/schedule rows.
-- [ ] Persist or export impact evidence.
 
 ### QA-P1 - Worked Examples and Verification Alignment
 

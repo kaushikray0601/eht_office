@@ -1,6 +1,6 @@
 # eTrace Master Roadmap
 
-Last updated: 2026-06-07
+Last updated: 2026-06-12
 
 ## Product Vision
 
@@ -102,9 +102,13 @@ Objective: build features that exceed manufacturer tools.
 4. `CC-P2`: Per-segment 3C cold-cable reporting/export. Complete.
 5. `SLD-R1`: SLD topology control regression fix. Complete.
 6. `CC-P3`: 3PH JB phase-balancing visibility. Complete.
-7. `CC-P4`: Panel/load summary. Next.
-8. `SCH-P1`: Procurement-grade cable schedule fields/export.
-9. `SLD-P1`: Visual issue badges and review indicators.
-10. `SLD-P2`: Topology edit impact summary.
-11. `QA-P1`: Worked examples and verification report alignment.
-12. `RELEASE-P1`: Production readiness sweep.
+7. `CC-P4`: Panel/load summary. Complete.
+8. `CC-P5`: Single-phase FeederCable / BranchCable cold-cable rebuild. Complete.
+9. `DB-R1`: Development database catalogue/reference restoration and safety protocol. Complete.
+10. `VDV-P1`: Vendor data validation. MI review/reseed complete; R7 row approval pending; SR review in progress.
+11. `TEST-P1`: Test baseline repair. Complete; SQLite and PostgreSQL full suites pass 306 tests.
+12. `SLD-P2`: Combined-circuit cold-cable resizing and impact summary. Complete.
+13. `SLD-P1`: Visual issue badges and review indicators. Complete; SQLite full suite passes 307 tests.
+14. `SCH-P1`: Procurement-grade cable schedule fields/export. Next.
+15. `QA-P1`: Worked examples and verification report alignment.
+16. `RELEASE-P1`: Production readiness sweep.

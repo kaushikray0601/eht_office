@@ -1,6 +1,6 @@
 # Release Checklist
 
-Last updated: 2026-06-08
+Last updated: 2026-06-12
 
 Purpose: checklist for declaring the current SR/MI + cold cable + SLD path
 production-ready for serious engineering review.
@@ -11,7 +11,8 @@ production-ready for serious engineering review.
 - [x] `env USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run` passes.
 - [x] `node --check static/js/sld_workspace.js` passes.
 - [x] `git diff --check` passes.
-- [x] Full `eht` test suite passes.
+- [x] Full SQLite `eht` test suite passes.
+- [x] Full PostgreSQL-backed `eht` test suite passes against `eht_local_test`.
 - [x] Current migrations are applied to the development database.
 - [x] No accidental unrelated file changes remain in the release diff.
 
@@ -65,7 +66,9 @@ production-ready for serious engineering review.
 - [x] Topology operation records and saved graph invariants are validated before active edits are persisted.
 - [ ] PDF export reflects active topology.
 - [ ] Cold-cable labels fit and do not overlap key symbols.
-- [ ] Review-required and missing-data states are visible.
+- [x] Review-required and missing-data states are visible through SLD visual
+      review badges for missing length, cold-cable review/unsizeable, manual
+      override, and topology-review states.
 - [ ] Large-project browsing/search remains usable.
 
 ## Documentation / Verification

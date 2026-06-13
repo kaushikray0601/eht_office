@@ -1,6 +1,6 @@
 # Open Questions
 
-Last updated: 2026-06-11
+Last updated: 2026-06-12
 
 ## Immediate Questions
 
@@ -16,9 +16,9 @@ Last updated: 2026-06-11
 
 1b. Should SQLite test mode be fixed (migration `0037` compatibility) or
     formally retired?
-   - Owner: KR + Codex in `TEST-P1`. Retiring simplifies to one supported
-     test path (PostgreSQL programmatic runner) but loses the isolated
-     no-Postgres check; fixing keeps both at small migration-maintenance cost.
+   - Resolved in `TEST-P1`: SQLite test mode is fixed and remains the
+     quick/default test path. PostgreSQL programmatic full-suite testing remains
+     the backup/safety path against `eht_local_test`.
 
 2. For cold-cable installation methods without validated catalogue rows, should
    the UI disable the option or allow it and report no catalogue rows?
@@ -78,11 +78,9 @@ Last updated: 2026-06-11
      allowed.
 
 1. What visual issue badges are most important for first SLD production polish?
-   - Missing length.
-   - Review-required cable.
-   - Manual override.
-   - Stale topology.
-   - Unsizeable result.
+   - Resolved 2026-06-12 in `SLD-P1`: missing length, cold-cable
+     review/unsizeable, manual override, and topology-review/stale badges are
+     shown from existing SLD payload metadata.
 
 2. Which cable schedule fields are needed first for procurement?
    - Route reference.
@@ -92,7 +90,8 @@ Last updated: 2026-06-11
    - Checked-by/date.
 
 3. Should topology edit impact summary be persisted or generated on demand?
-   - Recommendation: start generated on demand; persist later if audit requires.
+   - Resolved 2026-06-12 in `SLD-P2`: combined-feeder apply persists
+     cold-cable impact evidence in `SLDTopologyEdit.edit_payload`.
 
 4. Combined-circuit cable re-sizing workflow:
    - Next SLD feature: combined circuits must recalculate the combined feeder

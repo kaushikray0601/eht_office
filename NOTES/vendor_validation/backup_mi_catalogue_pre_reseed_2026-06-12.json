@@ -1,0 +1,3860 @@
+[
+{
+ "model": "eht.micablefamily",
+ "pk": 1,
+ "fields": {
+  "vendor": "THR",
+  "family_name": "MIQ",
+  "alloy_type": "Alloy 825",
+  "max_voltage": 600.0,
+  "max_sheath_temp_c": 600.0,
+  "max_maintain_temp_c": 500.0,
+  "max_exposure_temp_c": 600.0,
+  "max_watt_density_w_m": 250.0,
+  "min_circuit_length_m": 1.0,
+  "max_circuit_length_m": 200.0,
+  "temp_class_rating": "",
+  "gas_group": "IIC",
+  "zone_approval": "Zone 1, Zone 2",
+  "source_document": "TEP0020-MIQ-Spec.pdf",
+  "is_validated": true
+ }
+},
+{
+ "model": "eht.micablefamily",
+ "pk": 2,
+ "fields": {
+  "vendor": "nVN",
+  "family_name": "XMI-A62",
+  "alloy_type": "Alloy 825",
+  "max_voltage": 600.0,
+  "max_sheath_temp_c": 500.0,
+  "max_maintain_temp_c": 538.0,
+  "max_exposure_temp_c": 600.0,
+  "max_watt_density_w_m": 250.0,
+  "min_circuit_length_m": 1.0,
+  "max_circuit_length_m": 312.0,
+  "temp_class_rating": "",
+  "gas_group": "IIC",
+  "zone_approval": "Zone 1, Zone 2",
+  "source_document": "Raychem-DS-H56870-XMIA-EN-1810",
+  "is_validated": true
+ }
+},
+{
+ "model": "eht.micablefamily",
+ "pk": 3,
+ "fields": {
+  "vendor": "CHR",
+  "family_name": "MI-825B",
+  "alloy_type": "Alloy 825",
+  "max_voltage": 600.0,
+  "max_sheath_temp_c": 400.0,
+  "max_maintain_temp_c": 400.0,
+  "max_exposure_temp_c": 450.0,
+  "max_watt_density_w_m": 200.0,
+  "min_circuit_length_m": 1.0,
+  "max_circuit_length_m": 200.0,
+  "temp_class_rating": "",
+  "gas_group": "IIC",
+  "zone_approval": "Zone 1, Zone 2",
+  "source_document": "Chromalox-mod-mi.pdf",
+  "is_validated": true
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 1,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-11EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 36.1,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 3.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 2,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-11E2H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 18.0,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 4.5,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 3,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-11E4H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 9.02,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 6.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 4,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-11E6H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 4.51,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 8.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 5,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-21EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 2.29,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 11.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 6,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-21E2H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 1.64,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 13.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 7,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-21E4H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.984,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 16.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 8,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-21E6H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.655,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 20.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 9,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-31EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.328,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 28.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 10,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-31E2H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.246,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 32.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 11,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-31E4H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.164,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 39.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 12,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-31E6H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.123,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 45.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 13,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-41EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.082,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 55.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 14,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-41E2H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0656,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 61.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 15,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-41E4H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0492,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 71.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 16,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-41E6H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.041,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 77.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 17,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-51EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0328,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 86.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 18,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-61EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0164,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 122.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 19,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-71EOH-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.00656,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 192.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 20,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-81E2H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.03281,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 86.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 21,
+ "fields": {
+  "family": 1,
+  "part_number": "MIQ-81E4H-2S",
+  "conductors": 2,
+  "resistance_ohms_m": 0.02684,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 96.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 22,
+ "fields": {
+  "family": 2,
+  "part_number": "HAF2N36K",
+  "conductors": 2,
+  "resistance_ohms_m": 36.0,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 3.4,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 23,
+ "fields": {
+  "family": 2,
+  "part_number": "HAF2N18K",
+  "conductors": 2,
+  "resistance_ohms_m": 18.0,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 4.8,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 24,
+ "fields": {
+  "family": 2,
+  "part_number": "HAF2N9.0K",
+  "conductors": 2,
+  "resistance_ohms_m": 9.0,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 6.7,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 25,
+ "fields": {
+  "family": 2,
+  "part_number": "HAF2N4.5K",
+  "conductors": 2,
+  "resistance_ohms_m": 4.5,
+  "tcr_per_degree_c": 8.8e-05,
+  "max_current_a": 9.5,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 26,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N2.3K",
+  "conductors": 2,
+  "resistance_ohms_m": 2.3,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 13.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 27,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N1.8K",
+  "conductors": 2,
+  "resistance_ohms_m": 1.8,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 15.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 28,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N1.1K",
+  "conductors": 2,
+  "resistance_ohms_m": 1.1,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 19.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 29,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.73K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.73,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 24.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 30,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.36K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.36,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 34.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 31,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.27K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.27,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 39.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 32,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.18K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.18,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 48.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 33,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.14K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.14,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 55.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 34,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.090K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.09,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 68.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 35,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.072K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.072,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 77.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 36,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.054K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.054,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 88.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 37,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.045K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.045,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 97.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 38,
+ "fields": {
+  "family": 2,
+  "part_number": "HAA2N0.036K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.036,
+  "tcr_per_degree_c": 8.5e-05,
+  "max_current_a": 109.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 39,
+ "fields": {
+  "family": 2,
+  "part_number": "HAQ2N0.018K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.018,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 116.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 40,
+ "fields": {
+  "family": 2,
+  "part_number": "HAQ2N0.014K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.014,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 131.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 41,
+ "fields": {
+  "family": 2,
+  "part_number": "HAQ2N0.0090K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.009,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 164.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 42,
+ "fields": {
+  "family": 2,
+  "part_number": "HAQ2N0.0072K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0072,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 184.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 43,
+ "fields": {
+  "family": 2,
+  "part_number": "HAP2N0.0054K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0054,
+  "tcr_per_degree_c": 0.0013,
+  "max_current_a": 197.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy P"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 44,
+ "fields": {
+  "family": 2,
+  "part_number": "HAP2N0.0042K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0042,
+  "tcr_per_degree_c": 0.0013,
+  "max_current_a": 223.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy P"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 45,
+ "fields": {
+  "family": 2,
+  "part_number": "HAC2N0.036K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.036,
+  "tcr_per_degree_c": 0.0039,
+  "max_current_a": 90.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 46,
+ "fields": {
+  "family": 2,
+  "part_number": "HAC2N0.027K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.027,
+  "tcr_per_degree_c": 0.0039,
+  "max_current_a": 104.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 47,
+ "fields": {
+  "family": 2,
+  "part_number": "HAC2N0.018K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.018,
+  "tcr_per_degree_c": 0.0039,
+  "max_current_a": 127.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 48,
+ "fields": {
+  "family": 2,
+  "part_number": "HAC2N0.014K",
+  "conductors": 2,
+  "resistance_ohms_m": 0.014,
+  "tcr_per_degree_c": 0.0039,
+  "max_current_a": 146.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 49,
+ "fields": {
+  "family": 2,
+  "part_number": "HAC2N4.3",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0042,
+  "tcr_per_degree_c": 0.0039,
+  "max_current_a": 218.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 50,
+ "fields": {
+  "family": 3,
+  "part_number": "1110B",
+  "conductors": 2,
+  "resistance_ohms_m": 36.1,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 3.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 51,
+ "fields": {
+  "family": 3,
+  "part_number": "1010B",
+  "conductors": 2,
+  "resistance_ohms_m": 18.0,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 4.5,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 52,
+ "fields": {
+  "family": 3,
+  "part_number": "910B",
+  "conductors": 2,
+  "resistance_ohms_m": 9.02,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 6.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 53,
+ "fields": {
+  "family": 3,
+  "part_number": "810B",
+  "conductors": 2,
+  "resistance_ohms_m": 4.51,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 8.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 54,
+ "fields": {
+  "family": 3,
+  "part_number": "710B",
+  "conductors": 2,
+  "resistance_ohms_m": 2.29,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 11.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 55,
+ "fields": {
+  "family": 3,
+  "part_number": "610B",
+  "conductors": 2,
+  "resistance_ohms_m": 1.64,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 13.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 56,
+ "fields": {
+  "family": 3,
+  "part_number": "520B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.984,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 16.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 57,
+ "fields": {
+  "family": 3,
+  "part_number": "510B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.82,
+  "tcr_per_degree_c": 0.0001,
+  "max_current_a": 18.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel-Chromium"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 58,
+ "fields": {
+  "family": 3,
+  "part_number": "410B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.328,
+  "tcr_per_degree_c": 0.00018,
+  "max_current_a": 28.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nichrome T"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 59,
+ "fields": {
+  "family": 3,
+  "part_number": "320B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.164,
+  "tcr_per_degree_c": 0.00018,
+  "max_current_a": 38.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nichrome T"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 60,
+ "fields": {
+  "family": 3,
+  "part_number": "310B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.123,
+  "tcr_per_degree_c": 0.00018,
+  "max_current_a": 44.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nichrome T"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 61,
+ "fields": {
+  "family": 3,
+  "part_number": "210B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0656,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 61.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 62,
+ "fields": {
+  "family": 3,
+  "part_number": "205B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0328,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 86.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 63,
+ "fields": {
+  "family": 3,
+  "part_number": "200B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0164,
+  "tcr_per_degree_c": 0.0005,
+  "max_current_a": 122.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Nickel Alloy Q"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 64,
+ "fields": {
+  "family": 3,
+  "part_number": "115B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0082,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 175.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 65,
+ "fields": {
+  "family": 3,
+  "part_number": "110B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0041,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 247.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 66,
+ "fields": {
+  "family": 3,
+  "part_number": "108B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.00273,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 303.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 67,
+ "fields": {
+  "family": 3,
+  "part_number": "106B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.00164,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 391.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 68,
+ "fields": {
+  "family": 3,
+  "part_number": "105B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.00136,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 430.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 69,
+ "fields": {
+  "family": 3,
+  "part_number": "104B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.00082,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 553.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 70,
+ "fields": {
+  "family": 3,
+  "part_number": "103B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.000656,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 619.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 71,
+ "fields": {
+  "family": 3,
+  "part_number": "508B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0268,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 96.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micableheater",
+ "pk": 72,
+ "fields": {
+  "family": 3,
+  "part_number": "506B",
+  "conductors": 2,
+  "resistance_ohms_m": 0.0164,
+  "tcr_per_degree_c": 0.00393,
+  "max_current_a": 122.0,
+  "cold_lead_resistance_ohms_m": 0.0,
+  "cold_lead_max_ampacity_a": 0.0,
+  "sheath_material": "Alloy 825",
+  "conductor_material": "Alloy 825 Conductor"
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 1,
+ "fields": {
+  "heater": 1,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 2,
+ "fields": {
+  "heater": 1,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 3,
+ "fields": {
+  "heater": 2,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 4,
+ "fields": {
+  "heater": 2,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 5,
+ "fields": {
+  "heater": 3,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 6,
+ "fields": {
+  "heater": 3,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 7,
+ "fields": {
+  "heater": 4,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 8,
+ "fields": {
+  "heater": 4,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 9,
+ "fields": {
+  "heater": 5,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 10,
+ "fields": {
+  "heater": 5,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 11,
+ "fields": {
+  "heater": 6,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 12,
+ "fields": {
+  "heater": 6,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 13,
+ "fields": {
+  "heater": 7,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 14,
+ "fields": {
+  "heater": 7,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 15,
+ "fields": {
+  "heater": 8,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 16,
+ "fields": {
+  "heater": 8,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 17,
+ "fields": {
+  "heater": 9,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 18,
+ "fields": {
+  "heater": 9,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 19,
+ "fields": {
+  "heater": 10,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 20,
+ "fields": {
+  "heater": 10,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 21,
+ "fields": {
+  "heater": 11,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 22,
+ "fields": {
+  "heater": 11,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 23,
+ "fields": {
+  "heater": 12,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 24,
+ "fields": {
+  "heater": 12,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 25,
+ "fields": {
+  "heater": 13,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 26,
+ "fields": {
+  "heater": 13,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 27,
+ "fields": {
+  "heater": 14,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 28,
+ "fields": {
+  "heater": 14,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 29,
+ "fields": {
+  "heater": 15,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 30,
+ "fields": {
+  "heater": 15,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 31,
+ "fields": {
+  "heater": 16,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 32,
+ "fields": {
+  "heater": 16,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 33,
+ "fields": {
+  "heater": 17,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 34,
+ "fields": {
+  "heater": 17,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 35,
+ "fields": {
+  "heater": 18,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 36,
+ "fields": {
+  "heater": 18,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 37,
+ "fields": {
+  "heater": 19,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 38,
+ "fields": {
+  "heater": 19,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 39,
+ "fields": {
+  "heater": 20,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 40,
+ "fields": {
+  "heater": 20,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 41,
+ "fields": {
+  "heater": 21,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 42,
+ "fields": {
+  "heater": 21,
+  "option_code": "CL-7FT",
+  "length_m": 2.134
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 43,
+ "fields": {
+  "heater": 22,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 44,
+ "fields": {
+  "heater": 22,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 45,
+ "fields": {
+  "heater": 22,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 46,
+ "fields": {
+  "heater": 22,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 47,
+ "fields": {
+  "heater": 23,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 48,
+ "fields": {
+  "heater": 23,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 49,
+ "fields": {
+  "heater": 23,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 50,
+ "fields": {
+  "heater": 23,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 51,
+ "fields": {
+  "heater": 24,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 52,
+ "fields": {
+  "heater": 24,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 53,
+ "fields": {
+  "heater": 24,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 54,
+ "fields": {
+  "heater": 24,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 55,
+ "fields": {
+  "heater": 25,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 56,
+ "fields": {
+  "heater": 25,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 57,
+ "fields": {
+  "heater": 25,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 58,
+ "fields": {
+  "heater": 25,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 59,
+ "fields": {
+  "heater": 26,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 60,
+ "fields": {
+  "heater": 26,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 61,
+ "fields": {
+  "heater": 26,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 62,
+ "fields": {
+  "heater": 26,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 63,
+ "fields": {
+  "heater": 27,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 64,
+ "fields": {
+  "heater": 27,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 65,
+ "fields": {
+  "heater": 27,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 66,
+ "fields": {
+  "heater": 27,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 67,
+ "fields": {
+  "heater": 28,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 68,
+ "fields": {
+  "heater": 28,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 69,
+ "fields": {
+  "heater": 28,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 70,
+ "fields": {
+  "heater": 28,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 71,
+ "fields": {
+  "heater": 29,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 72,
+ "fields": {
+  "heater": 29,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 73,
+ "fields": {
+  "heater": 29,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 74,
+ "fields": {
+  "heater": 29,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 75,
+ "fields": {
+  "heater": 30,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 76,
+ "fields": {
+  "heater": 30,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 77,
+ "fields": {
+  "heater": 30,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 78,
+ "fields": {
+  "heater": 30,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 79,
+ "fields": {
+  "heater": 31,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 80,
+ "fields": {
+  "heater": 31,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 81,
+ "fields": {
+  "heater": 31,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 82,
+ "fields": {
+  "heater": 31,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 83,
+ "fields": {
+  "heater": 32,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 84,
+ "fields": {
+  "heater": 32,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 85,
+ "fields": {
+  "heater": 32,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 86,
+ "fields": {
+  "heater": 32,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 87,
+ "fields": {
+  "heater": 33,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 88,
+ "fields": {
+  "heater": 33,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 89,
+ "fields": {
+  "heater": 33,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 90,
+ "fields": {
+  "heater": 33,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 91,
+ "fields": {
+  "heater": 34,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 92,
+ "fields": {
+  "heater": 34,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 93,
+ "fields": {
+  "heater": 34,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 94,
+ "fields": {
+  "heater": 34,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 95,
+ "fields": {
+  "heater": 35,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 96,
+ "fields": {
+  "heater": 35,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 97,
+ "fields": {
+  "heater": 35,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 98,
+ "fields": {
+  "heater": 35,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 99,
+ "fields": {
+  "heater": 36,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 100,
+ "fields": {
+  "heater": 36,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 101,
+ "fields": {
+  "heater": 36,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 102,
+ "fields": {
+  "heater": 36,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 103,
+ "fields": {
+  "heater": 37,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 104,
+ "fields": {
+  "heater": 37,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 105,
+ "fields": {
+  "heater": 37,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 106,
+ "fields": {
+  "heater": 37,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 107,
+ "fields": {
+  "heater": 38,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 108,
+ "fields": {
+  "heater": 38,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 109,
+ "fields": {
+  "heater": 38,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 110,
+ "fields": {
+  "heater": 38,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 111,
+ "fields": {
+  "heater": 39,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 112,
+ "fields": {
+  "heater": 39,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 113,
+ "fields": {
+  "heater": 39,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 114,
+ "fields": {
+  "heater": 39,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 115,
+ "fields": {
+  "heater": 40,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 116,
+ "fields": {
+  "heater": 40,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 117,
+ "fields": {
+  "heater": 40,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 118,
+ "fields": {
+  "heater": 40,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 119,
+ "fields": {
+  "heater": 41,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 120,
+ "fields": {
+  "heater": 41,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 121,
+ "fields": {
+  "heater": 41,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 122,
+ "fields": {
+  "heater": 41,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 123,
+ "fields": {
+  "heater": 42,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 124,
+ "fields": {
+  "heater": 42,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 125,
+ "fields": {
+  "heater": 42,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 126,
+ "fields": {
+  "heater": 42,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 127,
+ "fields": {
+  "heater": 43,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 128,
+ "fields": {
+  "heater": 43,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 129,
+ "fields": {
+  "heater": 43,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 130,
+ "fields": {
+  "heater": 43,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 131,
+ "fields": {
+  "heater": 44,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 132,
+ "fields": {
+  "heater": 44,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 133,
+ "fields": {
+  "heater": 44,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 134,
+ "fields": {
+  "heater": 44,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 135,
+ "fields": {
+  "heater": 45,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 136,
+ "fields": {
+  "heater": 45,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 137,
+ "fields": {
+  "heater": 45,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 138,
+ "fields": {
+  "heater": 45,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 139,
+ "fields": {
+  "heater": 46,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 140,
+ "fields": {
+  "heater": 46,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 141,
+ "fields": {
+  "heater": 46,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 142,
+ "fields": {
+  "heater": 46,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 143,
+ "fields": {
+  "heater": 47,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 144,
+ "fields": {
+  "heater": 47,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 145,
+ "fields": {
+  "heater": 47,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 146,
+ "fields": {
+  "heater": 47,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 147,
+ "fields": {
+  "heater": 48,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 148,
+ "fields": {
+  "heater": 48,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 149,
+ "fields": {
+  "heater": 48,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 150,
+ "fields": {
+  "heater": 48,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 151,
+ "fields": {
+  "heater": 49,
+  "option_code": "S25A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 152,
+ "fields": {
+  "heater": 49,
+  "option_code": "S34A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 153,
+ "fields": {
+  "heater": 49,
+  "option_code": "S49A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 154,
+ "fields": {
+  "heater": 49,
+  "option_code": "S65A",
+  "length_m": 2.1
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 155,
+ "fields": {
+  "heater": 50,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 156,
+ "fields": {
+  "heater": 51,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 157,
+ "fields": {
+  "heater": 52,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 158,
+ "fields": {
+  "heater": 53,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 159,
+ "fields": {
+  "heater": 54,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 160,
+ "fields": {
+  "heater": 55,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 161,
+ "fields": {
+  "heater": 56,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 162,
+ "fields": {
+  "heater": 57,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 163,
+ "fields": {
+  "heater": 58,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 164,
+ "fields": {
+  "heater": 59,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 165,
+ "fields": {
+  "heater": 60,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 166,
+ "fields": {
+  "heater": 61,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 167,
+ "fields": {
+  "heater": 62,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 168,
+ "fields": {
+  "heater": 63,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 169,
+ "fields": {
+  "heater": 64,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 170,
+ "fields": {
+  "heater": 65,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 171,
+ "fields": {
+  "heater": 66,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 172,
+ "fields": {
+  "heater": 67,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 173,
+ "fields": {
+  "heater": 68,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 174,
+ "fields": {
+  "heater": 69,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 175,
+ "fields": {
+  "heater": 70,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 176,
+ "fields": {
+  "heater": 71,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.micoldleadoption",
+ "pk": 177,
+ "fields": {
+  "heater": 72,
+  "option_code": "CL-4FT",
+  "length_m": 1.219
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 26,
+ "fields": {
+  "line": 92,
+  "heater": 11,
+  "cold_lead_option": 21,
+  "selection_status": "selected",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 88.97621241242483,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 14.624201453076076,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 11816.029788324136,
+  "power_density_w_m": 132.79987389836478,
+  "current_nominal_a": 16.41115248378352,
+  "current_cold_start_a": 18.115895703501252,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "automatic_temperature_fallback",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 3,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": true,
+   "per_set_current_nominal_a": 16.41115248378352,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 18.115895703501252,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 44.26662463278826,
+   "per_set_low_voltage_power_density_w_m": 35.85596595255848,
+   "per_set_high_voltage_power_density_w_m": 53.75140541559487
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 27,
+ "fields": {
+  "line": 93,
+  "heater": 12,
+  "cold_lead_option": 23,
+  "selection_status": "selected",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 87.1156401512803,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 10.738797230832414,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 10727.458347872196,
+  "power_density_w_m": 123.14044101889709,
+  "current_nominal_a": 22.348871558067074,
+  "current_cold_start_a": 24.670407921500683,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "automatic_temperature_fallback",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 2,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": true,
+   "per_set_current_nominal_a": 22.348871558067074,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 24.670407921500683,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 61.570220509448546,
+   "per_set_low_voltage_power_density_w_m": 49.87187861265333,
+   "per_set_high_voltage_power_density_w_m": 74.76255331380311
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 28,
+ "fields": {
+  "line": 94,
+  "heater": 8,
+  "cold_lead_option": 15,
+  "selection_status": "selected",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 26.8,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 17.5926188,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 3274.100385782246,
+  "power_density_w_m": 122.16792484262112,
+  "current_nominal_a": 13.642084940759359,
+  "current_cold_start_a": 15.0591854051267,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "automatic_temperature_fallback",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 13.642084940759359,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 15.0591854051267,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 122.16792484262112,
+   "per_set_low_voltage_power_density_w_m": 98.95601912252312,
+   "per_set_high_voltage_power_density_w_m": 148.34421443856152
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 29,
+ "fields": {
+  "line": 95,
+  "heater": 9,
+  "cold_lead_option": 17,
+  "selection_status": "selected",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 30.586784673569348,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 10.054536796751194,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 5728.757193331037,
+  "power_density_w_m": 187.29517517025485,
+  "current_nominal_a": 23.86982163887932,
+  "current_cold_start_a": 26.349349913018525,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "automatic_temperature_fallback",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 23.86982163887932,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 26.349349913018525,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 187.29517517025485,
+   "per_set_low_voltage_power_density_w_m": 151.7090918879064,
+   "per_set_high_voltage_power_density_w_m": 227.4259439583366
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 30,
+ "fields": {
+  "line": 96,
+  "heater": 7,
+  "cold_lead_option": 13,
+  "selection_status": "selected",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 19.64207080414161,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 19.37031882615215,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 2973.621679485905,
+  "power_density_w_m": 151.39043684023912,
+  "current_nominal_a": 12.39009033119127,
+  "current_cold_start_a": 13.677137204021188,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "automatic_temperature_fallback",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 12.39009033119127,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 13.677137204021188,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 151.39043684023912,
+   "per_set_low_voltage_power_density_w_m": 122.62625384059369,
+   "per_set_high_voltage_power_density_w_m": 183.82808298910365
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 31,
+ "fields": {
+  "line": 97,
+  "heater": 7,
+  "cold_lead_option": 13,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 19.64207080414161,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 19.37031882615215,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 2973.621679485905,
+  "power_density_w_m": 151.39043684023912,
+  "current_nominal_a": 12.39009033119127,
+  "current_cold_start_a": 13.677137204021188,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 12.39009033119127,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 13.677137204021188,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 151.39043684023912,
+   "per_set_low_voltage_power_density_w_m": 122.62625384059369,
+   "per_set_high_voltage_power_density_w_m": 183.82808298910365
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 32,
+ "fields": {
+  "line": 103,
+  "heater": 1,
+  "cold_lead_option": 1,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 3.6,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 130.245912,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 442.2403675901935,
+  "power_density_w_m": 122.84454655283153,
+  "current_nominal_a": 1.842668198292473,
+  "current_cold_start_a": 2.0340792597845034,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 98.47578094298692,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 1.842668198292473,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 2.0340792597845034,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 122.84454655283153,
+   "per_set_low_voltage_power_density_w_m": 99.50408270779353,
+   "per_set_high_voltage_power_density_w_m": 149.16581238419693
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 33,
+ "fields": {
+  "line": 102,
+  "heater": 2,
+  "cold_lead_option": 3,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 4.714801909603819,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 85.05314052848907,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 677.2236703088763,
+  "power_density_w_m": 143.6377780643138,
+  "current_nominal_a": 2.821765292953651,
+  "current_cold_start_a": 3.114882138681023,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 61.83913384457266,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 2.821765292953651,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 3.114882138681023,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 45.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.0022,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 143.6377780643138,
+   "per_set_low_voltage_power_density_w_m": 116.34660023209419,
+   "per_set_high_voltage_power_density_w_m": 174.41430210180127
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 34,
+ "fields": {
+  "line": 99,
+  "heater": 9,
+  "cold_lead_option": 17,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 53.482782152230975,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 17.61336398903769,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 3270.244118945672,
+  "power_density_w_m": 61.14573676510315,
+  "current_nominal_a": 13.626017162273635,
+  "current_cold_start_a": 15.069184130773792,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 44.546745978762274,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 13.626017162273635,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 15.069184130773792,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 66.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.004048,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 61.14573676510315,
+   "per_set_low_voltage_power_density_w_m": 49.52804677973356,
+   "per_set_high_voltage_power_density_w_m": 74.38402510925346
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 35,
+ "fields": {
+  "line": 100,
+  "heater": 7,
+  "cold_lead_option": 13,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 35.87622047244095,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 35.44510425430678,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 1625.0481191066403,
+  "power_density_w_m": 45.29596757147131,
+  "current_nominal_a": 6.771033829611001,
+  "current_cold_start_a": 7.488171658597942,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 36.44419706158329,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 6.771033829611001,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 7.488171658597942,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 66.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.004048,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 45.29596757147131,
+   "per_set_low_voltage_power_density_w_m": 36.68973373289175,
+   "per_set_high_voltage_power_density_w_m": 55.10271962422674
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 36,
+ "fields": {
+  "line": 98,
+  "heater": 13,
+  "cold_lead_option": 25,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 136.13741707483416,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 11.208457109810555,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 5138.9767062215715,
+  "power_density_w_m": 37.748451650119804,
+  "current_nominal_a": 21.412402942589882,
+  "current_cold_start_a": 23.68024630980057,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 27.21549785352137,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 21.412402942589882,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 23.68024630980057,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 66.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.004048,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 37.748451650119804,
+   "per_set_low_voltage_power_density_w_m": 30.576245836597042,
+   "per_set_high_voltage_power_density_w_m": 45.921137333984234
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 37,
+ "fields": {
+  "line": 101,
+  "heater": 6,
+  "cold_lead_option": 11,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 40.847824828982986,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 67.0847552488012,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 858.6153409425951,
+  "power_density_w_m": 21.01985465657836,
+  "current_nominal_a": 3.5775639205941467,
+  "current_cold_start_a": 3.946070056127867,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 13.457816241702073,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 3.5775639205941467,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 3.946070056127867,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 36.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.001408,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 21.01985465657836,
+   "per_set_low_voltage_power_density_w_m": 17.02608227182847,
+   "per_set_high_voltage_power_density_w_m": 25.50349986025668
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 38,
+ "fields": {
+  "line": 104,
+  "heater": 5,
+  "cold_lead_option": 9,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 20.273912414491495,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 46.61519697535487,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 1235.6485381892246,
+  "power_density_w_m": 60.94771018671271,
+  "current_nominal_a": 5.1485355757884355,
+  "current_cold_start_a": 5.6938303886922235,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 27.21549785352137,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 5.1485355757884355,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 5.6938303886922235,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 66.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.004048,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 60.94771018671271,
+   "per_set_low_voltage_power_density_w_m": 49.367645251237285,
+   "per_set_high_voltage_power_density_w_m": 74.14312501124856
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 39,
+ "fields": {
+  "line": 106,
+  "heater": 3,
+  "cold_lead_option": 5,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 16.85543431086862,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 152.25008419665247,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 378.3249139330621,
+  "power_density_w_m": 22.445278297522886,
+  "current_nominal_a": 1.5763538080544253,
+  "current_cold_start_a": 1.738725763645795,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 13.457816241702073,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 1.5763538080544253,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 1.738725763645795,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 36.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.001408,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 22.445278297522886,
+   "per_set_low_voltage_power_density_w_m": 18.180675420993534,
+   "per_set_high_voltage_power_density_w_m": 27.23297383719771
+  }
+ }
+},
+{
+ "model": "eht.selectedmiheater",
+ "pk": 40,
+ "fields": {
+  "line": 107,
+  "heater": 2,
+  "cold_lead_option": 3,
+  "selection_status": "available_alternative",
+  "selection_rejection_reasons": [],
+  "heated_length_m": 11.436956207245748,
+  "cold_lead_option_code": "CL-4FT",
+  "cold_lead_length_m": 1.219,
+  "heater_resistance_ohms": 206.227534503069,
+  "cold_lead_resistance_total_ohms": 0.0,
+  "power_nominal_w": 279.3031499833153,
+  "power_density_w_m": 24.421108634338047,
+  "current_nominal_a": 1.1637631249304803,
+  "current_cold_start_a": 1.284087478304756,
+  "max_sheath_temp_published_c": 600.0,
+  "project_t_class_limit_c": 200.0,
+  "t_class_verdict": "review",
+  "selection_basis": {
+   "phase": "1PH",
+   "rule_set": "MI_SINGLE_PHASE_SELECTION_MVP_V1",
+   "max_cb_size": 40.0,
+   "low_voltage_v": 216.0,
+   "high_voltage_v": 264.0,
+   "multi_set_note": "family.max_watt_density_w_m is applied per heater set; aggregate line heat delivery is represented by heater_set_count multiplied by per-set output.",
+   "selection_mode": "available_alternative",
+   "source_document": "TEP0020-MIQ-Spec.pdf",
+   "heater_set_count": 1,
+   "nominal_voltage_v": 240.0,
+   "design_heat_loss_w_m": 15.247182441178785,
+   "t_class_review_reason": "DESIGN_SPECIFIC_SURFACE_TEMPERATURE_REVIEW_REQUIRED",
+   "max_mi_heater_sets_mvp": 12,
+   "mvp_multi_set_selection": false,
+   "per_set_current_nominal_a": 1.1637631249304803,
+   "restricted_loading_factor": 0.8,
+   "allowed_current_per_circuit": 32.0,
+   "per_set_current_cold_start_a": 1.284087478304756,
+   "resistance_temperature_basis": {
+    "rule_set": "MI_ALLOY_RESISTANCE_TEMPERATURE_FACTOR_V1",
+    "factor_rows": 0,
+    "startup_method": "linear_tcr_per_degree_c",
+    "startup_temp_c": 5.0,
+    "maintain_method": "linear_tcr_per_degree_c",
+    "maintain_temp_c": 40.0,
+    "tcr_per_degree_c": 8.8e-05,
+    "factor_lookup_key": "Nickel-Chromium",
+    "sheath_alloy_type": "Alloy 825",
+    "conductor_material": "Nickel-Chromium",
+    "startup_multiplier": 0.99868,
+    "maintain_multiplier": 1.00176,
+    "reference_temperature_c": 20.0,
+    "cold_start_temperature_basis": {
+     "selection_rule": "minimum_of_startup_t_and_min_amb_t",
+     "selected_source": "startup_t",
+     "selected_temperature_c": 5.0,
+     "candidate_temperatures_c": {
+      "min_amb_t": 5.0,
+      "startup_t": 5.0
+     }
+    }
+   },
+   "per_set_nominal_power_density_w_m": 24.421108634338047,
+   "per_set_low_voltage_power_density_w_m": 19.781097993813816,
+   "per_set_high_voltage_power_density_w_m": 29.640674330613137
+  }
+ }
+}
+]

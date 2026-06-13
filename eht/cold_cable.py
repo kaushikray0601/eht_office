@@ -1251,9 +1251,8 @@ def _critical_fault_loop_basis(sizing_result):
     return (critical_segment or {}).get('fault_loop_basis') or {}
 
 
-def size_cold_cable_for_branch(branch, project):
+def build_cold_cable_sizing_snapshot(project, sizing_input):
     project = _project(project)
-    sizing_input = build_cold_cable_sizing_input(branch, project)
     review_notes = list(sizing_input.review_notes)
     selection_4c = None
     selection_3c = None
@@ -1299,9 +1298,6 @@ def size_cold_cable_for_branch(branch, project):
         if selected_catalogue else None
     )
     result_defaults = {
-        'project': project,
-        'distribution': branch.distribution,
-        'branch': branch,
         'branch_index': sizing_input.branch_index,
         'line_id': sizing_input.line_id,
         'line_uid': sizing_input.line_uid,
@@ -1346,6 +1342,18 @@ def size_cold_cable_for_branch(branch, project):
     })
     result_defaults.update(_vd_defaults(sizing_result.vd_4c if sizing_result else None, 'cable_4c'))
     result_defaults.update(_vd_defaults(sizing_result.vd_3c if sizing_result else None, 'cable_3c'))
+    return result_defaults
+
+
+def size_cold_cable_for_branch(branch, project):
+    project = _project(project)
+    sizing_input = build_cold_cable_sizing_input(branch, project)
+    result_defaults = build_cold_cable_sizing_snapshot(project, sizing_input)
+    result_defaults.update({
+        'project': project,
+        'distribution': branch.distribution,
+        'branch': branch,
+    })
     result, _created = ColdCableResult.objects.update_or_create(
         distribution=branch.distribution,
         branch_index=branch.branch_index,

@@ -3,6 +3,11 @@ import hashlib
 
 from django.db import transaction
 
+from .cold_cable import (
+    ColdCable3CSegmentLength,
+    ColdCableSizingInput,
+    build_cold_cable_sizing_snapshot,
+)
 from .models import MAX_CB_SIZE, ProcessLineCalculation, ProjectData, SLDTopologyEdit
 from .sld_payload import build_project_sld_payload
 from .sld_topology import (
@@ -143,10 +148,49 @@ def _project_line_current_lookup(project_id):
     return lookup
 
 
+def _project_line_operating_current_lookup(project_id):
+    lookup = {'by_uid': {}, 'by_line_id': {}}
+    if not project_id:
+        return lookup
+    calculations = (
+        ProcessLineCalculation.objects
+        .filter(line__proj_id=project_id)
+        .select_related('line')
+    )
+    for calculation in calculations:
+        current = float(calculation.operating_current or 0)
+        if current <= 0:
+            continue
+        lookup['by_uid'][str(calculation.line_id)] = current
+        line_id = calculation.line.line_id if calculation.line else ''
+        if line_id:
+            lookup['by_line_id'][line_id] = lookup['by_line_id'].get(line_id, 0) + current
+    return lookup
+
+
 def _node_starting_current(node, current_lookup=None):
     current = _starting_current(node)
     if current > 0:
         return current
+    if not current_lookup:
+        return 0
+
+    line_uids, line_ids = _node_line_identity(node)
+    if line_ids:
+        by_line_id = current_lookup.get('by_line_id') or {}
+        line_id_current = sum(by_line_id.get(line_id, 0) for line_id in line_ids)
+        if line_id_current > 0:
+            return line_id_current
+    by_uid = current_lookup.get('by_uid') or {}
+    return sum(by_uid.get(str(line_uid), 0) for line_uid in line_uids)
+
+
+def _node_operating_current(node, current_lookup=None):
+    metadata = node.get('metadata') or {}
+    for key in ('combined_feeder_operating_current', 'line_operating_current', 'operating_current', 'per_circuit_operating_current'):
+        current = _to_positive_float(metadata.get(key))
+        if current is not None:
+            return current
     if not current_lookup:
         return 0
 
@@ -165,6 +209,16 @@ def _combined_feeder_current(nodes, current_lookup=None):
     if currents and all(current > 0 for current in currents):
         return sum(currents), 'starting_current'
     return sum(_breaker_rating(node) for node in nodes), 'breaker_rating'
+
+
+def _combined_feeder_operating_current(nodes, current_lookup=None):
+    currents = [_node_operating_current(node, current_lookup) for node in nodes]
+    positive_currents = [current for current in currents if current > 0]
+    if currents and len(positive_currents) == len(currents):
+        return sum(positive_currents), max(positive_currents), 'operating_current', positive_currents
+    fallback_total = sum(_breaker_rating(node) for node in nodes)
+    fallback_per_branch = fallback_total / len(nodes) if nodes else 0
+    return fallback_total, fallback_per_branch, 'breaker_rating_fallback', positive_currents
 
 
 def _mcb_nodes_by_id(payload):
@@ -381,6 +435,51 @@ def _node_length_m(node):
         return float((node.get('metadata') or {}).get('length_m') or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def _format_mm2(value):
+    if value in (None, ''):
+        return ''
+    value = float(value)
+    return f'{value:g}'
+
+
+def _format_cold_cable_size(size_mm2):
+    if size_mm2 in (None, ''):
+        return ''
+    return f'3C x {_format_mm2(size_mm2)} mm2'
+
+
+def _selected_feeder_entry_nodes(payload, selected_nodes):
+    node_by_id = _node_lookup(payload)
+    _incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    selected_ids = {node['component_id'] for node in selected_nodes}
+    entries = []
+    seen = set()
+    for selected_node in selected_nodes:
+        for edge in outgoing_by_id.get(selected_node['component_id'], []):
+            entry_id = edge.get('to_component_id')
+            if not entry_id or entry_id in selected_ids or entry_id in seen:
+                continue
+            entry_node = node_by_id.get(entry_id)
+            if not entry_node:
+                continue
+            entries.append(entry_node)
+            seen.add(entry_id)
+    return entries
+
+
+def _default_combined_trunk_length(payload, selected_nodes):
+    entry_lengths = [
+        _node_length_m(node)
+        for node in _selected_feeder_entry_nodes(payload, selected_nodes)
+        if _node_length_m(node) > 0
+    ]
+    return max(entry_lengths) if entry_lengths else None
+
+
+def _trunk_length_basis(trunk_length_input, default_length_basis):
+    return 'user_input' if trunk_length_input not in (None, '') else default_length_basis
 
 
 def _cable_role(node):
@@ -818,6 +917,178 @@ def _manual_combine_distribution(payload, source_mcb):
     return None, None, None
 
 
+def _manual_combine_branch_segments(payload, combine_jb):
+    node_by_id = _node_lookup(payload)
+    _incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    segments = []
+    for index, edge in enumerate(outgoing_by_id.get(combine_jb['component_id'], []), start=1):
+        node = node_by_id.get(edge.get('to_component_id'))
+        if not node:
+            continue
+        segments.append(ColdCable3CSegmentLength(
+            component_id=node.get('component_id') or '',
+            display_tag=node.get('display_tag') or '',
+            circuit_index=node.get('circuit_index') or index,
+            length_m=_node_length_m(node) or None,
+            length_basis='topology_edit',
+        ))
+    return segments
+
+
+def _snapshot_cold_cable_metadata(snapshot, *, length_m, force_review=True):
+    calculated_size = _format_cold_cable_size(snapshot.get('cable_4c_size_mm2'))
+    sizing_status = snapshot.get('sizing_status') or 'unsizeable'
+    review_notes = list(snapshot.get('review_notes') or [])
+    if force_review and sizing_status == 'selected':
+        sizing_status = 'review_required'
+        review_notes.append('Manual combined-feeder topology edit requires route and schedule review before issue.')
+    return {
+        'calculated_size': calculated_size,
+        'conductor_size_mm2': snapshot.get('cable_4c_size_mm2'),
+        'sizing_status': sizing_status,
+        'sizing_engine_status': snapshot.get('sizing_status'),
+        'vd_status': snapshot.get('vd_status'),
+        'fault_status': snapshot.get('fault_loop_status'),
+        'length_basis': snapshot.get('length_basis'),
+        'length_m': length_m,
+        'derated_ampacity_a': snapshot.get('cable_4c_ampacity_derated_a'),
+        'ampacity_margin_pct': snapshot.get('cable_4c_ampacity_margin_pct'),
+        'conductor_temp_c': snapshot.get('cable_4c_conductor_temp_c'),
+        'conductor_mass_mt': snapshot.get('cable_4c_conductor_mass_mt'),
+        'vd_pct': snapshot.get('cable_4c_vd_pct'),
+        'vd_total_pct': snapshot.get('vd_total_pct'),
+        'vd_allowable_pct': snapshot.get('vd_allowable_pct'),
+        'load_end_voltage_v': snapshot.get('load_end_voltage_v'),
+        'fault_current_a': snapshot.get('fault_current_l_pe_a'),
+        'k_temp': snapshot.get('k_temp'),
+        'k_group': snapshot.get('k_group'),
+        'k_total': snapshot.get('k_total'),
+        'review_notes': review_notes,
+    }
+
+
+def _previous_feeder_mass_mt(selected_entries):
+    values = [
+        ((node.get('metadata') or {}).get('cold_cable') or {}).get('conductor_mass_mt')
+        for node in selected_entries
+    ]
+    values = [float(value) for value in values if value not in (None, '')]
+    return sum(values) if values else None
+
+
+def _combined_feeder_cold_cable_impact(project, source_payload, edited_payload, selected_nodes, preview):
+    primary = selected_nodes[0]
+    cable4c, _isolator3ph, combine_jb = _manual_combine_distribution(edited_payload, primary)
+    if not cable4c or not combine_jb:
+        return {
+            'status': 'not_calculated',
+            'review_notes': ['Combined feeder trunk could not be resolved in the edited SLD payload.'],
+        }
+
+    operating_lookup = _project_line_operating_current_lookup(project.proj_id)
+    operating_total, operating_per_branch, operating_basis, operating_currents = _combined_feeder_operating_current(
+        selected_nodes,
+        operating_lookup,
+    )
+    segments = _manual_combine_branch_segments(edited_payload, combine_jb)
+    selected_entries = _selected_feeder_entry_nodes(source_payload, selected_nodes)
+    previous_lengths = [_node_length_m(node) for node in selected_entries if _node_length_m(node) > 0]
+    review_notes = [
+        'Manual combined-feeder topology edit recalculates the new feeder trunk from combined operating current.',
+        'Prior separate feeder cable lengths may no longer represent the final combined route; review affected SLD, BOQ, and cable schedule rows before issue.',
+    ]
+    if operating_basis != 'operating_current':
+        review_notes.append('Operating current could not be resolved for every selected feeder; breaker rating fallback was used for cold-cable impact sizing.')
+    sizing_input = ColdCableSizingInput(
+        project_id=project.proj_id,
+        line_id=', '.join(preview.get('affected_lines') or []),
+        line_uid=primary.get('line_uid') or primary.get('component_uid') or primary.get('component_id'),
+        branch_index=primary.get('branch_index') or 1,
+        branch_type='3phJB',
+        circuit_count=max(1, len(segments) or len(selected_nodes)),
+        heating_cable_type='SR',
+        per_circuit_operating_current_a=operating_per_branch or 0.0,
+        line_operating_current_a=operating_total or 0.0,
+        breaker_size_a=preview.get('recommended_breaker_rating') or 0.0,
+        length_4c_m=preview.get('trunk_length_m'),
+        length_3c_m=max((segment.length_m or 0 for segment in segments), default=0) or None,
+        length_basis='topology_edit',
+        length_missing=not preview.get('trunk_length_m') or any(not segment.length_m for segment in segments),
+        length_3c_segments=segments,
+        review_notes=review_notes,
+    )
+    snapshot = build_cold_cable_sizing_snapshot(project, sizing_input)
+    cold_metadata = _snapshot_cold_cable_metadata(snapshot, length_m=preview.get('trunk_length_m'))
+
+    metadata = dict(cable4c.get('metadata') or {})
+    metadata['cold_cable'] = cold_metadata
+    metadata['cold_cable_calculated_size'] = cold_metadata['calculated_size']
+    metadata['cold_cable_status'] = cold_metadata['sizing_status']
+    metadata['cold_cable_vd_status'] = cold_metadata['vd_status']
+    metadata['cold_cable_fault_status'] = cold_metadata['fault_status']
+    metadata['cold_cable_impact_role'] = 'combined_feeder_trunk'
+    cable4c['metadata'] = metadata
+
+    previous_mass = _previous_feeder_mass_mt(selected_entries)
+    new_mass = snapshot.get('cable_4c_conductor_mass_mt')
+    mass_delta = None
+    if previous_mass is not None and new_mass is not None:
+        mass_delta = float(new_mass) - previous_mass
+
+    return {
+        'status': cold_metadata['sizing_status'],
+        'sizing_engine_status': snapshot.get('sizing_status'),
+        'calculated_feeder_size': cold_metadata['calculated_size'],
+        'manual_input_cable_size': metadata.get('cable_size'),
+        'feeder_length_m': preview.get('trunk_length_m'),
+        'feeder_length_basis': preview.get('trunk_length_basis'),
+        'previous_feeder_lengths_m': previous_lengths,
+        'previous_feeder_length_max_m': max(previous_lengths) if previous_lengths else None,
+        'previous_feeder_length_total_m': sum(previous_lengths) if previous_lengths else None,
+        'length_delta_vs_previous_total_m': (
+            float(preview.get('trunk_length_m')) - sum(previous_lengths)
+            if previous_lengths and preview.get('trunk_length_m') is not None else None
+        ),
+        'combined_operating_current_a': operating_total,
+        'max_selected_operating_current_a': operating_per_branch,
+        'operating_current_basis': operating_basis,
+        'selected_operating_currents_a': operating_currents,
+        'recommended_breaker_rating': preview.get('recommended_breaker_rating'),
+        'input_breaker_ratings': preview.get('input_breaker_ratings') or [],
+        'downstream_segment_count': len(segments),
+        'downstream_segments': [
+            {
+                'component_id': segment.component_id,
+                'display_tag': segment.display_tag,
+                'length_m': segment.length_m,
+                'length_basis': segment.length_basis,
+            }
+            for segment in segments
+        ],
+        'vd_total_pct': snapshot.get('vd_total_pct'),
+        'vd_allowable_pct': snapshot.get('vd_allowable_pct'),
+        'fault_loop_status': snapshot.get('fault_loop_status'),
+        'fault_current_l_pe_a': snapshot.get('fault_current_l_pe_a'),
+        'new_feeder_conductor_mass_mt': new_mass,
+        'previous_feeder_conductor_mass_mt': previous_mass,
+        'feeder_conductor_mass_delta_mt': mass_delta,
+        'affected_lines': preview.get('affected_lines') or [],
+        'affected_branch_count': preview.get('affected_branch_count'),
+        'affected_schedule_rows': _edited_cable_schedule_rows(edited_payload),
+        'review_notes': cold_metadata['review_notes'],
+    }
+
+
+def _apply_combined_feeder_cold_cable_impact(project, source_payload, edited_payload, selected_nodes, preview):
+    impact = _combined_feeder_cold_cable_impact(project, source_payload, edited_payload, selected_nodes, preview)
+    meta = dict(edited_payload.get('meta') or {})
+    meta['combined_feeder_cold_cable_status'] = impact.get('status')
+    meta['combined_feeder_cold_cable_size'] = impact.get('calculated_feeder_size') or ''
+    meta['combined_feeder_cold_cable_review_required'] = impact.get('status') == 'review_required'
+    edited_payload['meta'] = meta
+    return impact
+
+
 def _build_edited_payload(
     payload,
     selected_nodes,
@@ -835,6 +1106,11 @@ def _build_edited_payload(
     _, outgoing_by_id = _edge_lookup(edited)
     existing_cable4c, existing_isolator3ph, existing_jb3ph = _manual_combine_distribution(edited, primary)
     combined_line_ids = _node_line_ids(selected_nodes)
+    operating_lookup = _project_line_operating_current_lookup(payload.get('project_id'))
+    combined_operating_current, _max_operating_current, operating_basis, _operating_currents = _combined_feeder_operating_current(
+        selected_nodes,
+        operating_lookup,
+    )
 
     for node in edited['nodes']:
         if node['component_id'] != primary_id:
@@ -845,7 +1121,9 @@ def _build_edited_payload(
             'breaker_size': recommended_rating,
             'starting_current': combined_current,
             'combined_feeder_current': combined_current,
+            'combined_feeder_operating_current': combined_operating_current,
             'breaker_rating_basis': rating_basis,
+            'cold_cable_current_basis': operating_basis,
             'manual_topology_edit': 'combine_feeders',
             'combined_feeder_count': len(selected_nodes),
         })
@@ -1877,12 +2155,6 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
             'error': 'Select at least two MCB feeder sources to combine.',
         }
     project = ProjectData.objects.get(proj_id=project_id)
-    trunk_length = _to_positive_float(trunk_length_m, project.ckt_ln)
-    if trunk_length is None:
-        return {
-            'ok': False,
-            'error': 'Enter a valid positive Feeder Cable length for the combined feeder.',
-        }
     normalized_cable_size = _manual_trunk_size(cable_size)
     payload = build_project_sld_payload(project_id)
     selected_nodes, invalid_ids = _selected_mcb_nodes(payload, component_ids)
@@ -1912,6 +2184,15 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
             'ok': False,
             'error': 'Selected MCB feeder sources must have outgoing feeder paths to combine.',
             'missing_outgoing_feeders': missing_outgoing,
+        }
+
+    default_trunk_length = _default_combined_trunk_length(payload, selected_nodes)
+    default_trunk_basis = 'max_selected_feeder_length' if default_trunk_length is not None else 'project_default'
+    trunk_length = _to_positive_float(trunk_length_m, default_trunk_length or project.ckt_ln)
+    if trunk_length is None:
+        return {
+            'ok': False,
+            'error': 'Enter a valid positive Feeder Cable length for the combined feeder.',
         }
 
     current_lookup = _project_line_current_lookup(project_id)
@@ -1959,6 +2240,7 @@ def preview_combine_feeders(project_id, component_ids, trunk_length_m=None, cabl
         'breaker_rating_basis': rating_basis,
         'recommended_breaker_rating': recommended_rating,
         'trunk_length_m': trunk_length,
+        'trunk_length_basis': _trunk_length_basis(trunk_length_m, default_trunk_basis),
         'cable_size': normalized_cable_size,
         'affected_lines': sorted({node.get('line_id') for node in selected_nodes if node.get('line_id')}),
         'affected_branch_count': len({
@@ -2447,6 +2729,13 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         cable_size=preview['cable_size'],
         current_lookup=current_lookup,
     )
+    cold_cable_impact = _apply_combined_feeder_cold_cable_impact(
+        project,
+        active_payload,
+        edited_payload,
+        selected_nodes,
+        preview,
+    )
 
     boq_overrides = {
         'mcb_total': _graph_component_count(edited_payload, ['MCB']),
@@ -2472,6 +2761,8 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
             'error': 'Topology edit failed structural validation.',
             'validation_summary': validation_summary,
         }
+    edit_payload['cold_cable_impact_summary'] = cold_cable_impact
+    edit_payload.setdefault('downstream_summaries', {})['cold_cable'] = cold_cable_impact
     SLDTopologyEdit.objects.filter(project=project, status='applied').update(status='superseded')
     edit = SLDTopologyEdit.objects.create(
         project=project,
@@ -2488,6 +2779,7 @@ def apply_combine_feeders(project_id, component_ids, trunk_length_m=None, cable_
         'ok': True,
         'edit_id': edit.id,
         'preview': preview,
+        'cold_cable_impact': cold_cable_impact,
         'validation_summary': edit.validation_summary,
     }
 

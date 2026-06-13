@@ -24,6 +24,7 @@
     const SCHEMATIC_SYMBOL_COMPONENTS = new Set(['MCB', 'Isolator3PH', 'Isolator1PH', 'JB3PH', 'JB1PH', 'Tracer']);
     let SchematicSymbolElement = null;
     let CableDetailLabelElement = null;
+    let ReviewBadgeElement = null;
     UPSTREAM_COMPONENT_ORDER.concat(DOWNSTREAM_COMPONENT_ORDER).forEach(function (componentType, index) {
         COMPONENT_SORT_ORDER[componentType] = index;
     });
@@ -68,6 +69,18 @@
             });
         }
         return CableDetailLabelElement;
+    }
+
+    function getReviewBadgeElementClass() {
+        if (!ReviewBadgeElement) {
+            ReviewBadgeElement = joint.dia.Element.define('sld.ReviewBadgeElement', {}, {
+                markup: [
+                    { tagName: 'rect', selector: 'body' },
+                    { tagName: 'text', selector: 'label' },
+                ],
+            });
+        }
+        return ReviewBadgeElement;
     }
 
     function escapeHtml(value) {
@@ -206,6 +219,150 @@
             return '-';
         }
         return `${formatEngineeringNumber(value, digits === undefined ? 2 : digits)} ${unit}`;
+    }
+
+    function formatColdCableImpactWarning(impact) {
+        if (!impact || typeof impact !== 'object') {
+            return '';
+        }
+        const parts = [];
+        if (impact.calculated_feeder_size) {
+            parts.push(`combined feeder cold cable ${impact.calculated_feeder_size}`);
+        }
+        if (impact.status) {
+            parts.push(`status ${formatStatusText(impact.status)}`);
+        }
+        if (hasValue(impact.vd_total_pct)) {
+            parts.push(`VD ${formatPercent(impact.vd_total_pct, 2)}`);
+        }
+        if (hasValue(impact.new_feeder_conductor_mass_mt)) {
+            parts.push(`feeder conductor mass ${formatUnit(impact.new_feeder_conductor_mass_mt, 'MT', 4)}`);
+        }
+        if (!parts.length) {
+            return '';
+        }
+        return `${parts.join('; ')}. Review affected BOQ and cable schedule rows before issue.`;
+    }
+
+    function isCableNode(node) {
+        return node && CABLE_COMPONENTS.has(node.component_type);
+    }
+
+    function hasManualOverride(node) {
+        const metadata = (node && node.metadata) || {};
+        const tracerSelection = metadata.tracer_selection || {};
+        return !!(
+            metadata.cable_override_active
+            || metadata.manual_length_m
+            || metadata.manual_cable_size
+            || tracerSelection.override_active
+        );
+    }
+
+    function hasMissingCableLength(node) {
+        if (!isCableNode(node)) {
+            return false;
+        }
+        const metadata = node.metadata || {};
+        const coldCable = metadata.cold_cable || {};
+        const length = hasValue(coldCable.length_m) ? coldCable.length_m : metadata.length_m;
+        return coldCable.sizing_status === 'length_missing' || !hasValue(length) || Number(length) <= 0;
+    }
+
+    function coldCableBadgeStatus(node) {
+        if (!isCableNode(node)) {
+            return '';
+        }
+        const metadata = node.metadata || {};
+        const coldCable = metadata.cold_cable || {};
+        const status = coldCable.sizing_status || metadata.cold_cable_status || '';
+        const vdStatus = coldCable.vd_status || metadata.cold_cable_vd_status || '';
+        const faultStatus = coldCable.fault_status || metadata.cold_cable_fault_status || '';
+        if (status === 'unsizeable' || status === 'length_missing' || vdStatus === 'fail' || faultStatus === 'fail') {
+            return 'danger';
+        }
+        if (
+            status === 'review_required'
+            || vdStatus === 'review_required'
+            || faultStatus === 'review_required'
+            || metadata.manual_size_review_status === 'undersized'
+            || metadata.manual_size_review_status === 'review_required'
+        ) {
+            return 'warning';
+        }
+        return '';
+    }
+
+    function topologyBadgeStatus(node, payloadMeta) {
+        const metadata = (node && node.metadata) || {};
+        if (!metadata.manual_topology_edit) {
+            return '';
+        }
+        if ((payloadMeta || {}).topology_baseline_changed || (payloadMeta || {}).topology_edit_review_required) {
+            return 'danger';
+        }
+        return 'warning';
+    }
+
+    function reviewBadgesForNode(node, payloadMeta) {
+        const badges = [];
+        const topologyTone = topologyBadgeStatus(node, payloadMeta);
+        if (topologyTone) {
+            badges.push({
+                code: 'topology',
+                label: topologyTone === 'danger' ? 'Topology Review' : 'Topology',
+                tone: topologyTone,
+                title: 'Manual topology edit requires engineering review.',
+            });
+        }
+        if (hasMissingCableLength(node)) {
+            badges.push({
+                code: 'length',
+                label: 'Length',
+                tone: 'danger',
+                title: 'Cable length is missing or unresolved.',
+            });
+        }
+        const coldTone = coldCableBadgeStatus(node);
+        if (coldTone) {
+            badges.push({
+                code: 'cold_cable',
+                label: coldTone === 'danger' ? 'Cold Cable' : 'CC Review',
+                tone: coldTone,
+                title: 'Cold-cable sizing requires review.',
+            });
+        }
+        if (hasManualOverride(node)) {
+            badges.push({
+                code: 'manual',
+                label: 'Manual',
+                tone: 'info',
+                title: 'Manual override is active.',
+            });
+        }
+        return badges.slice(0, 3);
+    }
+
+    function reviewBadgeToneAttrs(tone) {
+        if (tone === 'danger') {
+            return { fill: '#b42318', stroke: '#7a271a', text: '#ffffff' };
+        }
+        if (tone === 'info') {
+            return { fill: '#1f6feb', stroke: '#174ea6', text: '#ffffff' };
+        }
+        return { fill: '#d97706', stroke: '#92400e', text: '#ffffff' };
+    }
+
+    function reviewBadgeGeometry(node, position, badgeCount) {
+        const style = getNodeStyle(node.component_type);
+        const width = 92;
+        const height = Math.max(16, 16 * Math.max(1, badgeCount));
+        return {
+            x: position.x + style.width - Math.min(24, style.width * 0.25),
+            y: position.y - (style.height / 2) - height - 4,
+            width: width,
+            height: height,
+        };
     }
 
     function formatExternalDetail(node) {
@@ -811,6 +968,53 @@
             },
         });
         label.prop('sldMeta', { type: 'external-detail-label', ownerComponentId: node.component_id });
+        return label;
+    }
+
+    function positionReviewBadgeLabel(label, node, position, payloadMeta) {
+        if (!label || !node || !position) {
+            return;
+        }
+        const badgeCount = reviewBadgesForNode(node, payloadMeta).length;
+        const geometry = reviewBadgeGeometry(node, position, badgeCount);
+        label.position(geometry.x, geometry.y);
+        label.resize(geometry.width, geometry.height);
+    }
+
+    function createReviewBadgeLabel(node, position, payloadMeta) {
+        const badges = reviewBadgesForNode(node, payloadMeta);
+        if (!badges.length) {
+            return null;
+        }
+        const label = new (getReviewBadgeElementClass())();
+        const geometry = reviewBadgeGeometry(node, position, badges.length);
+        const toneAttrs = reviewBadgeToneAttrs(badges[0].tone);
+        label.position(geometry.x, geometry.y);
+        label.resize(geometry.width, geometry.height);
+        label.attr({
+            body: {
+                fill: toneAttrs.fill,
+                stroke: toneAttrs.stroke,
+                strokeWidth: 1,
+                rx: 3,
+                ry: 3,
+                pointerEvents: 'none',
+            },
+            label: {
+                text: badges.map(function (badge) { return badge.label; }).join('\n'),
+                fill: toneAttrs.text,
+                fontSize: 9.5,
+                fontWeight: 700,
+                textAnchor: 'middle',
+                textVerticalAnchor: 'middle',
+                pointerEvents: 'none',
+            },
+        });
+        label.prop('sldMeta', {
+            type: 'review-badge-label',
+            ownerComponentId: node.component_id,
+            reviewBadges: badges,
+        });
         return label;
     }
 
@@ -1827,7 +2031,8 @@
                     summary.innerHTML = `Feed ${escapeHtml(preview.source_display_tag || 'source')} from ${escapeHtml(preview.target_jb_display_tag || '3PH JB')}. Target outgoing: ${escapeHtml(preview.target_outgoing_before)} to ${escapeHtml(preview.target_outgoing_after)}. Recommended source MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>.`;
                 }
             } else if (preview && preview.ok) {
-                summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>; trunk: ${escapeHtml(preview.trunk_length_m || '-')} m ${escapeHtml(preview.cable_size || '4C')}.`;
+                const basisText = preview.trunk_length_basis === 'max_selected_feeder_length' ? 'max selected feeder length' : (preview.trunk_length_basis || 'input');
+                summary.innerHTML = `Selected ${selectedCount} feeder(s). Add ${escapeHtml((preview.added_display_tags || []).join(', ') || '-')}; remove ${escapeHtml((preview.removed_display_tags || []).join(', ') || '-')}; recommended MCB: <strong>${escapeHtml(preview.recommended_breaker_rating)}A</strong>; trunk: ${escapeHtml(preview.trunk_length_m || '-')} m ${escapeHtml(preview.cable_size || '4C')} (${escapeHtml(basisText)}).`;
             } else {
                 summary.textContent = 'Waiting for validation.';
             }
@@ -2350,6 +2555,7 @@
         [
             state.externalDetailLabelByComponentId[componentId],
             state.endLabelByComponentId[componentId],
+            state.reviewBadgeLabelByComponentId[componentId],
         ].forEach(function (label) {
             if (!label) {
                 return;
@@ -2419,6 +2625,16 @@
                 const position = element.position();
                 const size = element.size();
                 label.position(position.x + size.width + 14, position.y - 2);
+            });
+
+            Object.keys(state.reviewBadgeLabelByComponentId).forEach(function (componentId) {
+                const label = state.reviewBadgeLabelByComponentId[componentId];
+                const element = state.elementByComponentId[componentId];
+                const node = state.nodeByComponentId[componentId];
+                if (!label || !element || !node) {
+                    return;
+                }
+                positionReviewBadgeLabel(label, node, element.position(), (state.payload || {}).meta || {});
             });
 
             const positions = collectComponentPositions(state);
@@ -3173,6 +3389,7 @@
         const elementByComponentId = {};
         const externalDetailLabelByComponentId = {};
         const endLabelByComponentId = {};
+        const reviewBadgeLabelByComponentId = {};
         const lineLabelByLineKey = {};
         const branchLabelByBranchKey = {};
         const groupHandlePositionById = {};
@@ -3229,6 +3446,12 @@
                 endLabelByComponentId[node.component_id] = label;
                 cells.push(label);
             }
+
+            const reviewBadgeLabel = createReviewBadgeLabel(node, position, payload.meta || {});
+            if (reviewBadgeLabel) {
+                reviewBadgeLabelByComponentId[node.component_id] = reviewBadgeLabel;
+                cells.push(reviewBadgeLabel);
+            }
         });
 
         payload.edges.forEach(function (edge) {
@@ -3258,6 +3481,7 @@
             elementByComponentId: elementByComponentId,
             externalDetailLabelByComponentId: externalDetailLabelByComponentId,
             endLabelByComponentId: endLabelByComponentId,
+            reviewBadgeLabelByComponentId: reviewBadgeLabelByComponentId,
             lineLabelByLineKey: lineLabelByLineKey,
             branchLabelByBranchKey: branchLabelByBranchKey,
             groupHandlePositionById: groupHandlePositionById,
@@ -3811,10 +4035,11 @@
                 window.showToast(response.success || 'Topology edit applied.', 'success');
             }
             const warnings = response.validation_summary && response.validation_summary.warnings;
+            const coldCableImpactWarning = formatColdCableImpactWarning(response.cold_cable_impact);
             updateTopologyStateUi(root, {
                 hasEdit: true,
                 editType: response.preview ? response.preview.edit_type : 'manual',
-                warning: warnings && warnings.length ? warnings[0] : '',
+                warning: coldCableImpactWarning || (warnings && warnings.length ? warnings[0] : ''),
             });
             fetchAndRenderSld(root);
         }).fail(function (xhr) {

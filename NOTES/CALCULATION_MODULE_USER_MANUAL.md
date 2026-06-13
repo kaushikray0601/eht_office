@@ -802,6 +802,12 @@ will carry a Review Required note until the user confirms or updates the length.
 If no length is available, the branch receives a Length Missing status and no
 sizing is attempted.
 
+For SLD combine-feeder edits, if the user does not enter a new combined
+FeederCable length, the application defaults the combined trunk length to the
+maximum length of the selected feeder cables. The resulting combined trunk
+cold-cable sizing is always marked for review, because the final combined route
+must be confirmed before issue.
+
 #### Step 2 — Ampacity (current-carrying capacity)
 
 The cable must carry the maximum continuous operating current without overheating.
@@ -1309,9 +1315,22 @@ Manual topology edits are supported by controlled SLD workflows. When a manual
 SLD edit is active, the downstream BOQ and cable schedule impact should be
 reviewed before issue.
 
+When feeders are combined in the SLD, the application recalculates cold-cable
+impact evidence for the new combined FeederCable trunk. The evidence includes
+calculated cable size, sizing status, voltage-drop/fault status, conductor mass,
+length basis, affected lines, and affected schedule rows. This evidence is
+stored with the topology edit and shown through the SLD metadata/alert workflow.
+It is still review-required, not a silent final approval.
+
 If the project is recalculated after an SLD edit, the application may mark the
 manual edit as requiring review or may show a safe generated fallback state
 until the edit is reviewed.
+
+The SLD also shows compact review badges on affected components. These badges
+are visual indicators only; they do not recalculate the design. Current badge
+families highlight missing cable length, cold-cable review or unsizeable
+states, active manual cable/tracer overrides, and manual topology edits that
+need review or have become stale against the generated baseline.
 
 ## 18. Common Diagnostics and Corrective Actions
 
