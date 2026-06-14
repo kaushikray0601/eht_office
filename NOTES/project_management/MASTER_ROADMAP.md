@@ -114,5 +114,5 @@ Objective: build features that exceed manufacturer tools.
 16. `QA-P1a`: SR power-coefficient safety guard from Claude's SCH review. Complete.
 17. `QA-P1`: Worked examples and verification report alignment. Complete.
 18. `RELEASE-P1`: Production readiness sweep. Code sweep complete; manual release sign-off pending.
-19. KR/manual release sign-off: demo walkthrough, visual/large-project acceptance, and terminal-voltage manual cross-check.
-20. `CAT-P1`: Catalogue gate and import safety. Deferred per KR; retain before any production catalogue/import release.
+19. `CAT-P1 / SEC-P1a`: Catalogue import and exposure safety. Code safety complete; KR catalogue validation decisions pending.
+20. KR/manual release sign-off: demo walkthrough, visual/large-project acceptance, and terminal-voltage manual cross-check.

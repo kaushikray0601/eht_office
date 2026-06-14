@@ -1,12 +1,38 @@
 import csv
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
 from eht.models import ElecEHT_ThermalConductivity, ElecEHT_Vendor, ElecEHT_ASMEB36 # import other models
 
 
+CONFIRMATION_TEXT = "I understand this imports legacy catalogue CSV data"
+
+
 class Command(BaseCommand):
-    help = "Imports initial data from CSV files."
+    help = (
+        "Imports legacy initial data from CSV files. This is blocked by default "
+        "because the vendor CSV is not a trusted database mirror."
+    )
+
+    def add_arguments(self, parser):
+        parser.add_argument(
+            "--execute",
+            action="store_true",
+            help="Actually import the legacy CSV files.",
+        )
+        parser.add_argument(
+            "--confirm",
+            default="",
+            help=f"Required confirmation text: {CONFIRMATION_TEXT!r}",
+        )
 
     def handle(self, *args, **options):
+        if not options["execute"] or options["confirm"] != CONFIRMATION_TEXT:
+            raise CommandError(
+                "Refusing to import legacy catalogue CSV data. "
+                "The vendor CSV is divergent from the validated database. "
+                f"Re-run only with --execute --confirm={CONFIRMATION_TEXT!r} "
+                "after KR approval and a verified backup."
+            )
+
         # import ThermalConductivity data
         self.import_data_from_csv("eht/tmp/elecEHT_ThermalConductivity.csv", ElecEHT_ThermalConductivity, ['Ins_Mat_Type', 'K_factor_A', 'K_factor_B', 'K_factor_C'])
 

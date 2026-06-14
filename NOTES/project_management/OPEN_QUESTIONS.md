@@ -43,8 +43,10 @@ Last updated: 2026-06-14
 
 6. Should `import_data_from_file` be retired, or kept only behind an explicit
    force/confirmation option?
-   - Owner: KR + Codex in `CAT-P1`. The current command imports the divergent
-     vendor CSV and is unsafe for restored catalogue data.
+   - Resolved in `CAT-P1 / SEC-P1a`: keep the command, but block it by default.
+     It now requires `--execute` plus the exact confirmation text
+     `"I understand this imports legacy catalogue CSV data"` after KR approval
+     and a verified backup.
 
 7. Should production deployment enable HSTS preload for the final domain?
    - `RELEASE-P1` added environment-driven support and the production-shaped

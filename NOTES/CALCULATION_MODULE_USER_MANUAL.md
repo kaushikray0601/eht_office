@@ -1,9 +1,10 @@
 # Calculation Module User Manual
 
-Document status: Draft for integration into the full EHT Office user guide  
-Module covered: Electrical heat tracing calculation module  
-Current calculation technologies: Self-regulating tracer cable, also called SR
-cable, with automatic MI fallback for validated high-temperature cases  
+Document status: Production-hardening revision — 2026-06-14
+Module covered: Electrical heat tracing calculation module
+Current calculation technologies: Self-regulating tracer cable (SR) with
+automatic MI fallback for validated high-temperature cases; single-phase
+cold cable sizing (FeederCable / BranchCable / DistributionJB model)
 Future technology: Constant wattage cable and advanced MI zoning will be added
 as separate calculation modules
 
@@ -768,7 +769,7 @@ For every feeder segment in the active SLD topology, the module produces:
 | Output | Meaning |
 | --- | --- |
 | Cable type and size (mm²) | Selected conductor cross-section for this segment |
-| Core count | 3-core for single-phase circuits, 4-core for three-phase trunk feeders |
+| Core count | 3-core for all cold cable segments (live, neutral, protective earth — single-phase throughout) |
 | Derated ampacity (A) | Current-carrying capacity after temperature and grouping correction |
 | Ampacity margin (%) | Headroom between operating current and derated ampacity |
 | Voltage drop (%) | Calculated voltage drop for this cable segment |
@@ -972,14 +973,18 @@ per-segment evidence includes circuit index, length basis, selected cable size,
 voltage drop, load-end voltage, fault current/status, conductor mass, and
 whether that segment sets the branch critical size.
 
-The older round-robin phase-slot evidence belongs to the superseded 3PH/4C
-model and will be retired or reinterpreted during the single-phase rebuild.
+The single-phase rebuild is complete. The legacy 3PH/4C round-robin phase-slot
+model has been retired. All cold cable segments are now sized as single-phase
+(L, N, PE) circuits — there are no 4-core trunk cables in the active model.
 
-The result tab and result export summarize the inferred L1/L2/L3 current totals
-using the per-circuit operating current. They also show the phase-current
-imbalance as the difference between the highest and lowest inferred phase loads.
-This is visibility/review evidence only; the engine does not yet reorder circuits
-or optimize phase allocation.
+The result tab and result export include an inferred L1/L2/L3 panel supply load
+summary. This shows how per-circuit operating currents are estimated to be
+distributed across the three phases of the upstream distribution panel supply.
+It is review visibility for panel loading balance only — the heating circuits
+themselves are single-phase and the distribution across L1/L2/L3 is an
+engineering assignment, not an automatic calculation. Phase imbalance is shown
+as the difference between the highest and lowest inferred phase loads. The engine
+does not automatically reorder circuits to optimise phase allocation.
 
 ### 10B.6 Sizing Status
 
@@ -1011,8 +1016,9 @@ The following items are not calculated in the current cold cable module:
 - Aluminium conductor sizing (deferred; current catalogue path is copper only).
 - Short-circuit withstand verification (minimum cable cross-section for the
   prospective short-circuit current at the MCB).
-- Automatic phase rebalancing or user-editable phase-slot assignment for 3-phase
-  JB outgoing circuits.
+- Automatic rebalancing of L1/L2/L3 panel supply loading or user-editable phase
+  slot assignment across circuits (current panel-load summary is review visibility
+  only).
 - Route-aware cable length from a 3D model or layout drawing.
 - Upstream main-breaker coordination, spare-capacity checks, and phase-bus
   current totals. The Result tab/export now include a branch-based Panel / Load
@@ -1029,8 +1035,9 @@ These limitations are noted as review notes on affected results.
 3. All Review Required notes are read and assessed.
 4. Total path voltage drop is within the project allowable limit for all branches.
 5. Load-end voltage is acceptable for the heating cable type (SR or MI).
-6. Fault protection status is Pass for all 4-core trunk cables.
-7. Earth loop status is acceptable for all 3-core outgoing circuits.
+6. Fault protection status is Pass for all FeederCable segments (the L-PE
+   fault-loop check applies to every cold cable segment in the single-phase path).
+7. Earth loop status is acceptable for all BranchCable outgoing circuits.
 8. RCD provision basis matches the project protection philosophy.
 9. Conductor mass output has been passed to the material takeoff engineer.
 10. Any topology edit or cable length override made after the initial cold cable
@@ -1041,10 +1048,17 @@ These limitations are noted as review notes on affected results.
 After breaker sizing, the module builds a power-distribution structure for each
 line.
 
+The EHT Office power distribution model is single-phase throughout.
+Each MCB outgoing circuit routes to the field via a FeederCable. Where one MCB
+feeds a single downstream heating circuit, the FeederCable connects directly to
+the BranchJB. Where one MCB feeds multiple downstream branches, a DistributionJB
+is inserted between the FeederCable and the individual BranchCables.
+
 General behavior:
 
-- One circuit can be connected through a 1-phase junction box branch.
-- Multiple circuits may be grouped through a 3-phase junction box branch.
+- One direct branch: MCB → FeederCable → BranchJB → heating cable.
+- Distributed branch: MCB → FeederCable → DistributionJB → BranchCable(s) →
+  BranchJB(s) → heating cable(s).
 - Each branch carries tagged component data for MCB, cables, isolators,
   junction boxes, tracers, and end terminations.
 - The SLD graph is generated from the stored branch data.
@@ -1059,15 +1073,16 @@ The BOQ is generated per line and then consolidated at project level.
 
 Typical BOQ items include:
 
-- MCB.
-- 3-phase junction box.
-- 1-phase junction box.
-- Cable from MCB to 3-phase junction box.
-- Cable from 3-phase junction box to 1-phase junction box.
+- MCB (2-pole, single-phase).
+- DistributionJB (field distribution junction box used when one MCB feeds
+  multiple downstream BranchCable paths).
+- BranchJB (field branch connection junction box at each heating cable branch).
+- FeederCable (from MCB to DistributionJB or directly to BranchJB).
+- BranchCable (from DistributionJB to each downstream BranchJB, where a
+  DistributionJB is present).
 - Ordered SR heating tracer length, including termination allowance.
 - End termination kit.
-- 1-phase isolator.
-- 3-phase isolator.
+- Local isolator (single-phase).
 - RTD.
 - Thermostat.
 - Caution label.
@@ -1263,7 +1278,23 @@ distribution. The summary totals MCBs, circuits, load current, connected load,
 breaker ratings, and cold-cable selected/review-required/unsizeable counts. It
 does not yet compare against an upstream main breaker or panel spare capacity.
 
-### 16.1 Manual Cable Size Review
+### 16.1 Cable Schedule Procurement Annotations
+
+Each cable schedule row may carry engineering review and procurement annotation
+fields. These are entered manually and stored as review-layer data on the
+individual cable row.
+
+| Annotation field | Meaning |
+| --- | --- |
+| Review Status | Current review state of the schedule entry. Choices: Generated (auto-built from calculation), Review Required (changed conditions), Checked (engineering review complete), Issued (released for procurement/construction). |
+| Checked By | Name or initials of the engineer who reviewed and accepted this cable schedule row. |
+| Checked Date | Date on which the check was completed. |
+
+These fields do not affect the cold cable sizing calculation. They are
+engineering document control fields and should be updated as part of the normal
+issue workflow.
+
+### 16.2 Manual Cable Size Review
 
 When a user manually enters a cable specification for a schedule row, the
 application compares the manually entered size against the calculated cold cable
@@ -1272,7 +1303,7 @@ result for that branch. The comparison produces one of three review statuses:
 | Status | Meaning |
 | --- | --- |
 | Acceptable | The manually entered conductor size is equal to or larger than the calculated cold cable size. |
-| Review Required | The manual size could not be compared with the calculated size, or the manual core count does not match the required core count for the segment (3-core for outgoing, 4-core for trunk). |
+| Review Required | The manual size could not be compared with the calculated size, or the manual core count does not match the required core count for the segment. All EHT cold cable segments in the single-phase model are 3-core (live, neutral, protective earth). |
 | Undersized | The manually entered conductor size is below the calculated cold cable size. This is a warning that the manual specification may not satisfy ampacity or voltage-drop requirements. |
 
 The cable schedule summary card shows a count of rows with Review Required or
@@ -1331,6 +1362,30 @@ are visual indicators only; they do not recalculate the design. Current badge
 families highlight missing cable length, cold-cable review or unsizeable
 states, active manual cable/tracer overrides, and manual topology edits that
 need review or have become stale against the generated baseline.
+
+### 17.3 SLD Topology Operations
+
+The following controlled topology operations are available in the SLD workspace.
+Each operation modifies the stored SLD topology and triggers a cold cable impact
+re-evaluation for the affected branches.
+
+| Operation | What it does | When to use |
+| --- | --- | --- |
+| **Combine feeders** | Merges two or more individual FeederCables from separate MCBs into one shared FeederCable trunk routed to a new DistributionJB. The downstream branches remain individual BranchCable paths. | When two adjacent circuits share a common cable route to the field and a combined trunk cable is preferred to reduce cable count. |
+| **Split feeder** | Reverses a previous combine operation, restoring the individual FeederCable paths. | When a combined feeder arrangement is no longer appropriate. |
+| **Add downstream JB** | Inserts a DistributionJB between the existing FeederCable and the BranchJB for a direct branch. Converts a direct path to a distributed path. | When an existing direct circuit needs to be extended with additional downstream branches later, or when a field JB is required at an intermediate point. |
+| **Attach / move JB** | Moves a BranchJB from one DistributionJB to another, or attaches an isolated BranchJB to an existing DistributionJB. | When field routing changes require reattaching a downstream branch to a different distribution point. |
+| **Reset topology** | Restores the entire SLD topology to the last generated (calculation-based) state for the project. All manual topology edits are removed. | When manual edits are no longer valid and the generated topology should be the active basis. |
+| **Reset selected** | Restores the topology for a selected component or branch to the generated state, leaving other manual edits in place. | When one specific manual edit needs reverting without affecting other topology changes. |
+
+After any topology operation, the cold cable sizing for affected branches is
+re-evaluated automatically and the new result is shown in the SLD metadata
+panel. The new sizing is always marked Review Required until confirmed, because
+the topology change may affect cable lengths, current grouping, and voltage drop.
+
+Topology edit history is stored and is viewable in the SLD panel. Each edit is
+timestamped. The admin panel provides a read-only audit view of all topology
+operations and their resulting states.
 
 ## 18. Common Diagnostics and Corrective Actions
 
@@ -1511,12 +1566,13 @@ MI automatic fallback, but users should understand these limitations:
 - Multi-set MI remaining energized capacity after one breaker trip is not a
   guaranteed N-1 thermal design unless a future project basis explicitly sizes
   for that case.
-- Cold cable sizing is being rebuilt from the earlier 3PH/4C terminology to
-  single-phase FeederCable/BranchCable terminology. Remaining limitations:
-  tracer PE-path in earth loop (non-conservative until catalogue data exists);
-  aluminium conductor sizing deferred; armored/2C cable deferred; short-circuit
-  withstand check not yet implemented; route-aware lengths not yet available
-  from 3D model.
+- Cold cable sizing has been rebuilt from the earlier 3PH/4C model to the
+  single-phase FeederCable/BranchCable model. All segments are now sized as
+  single-phase 3-core circuits. Remaining limitations: tracer PE-path resistance
+  excluded from the earth loop check (non-conservative until SR/MI catalogue
+  data is extended); aluminium conductor sizing deferred; armored/2C cable
+  deferred; short-circuit withstand check not yet implemented; route-aware
+  lengths not yet available from a 3D model or layout drawing.
 
 ## 21. Recommended User Practice
 
@@ -1716,8 +1772,6 @@ The current implemented SR status is:
 
 Known SR limitations after Pass 19 are:
 
-- The current stored cold-cable result schema still contains legacy 4C/3PH
-  fields until the single-phase rebuild migration retires them.
 - Shared FeederCable quantities must be deduplicated in BOQ and cable schedule
   totals even though each branch result stores complete path evidence.
 - Physical installation space around small-bore pipe is not calculated.
@@ -1740,9 +1794,13 @@ should check:
 3. The selected SR model is acceptable for the temperature, area, gas group,
    and project voltage.
 4. Per-circuit current and total line current are both understood.
-5. Independent breaker-per-run topology is acceptable for the project stage.
-6. Future cold-cable sizing will revisit feeder grouping, voltage drop, and
-   panel loading.
+5. SR parallel runs share one 2-pole MCB per run group. Per-run currents are
+   carried by individual BranchCable paths from the DistributionJB. This
+   topology is now active in the cold cable sizing — verify it matches the
+   intended field installation arrangement.
+6. Cold cable sizing for the shared FeederCable and individual BranchCable
+   paths has been evaluated. Review the voltage drop budget split between
+   the trunk and outgoing cables.
 7. BOQ quantity is understood as full straight-run cable length, including
    termination allowance.
 
@@ -1761,20 +1819,22 @@ product development.
 | Review physical JB/cold-lead capacity manually | Current schema cannot calculate terminal/gland capacity | Manual review required |
 | Review cold-cable voltage drop and panel loading manually | Next module not yet built | Manual review required |
 
-### 24.2 Priority P1 - Cold Cable Module Status (Complete)
-
-This item was previously tracked as **Priority P1 - Next Calculation Module**.
-The cold-cable module is now implemented, with remaining work split into the
-deferred coordination and capacity items below.
+### 24.2 Priority P1 - SLD, Cold Cable, and Schedule Status
 
 | Activity | Reason | Status |
 | --- | --- | --- |
 | Cold cable sizing module | Cable size, voltage drop, and installation deliverables | **Complete** — see Section 10B |
-| Voltage-drop optimization | Minimize feeder/cold cable conductor tonnage via VD allocation | **Rebuild next** — replace paired 4C/3C optimisation with single-phase FeederCable/BranchCable optimisation |
+| Single-phase rebuild | Replace 3PH/4C model with FeederCable/BranchCable/DistributionJB | **Complete** — migrations 0035–0037 applied; all 4C trunk fields retired |
+| Voltage-drop optimization | Minimize feeder/cold cable conductor tonnage via VD allocation | **Complete** — minimum conductor-volume pair selected within VD allowance |
 | Consume active SLD topology in cable sizing | Manual topology edits affect cable quantities and sizing | **Complete** — topology and manual overrides consumed |
 | Consume SR/MI independent branch topology | Cold-cable sizing respects the stabilized branch/circuit model | **Complete** |
 | Panel/load coordination summary | Needed for upstream electrical review | **Complete** — branch-based Result tab and export summary; upstream spare-capacity coordination remains deferred |
-| Physical JB/cold-lead capacity data model | Needed before terminal-capacity gates can be honest | P2 — deferred |
+| SLD topology operations (combine, split, downstream JB, attach JB, reset) | Controlled SLD editing with cold cable impact re-evaluation | **Complete** — see Section 17.3 |
+| SLD topology audit history | Review and replay of past topology edits | **Complete** — admin audit panel with operation history |
+| SLD review badges | Visual indicators for missing lengths, review states, overrides | **Complete** |
+| SLD PDF export | PDF-quality diagram export from the SLD workspace | **Complete** |
+| Cable schedule procurement annotations | Review status, checked by/date fields per cable row | **Complete** — see Section 16.1 |
+| Physical JB/cold-lead capacity data model | Needed before terminal-capacity gates can be honest | Deferred |
 
 ### 24.3 Priority P2 - MI Engineering Enhancements
 
@@ -1840,11 +1900,17 @@ deferred coordination and capacity items below.
 | RCD | Residual Current Device. A protective device that trips at low earth fault current, typically 30 mA for industrial equipment protection. When an RCD is present on a heating circuit, the MCB earth-loop check for the 3-core outgoing circuit is a secondary verification, not a primary sizing gate. All EHT circuits should be designed with RCD protection as a primary requirement. |
 | Load-end voltage | The supply voltage minus the total series voltage drop across the cold cable path (FeederCable plus BranchCable where applicable). Reported in absolute volts as evidence that adequate voltage reaches the heating cable cold end. |
 | Conductor volume proxy | The material-optimisation cost function. For the single-phase rebuild: 3 x A_feeder x L_feeder + sum(3 x A_branch x L_branch), with shared FeederCable material counted once. |
-| FeederCable | Cold cable from the MCB/EHT DB outgoing circuit to the field DistributionJB or directly to the BranchJB. |
-| BranchCable | Cold cable from a DistributionJB to a downstream BranchJB/heating cable branch. |
-| DistributionJB | Field distribution junction box used only when one MCB feeds two or more downstream branches. |
-| BranchJB | Field branch/connection junction box at the heating cable branch. |
+| FeederCable | Cold cable from the MCB/EHT DB outgoing circuit to the field DistributionJB or directly to the BranchJB. Always single-phase 3-core (L, N, PE) in the current model. |
+| BranchCable | Cold cable from a DistributionJB to a downstream BranchJB/heating cable branch. Always single-phase 3-core in the current model. |
+| DistributionJB | Field distribution junction box used only when one MCB feeds two or more downstream BranchCable paths. Formerly called "3-phase junction box" in legacy documentation — the name change reflects the single-phase model. |
+| BranchJB | Field branch/connection junction box at the heating cable branch. Formerly called "1-phase junction box" in legacy documentation. |
 | CP cable | Constant power heating cable — fixed wattage per metre regardless of temperature. A planned future module in EHT Office. |
+| Topology edit | A controlled manual change to the SLD power-distribution topology. Includes combine-feeder, split-feeder, add-downstream-JB, attach-JB, reset, and reset-selected operations. Each edit is stored with a timestamp and is auditable. |
+| Combine-feeder | Topology operation that merges two or more individual FeederCable paths into one shared FeederCable trunk routed to a new DistributionJB. |
+| Split-feeder | Topology operation that reverses a combine-feeder edit, restoring independent FeederCable paths. |
+| Add downstream JB | Topology operation that inserts a DistributionJB between the FeederCable and BranchJB on a direct branch, converting it to a distributed path. |
+| Attach JB | Topology operation that moves a BranchJB from one DistributionJB to another. |
+| Review badge | Visual indicator on an SLD component showing that the component has an outstanding review condition: missing cable length, cold cable review required, unsizeable cold cable, active manual override, or stale topology edit. |
 
 ## 26. Calculation Verification Report
 
@@ -1891,11 +1957,13 @@ route lengths, or reviewing the heat-loss safety factor.
 
 ### 26.4 Optimisation Savings Comparison
 
-For three-phase junction box branches, the Section E report shows a comparison between
-the engine's optimised cable pair selection and three fixed voltage-drop split
-baselines: 25/75, 50/50, and 75/25 allocation between the 4-core trunk and 3-core
-outgoing cables. The comparison shows the conductor volume proxy and the percentage
-saving achieved by the optimised selection versus each fixed-split baseline.
+For distributed branches (one FeederCable to a DistributionJB feeding multiple
+BranchCable paths), the Section E report shows a comparison between the engine's
+optimised FeederCable/BranchCable pair selection and three fixed voltage-drop split
+baselines: 25/75, 50/50, and 75/25 allocation of the project VD allowance between
+the FeederCable and the longest BranchCable. The comparison shows the conductor
+volume proxy and the percentage saving achieved by the optimised selection versus
+each fixed-split baseline.
 
 ### 26.5 Worked Example Reference
 

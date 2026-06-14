@@ -8,9 +8,9 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 
 ## Current State
 
-- Phase A code through `RELEASE-P1` is implemented in the current worktree.
+- Phase A code through `CAT-P1 / SEC-P1a` is implemented in the current worktree.
 - Latest full SQLite test status (verified 2026-06-14 with `USE_POSTGRES=false`):
-  314 tests passed. SQLite quick testing remains the default fast path.
+  318 tests passed. SQLite quick testing remains the default fast path.
 - Latest full PostgreSQL test status (verified 2026-06-12 against
   `eht_local_test` via the programmatic runner): 306 tests passed.
 - `eht_local` catalogue restoration after the CC-P5 accidental flush completed
@@ -19,10 +19,11 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
   commands — see `CODEX_MEMORY.md`.
 - Latest quick health check: `venv/bin/python manage.py check` passed on
   2026-06-14.
-- Latest safety/compliance audit: `AUD-P1` completed on 2026-06-13 with
-  read-only live database inspection and code-pattern review. It found one
-  active catalogue gate discrepancy and one dangerous legacy import path;
-  `CAT-P1` is retained but deferred per KR so Phase A can converge.
+- Latest safety/compliance audit follow-up: `CAT-P1 / SEC-P1a` on 2026-06-14
+  guarded the dangerous legacy import path, added SR/MI catalogue-isolation
+  regression coverage, fixed login open-redirect handling, and hardened
+  error-file downloads. The remaining catalogue items are KR/vendor-validation
+  decisions, not code changes to make without approval.
 
 ## Active Work Queue
 
@@ -498,29 +499,54 @@ Checkpoint result, 2026-06-13:
   `is_validated=True`; nVent/XMI-A62 is `False`. No data was changed during
   the audit. This must be resolved with KR/Claude before more MI-sensitive
   calculations are trusted.
-- `import_data_from_file` still blindly imports `eht/tmp/elecEHT_Vendor.csv`,
-  which project notes say would corrupt the restored vendor catalogue. This is
-  now elevated into `CAT-P1`.
+- `import_data_from_file` used to blindly import `eht/tmp/elecEHT_Vendor.csv`,
+  which project notes say would corrupt the restored vendor catalogue. This was
+  guarded in `CAT-P1 / SEC-P1a`.
 - Ignored local root database artifacts exist: `db.sqlite3` and
   `db.sqlite3.bak`. They are not the active PostgreSQL database and are not
   tracked, but should be treated as local artifacts during release cleanup.
 
 ### CAT-P1 - Catalogue Gate and Import Safety
 
-Status: deferred
+Status: code safety complete; KR catalogue decisions pending
 
 - [ ] Resolve the live MI `is_validated` discrepancy with KR/Claude. If the
       current THR/CHR validation was not intentional R7 approval, explicitly
       close the gate again through an approved data-change path.
-- [ ] Guard or retire `import_data_from_file` so the divergent vendor CSV
+- [x] Guard or retire `import_data_from_file` so the divergent vendor CSV
       cannot be imported accidentally.
-- [ ] Add explicit safety confirmation to catalogue mutation commands that can
-      delete or clear catalogue/reference rows.
-- [ ] Add/confirm tests that SR selection ignores legacy MI rows in
+- [x] Add explicit safety confirmation to the legacy catalogue import command.
+- [ ] Review any other catalogue mutation commands that can delete or clear
+      catalogue/reference rows before production catalogue maintenance.
+- [x] Add/confirm tests that SR selection ignores legacy MI rows in
       `ElecEHT_Vendor`.
 - [ ] Decide whether Phase A needs an SR validation gate, or at minimum a
       vendor/readiness warning for unverified SR blocks, before production use.
-- [ ] Record the final approved catalogue state and command policy in PM docs.
+- [x] Record the command policy in PM docs.
+- [ ] Record the final approved catalogue state after KR/Claude vendor review.
+
+Checkpoint result, 2026-06-14:
+
+- `import_data_from_file` is now blocked by default. It requires both
+  `--execute` and the exact confirmation text
+  `"I understand this imports legacy catalogue CSV data"` before importing any
+  legacy CSV data.
+- Added regression coverage proving the command does not alter vendor,
+  thermal-conductivity, or pipe catalogue counts without explicit confirmation.
+- Strengthened SR selection regression coverage with an explicit legacy
+  `Tracer_Family='MI'` row in `ElecEHT_Vendor`-style data; SR selection ignores
+  it.
+- Fixed Claude security finding D-2: `my_login` now validates `next` with
+  `url_has_allowed_host_and_scheme` and falls back to `base` for unsafe
+  external redirects.
+- Fixed Claude security finding D-4: `download_error_file` rejects path
+  separators and resolves file paths inside the configured error-file
+  directory before serving.
+- Added Codex response/disposition section to
+  `NOTES/audit/sch-p1-requirements-2026-06-13.md`.
+- Focused SQLite regression:
+  `USE_POSTGRES=false DEBUG=true venv/bin/python manage.py test eht.tests.CatalogueAndSecurityHardeningTests eht.tests.TracerSelectionTests.test_get_tracer_options_filters_catalogue_temperature_limits_and_family -v 2 --noinput`:
+  5 tests passed.
 
 ### SCH-P1 - Procurement-Grade Cable Schedule
 
@@ -683,7 +709,7 @@ Checkpoint result, 2026-06-14:
   schedule/cold-cable impact.
 - Full SQLite suite:
   `USE_POSTGRES=false DEBUG=true venv/bin/python manage.py test eht -v 2 --noinput`:
-  314 tests passed.
+  318 tests passed.
 - `venv/bin/python manage.py check`: passed.
 - `node --check static/js/sld_workspace.js`: passed.
 - `git diff --check`: passed.

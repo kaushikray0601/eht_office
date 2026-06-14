@@ -47,17 +47,17 @@ Immediate next pass:
 1. KR/manual release sign-off: demo walkthrough, cold-cable label overlap
    inspection, large-project browsing/search feel, and terminal-voltage manual
    cross-check.
-2. `CAT-P1` remains deferred per KR: catalogue gate/import safety is important,
-   but CSV import tightening is not the immediate convergence path.
+2. KR/Claude catalogue decisions: live MI validation state, SR catalogue gate
+   or warning policy, and final approved catalogue state.
 3. Keep the calculation manual aligned with any behavior changes.
 
 ## Current Repo State
 
 - Working directory: `/home/kr/mydev/eht_office`.
 - Current date at latest update: 2026-06-14.
-- Phase A code through `RELEASE-P1` is implemented in the current worktree.
+- Phase A code through `CAT-P1 / SEC-P1a` is implemented in the current worktree.
 - Latest full SQLite test status (verified 2026-06-14 with
-  `USE_POSTGRES=false`): 314 tests passed. SQLite quick testing remains the
+  `USE_POSTGRES=false`): 318 tests passed. SQLite quick testing remains the
   default fast path.
 - Latest full PostgreSQL test status (verified 2026-06-12 against
   `eht_local_test` via the programmatic runner): 306 tests passed,
@@ -108,9 +108,17 @@ Immediate next pass:
   overridden. Production-shaped `manage.py check --deploy` passed with explicit
   deployment env values. PostgreSQL `migrate --check` and direct connection
   passed against live `eht_local` after local DB access was allowed. Full
-  SQLite suite remains 314 tests passed. Manual release sign-off items remain:
+  SQLite suite is now 318 tests passed after `CAT-P1 / SEC-P1a`. Manual release
+  sign-off items remain:
   demo walkthrough, cold-cable label overlap inspection, large-project
   browsing/search feel, and terminal-voltage manual cross-check.
+- `CAT-P1 / SEC-P1a` code safety sweep is complete: `import_data_from_file` is
+  blocked by default and requires `--execute` plus exact confirmation text
+  before legacy CSV import; SR selection tests explicitly ignore legacy
+  `Tracer_Family='MI'` vendor rows; login `next` redirects are validated with
+  `url_has_allowed_host_and_scheme`; error-file downloads reject path traversal
+  and resolve inside the error-file directory. No catalogue data or validation
+  flags were changed.
 - Testing convention from 2026-06-14: try PostgreSQL-backed tests first where
   meaningful, then fall back to SQLite if Django test-runner setup hits the
   known `psycopg.OperationalError: connection is bad`. Direct Django PostgreSQL
@@ -328,9 +336,10 @@ Immediate next pass:
   `MICableFamily.is_validated=False` until KR approves rows via Django admin,
   but `AUD-P1` found the live DB currently has THR/MIQ and CHR/MI-825B marked
   validated. Resolve before trusting MI-sensitive calculations.
-- `import_data_from_file` still imports `eht/tmp/elecEHT_Vendor.csv`; do not
-  run it. `CAT-P1` should guard or retire this command.
-- Procurement-grade cable schedule fields/export are not built.
+- `import_data_from_file` is blocked by default and requires explicit
+  confirmation; `eht/tmp/elecEHT_Vendor.csv` is still not catalogue truth.
+- A lightweight SCH-P1 procurement annotation/export layer exists. Full
+  document-level schedule snapshot/issue revision control is deferred.
 - Browser-level SLD smoke coverage exists in `eht.browser_tests` and is green
   in the local dev setup after installing Playwright's Linux browser
   dependencies in the venv workflow.

@@ -12,6 +12,7 @@ from uuid import uuid4
 import pandas as pd
 from django.contrib import admin
 from django.core.management import call_command
+from django.core.management.base import CommandError
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -201,6 +202,67 @@ class SldTopologyFingerprintTests(SimpleTestCase):
 
         self.assertEqual(payload_fingerprint(payload), payload_fingerprint(changed_metadata))
         self.assertNotEqual(payload_fingerprint(payload), payload_fingerprint(changed_topology))
+
+
+class CatalogueAndSecurityHardeningTests(TestCase):
+    def setUp(self):
+        self.user = User.objects.create_user(username='reviewer', password='safe-password-123')
+
+    def test_legacy_csv_import_is_blocked_without_explicit_confirmation(self):
+        before_counts = {
+            'vendor': ElecEHT_Vendor.objects.count(),
+            'thermal': ElecEHT_ThermalConductivity.objects.count(),
+            'pipe': ElecEHT_ASMEB36.objects.count(),
+        }
+
+        with self.assertRaises(CommandError):
+            call_command('import_data_from_file')
+
+        with self.assertRaises(CommandError):
+            call_command(
+                'import_data_from_file',
+                execute=True,
+                confirm='yes',
+            )
+
+        after_counts = {
+            'vendor': ElecEHT_Vendor.objects.count(),
+            'thermal': ElecEHT_ThermalConductivity.objects.count(),
+            'pipe': ElecEHT_ASMEB36.objects.count(),
+        }
+        self.assertEqual(after_counts, before_counts)
+
+    def test_login_rejects_external_next_redirect(self):
+        response = self.client.post(
+            reverse('my_login'),
+            {
+                'username': 'reviewer',
+                'password': 'safe-password-123',
+                'next': 'https://attacker.example/collect',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response['Location'], reverse('base'))
+
+    def test_error_file_download_rejects_traversal_paths(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse('download_error_file', args=['..\\settings.py']))
+        self.assertEqual(response.status_code, 404)
+
+    def test_error_file_download_serves_basename_from_error_directory(self):
+        self.client.force_login(self.user)
+        error_dir = BASE_DIR / 'file_storage' / 'error_file'
+        error_dir.mkdir(parents=True, exist_ok=True)
+        file_name = f'test-error-{uuid4().hex}.xlsx'
+        file_path = error_dir / file_name
+        file_path.write_bytes(b'test workbook placeholder')
+        try:
+            response = self.client.get(reverse('download_error_file', args=[file_name]))
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(file_name, response['Content-Disposition'])
+        finally:
+            file_path.unlink(missing_ok=True)
 
 
 def make_project_settings(**overrides):
@@ -1036,6 +1098,7 @@ class TracerSelectionTests(SimpleTestCase):
             {'V_UID': 'BAD_OPERATING', 'Max_Op_T': 70.0},
             {'V_UID': 'BAD_EXPOSURE', 'Max_Exp_T_On': 110.0},
             {'V_UID': 'MI_ROW', 'Tracer_Family': 'Constant Wattage'},
+            {'V_UID': 'LEGACY_MI_ROW', 'Tracer_Family': 'MI'},
         )
 
         best_tracer, alternatives = get_tracer_options(

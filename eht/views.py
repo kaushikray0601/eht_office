@@ -22,6 +22,7 @@ from django.shortcuts import redirect, render
 from django.utils.safestring import mark_safe
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.timezone import now, timedelta
 
 from .cable_management import (
@@ -3318,7 +3319,14 @@ def boq_export_view(request):
 # -------------Download error File -------------------------------------------------------
 
 def download_error_file(request, file_name):
-    file_path = os.path.join(settings.BASE_DIR, 'file_storage','error_file', file_name)  
+    if file_name != os.path.basename(file_name) or '\\' in file_name or '/' in file_name:
+        raise Http404("File not found.")
+
+    error_dir = (Path(settings.BASE_DIR) / 'file_storage' / 'error_file').resolve()
+    file_path = (error_dir / file_name).resolve()
+    if not file_path.is_relative_to(error_dir):
+        raise Http404("File not found.")
+
     try:
         return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=file_name)
     except FileNotFoundError:
@@ -3594,6 +3602,12 @@ def my_login(request):
         if user is not None:
             auth_login(request, user)
             next_url = request.POST.get('next', '').strip() or 'base'
+            if not url_has_allowed_host_and_scheme(
+                next_url,
+                allowed_hosts={request.get_host()},
+                require_https=request.is_secure(),
+            ):
+                next_url = 'base'
             return redirect(next_url)
         error = 'Invalid username or password. Please try again.'
     return render(request, 'eht/my_login.html', {

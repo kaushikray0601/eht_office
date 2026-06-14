@@ -256,6 +256,14 @@ This is architecturally incorrect for the following reasons:
 requirements above. Keep `CableScheduleOverride` for its original purpose (annotation /
 engineering override per cable). Do not conflate them.
 
+**Codex Response:** Agree with the architecture direction for an issued procurement
+document. I do not agree that this belongs in the CAT-P1 safety pass or that it blocks the
+current engineering MVP/manual review. The current implementation is a lightweight live
+engineering schedule with row annotations; a true issued schedule needs a dedicated
+`ScheduleSnapshot` workflow pass.
+
+**Status:** Open.
+
 ### A-2 Overbuilt — Deferred Items Implemented  [MEDIUM]
 
 The requirements spec explicitly listed the following as **DEFERRED — do NOT build for
@@ -270,6 +278,13 @@ four. Building deferred fields now:
 These fields are not harmful, but they are premature. The correct path is: fix the snapshot
 model first, then revisit whether these fields belong on the snapshot or on a future
 procurement extension model.
+
+**Codex Response:** Partly agree. The fields are premature for formal procurement control,
+but they are not currently harmful and are covered by migration/tests. I do not recommend
+removing them now because that adds churn without improving MVP safety. Their final
+ownership should be revisited when `ScheduleSnapshot` is designed.
+
+**Status:** Open.
 
 ### A-3 Missing Minimum Procurement Columns in Export  [HIGH]
 
@@ -288,6 +303,12 @@ A cable schedule that omits the maintain temperature, minimum ambient, and trace
 a credible procurement document. These are the top three columns an EHT engineer reads first
 on any cable schedule. Codex must add these columns from the upstream sizing data.
 
+**Codex Response:** Agree. These columns are useful and should be added in a small schedule
+polish pass. I would handle this before calling the cable schedule procurement-grade, but
+not inside CAT-P1 because it is not catalogue/import safety.
+
+**Status:** Open.
+
 ### A-4 Live Schedule — Not a Snapshot  [HIGH]
 
 `build_cable_schedule_workspace_data` in `cable_schedule.py` calls `build_project_sld_payload`
@@ -304,6 +325,12 @@ results on every export, including on every Excel download. The implications:
 This is not a blocker for a first internal beta, but it is a blocker for giving the schedule
 to a procurement team. The `ScheduleSnapshot` model (A-1 above) resolves this entirely.
 
+**Codex Response:** Agree. The current schedule is live engineering output, not an issued
+document. Release language should preserve that distinction until a real snapshot/issue
+workflow exists.
+
+**Status:** Open.
+
 ### A-5 Deduplication Bug  [LOW]
 
 In `cable_schedule.py`, `unique_cable_rows` (a deduplicated dict keyed by cable spec) is
@@ -314,6 +341,12 @@ correctly show one combined quantity row, but the main schedule tab will show th
 This is arguably correct behavior for a "per-circuit" schedule, but it creates confusion when
 comparing quantities between tabs. At minimum, a note column "shared feeder — see summary
 for combined quantity" would clarify intent.
+
+**Codex Response:** Agree with the nuance. The current behavior can be valid for
+per-circuit traceability, but the export should explicitly label shared feeder rows so the
+main sheet and summary sheet are not perceived as contradictory.
+
+**Status:** Open.
 
 ### A-6 NULL Coefficient Blocker — Status Update  [RESOLVED]
 
@@ -331,6 +364,13 @@ places:
 
 The blocker is resolved in the active code path. The concern about `calculation.py` is
 moot — that file now raises `NotImplementedError` and should be deleted (see Section C).
+
+**Codex Response:** Agree. `QA-P1a` closed the active calculation risk by guarding SR
+A/B/C coefficients in the active power-distribution path and preventing partial selected
+outputs when power-parameter calculation fails. Deleting the legacy stub is separate
+housekeeping.
+
+**Status:** Closed.
 
 ---
 
@@ -350,6 +390,12 @@ Recommended fix: add a `clean()` method to `HeatTracingInput` enforcing the temp
 ordering constraint. This is a model-level safety net, not a replacement for the upload
 sanitizer.
 
+**Codex Response:** Agree. This is a good model-level safety net for admin/API paths. It
+should be done as a focused EHT data-validity pass with tests that preserve the upload
+sanitizer behavior.
+
+**Status:** Open.
+
 ### B-2 Wind Correction — Rule-of-Thumb, Not IEC/IEEE Standard  [MEDIUM]
 
 The wind correction applied to external convection heat loss uses an empirical formula:
@@ -364,6 +410,12 @@ deviation; this finding simply confirms it. For the production release, the veri
 report should explicitly state the wind speed range within which the shortcut is calibrated
 and flag that locations with design wind speeds above that range require manual review.
 
+**Codex Response:** Agree. This is primarily a disclosure/reporting improvement for MVP.
+The rigorous IEC/IEEE wind model should be deferred unless KR wants advanced heat-loss
+methods before release.
+
+**Status:** Open.
+
 ### B-3 Single-Phase Assumption — No Hard Enforcement  [LOW]
 
 The cold cable module, SLD, and power distribution are all coded on a single-phase (L-N)
@@ -374,6 +426,12 @@ for higher-power MI cables, particularly 3-phase skin-effect systems). If a user
 such a project in the future, the calculations will silently produce wrong results. For the
 current release this is acceptable as the scope is explicitly single-phase SR/MI, but the
 limitations section of the user manual and verification report should state this explicitly.
+
+**Codex Response:** Agree with the limitation. Current scope is single-phase SR/MI cold
+cable, and the manual/report should say so plainly. A runtime hard gate is only needed if
+the UI/API can currently create out-of-scope three-phase heating cases.
+
+**Status:** Open.
 
 ### B-4 Cold-Start Voltage Drop — No Startup-Current Adequacy Check  [MEDIUM]
 
@@ -389,6 +447,12 @@ Recommend: add a startup-current VD cross-check using the tracer's published sta
 at minimum ambient temperature and flag as a warning (not a blocker) if VD exceeds 5% at
 startup current.
 
+**Codex Response:** Agree as an engineering enhancement, especially for SR. I would not
+make it a hard blocker until the rule basis and report wording are agreed. Warning-first is
+the right posture.
+
+**Status:** Open.
+
 ### B-5 Fault Loop Impedance — Approximation Disclosed, Completeness Gap  [LOW]
 
 `eht_db_source_impedance_ohm = V / (I_fault_ka × 1000)` is a single-phase scalar approximation
@@ -398,6 +462,12 @@ value is defensibly conservative for most distribution-level EHT panels, but for
 from large transformers with low X/R ratios the approximation can over-estimate fault current
 clearance capability. The verification report should note this limitation and recommend that
 the user supply an actual measured source impedance when available.
+
+**Codex Response:** Agree. This is a documentation/report limitation for now. A future
+source-impedance input model can replace the approximation when project electrical data is
+available.
+
+**Status:** Open.
 
 ### B-6 SR Rejection with No MI Fallback — Silent Line  [LOW]
 
@@ -411,6 +481,12 @@ return value holds it, but that diagnostic is not forwarded to the aggregated re
 means the user sees a line with heat loss but no tracer and no explanation in the UI. The
 rejection reasons should be persisted on the heat loss record in this path.
 
+**Codex Response:** Agree. This is useful reporting hardening and should be fixed before
+first-customer review if time allows, because unexplained blank selections reduce trust.
+It is separate from catalogue import safety.
+
+**Status:** Open.
+
 ### B-7 Accessory Heat Loss — No Published Reference  [LOW]
 
 The insulation accessory heat loss multipliers (flanges, supports, instrumentation taps) use
@@ -419,6 +495,12 @@ specific IEC/IEEE table. For a commercial EHT design tool, every empirical coeff
 trace to a published source. This is a documentation gap, not a code defect. The
 verification report should either cite the source or state that values are based on
 engineering judgment, so a reviewing engineer knows what to audit.
+
+**Codex Response:** Agree. For MVP, the honest fix is to label these adders as engineering
+judgment unless KR can provide the exact source table. Later, replace or cite coefficients
+against the chosen standard/vendor basis.
+
+**Status:** Open.
 
 ---
 
@@ -438,12 +520,23 @@ this path. This file:
 Codex action: delete `eht/calculation.py` in full. Confirm all imports from this file
 have been removed from other modules before deleting.
 
+**Codex Response:** Agree as housekeeping. I would do it after the current release
+checkpoint to avoid mixing cleanup with safety fixes. Before deletion, run an import search
+and targeted calculation tests.
+
+**Status:** Open.
+
 ### C-2 Dead Code — Commented-Out Models  [LOW]
 
 `eht/models.py` lines 943–1040 contain a large commented-out old model definition
 (`ElecEHT_CalculatedTable`, `ElecEHT_IO`) wrapped in a triple-quoted docstring. This is not
 an actual docstring — it is assigned to no name, so it is a discarded string literal that
 the garbage collector ignores. It serves no purpose and will mislead developers. Delete it.
+
+**Codex Response:** Agree. This is low-risk cleanup, but best done in a housekeeping pass
+after release safety work is checkpointed.
+
+**Status:** Open.
 
 ### C-3 Referential Integrity Gap — `HeatTracingInput.proj_id`  [MEDIUM]
 
@@ -458,6 +551,12 @@ For production, this should be migrated to a proper `ForeignKey(ProjectData, on_
 This is a non-trivial migration (requires data cleanup of any existing orphaned rows).
 Flag as a technical debt item for the post-release backlog if not done before release.
 
+**Codex Response:** Agree with the long-term model direction. This is a real data migration
+and should not be rushed while live project data exists. It belongs in a planned data-model
+pass with orphan inspection first.
+
+**Status:** Open.
+
 ### C-4 Self-Registration Disabled — No User-Facing Indication  [LOW]
 
 `my_register` at `views.py:3610` silently redirects to the login page.
@@ -469,6 +568,12 @@ self-registration is intentionally disabled (all users created by admin), the `/
 URL should be removed from `urls.py` or return a clear `403 / "Account creation is
 admin-managed"` message.
 
+**Codex Response:** Agree. This is small UX/security polish. It was not included in
+CAT-P1 / SEC-P1a because it is not catalogue/import safety, but it is safe to take in a
+near-term `SEC-P1b` pass.
+
+**Status:** Open.
+
 ### C-5 Error File Shared Path — Race Condition on Concurrent Uploads  [MEDIUM]
 
 `sanatize_input.py` writes validation error output to a hardcoded path
@@ -479,6 +584,11 @@ replaced). Fix: use a per-request unique filename (e.g., include user ID or a UU
 filename). The `download_error_file` URL already accepts a variable filename — the generator
 just needs to write to a unique path and pass that name back to the client.
 
+**Codex Response:** Agree. CAT-P1 / SEC-P1a fixed path traversal on download, but the
+shared filename race remains. This should be a focused upload workflow hardening task.
+
+**Status:** Open.
+
 ### C-6 No Stale-Results Warning After Project Edit  [MEDIUM]
 
 If a user edits project settings (e.g., changes ambient temperature or voltage) and then
@@ -488,6 +598,12 @@ A first customer will not know that the schedule no longer matches the current p
 settings. The UI should compare the `ProjectData` last-modified timestamp against the last
 calculation timestamp and show a warning banner if the project is newer than the results.
 
+**Codex Response:** Agree. This is one of the most important first-customer UX items left.
+It should be prioritized before broad polishing because it prevents users from trusting
+stale schedules/results.
+
+**Status:** Open.
+
 ### C-7 No Project Dashboard / Summary View  [MEDIUM]
 
 The base/project-list page shows projects but no per-project summary: number of lines
@@ -495,12 +611,24 @@ calculated, calculation status (complete / in-progress / not run), last calculat
 number of lines with SR selected vs. MI, total panel loading. A first customer opening the
 app after a week away has no way to know the state of any project at a glance.
 
+**Codex Response:** Agree as product polish, but defer until after manual release sign-off
+or combine with the stale-results/status badge work. It is not a calculation correctness
+blocker.
+
+**Status:** Open.
+
 ### C-8 Test Suite Maintenance Failures  [HIGH]
 
 The baseline prior to this session was 305 tests / 8 maintenance failures. These 8 failures
 are real regressions that a first customer's Q/A team will encounter. They must be resolved
 before the production release. The 8 failures were noted as "database state issue" in
 project memory — they need root-cause analysis and individual fixes, not a global reset.
+
+**Codex Response:** Closed as stale. The current full SQLite suite is green at 318 tests
+after CAT-P1 / SEC-P1a. PostgreSQL test-runner behavior remains environment-sensitive, but
+direct PostgreSQL checks and prior programmatic test runs have been recorded separately.
+
+**Status:** Closed.
 
 ---
 
@@ -510,8 +638,8 @@ This section uses OWASP Top 10 2021 as the primary reference frame.
 
 ### D-1 [CRITICAL] Host Header Injection — `ALLOWED_HOSTS = ["*"]`
 
-**File:** `ELECSENSE/settings.py`, line 30  
-**OWASP:** A05 Security Misconfiguration  
+**File:** `ELECSENSE/settings.py`, line 30
+**OWASP:** A05 Security Misconfiguration
 
 ```python
 # Line 28 — correctly reads from environment:
@@ -532,10 +660,16 @@ Any `Host:` header is accepted. Consequences:
 **Fix:** Remove line 30. The env-based setting on line 28 is correct. Verify the
 `ALLOWED_HOSTS` env var is set in the production `.env` file.
 
+**Codex Response:** Agree. This is already fixed in the code path from `RELEASE-P1`.
+The remaining lesson is operational: the `.env` value must be correct because it overrides
+the settings default. KR already corrected the local `.env` entry for `local.enggsense.com`.
+
+**Status:** Closed.
+
 ### D-2 [CRITICAL] Open Redirect — Login View
 
-**File:** `eht/views.py`, lines 3596–3597  
-**OWASP:** A01 Broken Access Control  
+**File:** `eht/views.py`, lines 3596–3597
+**OWASP:** A01 Broken Access Control
 
 ```python
 next_url = request.POST.get('next', '').strip() or 'base'
@@ -563,10 +697,16 @@ if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host
 return redirect(next_url)
 ```
 
+**Codex Response:** Agree. This was implemented in CAT-P1 / SEC-P1a. `my_login`
+validates `next` using Django's `url_has_allowed_host_and_scheme` and falls back to `base`
+for external or unsafe redirect targets. Regression coverage was added.
+
+**Status:** Closed.
+
 ### D-3 [HIGH] Insecure Defaults — DEBUG and SECRET_KEY
 
-**File:** `ELECSENSE/settings.py`, lines 20–26  
-**OWASP:** A05 Security Misconfiguration  
+**File:** `ELECSENSE/settings.py`, lines 20–26
+**OWASP:** A05 Security Misconfiguration
 
 ```python
 SECRET_KEY = env("SECRET_KEY", default="django-insecure-5ms*1c5@!*%6q)ve3&guld-jc$ii_!pbvyvr*g$_lf)f0d*r6a")
@@ -584,10 +724,18 @@ If the `.env` file is absent or `SECRET_KEY` / `DEBUG` are not set:
 not silently degrade, if these environment variables are missing. Django will raise
 `ImproperlyConfigured` automatically if `SECRET_KEY` is empty string.
 
+**Codex Response:** Partly agree. For true production deployment, real env values are
+mandatory and production-shaped deploy checks should be run with explicit values. I do not
+recommend making local engineering startup brittle before MVP manual review. Current
+position: keep development-friendly local defaults for now, but treat production hard-fail
+policy as an open release/deployment decision.
+
+**Status:** Open.
+
 ### D-4 [HIGH] Path Traversal — Error File Download
 
-**File:** `eht/views.py`, lines 3320–3325  
-**OWASP:** A01 Broken Access Control / A03 Injection  
+**File:** `eht/views.py`, lines 3320–3325
+**OWASP:** A01 Broken Access Control / A03 Injection
 
 ```python
 def download_error_file(request, file_name):
@@ -611,10 +759,16 @@ file_path = os.path.join(settings.BASE_DIR, 'file_storage', 'error_file',
 ```
 `os.path.basename` strips all directory components regardless of separator.
 
+**Codex Response:** Agree. This was implemented in CAT-P1 / SEC-P1a with stricter handling
+than basename-only: separator/backslash names are rejected, the resolved file path must stay
+inside the error-file directory, and safe basename downloads are covered by tests.
+
+**Status:** Closed.
+
 ### D-5 [HIGH] Missing HTTPS/Cookie Security Settings for Production
 
-**File:** `ELECSENSE/settings.py`  
-**OWASP:** A05 Security Misconfiguration  
+**File:** `ELECSENSE/settings.py`
+**OWASP:** A05 Security Misconfiguration
 
 The following Django security settings are absent:
 
@@ -638,9 +792,15 @@ cleartext and can be sniffed on the local network. The Cloudflare tunnel noted i
 **Note:** `CSRF_TRUSTED_ORIGINS` is already set (good for Cloudflare). The remaining
 security headers are the gap.
 
+**Codex Response:** Agree. This was handled in `RELEASE-P1` using environment-driven
+secure cookie/HTTPS settings, and production-shaped `check --deploy` passed with explicit
+deployment values. HSTS preload/subdomain policy remains a KR deployment decision.
+
+**Status:** Closed.
+
 ### D-6 [HIGH] Dangerous Management Command — `import_data_from_file`
 
-**File:** `eht/management/commands/import_data_from_file.py`  
+**File:** `eht/management/commands/import_data_from_file.py`
 **Risk:** Catalogue data integrity (CAT-P1 prerequisite)
 
 The command at line 14 hardcodes import from `eht/tmp/elecEHT_Vendor.csv`. This CSV
@@ -659,10 +819,17 @@ obvious, or (c) delete the command entirely if the CSV import path is permanentl
 The validated catalogue was seeded via a separate Codex pass — this command's purpose is
 now obsolete.
 
+**Codex Response:** Agree. This was implemented in CAT-P1. The command is blocked by
+default and requires both `--execute` and an exact confirmation phrase before it can import
+legacy CSV data. A regression test verifies that the unconfirmed command raises and leaves
+catalogue row counts unchanged.
+
+**Status:** Closed.
+
 ### D-7 [MEDIUM] File Upload MIME Type — Extension Only, Not Magic Bytes
 
-**File:** `eht/sanatize_input.py`, lines 50–53  
-**OWASP:** A03 Injection / A04 Insecure Design  
+**File:** `eht/sanatize_input.py`, lines 50–53
+**OWASP:** A03 Injection / A04 Insecure Design
 
 ```python
 mime_type, _ = guess_type(file.name)
@@ -683,10 +850,17 @@ check. As a lightweight alternative, open the file and check for the XLSX magic 
 (`PK\x03\x04` — XLSX/OOXML is a ZIP archive) before calling `openpyxl`. Set a file size
 limit before parse. Enforce `max_rows` in the `openpyxl` load to prevent ZIP-bomb expansion.
 
+**Codex Response:** Agree. This is a valid upload-hardening task and should be taken in a
+dedicated `SEC-P1b` or upload safety pass. I would start with file size limit plus XLSX/ZIP
+signature and workbook-open failure messaging, then consider `python-magic` if dependency
+policy allows.
+
+**Status:** Open.
+
 ### D-8 [MEDIUM] Brute-Force Protection Built but Never Triggered
 
-**File:** `eht/views.py`, lines 3586–3602 (`my_login`); `eht/models.py` (`UserAttempt`)  
-**OWASP:** A07 Identification and Authentication Failures  
+**File:** `eht/views.py`, lines 3586–3602 (`my_login`); `eht/models.py` (`UserAttempt`)
+**OWASP:** A07 Identification and Authentication Failures
 
 `UserAttempt` model exists with fields for tracking failed login attempts and lockouts.
 There is no call to `log_failed_attempt` (or equivalent) anywhere in `my_login`. Failed
@@ -698,9 +872,15 @@ alert.
 the lockout status before attempting authentication. Return a generic error message (do not
 confirm whether the username exists).
 
+**Codex Response:** Agree. This is a real security backlog item. It is outside CAT-P1, but
+should be addressed before broad internet exposure. We should preserve generic login errors
+and add tests for lockout, reset-after-success, and non-enumerating messages.
+
+**Status:** Open.
+
 ### D-9 [MEDIUM] No Rate Limiting on Any Endpoint
 
-**OWASP:** A07 Identification and Authentication Failures / A04 Insecure Design  
+**OWASP:** A07 Identification and Authentication Failures / A04 Insecure Design
 
 There is no rate limiting middleware, no `django-ratelimit`, no IP-based throttling on any
 endpoint — including `/login/`, `/register/`, file upload, or any API endpoint. Combined
@@ -711,10 +891,17 @@ upload endpoints can be called in a tight loop to exhaust disk space.
 per minute). The simplest drop-in is `django-ratelimit` — it is already a compatible
 package. Alternatively, configure rate limiting at the Nginx / Cloudflare level.
 
+**Codex Response:** Agree. For the current controlled Cloudflare review tunnel, edge-level
+controls may be enough temporarily. For production, login and upload throttling should be
+implemented either at Cloudflare/Nginx or in-app with regression tests around legitimate
+engineering uploads.
+
+**Status:** Open.
+
 ### D-10 [LOW] `mark_safe` on Server-Side Markdown HTML
 
-**File:** `eht/views.py`, lines 181, 965  
-**OWASP:** A03 Injection (XSS)  
+**File:** `eht/views.py`, lines 181, 965
+**OWASP:** A03 Injection (XSS)
 
 `mark_safe(rendered.html)` is called where `rendered.html` is the output of rendering a
 markdown file from the server filesystem (the calculation manual and design guide). Since
@@ -724,6 +911,12 @@ markdown source content. The risk is low for the current deployment, but the pat
 fragile. If the manual is ever editable via admin, this becomes an XSS sink immediately.
 Document this constraint: "manual files must be version-controlled and reviewed — never
 editable via admin or user upload."
+
+**Codex Response:** Agree with the constraint. Risk is low while manuals/design guides are
+repo-controlled reviewed files, but this must not become an admin/user-editable Markdown
+feature without sanitization. The constraint should be documented in release/security notes.
+
+**Status:** Open.
 
 ### D-11 [LOW] Django and Package Version Hygiene
 
@@ -743,10 +936,16 @@ known-vulnerable surface areas should be checked before the production release:
 **Action for CAT-P1 or a dedicated SEC-P1:** Run `pip-audit` (or `safety check`) against
 the installed packages. Check `npm audit` for JS dependencies if `package.json` exists.
 
+**Codex Response:** Agree. This belongs in a dedicated dependency hygiene pass because it
+may require network access, package upgrades, and regression testing. It should be run in
+staging before production release, not mixed into catalogue safety work.
+
+**Status:** Open.
+
 ### D-12 [LOW] Django Admin Exposed at Default Path
 
-**File:** `ELECSENSE/urls.py` (not read, inferred from middleware exempt list: `/admin/`)  
-**OWASP:** A05 Security Misconfiguration  
+**File:** `ELECSENSE/urls.py` (not read, inferred from middleware exempt list: `/admin/`)
+**OWASP:** A05 Security Misconfiguration
 
 The Django admin is mounted at `/admin/` — the default path that automated scanners target
 first. For a production application, the admin should be:
@@ -757,6 +956,13 @@ first. For a production application, the admin should be:
 The admin is the highest-privilege entry point in the application. A compromised admin
 account can corrupt the entire vendor catalogue, delete all projects, and access all user
 data.
+
+**Codex Response:** Agree for production. For the present controlled review environment,
+this can be deferred if Cloudflare/account access is restricted. Before production, admin
+access should be constrained by at least IP/identity controls, and a non-default path or
+2FA should be considered.
+
+**Status:** Open.
 
 ---
 
@@ -844,12 +1050,22 @@ projects. A dropdown `<select>` in the navbar showing all of the user's projects
 engineers switch context without a page reload. Implementation: one template change, one
 queryset in the context processor.
 
+**Codex Response:** Agree. Useful navigation polish, but not an MVP safety blocker. Good
+candidate for a small first-customer UX pass.
+
+**Status:** Open.
+
 ### F-2 Calculation Status Badge on Project List  [EFFORT: Low]
 
 Add a coloured status badge on the project list: "Not calculated", "Results ready (DD/MM/YY)",
 "Settings changed — recalculate". Implementation: compare `ProjectData.updated_at` vs.
 the latest `HeatTracingInput` or result timestamp. One additional context annotation per
 project row.
+
+**Codex Response:** Agree. This should be combined with the stale-results warning so the
+same freshness logic is used consistently across dashboard/results/schedule pages.
+
+**Status:** Open.
 
 ### F-3 Project Setup Form Grouped into Logical Sections  [EFFORT: Low-Medium]
 
@@ -862,6 +1078,11 @@ Use `<fieldset>` + `<legend>` or Bootstrap card-groups to visually separate:
 
 No model change required — pure template/form layout change.
 
+**Codex Response:** Agree. This improves first-use confidence and can be done without
+calculation risk. It should stay restrained and functional, not become a redesign project.
+
+**Status:** Open.
+
 ### F-4 Tooltip / Help Text on Technical Fields  [EFFORT: Low]
 
 Add Bootstrap tooltip `title=` attributes to the label of each non-obvious field in the
@@ -869,11 +1090,22 @@ project setup form. Example: "Maintain Temperature — The minimum pipe surface 
 that must be maintained during the coldest design condition." Implementation: add `help_text`
 to `ProjectDataForm` fields — crispy_forms renders it automatically.
 
+**Codex Response:** Agree. Prefer form `help_text` where possible so guidance remains close
+to the field and testable in templates.
+
+**Status:** Open.
+
 ### F-5 MI "Not Available" Reason Text  [EFFORT: Very Low]
 
 When MI is shown as "not available" in the results, display: "MI catalogue for [vendor]
 is pending validation. Contact administrator." One template `{% if %}` check on
 `is_validated` status.
+
+**Codex Response:** Agree, and this is more important than its effort suggests. It prevents
+users from mistaking a catalogue governance gate for missing MI capability. Coordinate with
+Claude/KR on final MI validation wording.
+
+**Status:** Open.
 
 ### F-6 "Results May Be Outdated" Banner  [EFFORT: Low]
 
@@ -882,11 +1114,21 @@ Bootstrap alert banner on all result/schedule/SLD/BOQ views: "Project settings h
 since this calculation was run. Recalculate to update results." This is a single view context
 variable check.
 
+**Codex Response:** Agree and prioritize. This is the strongest low-risk UX correctness
+item in the list because it prevents users from trusting stale engineering output.
+
+**Status:** Open.
+
 ### F-7 "Jump to Line" Search on Results Table  [EFFORT: Low]
 
 Add a client-side search/filter input above the results table that filters rows by line ID,
 pipe tag, or area using JavaScript `input` event + `tr.style.display`. No server change
 required. For projects with 50+ lines this is a significant navigation improvement.
+
+**Codex Response:** Agree. Good candidate for manual review productivity after the
+freshness/status work.
+
+**Status:** Open.
 
 ### F-8 Excel Export Polish — Freeze Panes + Auto-Width  [EFFORT: Very Low]
 
@@ -899,11 +1141,20 @@ for col in ws.columns:
 ```
 This makes the Excel export immediately usable without manual formatting.
 
+**Codex Response:** Agree. This is harmless polish with high day-to-day value. It can ride
+with the next schedule export touch-up.
+
+**Status:** Open.
+
 ### F-9 Last-Calculated Timestamp on Results Page  [EFFORT: Very Low]
 
 Show "Last calculated: DD/MM/YYYY HH:MM UTC" at the top of the results page.
 The timestamp already exists in the calculation result records — it is just not surfaced
 in the template.
+
+**Codex Response:** Agree. This pairs naturally with the stale-results banner/status badge.
+
+**Status:** Open.
 
 ### F-10 SLD — Fit-to-Screen Keyboard Shortcut  [EFFORT: Very Low]
 
@@ -912,6 +1163,12 @@ JointJS supports `paper.fitToContent()` via JavaScript. Add a "Fit to Screen" bu
 addition. Reviewers and approvers who open large SLDs are currently left zoomed into the
 default view with no easy way to see the full diagram.
 
+**Codex Response:** Agree. This is useful SLD reviewer polish and should be small, but I
+would verify it with browser smoke coverage because SLD layout regressions are visually
+painful.
+
+**Status:** Open.
+
 ### F-11 SLD PDF Title Block  [EFFORT: Low-Medium]
 
 The current `sld/pdf/` export produces a bare diagram image. For a design document, an
@@ -919,6 +1176,12 @@ EHT SLD needs: project name, project number, revision, date, drawn/checked/appro
 signatures (blank), and a company logo placeholder. This is an `<html2canvas>` or
 `puppeteer`-equivalent overlay on the frontend before the print/download trigger. The SLD
 PDF export already exists — the title block is a template overlay addition.
+
+**Codex Response:** Agree for document-package maturity. It is lower priority than the
+stale-results warning and schedule minimum columns, but should be done before calling SLD
+PDF export issue-ready.
+
+**Status:** Open.
 
 ---
 
