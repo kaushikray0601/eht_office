@@ -1,6 +1,6 @@
 # Open Questions
 
-Last updated: 2026-06-13
+Last updated: 2026-06-14
 
 ## Immediate Questions
 
@@ -45,6 +45,12 @@ Last updated: 2026-06-13
    force/confirmation option?
    - Owner: KR + Codex in `CAT-P1`. The current command imports the divergent
      vendor CSV and is unsafe for restored catalogue data.
+
+7. Should production deployment enable HSTS preload for the final domain?
+   - `RELEASE-P1` added environment-driven support and the production-shaped
+     Django deploy check passes with `SECURE_HSTS_PRELOAD=true`.
+   - Owner: KR/deployment. Enable only after confirming the real domain and
+     subdomain policy are permanently HTTPS.
 
 ## Cold Cable Engineering Questions
 

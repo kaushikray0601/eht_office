@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import environ
@@ -13,24 +14,82 @@ if env_file.exists():
     environ.Env.read_env(env_file, overwrite=False)
 
 
+def env_list(name, default):
+    """Read a comma-separated or JSON-ish env list without requiring JSON syntax."""
+    raw_value = env(name, default=None)
+    if raw_value is None:
+        return list(default)
+    value = str(raw_value).strip()
+    if not value:
+        return []
+    if value.startswith("[") and value.endswith("]"):
+        value = value[1:-1]
+    return [
+        item.strip().strip("\"'")
+        for item in value.split(",")
+        if item.strip().strip("\"'")
+    ]
+
+
+def env_bool_strict(name, default):
+    raw_value = env(name, default=None)
+    if raw_value is None:
+        return default
+    value = str(raw_value).strip().lower()
+    if value in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if value in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    return default
+
+
+def merge_unique(*value_lists):
+    merged = []
+    seen = set()
+    for values in value_lists:
+        for value in values:
+            if value not in seen:
+                merged.append(value)
+                seen.add(value)
+    return merged
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
+DEFAULT_DEV_SECRET_KEY = "django-insecure-5ms*1c5@!*%6q)ve3&guld-jc$ii_!pbvyvr*g$_lf)f0d*r6a"
 SECRET_KEY = env(
     "SECRET_KEY",
-    default="django-insecure-5ms*1c5@!*%6q)ve3&guld-jc$ii_!pbvyvr*g$_lf)f0d*r6a",
+    default=DEFAULT_DEV_SECRET_KEY,
 )
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = env.bool("DEBUG", default=True)
+DEBUG = env_bool_strict("DEBUG", default=True)
+IS_TESTING = "test" in sys.argv
 
-ALLOWED_HOSTS = env.list("ALLOWED_HOSTS", default=["local.enggsense.com", "localhost", "127.0.0.1"])
+DEFAULT_ALLOWED_HOSTS = ["local.enggsense.com", "localhost", "127.0.0.1"]
+ALLOWED_HOSTS = merge_unique(
+    DEFAULT_ALLOWED_HOSTS,
+    env_list("ALLOWED_HOSTS", default=[]),
+)
 
-ALLOWED_HOSTS = ["*"]
+CSRF_TRUSTED_ORIGINS = merge_unique(
+    ["https://local.enggsense.com"],
+    env_list("CSRF_TRUSTED_ORIGINS", default=[]),
+)
 
-# Allow CSRF validation to pass for the Cloudflare Tunnel HTTPS origin
-CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=["https://local.enggsense.com"])
+if IS_TESTING and "testserver" not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append("testserver")
+
+# Keep baseline review/local hosts present even when `.env` adds more hosts.
+
+SECURE_SSL_REDIRECT = env.bool("SECURE_SSL_REDIRECT", default=not DEBUG and not IS_TESTING)
+SECURE_HSTS_SECONDS = env.int("SECURE_HSTS_SECONDS", default=31536000 if not DEBUG else 0)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = env.bool("SECURE_HSTS_INCLUDE_SUBDOMAINS", default=not DEBUG)
+SECURE_HSTS_PRELOAD = env.bool("SECURE_HSTS_PRELOAD", default=False)
+SESSION_COOKIE_SECURE = env.bool("SESSION_COOKIE_SECURE", default=not DEBUG and not IS_TESTING)
+CSRF_COOKIE_SECURE = env.bool("CSRF_COOKIE_SECURE", default=not DEBUG and not IS_TESTING)
 
 
 
@@ -116,7 +175,7 @@ if USE_POSTGRES:
             "NAME": POSTGRES_NAME,
             "USER": POSTGRES_USER,
             "PASSWORD": env("POSTGRES_PASSWORD", default=os.getenv("PGPASSWORD", "")),
-            "HOST": env("POSTGRES_HOST", default=os.getenv("PGHOST", "129.151.129.146")),
+            "HOST": env("POSTGRES_HOST", default=os.getenv("PGHOST", "127.0.0.1")),
             "PORT": env("POSTGRES_PORT", default=os.getenv("PGPORT", "5432")),
             "CONN_MAX_AGE": env.int("POSTGRES_CONN_MAX_AGE", default=60),
             "CONN_HEALTH_CHECKS": env.bool("POSTGRES_CONN_HEALTH_CHECKS", default=True),

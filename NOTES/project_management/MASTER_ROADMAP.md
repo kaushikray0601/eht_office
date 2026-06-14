@@ -113,5 +113,6 @@ Objective: build features that exceed manufacturer tools.
 15. `SCH-P1`: Procurement-grade cable schedule fields/export. Complete; SQLite full suite passes 309 tests.
 16. `QA-P1a`: SR power-coefficient safety guard from Claude's SCH review. Complete.
 17. `QA-P1`: Worked examples and verification report alignment. Complete.
-18. `RELEASE-P1`: Production readiness sweep. Next.
-19. `CAT-P1`: Catalogue gate and import safety. Deferred per KR; retain before any production catalogue/import release.
+18. `RELEASE-P1`: Production readiness sweep. Code sweep complete; manual release sign-off pending.
+19. KR/manual release sign-off: demo walkthrough, visual/large-project acceptance, and terminal-voltage manual cross-check.
+20. `CAT-P1`: Catalogue gate and import safety. Deferred per KR; retain before any production catalogue/import release.

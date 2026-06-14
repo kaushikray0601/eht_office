@@ -8,7 +8,7 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 
 ## Current State
 
-- Phase A code through `QA-P1` is implemented in the current worktree.
+- Phase A code through `RELEASE-P1` is implemented in the current worktree.
 - Latest full SQLite test status (verified 2026-06-14 with `USE_POSTGRES=false`):
   314 tests passed. SQLite quick testing remains the default fast path.
 - Latest full PostgreSQL test status (verified 2026-06-12 against
@@ -645,10 +645,48 @@ Checkpoint result, 2026-06-14:
 
 ### RELEASE-P1 - Production Readiness Sweep
 
-Status: pending
+Status: code sweep complete; manual release sign-off pending
 
-- [ ] Full test suite green.
-- [ ] Migrations applied and checked.
+- [x] Full test suite green.
+- [x] Migrations applied and checked.
 - [ ] Manual demo project verified.
-- [ ] Known limitations visible in UI/report/manual.
+- [x] Known limitations visible in UI/report/manual.
 - [ ] Release checklist complete.
+
+Checkpoint result, 2026-06-14:
+
+- Production settings hardening added in `ELECSENSE/settings.py`:
+  - Removed the hardcoded `ALLOWED_HOSTS = ["*"]` override.
+  - Added robust comma/JSON-ish parsing for `ALLOWED_HOSTS` and
+    `CSRF_TRUSTED_ORIGINS`.
+  - Added environment-driven HTTPS redirect, HSTS, secure session cookie, and
+    secure CSRF cookie settings. Defaults remain local-development friendly;
+    production mode can satisfy Django deploy checks through explicit
+    environment variables.
+  - Changed the default PostgreSQL host from the old hardcoded public IP to
+    `127.0.0.1`; `.env` or process environment remains the source of truth for
+    actual deployment/database hosts.
+- Production-shaped deploy check passed with a non-development `SECRET_KEY`,
+  explicit host/origin, and `SECURE_HSTS_PRELOAD=true`:
+  `DEBUG=false ... venv/bin/python manage.py check --deploy`.
+  HSTS preload remains a deployment decision and should only be enabled for a
+  domain that is permanently HTTPS.
+- PostgreSQL migration check passed against live `eht_local` after local DB
+  access was allowed:
+  `DEBUG=true venv/bin/python manage.py migrate --check`.
+- Direct Django PostgreSQL connection check passed against `eht_local`.
+- SQLite migration dry run passed:
+  `USE_POSTGRES=false DEBUG=true venv/bin/python manage.py makemigrations --check --dry-run`.
+- Acceptance smoke slice passed 14 tests covering SLD layout save/reset,
+  SLD PDF export, result export, BOQ export, cable schedule export, manual
+  cable override save/reset, verification report render, and combined-feeder
+  schedule/cold-cable impact.
+- Full SQLite suite:
+  `USE_POSTGRES=false DEBUG=true venv/bin/python manage.py test eht -v 2 --noinput`:
+  314 tests passed.
+- `venv/bin/python manage.py check`: passed.
+- `node --check static/js/sld_workspace.js`: passed.
+- `git diff --check`: passed.
+- Remaining release sign-off items are manual/visual rather than code blockers:
+  demo project walkthrough, cold-cable label overlap inspection, large-project
+  browsing/search feel, and terminal-voltage manual cross-check.

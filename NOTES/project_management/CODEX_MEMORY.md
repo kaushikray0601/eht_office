@@ -44,7 +44,9 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. `RELEASE-P1`: production readiness sweep.
+1. KR/manual release sign-off: demo walkthrough, cold-cable label overlap
+   inspection, large-project browsing/search feel, and terminal-voltage manual
+   cross-check.
 2. `CAT-P1` remains deferred per KR: catalogue gate/import safety is important,
    but CSV import tightening is not the immediate convergence path.
 3. Keep the calculation manual aligned with any behavior changes.
@@ -53,7 +55,7 @@ Immediate next pass:
 
 - Working directory: `/home/kr/mydev/eht_office`.
 - Current date at latest update: 2026-06-14.
-- Phase A code through `QA-P1` is implemented in the current worktree.
+- Phase A code through `RELEASE-P1` is implemented in the current worktree.
 - Latest full SQLite test status (verified 2026-06-14 with
   `USE_POSTGRES=false`): 314 tests passed. SQLite quick testing remains the
   default fast path.
@@ -100,6 +102,15 @@ Immediate next pass:
   wording in the verification report, manual, and design guide to the active
   shared-MCB basis; added regression tests for verification-report Sections B-E
   formula text and manual/design-guide shared-MCB wording.
+- `RELEASE-P1` code sweep is complete: `ELECSENSE/settings.py` no longer
+  hardcodes wildcard `ALLOWED_HOSTS`; production HTTPS/HSTS/secure-cookie
+  settings are environment-driven; default PostgreSQL host is local unless
+  overridden. Production-shaped `manage.py check --deploy` passed with explicit
+  deployment env values. PostgreSQL `migrate --check` and direct connection
+  passed against live `eht_local` after local DB access was allowed. Full
+  SQLite suite remains 314 tests passed. Manual release sign-off items remain:
+  demo walkthrough, cold-cable label overlap inspection, large-project
+  browsing/search feel, and terminal-voltage manual cross-check.
 - Testing convention from 2026-06-14: try PostgreSQL-backed tests first where
   meaningful, then fall back to SQLite if Django test-runner setup hits the
   known `psycopg.OperationalError: connection is bad`. Direct Django PostgreSQL
