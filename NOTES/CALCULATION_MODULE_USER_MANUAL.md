@@ -1691,8 +1691,9 @@ The current implemented SR status is:
   straight run still means one full installed trace.
 - Selected SR rows persist SR run count, duty ratio, run basis, per-run tracer
   length, and constructability warning.
-- SR parallel runs are represented as independent protected branches in the SLD
-  and power-distribution payload.
+- SR parallel runs share one 2-pole MCB per run group in the active
+  cold-cable rebuild. The SLD and power-distribution payload preserve the run
+  count and per-run evidence while avoiding independently protected SR branches.
 - The result tab, Excel export, SLD inspector, and diagnostic table expose SR
   duty/run evidence.
 - `NO_SPIRAL_FACTOR_MATCH` diagnostics now include attempted run counts and the
@@ -1896,7 +1897,20 @@ baselines: 25/75, 50/50, and 75/25 allocation between the 4-core trunk and 3-cor
 outgoing cables. The comparison shows the conductor volume proxy and the percentage
 saving achieved by the optimised selection versus each fixed-split baseline.
 
-### 26.5 Review Checklist
+### 26.5 Worked Example Reference
+
+The QA worked examples used to cross-check the report formula basis are recorded
+in `NOTES/verification/QA_P1_WORKED_EXAMPLES.md`. They cover:
+
+- SR heat loss and straight-run selection.
+- MI automatic fallback evidence.
+- Direct single-phase cold-cable voltage drop and L-PE fault-loop evidence.
+- Shared FeederCable / BranchCable optimisation material proxy.
+
+These examples are review arithmetic for the current MVP basis. They are not
+catalogue certification and should not be treated as vendor approval.
+
+### 26.6 Review Checklist
 
 The verification report includes a review checklist. The checklist covers input
 confirmation, thermal evidence, tracer selection, electrical sizing, and cold cable
@@ -1907,7 +1921,7 @@ The checklist items include conditional entries for MI heater lines (T-class rev
 cold-lead arrangement) and cold cable sizing lines (VD compliance, fault protection,
 cable length basis).
 
-### 26.6 Printing and Export
+### 26.7 Printing and Export
 
 The verification report includes a print button. Browser-native PDF generation is the
 intended export format. The print stylesheet removes the navigation bar, selector panel,

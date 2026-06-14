@@ -102,9 +102,15 @@
                             <th data-field="line-ids" data-sortable="true">Line IDs</th>
                             <th data-field="purpose" data-sortable="true">Purpose</th>
                             <th data-field="manual-edit" data-sortable="true" data-visible="false">Manual Edit</th>
+                            <th data-field="route-reference" data-sortable="true" data-visible="false">Route Reference</th>
+                            <th data-field="installation-area" data-sortable="true" data-visible="false">Installation Area</th>
+                            <th data-field="installation-basis" data-sortable="true" data-visible="false">Installation Basis</th>
                             <th data-field="cable-drum-tag" data-sortable="true" data-visible="false">Cable Drum Tag</th>
-                            <th data-field="cable-route-details" data-sortable="true" data-visible="false">Cable Route Details</th>
+                            <th data-field="cable-lot" data-sortable="true" data-visible="false">Cable Lot</th>
                             <th data-field="remarks" data-sortable="true" data-visible="false">Remarks</th>
+                            <th data-field="review-status" data-sortable="true">Review Status</th>
+                            <th data-field="checked-by" data-sortable="true" data-visible="false">Checked By</th>
+                            <th data-field="checked-date" data-sortable="true" data-visible="false">Checked Date</th>
                             <th data-field="rev-no" data-sortable="true">Rev. No.</th>
                         </tr>
                     </thead>
@@ -163,6 +169,27 @@
                                 <td>{{ row.purpose|default:"-" }}</td>
                                 <td>{% if row.manual_override_active %}Yes{% else %}No{% endif %}</td>
                                 <td>
+                                    {% if row.route_reference %}
+                                        {{ row.route_reference }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.installation_area %}
+                                        {{ row.installation_area }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.installation_basis %}
+                                        {{ row.installation_basis }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
                                     {% if row.cable_drum_tag %}
                                         {{ row.cable_drum_tag }}
                                     {% else %}
@@ -170,8 +197,8 @@
                                     {% endif %}
                                 </td>
                                 <td>
-                                    {% if row.cable_route_details %}
-                                        {{ row.cable_route_details }}
+                                    {% if row.cable_lot %}
+                                        {{ row.cable_lot }}
                                     {% else %}
                                         <span class="text-muted">-</span>
                                     {% endif %}
@@ -179,6 +206,21 @@
                                 <td>
                                     {% if row.remarks %}
                                         {{ row.remarks }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ row.review_status }}</td>
+                                <td>
+                                    {% if row.checked_by %}
+                                        {{ row.checked_by }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.checked_date %}
+                                        {{ row.checked_date }}
                                     {% else %}
                                         <span class="text-muted">-</span>
                                     {% endif %}

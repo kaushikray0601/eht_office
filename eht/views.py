@@ -872,7 +872,7 @@ def verification_report_view(request):
             ),
             'evidence': [
                 {'icon': 'bi-gear', 'label': f'CB max = {proj_cb_max} A  ·  loading = {proj_cb_load}%  ·  voltage = {fmt(proj_voltage, 0)} V'},
-                {'icon': 'bi-lightning-charge', 'label': 'Each SR parallel run is independently protected — one MCB branch per run in the SLD.'},
+                {'icon': 'bi-lightning-charge', 'label': 'SR parallel straight runs share one 2-pole MCB per run group; MI multi-sets remain independently protected.'},
             ],
             'std_refs': [],
         })

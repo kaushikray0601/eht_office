@@ -305,7 +305,7 @@
             <div class="dg-step-body">
                 <div>
                     <p>Three voltage scenarios are kept separate: <strong style="color:var(--green)">low voltage</strong> sizes heat delivery, <strong style="color:var(--blue)">nominal voltage</strong> gives the display power output, and <strong style="color:var(--red)">high voltage</strong> sizes maximum current and breaker.</p>
-                    <p style="margin-top:10px;">Circuit count = ceil(I_max_line / (CB_max × CB_loading%)). For multiple SR straight runs or MI heater sets, each run/set is modelled as an independently protected branch. Breaker size is selected from the standard size table to satisfy the restricted loading factor.</p>
+                    <p style="margin-top:10px;">Circuit count = ceil(I_max_line / (CB_max × CB_loading%) for single-run SR. SR parallel straight runs share one 2-pole MCB per run group in the cold-cable rebuild, while MI heater sets remain independently protected. Breaker size is selected from the standard size table to satisfy the restricted loading factor.</p>
                 </div>
                 <div class="dg-step-outputs">
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Operating current / circuit (A)</div>

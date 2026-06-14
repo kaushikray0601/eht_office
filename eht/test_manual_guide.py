@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from django.conf import settings
 from django.contrib.auth.models import User
 from django.test import TestCase
 from django.urls import reverse
@@ -40,3 +43,22 @@ class CalculationManualGuideTests(TestCase):
         self.assertContains(response, 'SR straight-run path with bounded MI fallback')
         self.assertContains(response, 'Known Limitations')
         self.assertNotContains(response, 'Formulas should read like engineering notation')
+
+    def test_manual_and_design_guide_use_shared_mcb_sr_parallel_basis(self):
+        manual = (Path(settings.BASE_DIR) / 'NOTES' / 'CALCULATION_MODULE_USER_MANUAL.md').read_text(encoding='utf-8')
+        design_guide = (Path(settings.BASE_DIR) / 'templates' / 'eht' / 'design_guide.html').read_text(encoding='utf-8')
+
+        self.assertIn('SR parallel runs share one 2-pole MCB per run group', manual)
+        self.assertIn('SR parallel straight runs share one 2-pole MCB per run group', design_guide)
+        self.assertNotIn('SR parallel runs are represented as independent protected branches', manual)
+        self.assertNotIn('each run/set is modelled as an independently protected branch', design_guide)
+
+    def test_qa_p1_worked_examples_cover_required_mvp_cases(self):
+        examples = (Path(settings.BASE_DIR) / 'NOTES' / 'verification' / 'QA_P1_WORKED_EXAMPLES.md').read_text(encoding='utf-8')
+
+        self.assertIn('Example 1 - SR Heat Loss And Straight-Run Selection', examples)
+        self.assertIn('Example 2 - MI Automatic Fallback Evidence', examples)
+        self.assertIn('Example 3 - Direct Single-Phase Cold Cable', examples)
+        self.assertIn('Example 4 - Shared FeederCable / BranchCable Optimisation', examples)
+        self.assertIn('VD = 2 x I x R(T) x L', examples)
+        self.assertIn('Conductor volume proxy', examples)

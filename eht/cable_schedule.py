@@ -1,6 +1,6 @@
 from math import ceil
 
-from .models import ColdCableResult
+from .models import ColdCableResult, ProjectData
 from .sld_payload import build_project_sld_payload
 
 
@@ -32,11 +32,17 @@ CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Connected To',
     'Line IDs',
     'Purpose',
+    'Route Reference',
+    'Installation Area',
+    'Installation Basis',
     'Cable Drum Tag',
-    'Cable Route Details',
+    'Cable Lot',
     'Remarks',
     'Manual Size Review',
     'Manual Size Review Note',
+    'Review Status',
+    'Checked By',
+    'Checked Date',
     'Rev. No.',
 ]
 
@@ -235,10 +241,35 @@ def _purpose(node, incoming_edges, outgoing_edges, node_by_id):
     return ''
 
 
-def _cable_schedule_rows(payload, cold_results=None):
+def _installation_basis(project):
+    if project is None:
+        return ''
+    parts = [
+        str(getattr(project, 'cable_standard', '') or '').strip(),
+        str(getattr(project, 'cable_conductor_material', '') or '').strip(),
+        str(getattr(project, 'cable_insulation_type', '') or '').strip(),
+        f"installation method {getattr(project, 'cable_install_method', '')}".strip(),
+    ]
+    return ', '.join(part for part in parts if part and part != 'installation method')
+
+
+def _default_route_reference(connected_from, connected_to):
+    if connected_from and connected_to:
+        return f'{connected_from} -> {connected_to}'
+    return connected_from or connected_to or ''
+
+
+def _review_status(metadata):
+    return metadata.get('cable_schedule_review_status') or (
+        'review_required' if metadata.get('cable_override_active') else 'generated'
+    )
+
+
+def _cable_schedule_rows(payload, cold_results=None, project=None):
     cold_results = cold_results or {}
     node_by_id = _node_lookup(payload)
     incoming_by_id, outgoing_by_id = _edge_lookup(payload)
+    installation_basis = _installation_basis(project)
     cable_nodes = sorted(
         [
             node for node in payload.get('nodes', [])
@@ -260,20 +291,28 @@ def _cable_schedule_rows(payload, cold_results=None):
         outgoing_edges = outgoing_by_id.get(component_id, [])
         metadata = _metadata(node)
         cold_fields = _cold_cable_fields(node, cold_results)
+        connected_from = _connected_tags(incoming_edges, node_by_id, 'from_component_id')
+        connected_to = _connected_tags(outgoing_edges, node_by_id, 'to_component_id')
         rows.append({
             'sr_no': index,
             'cable_tag': _display_tag(node),
             'cable_specification': _cable_specification(node),
             **cold_fields,
             'cable_length_m': _cable_length_m(node),
-            'connected_from': _connected_tags(incoming_edges, node_by_id, 'from_component_id'),
-            'connected_to': _connected_tags(outgoing_edges, node_by_id, 'to_component_id'),
+            'connected_from': connected_from,
+            'connected_to': connected_to,
             'line_ids': _line_ids(node),
             'purpose': _purpose(node, incoming_edges, outgoing_edges, node_by_id),
-            'cable_drum_tag': '',
-            'cable_route_details': '',
+            'route_reference': metadata.get('cable_route_reference') or _default_route_reference(connected_from, connected_to),
+            'installation_area': metadata.get('cable_installation_area') or '',
+            'installation_basis': metadata.get('cable_installation_basis') or installation_basis,
+            'cable_drum_tag': metadata.get('cable_drum_tag') or '',
+            'cable_lot': metadata.get('cable_lot') or '',
             'remarks': metadata.get('cable_override_remarks') or '',
-            'revision_no': '0',
+            'revision_no': metadata.get('cable_schedule_revision') or '0',
+            'review_status': _review_status(metadata),
+            'checked_by': metadata.get('cable_checked_by') or '',
+            'checked_date': metadata.get('cable_checked_date') or '',
             'manual_override_active': bool(metadata.get('cable_override_active')),
             'manual_size_review_status': metadata.get('manual_size_review_status') or '',
             'manual_size_review_note': metadata.get('manual_size_review_note') or '',
@@ -285,12 +324,13 @@ def build_cable_schedule_workspace_data(project_id):
     sld_payload = build_project_sld_payload(project_id)
     sld_meta = sld_payload.get('meta') or {}
     allow_topology_overrides = not sld_meta.get('topology_edit_review_required')
+    project = ProjectData.objects.filter(proj_id=project_id).first()
     cold_results = {}
     cold_result_rows = list(ColdCableResult.objects.filter(project_id=project_id).order_by('line_id', 'branch_index'))
     for result in cold_result_rows:
         cold_results[(str(result.line_uid), result.branch_index)] = result
         cold_results[(str(result.line_id), result.branch_index)] = result
-    cable_rows = _cable_schedule_rows(sld_payload, cold_results)
+    cable_rows = _cable_schedule_rows(sld_payload, cold_results, project)
 
     unique_cable_rows = {}
     for row in cable_rows:
@@ -340,11 +380,17 @@ def cable_schedule_export_rows(cable_rows):
             'Connected To': row.get('connected_to', ''),
             'Line IDs': row.get('line_ids', ''),
             'Purpose': row.get('purpose', ''),
+            'Route Reference': row.get('route_reference', ''),
+            'Installation Area': row.get('installation_area', ''),
+            'Installation Basis': row.get('installation_basis', ''),
             'Cable Drum Tag': row.get('cable_drum_tag', ''),
-            'Cable Route Details': row.get('cable_route_details', ''),
+            'Cable Lot': row.get('cable_lot', ''),
             'Remarks': row.get('remarks', ''),
             'Manual Size Review': row.get('manual_size_review_status', ''),
             'Manual Size Review Note': row.get('manual_size_review_note', ''),
+            'Review Status': row.get('review_status', ''),
+            'Checked By': row.get('checked_by', ''),
+            'Checked Date': row.get('checked_date', ''),
             'Rev. No.': row.get('revision_no', ''),
         }
         for row in cable_rows

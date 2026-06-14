@@ -1,6 +1,6 @@
 # Decision Log
 
-Last updated: 2026-06-12
+Last updated: 2026-06-13
 
 This log records current product and engineering decisions that should guide
 implementation. Historical debate can remain in older notes; this file should
@@ -44,6 +44,7 @@ stay concise.
 | 2026-06-11 | Mandatory Database Safety Protocol: `flush`, `DELETE`/`TRUNCATE`/`DROP`, and QuerySet deletes against `eht_local` or any catalogue/reference table require explicit written KR approval; the active database name must be verified and stated before every database-modifying command. | The local development database was accidentally flushed during CC-P5 verification; catalogue restoration cost a full working session. | Active |
 | 2026-06-11 | `eht/tmp/elecEHT_Vendor.csv` must not be imported via `import_data_from_file` until KR rules on its 178 unverified rows. | The CSV has diverged from the validated vendor table in both directions and an import would corrupt the restored catalogue. | Active |
 | 2026-06-12 | Keep SQLite as the quick/default test database; use PostgreSQL `eht_local_test` as the backup/safety full-suite path. | KR wants fast isolated tests while preserving PostgreSQL project-data backup and production-like verification. | Active |
+| 2026-06-13 | Procurement-grade cable schedule fields are optional annotations on `CableScheduleOverride`, maintained through admin for MVP and exported with generated schedule rows. | Adds route/reference, installation basis, drum/lot, revision, review status, and checked-by/date without introducing a full procurement workflow before MVP convergence. | Active |
 
 ## Decision Candidates
 

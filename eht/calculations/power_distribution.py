@@ -9,6 +9,7 @@ SR_TERMINATION_MARGIN_RULE_SET = 'SR_TERMINATION_MARGIN_INSTALLATION_ALLOWANCE_V
 MI_SINGLE_HEATER_BREAKER_RULE_SET = 'MI_SINGLE_HEATER_BREAKER_SIZING_MVP_V1'
 MI_MULTI_HEATER_BREAKER_RULE_SET = 'MI_MULTI_HEATER_SET_BREAKER_SIZING_MVP_V1'
 BREAKER_SIZES = [2, 4, 6, 10, 16, 20, 25, 32, 40]
+SR_POWER_COEFFICIENT_KEYS = ('A_Coeff', 'B_Coeff', 'C_Coeff')
 
 
 def _select_breaker_size(required_current, max_cb_size):
@@ -16,6 +17,26 @@ def _select_breaker_size(required_current, max_cb_size):
     if not candidates:
         candidates = BREAKER_SIZES
     return next((size for size in candidates if size >= required_current), max_cb_size)
+
+
+def _sr_power_coefficients(selected_tracer):
+    coefficients = []
+    invalid_keys = []
+    for key in SR_POWER_COEFFICIENT_KEYS:
+        try:
+            coefficients.append(float(selected_tracer[key]))
+        except (KeyError, TypeError, ValueError):
+            invalid_keys.append(key)
+
+    if invalid_keys:
+        tracer_uid = selected_tracer.get('V_UID') or selected_tracer.get('selected_tracer') or 'unknown'
+        logging.error(
+            "SR tracer %s has missing or non-numeric power coefficient(s): %s",
+            tracer_uid,
+            ', '.join(invalid_keys),
+        )
+        return None
+    return tuple(coefficients)
 
 
 def compute_power_params(line, project_settings, asme_data, selected_tracer):
@@ -38,9 +59,10 @@ def compute_power_params(line, project_settings, asme_data, selected_tracer):
         max_cb_size = project_settings['max_cb_size']
         margin_on_max_cb_size = project_settings['restrict_cb_current'] / 100  # Convert percentage to fraction     
         tracer_length = float(selected_tracer['Tracer_With_Margin'])
-        tracer_A_const = float(selected_tracer['A_Coeff'])
-        tracer_B_const = float(selected_tracer['B_Coeff'])
-        tracer_C_const = float(selected_tracer['C_Coeff'])
+        coefficients = _sr_power_coefficients(selected_tracer)
+        if coefficients is None:
+            return None
+        tracer_A_const, tracer_B_const, tracer_C_const = coefficients
         min_amb_temp = float(project_settings['min_amb_t'])
         operating_temp = float(line['oper_temp'])
         nominal_voltage_correction = float(

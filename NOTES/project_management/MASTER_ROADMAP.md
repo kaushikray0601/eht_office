@@ -1,6 +1,6 @@
 # eTrace Master Roadmap
 
-Last updated: 2026-06-12
+Last updated: 2026-06-14
 
 ## Product Vision
 
@@ -109,6 +109,9 @@ Objective: build features that exceed manufacturer tools.
 11. `TEST-P1`: Test baseline repair. Complete; SQLite and PostgreSQL full suites pass 306 tests.
 12. `SLD-P2`: Combined-circuit cold-cable resizing and impact summary. Complete.
 13. `SLD-P1`: Visual issue badges and review indicators. Complete; SQLite full suite passes 307 tests.
-14. `SCH-P1`: Procurement-grade cable schedule fields/export. Next.
-15. `QA-P1`: Worked examples and verification report alignment.
-16. `RELEASE-P1`: Production readiness sweep.
+14. `AUD-P1`: Safety/compliance and side-effect audit. Complete.
+15. `SCH-P1`: Procurement-grade cable schedule fields/export. Complete; SQLite full suite passes 309 tests.
+16. `QA-P1a`: SR power-coefficient safety guard from Claude's SCH review. Complete.
+17. `QA-P1`: Worked examples and verification report alignment. Complete.
+18. `RELEASE-P1`: Production readiness sweep. Next.
+19. `CAT-P1`: Catalogue gate and import safety. Deferred per KR; retain before any production catalogue/import release.

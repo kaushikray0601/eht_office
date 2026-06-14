@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-06-12
+Last updated: 2026-06-14
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -44,21 +44,19 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. `SCH-P1`: procurement-grade cable schedule fields/export.
-2. Then `QA-P1`: worked examples and verification alignment.
-3. Then `RELEASE-P1`: production readiness sweep.
-4. Keep the calculation manual aligned with any behavior changes.
+1. `RELEASE-P1`: production readiness sweep.
+2. `CAT-P1` remains deferred per KR: catalogue gate/import safety is important,
+   but CSV import tightening is not the immediate convergence path.
+3. Keep the calculation manual aligned with any behavior changes.
 
 ## Current Repo State
 
 - Working directory: `/home/kr/mydev/eht_office`.
-- Current date at latest update: 2026-06-12.
-- Phase A work through `CC-P5` plus auth middleware and SLD admin/retention
-  features is committed; HEAD is `dc8c741`. Current dirty work includes
-  `TEST-P1`, `SLD-P2`, `SLD-P1`, project-management documentation updates,
-  and Claude's vendor-validation notes.
-- Latest full SQLite test status (verified 2026-06-12 with
-  `USE_POSTGRES=false`): 307 tests passed. SQLite quick testing is restored.
+- Current date at latest update: 2026-06-14.
+- Phase A code through `QA-P1` is implemented in the current worktree.
+- Latest full SQLite test status (verified 2026-06-14 with
+  `USE_POSTGRES=false`): 314 tests passed. SQLite quick testing remains the
+  default fast path.
 - Latest full PostgreSQL test status (verified 2026-06-12 against
   `eht_local_test` via the programmatic runner): 306 tests passed,
   `Failures: 0`.
@@ -74,6 +72,38 @@ Immediate next pass:
   cable length, cold-cable review/unsizeable states, manual overrides, and
   manual topology review/stale states. Full SQLite suite passed 307 tests on
   2026-06-12.
+- `AUD-P1` is complete: read-only `eht_local` audit confirmed restored
+  reference counts, all migrations through `0037` applied, and no active
+  selected-MI orphan driving output. It found two follow-up items for `CAT-P1`:
+  live normalized MI validation currently has THR/MIQ and CHR/MI-825B
+  `is_validated=True` while project notes say all families should remain false
+  until KR row review; and `import_data_from_file` can still blindly import the
+  divergent vendor CSV.
+- `SCH-P1` is complete: cable schedule overrides now carry optional
+  procurement/review annotations (route reference, installation area/basis,
+  drum tag, cable lot, revision, review status, checked-by/date). The schedule
+  table and Excel export surface these fields, admin can maintain them, and
+  migration `0038_cablescheduleoverride_cable_lot_and_more` adds the columns.
+  `0038` is applied to live PostgreSQL dev database `eht_local` as of
+  2026-06-13 19:25 fix after the upload path exposed the pending-schema
+  mismatch.
+- Claude's SCH-P1 requirements review recommended a fuller procurement
+  schedule snapshot model and identified null SR A/B/C coefficients as a
+  must-fix blocker. KR accepted the lighter SCH-P1 as complete for convergence;
+  the fuller snapshot model is deferred. `QA-P1a` fixed the active blocker:
+  `compute_power_params` explicitly rejects missing/non-numeric SR coefficients,
+  and `orchestrate_calculations` no longer publishes selected SR/power/BOQ rows
+  when downstream power parameters fail.
+- `QA-P1` is complete: added `NOTES/verification/QA_P1_WORKED_EXAMPLES.md`
+  with SR, MI, direct single-phase cold-cable, and shared Feeder/Branch
+  optimization worked examples; corrected stale SR parallel independent-branch
+  wording in the verification report, manual, and design guide to the active
+  shared-MCB basis; added regression tests for verification-report Sections B-E
+  formula text and manual/design-guide shared-MCB wording.
+- Testing convention from 2026-06-14: try PostgreSQL-backed tests first where
+  meaningful, then fall back to SQLite if Django test-runner setup hits the
+  known `psycopg.OperationalError: connection is bad`. Direct Django PostgreSQL
+  connection to `eht_local` remains usable.
 - Local PostgreSQL is healthy; first-attempt failures from Codex were
   command-sandbox local-network restrictions. Use local Postgres access for
   PostgreSQL-backed Django commands.
@@ -86,8 +116,10 @@ Immediate next pass:
 - Claude's KR-instructed MI vendor-validation pass on 2026-06-12 found the
   originally seeded MI catalogue data was not R7-valid. The MI catalogue was
   backed up and reseeded from official vendor documents under
-  `NOTES/vendor_validation/`; all MI families are currently
-  `is_validated=False` pending KR row-by-row review via Django admin.
+  `NOTES/vendor_validation/`; the documented intended state after reseed was
+  all MI families `is_validated=False` pending KR row-by-row review via Django
+  admin. `AUD-P1` later found the live DB has THR/MIQ and CHR/MI-825B marked
+  validated; resolve in `CAT-P1`.
 - Latest SLD topology regression status: `SldTopologyWorkflowTests` 32 tests OK
   in SQLite mode on 2026-06-12 after `SLD-P2`.
 - Latest broader SLD/payload/result/topology/JS regression status:
@@ -280,9 +312,13 @@ Immediate next pass:
 - Automatic phase rebalancing/user-editable phase slots are not built.
 - Upstream main-breaker coordination/spare-capacity checking is not built. The
   CC-P4 branch-based panel/load summary is available for review evidence.
-- MI R7 row-by-row validation is pending after Claude's 2026-06-12 official
-  document review/reseed. MI auto-fallback remains gated by
-  `MICableFamily.is_validated=False` until KR approves rows via Django admin.
+- MI R7 row-by-row validation state needs reconciliation after Claude's
+  2026-06-12 official document review/reseed. The intended gate is
+  `MICableFamily.is_validated=False` until KR approves rows via Django admin,
+  but `AUD-P1` found the live DB currently has THR/MIQ and CHR/MI-825B marked
+  validated. Resolve before trusting MI-sensitive calculations.
+- `import_data_from_file` still imports `eht/tmp/elecEHT_Vendor.csv`; do not
+  run it. `CAT-P1` should guard or retire this command.
 - Procurement-grade cable schedule fields/export are not built.
 - Browser-level SLD smoke coverage exists in `eht.browser_tests` and is green
   in the local dev setup after installing Playwright's Linux browser
@@ -344,5 +380,6 @@ Recommend a new chat when:
 - The next task is large enough to deserve a clean brief.
 
 Current recommendation: `CC-P0` through `CC-P5`, `SLD-R1`, `DB-R1`,
-`TEST-P1`, `SLD-P2`, and `SLD-P1` are complete. Next work: `SCH-P1`
-procurement-grade cable schedule fields/export.
+`TEST-P1`, `SLD-P2`, `SLD-P1`, and `AUD-P1` are complete. Next work:
+`CAT-P1` catalogue gate/import safety, then `SCH-P1` procurement-grade cable
+schedule fields/export.

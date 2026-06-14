@@ -1,6 +1,6 @@
 # Current Phase Tracker
 
-Last updated: 2026-06-12
+Last updated: 2026-06-14
 
 ## Active Phase
 
@@ -8,11 +8,9 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 
 ## Current State
 
-- Phase A work through `CC-P5` is committed (HEAD `dc8c741`). Current dirty
-  work includes `TEST-P1`, `SLD-P2`, `SLD-P1`, project-management
-  documentation updates, and Claude's vendor-validation notes.
-- Latest full SQLite test status (verified 2026-06-12 with `USE_POSTGRES=false`):
-  307 tests passed. SQLite quick testing is restored.
+- Phase A code through `QA-P1` is implemented in the current worktree.
+- Latest full SQLite test status (verified 2026-06-14 with `USE_POSTGRES=false`):
+  314 tests passed. SQLite quick testing remains the default fast path.
 - Latest full PostgreSQL test status (verified 2026-06-12 against
   `eht_local_test` via the programmatic runner): 306 tests passed.
 - `eht_local` catalogue restoration after the CC-P5 accidental flush completed
@@ -20,7 +18,11 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 - Database Safety Protocol is now mandatory for all database-modifying
   commands — see `CODEX_MEMORY.md`.
 - Latest quick health check: `venv/bin/python manage.py check` passed on
-  2026-06-12.
+  2026-06-14.
+- Latest safety/compliance audit: `AUD-P1` completed on 2026-06-13 with
+  read-only live database inspection and code-pattern review. It found one
+  active catalogue gate discrepancy and one dangerous legacy import path;
+  `CAT-P1` is retained but deferred per KR so Phase A can converge.
 
 ## Active Work Queue
 
@@ -454,27 +456,192 @@ Checkpoint result, 2026-06-12:
   `USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
   307 tests passed.
 
+### AUD-P1 - Safety, Compliance, and Side-Effect Audit
+
+Status: complete
+
+- [x] Review recent work from DB restoration through `TEST-P1`, `SLD-P2`, and
+      `SLD-P1` for hanging/orphaned/stale side effects.
+- [x] Run read-only `eht_local` catalogue/reference count checks.
+- [x] Check migration state and quick Django health.
+- [x] Run Django deploy security check for release-readiness warnings.
+- [x] Search for destructive commands, raw SQL, unsafe HTML insertion, and
+      import/catalgoue mutation paths.
+- [x] Re-sequence next passes only where needed for MVP convergence.
+
+Checkpoint result, 2026-06-13:
+
+- Worktree was clean at audit start.
+- `venv/bin/python manage.py check`: passed.
+- `venv/bin/python manage.py check --deploy`: returned expected deployment
+  warnings for HSTS, SSL redirect, secure session/CSRF cookies, and production
+  `SECRET_KEY` handling. These are release-environment settings, not current
+  calculation defects.
+- `venv/bin/python manage.py showmigrations eht`: all migrations through
+  `0037_remove_legacy_3c_fault_fields` applied.
+- Read-only live `eht_local` counts:
+  - `ElecEHT_Vendor`: 130 rows total = 58 SR rows + 72 legacy MI rows.
+  - ASME B36 pipe rows: 200.
+  - Thermal conductivity rows: 5.
+  - Cold cable catalogue rows: 14, all validated Method E/Cu/XLPE rows.
+  - Normalized MI catalogue: 3 families, 72 heaters, 177 cold-lead options.
+  - Current project data: 3 projects, all using Method E/Cu/XLPE; 22 input
+    lines; 13 cold-cable results.
+- Legacy MI rows remain in `ElecEHT_Vendor` as `Tracer_Family='MI'`. The
+  current SR selector filters SR candidates by family (`SR`/self-regulating),
+  so these rows are not an active SR selection path, but they remain confusing
+  historical data and must not be reimported from CSV.
+- `SelectedMIHeater` currently has 6 rejected snapshots with no heater
+  references; no active selected MI orphan was found in the read-only audit.
+- Normalized MI validation state in the live DB is inconsistent with the
+  vendor-validation note/tracker: THR/MIQ and CHR/MI-825B are currently
+  `is_validated=True`; nVent/XMI-A62 is `False`. No data was changed during
+  the audit. This must be resolved with KR/Claude before more MI-sensitive
+  calculations are trusted.
+- `import_data_from_file` still blindly imports `eht/tmp/elecEHT_Vendor.csv`,
+  which project notes say would corrupt the restored vendor catalogue. This is
+  now elevated into `CAT-P1`.
+- Ignored local root database artifacts exist: `db.sqlite3` and
+  `db.sqlite3.bak`. They are not the active PostgreSQL database and are not
+  tracked, but should be treated as local artifacts during release cleanup.
+
+### CAT-P1 - Catalogue Gate and Import Safety
+
+Status: deferred
+
+- [ ] Resolve the live MI `is_validated` discrepancy with KR/Claude. If the
+      current THR/CHR validation was not intentional R7 approval, explicitly
+      close the gate again through an approved data-change path.
+- [ ] Guard or retire `import_data_from_file` so the divergent vendor CSV
+      cannot be imported accidentally.
+- [ ] Add explicit safety confirmation to catalogue mutation commands that can
+      delete or clear catalogue/reference rows.
+- [ ] Add/confirm tests that SR selection ignores legacy MI rows in
+      `ElecEHT_Vendor`.
+- [ ] Decide whether Phase A needs an SR validation gate, or at minimum a
+      vendor/readiness warning for unverified SR blocks, before production use.
+- [ ] Record the final approved catalogue state and command policy in PM docs.
+
 ### SCH-P1 - Procurement-Grade Cable Schedule
 
-Status: pending (next pass)
+Status: complete
 
-- [ ] Add route/reference fields.
-- [ ] Add drum tag / cable lot fields.
-- [ ] Add installation area/basis fields.
-- [ ] Add revision/review status.
-- [ ] Improve Excel export for procurement review.
+- [x] Add route/reference fields.
+- [x] Add drum tag / cable lot fields.
+- [x] Add installation area/basis fields.
+- [x] Add revision/review status.
+- [x] Improve Excel export for procurement review.
+
+Checkpoint result, 2026-06-13:
+
+- `CableScheduleOverride` now carries optional procurement/review annotations:
+  route reference, installation area/basis, drum tag, cable lot, schedule
+  revision, review status, checked-by/date.
+- Existing SLD cable override save paths preserve those annotations while
+  continuing to update manual length/size/remarks.
+- Cable schedule rows now surface generated route references and project cable
+  installation basis, plus any manual procurement annotations.
+- Cable schedule table exposes procurement fields through optional columns and
+  shows review status/revision in the active schedule.
+- Cable schedule Excel export includes route reference, installation area,
+  installation basis, drum tag, cable lot, review status, checked-by/date, and
+  revision fields.
+- Admin now provides a focused `CableScheduleOverride` maintenance surface for
+  procurement annotations without building a larger cable-management workflow.
+- New migration: `0038_cablescheduleoverride_cable_lot_and_more`.
+- Live PostgreSQL dev database `eht_local` was updated to migration `0038` on
+  2026-06-13 after the running app exposed the pending-schema mismatch during
+  line-list upload.
+- Targeted SQLite `ResultAndBoqViewTests`: 71 tests passed.
+- Full SQLite suite: 309 tests passed.
+- Claude's SCH requirements review at
+  `NOTES/audit/sch-p1-requirements-2026-06-13.md` recommends a fuller
+  procurement snapshot model with Draft/Issued revision semantics and says the
+  route/drum/lot fields are later pre-construction fields. KR accepted the
+  current lighter SCH-P1 as complete for convergence. The fuller snapshot model
+  is deferred, not deleted from consideration.
+
+### QA-P1a - SR Power-Coefficient Safety Guard
+
+Status: complete
+
+- [x] Review Claude's SCH-P1 blocker about null SR A/B/C coefficients.
+- [x] Confirm the active code path is `eht.calculations.power_distribution`,
+      not the legacy `eht/calculation.py` implementation.
+- [x] Add an explicit SR A/B/C coefficient guard before power-parameter
+      calculation.
+- [x] Ensure orchestration does not publish an SR selected tracer when
+      downstream power-parameter calculation fails.
+- [x] Add focused regression tests.
+
+Checkpoint result, 2026-06-14:
+
+- `compute_power_params` now rejects missing or non-numeric SR power
+  coefficients explicitly and logs the affected coefficient names.
+- `orchestrate_calculations` now converts a downstream SR power-parameter
+  failure into a structured `SR_POWER_PARAMETER_CALCULATION_FAILED` rejection
+  and does not append selected tracer, power distribution, BOQ, or tracer power
+  rows for that line.
+- PostgreSQL-first test attempt:
+  `venv/bin/python manage.py test eht.tests.ResultAndBoqViewTests.test_cable_schedule_export_returns_schedule_sheet -v 2 --noinput`
+  still failed during Django test-runner database setup with
+  `psycopg.OperationalError: connection is bad` before the test executed.
+- Direct Django PostgreSQL connection check passed against live dev DB
+  `eht_local`; `connection.vendor == postgresql` and `connection.is_usable()`
+  returned `True`.
+- Pure targeted calculation tests passed:
+  `venv/bin/python manage.py test eht.tests.PowerDistributionCalculationTests eht.tests.OrchestrationTests -v 2 --noinput`:
+  11 tests passed.
+- SQLite fallback DB-backed schedule smoke passed:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht.tests.ResultAndBoqViewTests.test_cable_schedule_export_returns_schedule_sheet -v 2 --noinput`:
+  1 test passed.
+- Full SQLite suite:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
+  311 tests passed.
+- `venv/bin/python manage.py check`: passed.
+- `USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run`: passed.
+- `git diff --check`: passed.
 
 ### QA-P1 - Worked Examples and Verification Alignment
 
-Status: pending
+Status: complete
 
-- [ ] Add SR worked example.
-- [ ] Add MI worked example.
-- [ ] Add direct 1PH cold-cable worked example.
-- [ ] Add 3PH JB cold-cable optimization worked example.
-- [ ] Confirm report formulas are aligned with code.
-- [ ] Verify Sections B-E formula text in the verification report against
+- [x] Add SR worked example.
+- [x] Add MI worked example.
+- [x] Add direct 1PH cold-cable worked example.
+- [x] Add 3PH JB cold-cable optimization worked example.
+- [x] Confirm report formulas are aligned with code.
+- [x] Verify Sections B-E formula text in the verification report against
       `cold_cable.py`, `pipeline.py`, and `calculation.py` (covers Risk R-006).
+
+Checkpoint result, 2026-06-14:
+
+- Added `NOTES/verification/QA_P1_WORKED_EXAMPLES.md` with worked examples for
+  SR heat loss/selection, MI fallback evidence, direct single-phase cold-cable
+  voltage-drop/fault-loop sizing, and shared FeederCable / BranchCable
+  optimization.
+- Corrected stale SR parallel-run wording in the verification report,
+  calculation manual, and Engineering Hub design guide. Active basis is now
+  stated consistently: SR parallel straight runs share one 2-pole MCB per run
+  group; MI multi-sets remain independently protected.
+- Added regression coverage that pins verification-report Sections B-E formula
+  text to the active source basis and prevents the old SR independent-branch
+  wording from returning.
+- Added manual/design-guide regression coverage for the shared-MCB SR parallel
+  basis and worked-example coverage.
+- PostgreSQL-first targeted test attempt still failed during Django test-runner
+  database setup with the known `psycopg.OperationalError: connection is bad`
+  before tests executed. Direct Django PostgreSQL connection to live `eht_local`
+  passed immediately after.
+- Targeted SQLite fallback tests passed: 4 tests.
+- Full SQLite suite:
+  `USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
+  314 tests passed.
+- `venv/bin/python manage.py check`: passed.
+- `USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run`:
+  passed.
+- `node --check static/js/sld_workspace.js`: passed.
+- `git diff --check`: passed.
 
 ### RELEASE-P1 - Production Readiness Sweep
 

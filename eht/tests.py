@@ -1,6 +1,7 @@
 import json
 import math
 from copy import deepcopy
+from datetime import date
 from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -1382,6 +1383,27 @@ class PowerDistributionCalculationTests(SimpleTestCase):
         self.assertEqual(len(branch['tagged_components']['Downstream']), 2)
         self.assertEqual(len(branch['tagged_components']['connections']), 13)
 
+    def test_compute_power_params_rejects_missing_sr_power_coefficients(self):
+        selected_tracer = {
+            'V_UID': 'BAD-COEFF',
+            'Tracer_With_Margin': 20.0,
+            'A_Coeff': 0.0,
+            'B_Coeff': None,
+            'C_Coeff': 100.0,
+            'Voltage_Correction_Factor': 1.0,
+        }
+
+        with self.assertLogs(level='ERROR') as captured:
+            power_params = compute_power_params(
+                make_line(),
+                make_project_settings(),
+                make_asme_table(),
+                selected_tracer,
+            )
+
+        self.assertIsNone(power_params)
+        self.assertTrue(any('missing or non-numeric power coefficient' in message for message in captured.output))
+
     def test_compute_power_distribution_uses_project_wide_tags_across_lines(self):
         selected_tracer = {
             'Tracer_With_Margin': 20.0,
@@ -1624,6 +1646,29 @@ class OrchestrationTests(SimpleTestCase):
         self.assertEqual(len(result['tracer_power_param']), 1)
         self.assertIn('TRACER', result['boq_per_line']['L1'])
         self.assertIn('MCB', result['consolidated_boq'])
+
+    def test_orchestrate_calculations_does_not_publish_sr_selection_when_power_params_fail(self):
+        line = make_line(valve_qty=0, support_qty=0, flange_qty=0)
+        vendor_data = make_tracer_vendor_data().assign(C_Coeff=[30.0, 25.0, 20.0])
+
+        with patch('eht.cal.compute_power_params', return_value=None):
+            result = orchestrate_calculations(
+                process_lines=[line],
+                vendor_data=vendor_data,
+                project_settings=make_project_settings(),
+                asme_b36_table=make_asme_table(),
+                thermal_cond_data=make_thermal_table(),
+            )
+
+        self.assertEqual(len(result['heat_loss']), 1)
+        self.assertEqual(result['heat_loss'][0]['selection_status'], 'rejected')
+        self.assertEqual(
+            result['heat_loss'][0]['selection_rejection_reasons'][0]['code'],
+            'SR_POWER_PARAMETER_CALCULATION_FAILED',
+        )
+        self.assertEqual(result['selected_tracers'], [])
+        self.assertEqual(result['power_distribution'], [])
+        self.assertEqual(result['tracer_power_param'], [])
 
     def test_orchestrate_calculations_keeps_display_tags_stable_for_same_line_set(self):
         vendor_data = make_tracer_vendor_data().assign(C_Coeff=[30.0, 25.0, 20.0])
@@ -5760,6 +5805,29 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'VD_feeder = 2')
         self.assertContains(response, 'L-PE Fault Loop Check')
 
+    def test_verification_report_sections_b_to_e_formula_text_matches_current_basis(self):
+        call_command('populate_cold_cable_catalogue')
+        line = make_calculated_project_snapshot()
+        size_cold_cables_for_project('p1')
+
+        response = self.client.get(
+            reverse('verification_report_view'),
+            {'project_id': 'p1', 'line_uid': str(line.uid)},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'q_base = 2π')
+        self.assertContains(response, 'Q_design = q_base')
+        self.assertContains(response, 'P_LV = P_nom')
+        self.assertContains(response, 'F_duty = Q_design')
+        self.assertContains(response, 'N_circuits =')
+        self.assertContains(response, 'SR parallel straight runs share one 2-pole MCB per run group')
+        self.assertContains(response, 'VD_feeder = 2')
+        self.assertContains(response, 'VD_branch = 2')
+        self.assertContains(response, 'I_fault = V_phase')
+        self.assertContains(response, 'P_actual = P_nom')
+        self.assertNotContains(response, 'Each SR parallel run is independently protected')
+
     def test_verification_report_does_not_truncate_cold_cable_branches(self):
         call_command('populate_cold_cable_catalogue')
         line = make_calculated_project_snapshot()
@@ -6012,6 +6080,84 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(export_row[review_status_index], 'undersized')
         self.assertIn('below the calculated cold cable size', export_row[review_note_index])
 
+    def test_cable_schedule_view_surfaces_procurement_annotations(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            route_reference='RTR-A-014',
+            installation_area='Pipe rack A',
+            installation_basis='IFC routing sketch SK-14',
+            drum_tag='DR-77',
+            cable_lot='LOT-9',
+            schedule_revision='B',
+            review_status='checked',
+            checked_by='KR',
+            checked_date=date(2026, 6, 13),
+        )
+
+        response = self.client.get(reverse('cable_schedule_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'RTR-A-014')
+        self.assertContains(response, 'Pipe rack A')
+        self.assertContains(response, 'IFC routing sketch SK-14')
+        self.assertContains(response, 'DR-77')
+        self.assertContains(response, 'LOT-9')
+        self.assertContains(response, '<td>checked</td>', html=True)
+        self.assertContains(response, '<td>B</td>', html=True)
+
+    def test_cable_schedule_export_includes_procurement_annotations(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        generated_payload = build_project_sld_payload('p1')
+        cable_node = next(node for node in generated_payload['nodes'] if node['component_type'] == 'Cable3C')
+        CableScheduleOverride.objects.create(
+            project_id='p1',
+            component_id=cable_node['component_id'],
+            component_uid=cable_node['component_uid'],
+            display_tag=cable_node['display_tag'],
+            component_type=cable_node['component_type'],
+            line_id=cable_node['line_id'],
+            line_uid=cable_node['line_uid'],
+            branch_index=cable_node['branch_index'],
+            circuit_index=cable_node['circuit_index'],
+            route_reference='RTR-A-014',
+            installation_area='Pipe rack A',
+            installation_basis='IFC routing sketch SK-14',
+            drum_tag='DR-77',
+            cable_lot='LOT-9',
+            schedule_revision='B',
+            review_status='checked',
+            checked_by='KR',
+            checked_date=date(2026, 6, 13),
+        )
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1'})
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        header = rows[0]
+        export_row = next(row for row in rows[1:] if row[1] == cable_node['display_tag'])
+        self.assertEqual(export_row[header.index('Route Reference')], 'RTR-A-014')
+        self.assertEqual(export_row[header.index('Installation Area')], 'Pipe rack A')
+        self.assertEqual(export_row[header.index('Installation Basis')], 'IFC routing sketch SK-14')
+        self.assertEqual(export_row[header.index('Cable Drum Tag')], 'DR-77')
+        self.assertEqual(export_row[header.index('Cable Lot')], 'LOT-9')
+        self.assertEqual(export_row[header.index('Review Status')], 'checked')
+        self.assertEqual(export_row[header.index('Checked By')], 'KR')
+        self.assertEqual(export_row[header.index('Checked Date')], '2026-06-13')
+        self.assertEqual(export_row[header.index('Rev. No.')], 'B')
+
     def test_cable_schedule_view_uses_applied_topology_rows(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
         generated_payload = build_project_sld_payload('p1')
@@ -6084,11 +6230,17 @@ class ResultAndBoqViewTests(TestCase):
             'Connected To',
             'Line IDs',
             'Purpose',
+            'Route Reference',
+            'Installation Area',
+            'Installation Basis',
             'Cable Drum Tag',
-            'Cable Route Details',
+            'Cable Lot',
             'Remarks',
             'Manual Size Review',
             'Manual Size Review Note',
+            'Review Status',
+            'Checked By',
+            'Checked Date',
             'Rev. No.',
         ))
         self.assertTrue(any(row[1] and str(row[1]).startswith('CCAB') for row in rows[1:]))

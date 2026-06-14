@@ -8,6 +8,7 @@ from django.utils.html import format_html
 from eht.cold_cable_readiness import cold_cable_method_readiness
 from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
 from eht.models import (
+    CableScheduleOverride,
     ColdCableCatalogue,
     ColdCableResult,
     ManagedProject,
@@ -173,6 +174,77 @@ class ColdCableResultAdmin(admin.ModelAdmin):
 
     def has_add_permission(self, request):
         return False
+
+
+@admin.register(CableScheduleOverride)
+class CableScheduleOverrideAdmin(admin.ModelAdmin):
+    list_display = (
+        'project',
+        'display_tag',
+        'component_type',
+        'line_id',
+        'branch_index',
+        'circuit_index',
+        'manual_length_m',
+        'manual_cable_size',
+        'review_status',
+        'schedule_revision',
+        'is_active',
+    )
+    list_filter = ('project', 'component_type', 'review_status', 'is_active')
+    search_fields = (
+        'project__proj_id',
+        'component_id',
+        'component_uid',
+        'display_tag',
+        'line_id',
+        'route_reference',
+        'installation_area',
+        'drum_tag',
+        'cable_lot',
+    )
+    fieldsets = (
+        ('Cable identity', {
+            'fields': (
+                'project',
+                'component_id',
+                'component_uid',
+                'display_tag',
+                'component_type',
+                'line_id',
+                'line_uid',
+                'branch_index',
+                'circuit_index',
+                'is_active',
+            ),
+        }),
+        ('Generated and manual sizing', {
+            'fields': (
+                'generated_length_m',
+                'manual_length_m',
+                'generated_cable_size',
+                'manual_cable_size',
+            ),
+        }),
+        ('Procurement and issue control', {
+            'fields': (
+                'route_reference',
+                'installation_area',
+                'installation_basis',
+                'drum_tag',
+                'cable_lot',
+                'schedule_revision',
+                'review_status',
+                'checked_by',
+                'checked_date',
+                'remarks',
+            ),
+        }),
+        ('Audit', {
+            'fields': ('created_by', 'updated_by', 'created_at', 'updated_at'),
+        }),
+    )
+    readonly_fields = ('created_at', 'updated_at')
 
 
 @admin.register(SLDNodeLayout)

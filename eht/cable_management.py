@@ -67,6 +67,15 @@ def apply_cable_overrides_to_payload(project_id, payload):
             metadata['cable_override_active'] = True
             metadata['cable_override_id'] = override.id
             metadata['cable_override_remarks'] = override.remarks
+            metadata['cable_route_reference'] = override.route_reference
+            metadata['cable_installation_area'] = override.installation_area
+            metadata['cable_installation_basis'] = override.installation_basis
+            metadata['cable_drum_tag'] = override.drum_tag
+            metadata['cable_lot'] = override.cable_lot
+            metadata['cable_schedule_revision'] = override.schedule_revision
+            metadata['cable_schedule_review_status'] = override.review_status
+            metadata['cable_checked_by'] = override.checked_by
+            metadata['cable_checked_date'] = override.checked_date.isoformat() if override.checked_date else ''
 
         node['metadata'] = metadata
     return adjusted

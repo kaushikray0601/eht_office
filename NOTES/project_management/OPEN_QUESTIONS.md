@@ -1,6 +1,6 @@
 # Open Questions
 
-Last updated: 2026-06-12
+Last updated: 2026-06-13
 
 ## Immediate Questions
 
@@ -35,6 +35,16 @@ Last updated: 2026-06-12
    - This is blocking `is_validated=True` for all MI families, meaning MI
      auto-fallback cannot fire in production until at least one family is
      validated. Owner: KR.
+
+5. Was the current THR/MIQ and CHR/MI-825B `is_validated=True` state in
+   `eht_local` an intentional KR approval after row review?
+   - Found in read-only `AUD-P1` on 2026-06-13. If not intentional, close the
+     MI gate again in `CAT-P1` through an explicit approved data-change path.
+
+6. Should `import_data_from_file` be retired, or kept only behind an explicit
+   force/confirmation option?
+   - Owner: KR + Codex in `CAT-P1`. The current command imports the divergent
+     vendor CSV and is unsafe for restored catalogue data.
 
 ## Cold Cable Engineering Questions
 
@@ -83,24 +93,22 @@ Last updated: 2026-06-12
      shown from existing SLD payload metadata.
 
 2. Which cable schedule fields are needed first for procurement?
-   - Route reference.
-   - Drum tag.
-   - Installation area.
-   - Revision/status.
-   - Checked-by/date.
+   - Resolved for `SCH-P1`: add optional route reference, installation area,
+     installation basis, drum tag, cable lot, schedule revision, review status,
+     checked-by, and checked-date fields on cable schedule overrides; surface
+     them in admin, the schedule table, and Excel export.
+   - Future question: whether these annotations should get a dedicated
+     non-admin editing workflow or remain admin-maintained for MVP.
 
 3. Should topology edit impact summary be persisted or generated on demand?
    - Resolved 2026-06-12 in `SLD-P2`: combined-feeder apply persists
      cold-cable impact evidence in `SLDTopologyEdit.edit_payload`.
 
 4. Combined-circuit cable re-sizing workflow:
-   - Next SLD feature: combined circuits must recalculate the combined feeder
-     cable size from combined current.
-   - The app should warn that the prior separate feeder cable lengths are no
-     longer valid and default the new combined trunk length to the highest
-     length among the combined feeder cables.
-   - Current direction: build this after `CC-P5`, so the warning and automatic
-     recalculation use the new single-phase FeederCable/BranchCable engine.
+   - Resolved 2026-06-12 in `SLD-P2`: combine apply recalculates combined
+     FeederCable cold-cable impact, defaults missing trunk length to the
+     maximum selected feeder length, persists impact evidence, and marks the
+     result for route/schedule review.
 
 ## Future Module Questions
 

@@ -202,6 +202,20 @@ def orchestrate_calculations(process_lines, vendor_data, project_settings, asme_
                 continue
 
             selected_tracer = {**selected_tracer, "uid": line["uid"]}
+            power_params = compute_power_params(line, project_settings, asme_b36_table, selected_tracer)
+            if not power_params:
+                heat_loss['selection_status'] = 'rejected'
+                heat_loss['selection_rejection_reasons'] = [{
+                    'rule_set': 'SR_POWER_PARAMETER_SAFETY_GUARD_V1',
+                    'code': 'SR_POWER_PARAMETER_CALCULATION_FAILED',
+                    'message': (
+                        'SR tracer was not carried forward because downstream '
+                        'power-parameter calculation failed. Review SR catalogue '
+                        'power coefficients and rerun the calculation.'
+                    ),
+                    'details': {'selected_tracer': selected_tracer.get('V_UID', '')},
+                }]
+                continue
             aggregated_results["selected_tracers"].append(selected_tracer)
             mi_alternative = _mi_selection_result(
                 line,
@@ -219,7 +233,6 @@ def orchestrate_calculations(process_lines, vendor_data, project_settings, asme_
                     for tracer in alternative_tracers
                 )
 
-            power_params = compute_power_params(line, project_settings, asme_b36_table, selected_tracer)
             power_distribution = compute_power_distribution(power_params, project_settings, tag_factory=tag_factory)
             aggregated_results["power_distribution"].append(power_distribution)
 

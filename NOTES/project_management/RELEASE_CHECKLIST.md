@@ -1,6 +1,6 @@
 # Release Checklist
 
-Last updated: 2026-06-12
+Last updated: 2026-06-14
 
 Purpose: checklist for declaring the current SR/MI + cold cable + SLD path
 production-ready for serious engineering review.
@@ -15,6 +15,8 @@ production-ready for serious engineering review.
 - [x] Full PostgreSQL-backed `eht` test suite passes against `eht_local_test`.
 - [x] Current migrations are applied to the development database.
 - [x] No accidental unrelated file changes remain in the release diff.
+- [ ] Production deployment settings satisfy Django deploy checks: HSTS/HTTPS
+      policy, secure session/CSRF cookies, and non-development `SECRET_KEY`.
 
 ## Hot Engineering
 
@@ -47,13 +49,13 @@ production-ready for serious engineering review.
 
 ## Cable Schedule / BOQ
 
-- [ ] Cable schedule separates generated and manual quantities.
-- [ ] Manual length/size overrides are visible.
-- [ ] Cold-cable calculated size/status/VD/fault evidence is visible.
-- [ ] Shared FeederCable quantities are deduplicated in cable schedule and BOQ totals.
-- [ ] Total cable length and conductor mass are summarized.
-- [ ] Procurement fields are present or explicitly deferred.
-- [ ] Excel export is suitable for engineering review.
+- [x] Cable schedule separates generated and manual quantities.
+- [x] Manual length/size overrides are visible.
+- [x] Cold-cable calculated size/status/VD/fault evidence is visible.
+- [x] Shared FeederCable quantities are deduplicated in cable schedule and BOQ totals.
+- [x] Total cable length and conductor mass are summarized.
+- [x] Procurement fields are present or explicitly deferred.
+- [x] Excel export is suitable for engineering review.
 
 ## SLD
 
@@ -73,14 +75,14 @@ production-ready for serious engineering review.
 
 ## Documentation / Verification
 
-- [ ] Calculation manual aligns with implemented formulas.
+- [x] Calculation manual aligns with implemented formulas.
 - [ ] User manual (`NOTES/CALCULATION_MODULE_USER_MANUAL.md`) is current and committed.
-- [ ] Engineering Hub design guide formulas match implemented cold cable basis.
-- [ ] Verification report aligns with source-of-truth code.
-- [ ] Worked SR example exists.
-- [ ] Worked MI example exists.
-- [ ] Worked direct single-phase FeederCable example exists.
-- [ ] Worked shared FeederCable / BranchCable optimization example exists.
+- [x] Engineering Hub design guide formulas match implemented cold cable basis.
+- [x] Verification report aligns with source-of-truth code.
+- [x] Worked SR example exists.
+- [x] Worked MI example exists.
+- [x] Worked direct single-phase FeederCable example exists.
+- [x] Worked shared FeederCable / BranchCable optimization example exists.
 - [ ] Known limitations are visible and plain-language.
 
 ## Demo / Acceptance

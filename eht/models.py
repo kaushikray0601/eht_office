@@ -429,6 +429,13 @@ class PowerDistributionBranch(models.Model):
 
 
 class CableScheduleOverride(models.Model):
+    SCHEDULE_REVIEW_STATUS_CHOICES = [
+        ('generated', 'Generated'),
+        ('review_required', 'Review required'),
+        ('checked', 'Checked'),
+        ('issued', 'Issued'),
+    ]
+
     project = models.ForeignKey(
         ProjectData,
         to_field='proj_id',
@@ -448,6 +455,15 @@ class CableScheduleOverride(models.Model):
     manual_length_m = models.FloatField(null=True, blank=True)
     generated_cable_size = models.CharField(max_length=50, blank=True, default='')
     manual_cable_size = models.CharField(max_length=50, blank=True, default='')
+    route_reference = models.CharField(max_length=120, blank=True, default='')
+    installation_area = models.CharField(max_length=120, blank=True, default='')
+    installation_basis = models.CharField(max_length=160, blank=True, default='')
+    drum_tag = models.CharField(max_length=80, blank=True, default='')
+    cable_lot = models.CharField(max_length=80, blank=True, default='')
+    schedule_revision = models.CharField(max_length=20, blank=True, default='0')
+    review_status = models.CharField(max_length=30, choices=SCHEDULE_REVIEW_STATUS_CHOICES, default='generated')
+    checked_by = models.CharField(max_length=100, blank=True, default='')
+    checked_date = models.DateField(null=True, blank=True)
     remarks = models.TextField(blank=True, default='')
     is_active = models.BooleanField(default=True)
     created_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='created_cable_overrides')
