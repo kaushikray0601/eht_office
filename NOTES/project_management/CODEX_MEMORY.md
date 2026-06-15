@@ -541,3 +541,15 @@ PostgreSQL targeted test attempt hit the known Codex-side test-runner
 targeted tests passed 101 tests; full SQLite `eht` suite passed 358 tests.
 `manage.py check`, SQLite migration dry-run, `node --check static/js/sld_workspace.js`,
 and `git diff --check` passed.
+
+Latest release-readiness reconciliation, 2026-06-15: tracker/checklist status
+was refreshed after the UX/dashboard/FAQ work so completed implementation
+passes are marked complete without hiding the remaining release gates. `EHT-P1`
+is complete; `APP-P1` code is complete with Claude's dashboard delivered;
+`SEC-P1b` implemented controls are complete while dependency hygiene, admin
+exposure policy, and production key/markdown decisions remain open. Added
+focused smoke coverage for Claude's project dashboard and FAQ/help page. The
+focused SQLite dashboard/FAQ smoke slice passed 2 tests. Final reconciliation
+checks passed (`manage.py check`, SQLite migration dry-run, SLD JavaScript
+syntax check, and `git diff --check`), and the full SQLite `eht` suite passed
+360 tests.

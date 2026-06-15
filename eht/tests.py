@@ -5976,6 +5976,28 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'Electrical supply and protection')
         self.assertContains(response, 'Tracer selection and heat loss basis')
 
+    def test_project_dashboard_renders_calculated_project_summary(self):
+        make_managed_project(proj_id='P-DASH', description='Dashboard Smoke')
+        make_calculated_project_snapshot(project_id='P-DASH')
+
+        response = self.client.get(reverse('project_dashboard_view'), {'project_id': 'P-DASH'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Project Dashboard')
+        self.assertContains(response, 'P-DASH')
+        self.assertContains(response, 'Design Lifecycle')
+        self.assertContains(response, 'Issue Readiness')
+        self.assertContains(response, 'Assumption Exposure')
+
+    def test_faq_view_renders_searchable_help_page(self):
+        response = self.client.get(reverse('faq_view'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, '<title>FAQ')
+        self.assertContains(response, 'id="faq-search"')
+        self.assertContains(response, 'Getting Started')
+        self.assertContains(response, 'Troubleshooting')
+
     def test_update_project_data_workspace_form_posts_to_project_update_route(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
         make_project_record(proj_id='PLANT_A_001')

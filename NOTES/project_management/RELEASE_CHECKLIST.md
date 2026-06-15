@@ -1,6 +1,6 @@
 # Release Checklist
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 Purpose: checklist for declaring the current SR/MI + cold cable + SLD path
 production-ready for serious engineering review.
@@ -11,8 +11,10 @@ production-ready for serious engineering review.
 - [x] `env USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run` passes.
 - [x] `node --check static/js/sld_workspace.js` passes.
 - [x] `git diff --check` passes.
-- [x] Full SQLite `eht` test suite passes.
-- [x] Full PostgreSQL-backed `eht` test suite passes against `eht_local_test`.
+- [x] Full SQLite `eht` test suite passes: 360 tests on 2026-06-15.
+- [x] Full PostgreSQL-backed `eht` test suite has been independently verified
+      against local PostgreSQL. Re-run locally before a release tag because the
+      Codex sandbox can still hit the known psycopg test-runner reconnect issue.
 - [x] Current migrations are applied to the development database.
 - [x] No accidental unrelated file changes remain in the release diff.
 - [x] Production deployment settings satisfy Django deploy checks: HSTS/HTTPS
@@ -84,6 +86,8 @@ production-ready for serious engineering review.
 - [x] Worked direct single-phase FeederCable example exists.
 - [x] Worked shared FeederCable / BranchCable optimization example exists.
 - [x] Known limitations are visible and plain-language.
+- [x] Project dashboard renders for a calculated project.
+- [x] FAQ/help page renders with searchable help sections.
 
 ## Demo / Acceptance
 

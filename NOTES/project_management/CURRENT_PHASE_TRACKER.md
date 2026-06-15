@@ -8,12 +8,13 @@ Phase A: production hardening for the current SR/MI + cold cable + SLD path.
 
 ## Current State
 
-- Phase A code through `CAT-P1 / SEC-P1a` and `EHT-P1` is implemented in the
-  current worktree. `EHT-P1` includes corrected upload/model temperature-order
-  validation, SR heat-duty MI fallback diagnostics, startup-current cold-cable
-  VD warning, and documented assumptions/future-scope notes.
+- Phase A code through `CAT-P1 / SEC-P1a`, `EHT-P1`, `APP-P1`, `SCH-P2`,
+  `SEC-P1b` implemented controls, and `UX-P1` is implemented in the current
+  worktree. Remaining open items are mostly catalogue/vendor-validation
+  decisions, dependency/admin exposure hardening, manual visual checks, and
+  final release acceptance.
 - Latest full SQLite test status (verified 2026-06-15 with `USE_POSTGRES=false`):
-  345 tests passed. SQLite quick testing remains the default fast path.
+  360 tests passed. SQLite quick testing remains the default fast path.
 - Latest full PostgreSQL test status (verified independently by Claude on
   2026-06-15 against local PostgreSQL): 320 tests passed. Codex may still use
   SQLite fallback when its sandbox hits the known PostgreSQL test-runner
@@ -793,7 +794,7 @@ Checkpoint result, 2026-06-15 internal lifecycle pass:
 
 ### EHT-P1 - Engineering Rule Corrections and Warnings
 
-Status: planned from KR/Claude audit convergence
+Status: complete
 
 - [x] Correct upload line-list temperature validation to enforce:
       `Maint_T <= Oper_T <= Design_T`.
@@ -863,7 +864,7 @@ Checkpoint note, 2026-06-14:
 
 ### APP-P1 - Data Integrity, Cleanup, and Project Lifecycle
 
-Status: planned from KR/Claude audit convergence
+Status: code complete; dashboard delivered by Claude; manual release sign-off pending
 
 - [x] Remove dead legacy calculation stub code from production package after
       confirming no imports remain. Keep any needed historical context in
@@ -881,7 +882,7 @@ Status: planned from KR/Claude audit convergence
       existing calculated data would be cleared. If confirmed, clear only that
       project's calculated result/BOQ/SLD/cable-schedule data and require
       recalculation; if not confirmed, cancel the change.
-- [ ] Add a project dashboard showing project calculation state, last run,
+- [x] Add a project dashboard showing project calculation state, last run,
       stale/ready status, and high-level project counts.
 
 Checkpoint note, 2026-06-15:
@@ -955,7 +956,7 @@ Checkpoint note, 2026-06-15:
 
 ### SEC-P1b - Upload, Authentication, Admin, and Dependency Hardening
 
-Status: planned before production release
+Status: implemented controls complete; dependency/admin exposure decisions remain before production release
 
 - [x] Add upload hardening: file size limit, actual XLSX/ZIP magic-byte check,
       XLSX MIME check, upload-name traversal guard, bounded validation-error
@@ -1114,3 +1115,35 @@ Completion note, 2026-06-15:
   `venv/bin/python manage.py check`,
   `env USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run`,
   `node --check static/js/sld_workspace.js`, and `git diff --check`.
+
+### REL-P1a - Release-Readiness Reconciliation
+
+Status: complete
+
+- [x] Reconcile tracker status against completed code passes.
+- [x] Review Claude dashboard integration for access scope, generated schedule
+      basis, MI validation exposure, SLD-stage basis, responsiveness, and
+      external dependency risk.
+- [x] Add focused smoke coverage for project dashboard and FAQ/help rendering.
+- [x] Run final quick checks and full SQLite suite after reconciliation edits.
+- [ ] Confirm remaining manual release checklist items with KR before declaring
+      the MVP ready for external engineering review.
+
+Checkpoint note, 2026-06-15:
+
+- Dashboard review found no release-blocking integration issue. It uses
+  `ManagedProject.available_to_user()` access scope, project-specific MI
+  family validation exposure, actual generated schedule workspace data, and
+  `PowerDistributionBranch` as the SLD-output basis. The remaining dashboard
+  deep-link polish is optional: schedule/workspace links may later pass
+  `?project_id=...` now that `/base/` supports it.
+- FAQ/help page was treated as Claude-owned polish during this pass. Codex
+  added a stable smoke test for the searchable FAQ surface without modifying
+  Claude's template work.
+- Final reconciliation checks passed:
+  `venv/bin/python manage.py check`,
+  `env USE_POSTGRES=false venv/bin/python manage.py makemigrations --check --dry-run`,
+  `node --check static/js/sld_workspace.js`, and `git diff --check`.
+- Full SQLite-mode `eht` suite passed after reconciliation:
+  `env USE_POSTGRES=false venv/bin/python manage.py test eht -v 2 --noinput`:
+  360 tests passed.

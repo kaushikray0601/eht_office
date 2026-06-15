@@ -391,19 +391,16 @@ body {
     </button>
   </div>
   <p class="faq-count-msg" id="faq-count-msg"></p>
-</header>
 
-<!-- ════════════════════════════════ CATEGORY PILLS ══════════════════════ -->
-<div class="faq-cat-nav">
-  <div class="faq-cat-nav-inner">
+  <div class="faq-cat-pills">
     <a href="#cat-start"    class="faq-cat-pill active"><i class="bi bi-rocket-takeoff"></i> Getting Started</a>
     <a href="#cat-basics"   class="faq-cat-pill"><i class="bi bi-thermometer-half"></i> Heat Tracing Basics</a>
     <a href="#cat-workflow" class="faq-cat-pill"><i class="bi bi-diagram-3"></i> Design Workflow</a>
     <a href="#cat-calcs"    class="faq-cat-pill"><i class="bi bi-calculator"></i> Calculations</a>
-    <a href="#cat-results"  class="faq-cat-pill"><i class="bi bi-bar-chart-line"></i> Results & Outputs</a>
+    <a href="#cat-results"  class="faq-cat-pill"><i class="bi bi-bar-chart-line"></i> Results &amp; Outputs</a>
     <a href="#cat-trouble"  class="faq-cat-pill"><i class="bi bi-wrench-adjustable"></i> Troubleshooting</a>
   </div>
-</div>
+</header>
 
 <!-- ═══════════════════════════════════════ MAIN ═════════════════════════ -->
 <main class="faq-main" id="faq-main">
@@ -1261,7 +1258,7 @@ function runFilter(term) {
 }
 
 /* ── Scroll spy for category pills ─────────────────────────────────────── */
-const pills    = document.querySelectorAll('.faq-cat-pill');
+const pills    = document.querySelectorAll('.faq-cat-pills .faq-cat-pill');
 const sections = document.querySelectorAll('.faq-section[id]');
 
 const spy = new IntersectionObserver((entries) => {
