@@ -1,7 +1,13 @@
 {%load crispy_forms_tags %} 
 
-<form method="post" id="project-data-form" action="{% url 'update_project_data' project_id %}">
+<form method="post" id="project-data-form" data-workspace-has-data="{{ workspace_has_data|yesno:'true,false' }}" action="{% url 'update_project_data' project_id %}">
     {% csrf_token %} 
+        {% if form.non_field_errors %}
+            <div class="alert alert-warning">
+                {{ form.non_field_errors }}
+            </div>
+        {% endif %}
+        <div class="text-uppercase text-muted small fw-semibold mt-2 mb-2">Project basis</div>
         <div class="row g-3">
             <div class="col-lg-4">
               {{ form.proj_id|as_crispy_field }}
@@ -13,6 +19,7 @@
                 {{ form.heat_loss_method|as_crispy_field }}
             </div>
         </div>
+        <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Temperature and environment</div>
         <div class="row g-3 mt-1">
             <div class="col-lg-4">
                 {{ form.startup_t|as_crispy_field }}
@@ -24,6 +31,7 @@
                 {{ form.max_amb_t|as_crispy_field }}
             </div>
         </div>
+        <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Electrical supply and protection</div>
         <div class="row g-3 mt-1">
             <div class="col-lg-4">
                 {{ form.voltage|as_crispy_field }}
@@ -48,12 +56,16 @@
         </div>
         <div class="row g-3 mt-1">
               <div class="col-lg-4">
+                {{ form.startup_vd_warning_threshold_pct|as_crispy_field }}
+              </div>
+              <div class="col-lg-4">
                 {{ form.voltage_var_factor|as_crispy_field }}
               </div>
               <div class="col-lg-4">
                 {{ form.res_tol|as_crispy_field }}
               </div>
         </div>
+        <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Cold cable sizing basis</div>
         <div class="row g-3 mt-1">
             <div class="col-lg-4">
                 {{ form.cable_standard|as_crispy_field }}
@@ -84,6 +96,7 @@
                 {{ form.rcd_provided|as_crispy_field }}
             </div>
         </div>
+        <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Tracer selection and heat loss basis</div>
         <div class="row g-3 mt-1">
             <div class="col-lg-4">
                 {{ form.spiral_factor|as_crispy_field }} 
@@ -114,6 +127,7 @@
                 {{ form.termination_margin|as_crispy_field }}
               </div>
         </div>
+        <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Field accessories and area classification</div>
         <div class="row g-3 mt-1">
             <div class="col-lg-4">
                 {{ form.rtd_thrm|as_crispy_field }}  

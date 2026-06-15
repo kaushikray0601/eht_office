@@ -70,15 +70,30 @@
                     <div class="d-flex align-items-center gap-2">
                         <span class="text-muted small">{{ cable_schedule_summary.row_count }} row{{ cable_schedule_summary.row_count|pluralize }}</span>
                         <a
+                            data-cable-schedule-visible-export
                             class="btn btn-sm btn-outline-primary"
-                            href="{{ cable_schedule_export_url }}?project_id={{ project_id|urlencode }}"
+                            href="{{ cable_schedule_export_url }}?project_id={{ project_id|urlencode }}&scope=visible"
                         >
                             <i class="bi bi-file-earmark-excel me-1"></i>
-                            Download Excel
+                            Download Visible
+                        </a>
+                        <a
+                            class="btn btn-sm btn-outline-secondary"
+                            href="{{ cable_schedule_export_url }}?project_id={{ project_id|urlencode }}&scope=full"
+                        >
+                            <i class="bi bi-file-earmark-spreadsheet me-1"></i>
+                            Full Audit
                         </a>
                     </div>
                 </div>
+                <p class="small text-muted mb-2">
+                    Visible export follows the current table column selection. Full audit export includes hidden procurement, checking, and detailed cold-cable evidence fields.
+                </p>
+                <p class="small text-muted mb-2">
+                    Shared feeder cables may appear against multiple downstream circuits for traceability; schedule summary quantities count shared cable material only once.
+                </p>
                 <table
+                    data-cable-schedule-table
                     class="table table-striped table-hover align-middle"
                     data-toggle="table"
                     data-classes="table table-striped table-hover align-middle"
@@ -112,6 +127,9 @@
                             <th data-field="checked-by" data-sortable="true" data-visible="false">Checked By</th>
                             <th data-field="checked-date" data-sortable="true" data-visible="false">Checked Date</th>
                             <th data-field="rev-no" data-sortable="true">Rev. No.</th>
+                            <th data-field="generated-at" data-sortable="true" data-visible="false">Generated At</th>
+                            <th data-field="modified-at" data-sortable="true" data-visible="false">Modified At</th>
+                            <th data-field="lifecycle-status" data-sortable="true" data-visible="false">Lifecycle Status</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -226,10 +244,50 @@
                                     {% endif %}
                                 </td>
                                 <td>{{ row.revision_no }}</td>
+                                <td>
+                                    {% if row.generated_at %}
+                                        {{ row.generated_at|date:"Y-m-d H:i" }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>
+                                    {% if row.modified_at %}
+                                        {{ row.modified_at|date:"Y-m-d H:i" }}
+                                    {% else %}
+                                        <span class="text-muted">-</span>
+                                    {% endif %}
+                                </td>
+                                <td>{{ row.lifecycle_status|default:"active" }}</td>
                             </tr>
                         {% endfor %}
                     </tbody>
                 </table>
+                <script>
+                    (function () {
+                        const exportLink = document.querySelector('[data-cable-schedule-visible-export]');
+                        const scheduleTable = document.querySelector('[data-cable-schedule-table]');
+                        if (!exportLink || !scheduleTable || !window.jQuery) {
+                            return;
+                        }
+
+                        exportLink.addEventListener('click', function () {
+                            const $table = window.jQuery(scheduleTable);
+                            if (typeof $table.bootstrapTable !== 'function') {
+                                return;
+                            }
+                            const visibleFields = ($table.bootstrapTable('getVisibleColumns') || [])
+                                .map(function (column) { return column.field; })
+                                .filter(Boolean);
+                            if (!visibleFields.length) {
+                                return;
+                            }
+                            const url = new URL(exportLink.href, window.location.origin);
+                            url.searchParams.set('columns', visibleFields.join(','));
+                            exportLink.href = url.pathname + url.search;
+                        });
+                    })();
+                </script>
             </div>
         {% endif %}
     </div>

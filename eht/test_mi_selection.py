@@ -4,7 +4,7 @@ from django.core.management import call_command
 from django.test import TestCase
 
 from eht.calculations.mi_selection import get_mi_heater_options
-from eht.models import HeatTracingInput, MIAlloyTempFactor, MICableFamily, MICableHeater, MIColdLeadOption
+from eht.models import HeatTracingInput, MIAlloyTempFactor, MICableFamily, MICableHeater, MIColdLeadOption, ProjectData
 
 
 def make_heat_loss(**overrides):
@@ -35,7 +35,40 @@ def make_line(**overrides):
         'status': 'confirmed',
     }
     values.update(overrides)
+    ensure_project(values['proj_id'])
     return HeatTracingInput.objects.create(**values)
+
+
+def ensure_project(project_id):
+    ProjectData.objects.get_or_create(
+        proj_id=project_id,
+        defaults={
+            'min_amb_t': 20.0,
+            'max_amb_t': 45.0,
+            'startup_t': 15.0,
+            'area_class': 'Zone 1, IIC',
+            'temp_class': 'T3',
+            'voltage': 230.0,
+            'max_cb_size': 10,
+            'restrict_cb_current': 80.0,
+            'vendor': 'THR',
+            'spiral_wrap_allowed': True,
+            'spiral_factor': 2.0,
+            'margin_on_tracer_lengths': 10.0,
+            'voltage_var_factor': 0.0,
+            'res_tol': 10.0,
+            'termination_margin': 250.0,
+            'heat_loss_sf': 1.0,
+            'rtd_thrm': 'TI',
+            'wind_speed': 32.0,
+            'req_local_isolator': 'required',
+            'caution_label_interval': 10.0,
+            'isolator_location': 'bothSides',
+            'ckt_ln': 30.0,
+            'loop_ln': 12.0,
+            'allowablevdrop': 5.0,
+        },
+    )
 
 
 def make_project_settings(**overrides):

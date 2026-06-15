@@ -52,8 +52,14 @@
         </div>
 
         <div id="project-data-form-container">
-            <form method="post" id="project-data-form" action="{% if project_id %}{% url 'update_project_data' project_id %}{% else %}{% url 'create_project_data' %}{% endif %}">
+            <form method="post" id="project-data-form" data-workspace-has-data="{{ workspace_has_data|yesno:'true,false' }}" action="{% if project_id %}{% url 'update_project_data' project_id %}{% else %}{% url 'create_project_data' %}{% endif %}">
                 {% csrf_token %}
+                {% if form.non_field_errors %}
+                    <div class="alert alert-warning">
+                        {{ form.non_field_errors }}
+                    </div>
+                {% endif %}
+                <div class="text-uppercase text-muted small fw-semibold mt-2 mb-2">Project basis</div>
                 <div class="row g-3">
                     <div class="col-lg-4">
                         {{ form.proj_id|as_crispy_field }}
@@ -65,6 +71,7 @@
                         {{ form.heat_loss_method|as_crispy_field }}
                     </div>
                 </div>
+                <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Temperature and environment</div>
                 <div class="row g-3 mt-1">
                     <div class="col-lg-4">
                         {{ form.startup_t|as_crispy_field }}
@@ -76,6 +83,7 @@
                         {{ form.max_amb_t|as_crispy_field }}
                     </div>
                 </div>
+                <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Electrical supply and protection</div>
                 <div class="row g-3 mt-1">
                     <div class="col-lg-4">
                         {{ form.voltage|as_crispy_field }}
@@ -100,12 +108,16 @@
                 </div>
                 <div class="row g-3 mt-1">
                     <div class="col-lg-4">
+                        {{ form.startup_vd_warning_threshold_pct|as_crispy_field }}
+                    </div>
+                    <div class="col-lg-4">
                         {{ form.voltage_var_factor|as_crispy_field }}
                     </div>
                     <div class="col-lg-4">
                         {{ form.res_tol|as_crispy_field }}
                     </div>
                 </div>
+                <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Cold cable sizing basis</div>
                 <div class="row g-3 mt-1">
                     <div class="col-lg-4">
                         {{ form.cable_standard|as_crispy_field }}
@@ -136,6 +148,7 @@
                         {{ form.rcd_provided|as_crispy_field }}
                     </div>
                 </div>
+                <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Tracer selection and heat loss basis</div>
                 <div class="row g-3 mt-1">
                     <div class="col-lg-4">
                         {{ form.spiral_factor|as_crispy_field }}
@@ -166,6 +179,7 @@
                         {{ form.termination_margin|as_crispy_field }}
                     </div>
                 </div>
+                <div class="text-uppercase text-muted small fw-semibold mt-4 mb-2">Field accessories and area classification</div>
                 <div class="row g-3 mt-1">
                     <div class="col-lg-4">
                         {{ form.rtd_thrm|as_crispy_field }}
@@ -208,6 +222,23 @@
 </div>
 
 <script>
+    const workspaceClearConfirmationMessage = "This project already has uploaded or calculated workspace data. Saving this setup or uploading a replacement line list will clear only this project's input lines, calculated results, BOQ, SLD layout/topology edits, cable schedule overrides, and tracer overrides. Continue?";
+
+    function appendWorkspaceClearConfirmation(formDataOrForm) {
+        if (formDataOrForm instanceof FormData) {
+            formDataOrForm.set('confirm_clear_workspace', 'yes');
+            return;
+        }
+        let input = formDataOrForm.querySelector('input[name="confirm_clear_workspace"]');
+        if (!input) {
+            input = document.createElement('input');
+            input.type = 'hidden';
+            input.name = 'confirm_clear_workspace';
+            formDataOrForm.appendChild(input);
+        }
+        input.value = 'yes';
+    }
+
     function setCalculationProgress(isVisible, message) {
         const overlay = document.getElementById('calculation-progress-overlay');
         const messageNode = document.getElementById('calculation-progress-message');
@@ -220,10 +251,35 @@
         overlay.classList.toggle('d-none', !isVisible);
     }
 
+    $(document).off('submit.projectDataConfirm', '#project-data-form').on('submit.projectDataConfirm', '#project-data-form', function (event) {
+        const form = this;
+        const workspaceHasData = form.dataset.workspaceHasData === 'true';
+        const alreadyConfirmed = form.querySelector('input[name="confirm_clear_workspace"]');
+        if (!workspaceHasData || alreadyConfirmed) {
+            return;
+        }
+        if (!confirm(workspaceClearConfirmationMessage)) {
+            event.preventDefault();
+            showToast("Project setup was not saved. Existing calculation data was left unchanged.", "info");
+            return;
+        }
+        appendWorkspaceClearConfirmation(form);
+    });
+
     $('#upload_input').off('change.projectUpload').on('change.projectUpload', function () {
         let projectId = $('#id_proj_id').val();
         let formData = new FormData();
         const projectForm = document.getElementById('project-data-form');
+        const uploadInput = this;
+        const workspaceHasData = projectForm && projectForm.dataset.workspaceHasData === 'true';
+        if (workspaceHasData) {
+            if (!confirm(workspaceClearConfirmationMessage)) {
+                uploadInput.value = '';
+                showToast("Upload was cancelled. Existing calculation data was left unchanged.", "info");
+                return;
+            }
+            appendWorkspaceClearConfirmation(formData);
+        }
         if (projectForm) {
             const setupData = new FormData(projectForm);
             setupData.forEach(function (value, key) {
@@ -245,6 +301,9 @@
             success: function (data) {
                 if (data.valid_data_with_error) {
                     setCalculationProgress(false);
+                    if (projectForm) {
+                        projectForm.dataset.workspaceHasData = 'true';
+                    }
                     let downloadUrl = data.error_file_url;
                     let a = document.createElement('a');
                     a.href = downloadUrl;
@@ -261,10 +320,17 @@
                 } else {
                     setCalculationProgress(false);
                     showToast(data.success || "Input file processed successfully.", "success");
+                    if (projectForm) {
+                        projectForm.dataset.workspaceHasData = 'true';
+                    }
                 }
             },
             error: function (xhr) {
                 setCalculationProgress(false);
+                if (xhr.status === 409 && xhr.responseJSON && xhr.responseJSON.requires_confirmation) {
+                    showToast(xhr.responseJSON.error || "Upload needs confirmation before existing project data can be cleared.", "warning");
+                    return;
+                }
                 handleErrorResponse(xhr);
             }
         });

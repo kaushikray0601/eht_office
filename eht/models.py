@@ -1,6 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.utils.timezone import now, timedelta
 
 # from django.contrib.postgres.fields import JSONField  # or use TextField if DB doesn't support native JSON
@@ -139,6 +140,7 @@ class ProjectData(models.Model):
     tracer_temp_factor = models.DecimalField(max_digits=5, decimal_places=2, default=1)
     alpha_for_res = models.DecimalField(max_digits=6, decimal_places=4, default=1)
     allowablevdrop = models.DecimalField(max_digits=5, decimal_places=2)
+    startup_vd_warning_threshold_pct = models.DecimalField(max_digits=5, decimal_places=2, default=10)
     cable_standard = models.CharField(max_length=20, choices=CABLE_STANDARD_CHOICES, default='IEC_60502_1')
     cable_conductor_material = models.CharField(max_length=5, choices=CABLE_CONDUCTOR_MATERIAL_CHOICES, default='Cu')
     cable_insulation_type = models.CharField(max_length=10, choices=CABLE_INSULATION_TYPE_CHOICES, default='XLPE')
@@ -163,6 +165,8 @@ class ProjectData(models.Model):
         for field in ['margin_on_tracer_lengths', 'voltage_var_factor', 'res_tol', 'termination_margin', 'wind_speed', 'loop_ln', 'allowablevdrop']:
             if getattr(self, field) is not None and getattr(self, field) < 0:
                 errors[field] = 'Value cannot be negative.'
+        if self.startup_vd_warning_threshold_pct is not None and self.startup_vd_warning_threshold_pct <= 0:
+            errors['startup_vd_warning_threshold_pct'] = 'Startup voltage-drop warning threshold must be greater than zero.'
         if self.restrict_cb_current is not None and not (0 < self.restrict_cb_current <= 100):
             errors['restrict_cb_current'] = 'Circuit breaker loading must be greater than 0 and no more than 100 percent.'
         if self.cable_grouping_derating is not None and not (
@@ -196,13 +200,58 @@ class ProjectData(models.Model):
             return float(self.voltage) / (float(self.eht_db_fault_rating_ka) * 1000.0)
         except (TypeError, ValueError, ZeroDivisionError):
             return None
+
+
+class ErrorFileRetentionPolicy(models.Model):
+    """Admin-controlled retention for temporary upload validation workbooks."""
+
+    name = models.CharField(max_length=80, default='Default upload error-file retention')
+    max_error_files = models.PositiveSmallIntegerField(
+        default=10,
+        validators=[MinValueValidator(1), MaxValueValidator(100)],
+        help_text='Maximum number of upload validation error workbooks retained on the server.',
+    )
+    max_file_size_mb = models.DecimalField(
+        max_digits=6,
+        decimal_places=2,
+        default=5,
+        validators=[MinValueValidator(0.1), MaxValueValidator(100)],
+        help_text='Maximum size of each retained error workbook. Default 5 MB; total retained size is bounded by file count times this value.',
+    )
+    is_active = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Error file retention policy'
+        verbose_name_plural = 'Error file retention policy'
+
+    def clean(self):
+        if self.max_error_files < 1:
+            raise ValidationError({'max_error_files': 'At least one error file must be retained.'})
+        if self.max_file_size_mb <= 0:
+            raise ValidationError({'max_file_size_mb': 'Maximum file size must be greater than zero.'})
+
+    @property
+    def max_total_size_mb(self):
+        return float(self.max_error_files) * float(self.max_file_size_mb)
+
+    def __str__(self):
+        return f'{self.name} ({self.max_error_files} files, {self.max_file_size_mb} MB each)'
     
 
 
 class HeatTracingInput(models.Model):
     # Core fields
     uid = models.AutoField(primary_key=True)  # Unique ID for each entry
-    proj_id = models.CharField(max_length=50, blank=True, null=True)  # Project ID
+    proj = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='proj_id',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='input_lines',
+    )
     is_deleted = models.BooleanField(default=False)  # Logical deletion flag
     line_id = models.CharField(max_length=100)  # pipeline ID
     pid_no = models.CharField(max_length=50, blank=True, null=True)  # Piping & Instrumentation Drawing Number
@@ -238,6 +287,23 @@ class HeatTracingInput(models.Model):
         default='pending',  # Default to 'pending'
     )
 
+    def clean(self):
+        errors = {}
+        if (
+            self.maint_temp is not None
+            and self.oper_temp is not None
+            and self.maint_temp > self.oper_temp
+        ):
+            errors['oper_temp'] = 'Operating temperature must be greater than or equal to maintain temperature.'
+        if (
+            self.oper_temp is not None
+            and self.design_temp is not None
+            and self.oper_temp > self.design_temp
+        ):
+            errors['design_temp'] = 'Design temperature must be greater than or equal to operating temperature.'
+        if errors:
+            raise ValidationError(errors)
+
     def __str__(self):
         return f"{self.proj_id} - {self.line_id}"
 
@@ -245,8 +311,8 @@ class HeatTracingInput(models.Model):
         verbose_name = "Heat Tracing Input"
         verbose_name_plural = "Heat Tracing Inputs"
         indexes = [
-            models.Index(fields=['proj_id']),
-            models.Index(fields=['proj_id', 'status']),
+            models.Index(fields=['proj']),
+            models.Index(fields=['proj', 'status']),
         ]
 
 # This table holds thermal conductivity data for insulation materials
@@ -484,6 +550,59 @@ class CableScheduleOverride(models.Model):
         ]
 
 
+class CableScheduleRecord(models.Model):
+    LIFECYCLE_STATUS_CHOICES = [
+        ('active', 'Active'),
+        ('retired', 'Retired'),
+    ]
+
+    project = models.ForeignKey(
+        ProjectData,
+        to_field='proj_id',
+        db_column='project_id',
+        on_delete=models.CASCADE,
+        related_name='cable_schedule_records',
+    )
+    cable_tag = models.CharField(max_length=120)
+    component_id = models.CharField(max_length=255, blank=True, default='')
+    component_type = models.CharField(max_length=50, blank=True, default='')
+    line_ids = models.CharField(max_length=255, blank=True, default='')
+    cable_specification = models.CharField(max_length=120, blank=True, default='')
+    calculated_cold_cable_size = models.CharField(max_length=80, blank=True, default='')
+    cable_length_m = models.FloatField(null=True, blank=True)
+    connected_from = models.CharField(max_length=255, blank=True, default='')
+    connected_to = models.CharField(max_length=255, blank=True, default='')
+    purpose = models.CharField(max_length=160, blank=True, default='')
+    review_status = models.CharField(
+        max_length=30,
+        choices=CableScheduleOverride.SCHEDULE_REVIEW_STATUS_CHOICES,
+        default='generated',
+    )
+    schedule_signature = models.CharField(max_length=64)
+    internal_revision = models.PositiveIntegerField(default=0)
+    lifecycle_status = models.CharField(max_length=20, choices=LIFECYCLE_STATUS_CHOICES, default='active')
+    generated_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='generated_cable_schedule_records')
+    modified_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='modified_cable_schedule_records')
+    retired_by = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='retired_cable_schedule_records')
+    generated_at = models.DateTimeField(auto_now_add=True)
+    modified_at = models.DateTimeField(null=True, blank=True)
+    retired_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ['project', 'cable_tag']
+        constraints = [
+            models.UniqueConstraint(fields=['project', 'cable_tag'], name='unique_cable_schedule_record_tag_per_project'),
+        ]
+        indexes = [
+            models.Index(fields=['project', 'lifecycle_status']),
+            models.Index(fields=['project', 'internal_revision']),
+            models.Index(fields=['cable_tag']),
+        ]
+
+    def __str__(self):
+        return f'{self.project_id} - {self.cable_tag} r{self.internal_revision}'
+
+
 class ColdCableCatalogue(models.Model):
     """Validated LV cold-cable catalogue row used by the cold cable module."""
     CORE_COUNT_CHOICES = [(2, '2C'), (3, '3C'), (4, '4C')]
@@ -706,6 +825,7 @@ class ProcessLineCalculation(models.Model):
     sr_parallel_run_basis = models.CharField(max_length=50, default='', blank=True)
     sr_constructability_warning = models.CharField(max_length=255, default='', blank=True)
     remarks = models.TextField(null=True, blank=True)  # Placeholder for future
+    calculated_at = models.DateTimeField(default=timezone.now)
 
     class Meta:
         ordering = ['line']
@@ -746,6 +866,7 @@ class ColdCableResult(models.Model):
     heating_cable_type = models.CharField(max_length=10, default='SR')
 
     per_circuit_operating_current_a = models.FloatField(default=0.0)
+    per_circuit_starting_current_a = models.FloatField(default=0.0)
     line_operating_current_a = models.FloatField(default=0.0)
     breaker_size_a = models.FloatField(default=0.0)
     circuit_count = models.IntegerField(default=0)
@@ -786,6 +907,10 @@ class ColdCableResult(models.Model):
     vd_allowable_pct = models.FloatField(default=0.0)
     vd_status = models.CharField(max_length=20, choices=VD_STATUS_CHOICES, default='not_calculated')
     load_end_voltage_v = models.FloatField(null=True, blank=True)
+    startup_vd_total_pct = models.FloatField(null=True, blank=True)
+    startup_vd_threshold_pct = models.FloatField(default=10.0)
+    startup_vd_status = models.CharField(max_length=20, choices=VD_STATUS_CHOICES, default='not_calculated')
+    startup_vd_basis = models.JSONField(default=dict, blank=True)
 
     optimization_run = models.BooleanField(default=False)
     conductor_volume_proxy = models.FloatField(null=True, blank=True)
@@ -938,103 +1063,3 @@ class SelectedMIHeater(models.Model):
 
     class Meta:
         ordering = ['line']
-
-
-# ######################### OLD Models for reference #####################################
-
-
-'''
-# This table holds all EHT system design calculation
-class ElecEHT_CalculatedTable(models.Model):
-    UID = models.CharField(max_length=50, null=True)
-    Heat_Loss = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Tracer_Power_Output = models.DecimalField(max_digits=4, decimal_places=2, null=True)
-    User_Tracer_Cat_UID = models.CharField(max_length=50, null=True)
-    Auto_Tracer_Cat_UID = models.CharField(max_length=50, null=True)
-    Tracer_Length = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Spiral_Factor = models.DecimalField(max_digits=4, decimal_places=2, null=True)
-    DB_No = models.CharField(max_length=20, null=True)
-    CKT_No = models.TextField(null=True)
-    Breaker_Size = models.IntegerField(null=True)
-    Operating_Current = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Maximum_Current = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Operating_Load = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Optional_Tracer = models.TextField(null=True)
-    Total_Tracer_Length = models.DecimalField(max_digits=10, decimal_places=3, null=True)
-    Last_Design = models.CharField(max_length=7, null=True)
-    No_of_Ckt = models.IntegerField(null=True)
-    Isolator = models.IntegerField(null=True)
-    JB_3PH = models.IntegerField(null=True)
-    JB_1PH = models.IntegerField(null=True)
-    Splice_Connection_Box = models.IntegerField(null=True)
-    Tee_Connection_Box = models.IntegerField(null=True)
-    End_Connection_Box = models.IntegerField(null=True, blank=True)
-    RTD = models.IntegerField(null=True, blank=True)
-    Thermostat = models.IntegerField(null=True, blank=True)
-    Caution_Label = models.IntegerField(null=True, blank=True)
-    Aluminium_Adhesive_Tape = models.DecimalField(max_digits=9, decimal_places=3, null=True)
-    Others = models.TextField(null=True)
-    Pipe_Strap = models.IntegerField(null=True)
-    No_of_Segment = models.IntegerField(null=True)
-    IsMIQ = models.BooleanField(null=True, default=False)
-    IsSeries = models.BooleanField(null=True, default=False)
-
-# This table holds clean Input & output parameters
-class ElecEHT_IO(models.Model):
-    UID = models.CharField(max_length=50, unique=True)
-    XLID = models.CharField(max_length=10, null=True)
-    ISDeleted = models.BooleanField(default=False)
-    Line_ID = models.CharField(max_length=100)
-    PID_No = models.CharField(max_length=100)
-    Area = models.CharField(max_length=50, null=True)
-    Train = models.CharField(max_length=50, null=True)
-    Service_Type = models.CharField(max_length=20)
-    Line_Size = models.DecimalField(max_digits=7, decimal_places=3)
-    Line_Length = models.DecimalField(max_digits=7, decimal_places=3)
-    Valve_Qty = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Flange_Qty = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Support_Qty = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Pipe_Mat_Class = models.CharField(max_length=20, null=True)
-    Ins_Mat_Type = models.CharField(max_length=20)
-    Insul_Thick = models.DecimalField(max_digits=7, decimal_places=3)
-    Maint_T = models.DecimalField(max_digits=4, decimal_places=1)
-    Oper_T = models.DecimalField(max_digits=4, decimal_places=1)
-    Design_T = models.DecimalField(max_digits=4, decimal_places=1)
-    Emergency_Supply = models.BooleanField(null=True)
-    Discipline = models.CharField(max_length=20, null=True)
-    Remarks = models.CharField(max_length=200, null=True)
-    Repeat_Seq = models.CharField(max_length=20, null=True)
-    Heat_Loss = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Tracer_Power_Output = models.DecimalField(max_digits=7, decimal_places=2, null=True)
-    User_Tracer_Cat_UID = models.CharField(max_length=50, null=True)
-    Auto_Tracer_Cat_UID = models.CharField(max_length=50, null=True)
-    Tracer_Length = models.DecimalField(max_digits=8, decimal_places=3, null=True)
-    Spiral_Factor = models.DecimalField(max_digits=4, decimal_places=2, null=True)
-    DB_No = models.CharField(max_length=20, null=True)
-    CKT_No = models.TextField(null=True)
-    Breaker_Size = models.IntegerField(null=True)
-    Operating_Current = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Maximum_Current = models.DecimalField(max_digits=7, decimal_places=3, null=True)
-    Operating_Load = models.DecimalField(max_digits=9, decimal_places=3, null=True)
-    Optional_Tracer = models.TextField(null=True)
-    Total_Tracer_Length = models.DecimalField(max_digits=8, decimal_places=3, null=True)
-    Last_Design = models.CharField(max_length=7, null=True)
-    No_of_Ckt = models.IntegerField(null=True)
-    Isolator = models.IntegerField(null=True)
-    JB_3PH = models.IntegerField(null=True)
-    JB_1PH = models.IntegerField(null=True)
-    Splice_Connection_Box = models.IntegerField(null=True)
-    Tee_Connection_Box = models.IntegerField(null=True)
-    End_Connection_Box = models.IntegerField(null=True)
-    RTD = models.IntegerField(null=True)
-    Thermostat = models.IntegerField(null=True)
-    Caution_Label = models.IntegerField(null=True)
-    Aluminium_Adhesive_Tape = models.DecimalField(max_digits=9, decimal_places=3, null=True)
-    Others = models.TextField(null=True)
-    Pipe_Strap = models.IntegerField(null=True)
-    No_of_Segment = models.IntegerField(null=True)
-    IsMIQ = models.BooleanField(null=True)
-    IsSeries = models.BooleanField(null=True)
-    projID = models.CharField(max_length=50, null=True)
-
-'''

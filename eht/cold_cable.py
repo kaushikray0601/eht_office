@@ -103,6 +103,7 @@ class ColdCableSizingInput:
     circuit_count: int
     heating_cable_type: str
     per_circuit_operating_current_a: float
+    per_circuit_starting_current_a: float
     line_operating_current_a: float
     breaker_size_a: float
     length_4c_m: float | None
@@ -447,6 +448,9 @@ def build_cold_cable_sizing_input(branch, project):
     per_circuit_current = _numeric_metadata_value(mcb_metadata, 'operating_current', 'per_circuit_operating_current')
     if per_circuit_current is None and calculation is not None:
         per_circuit_current = _to_float(calculation.operating_current)
+    per_circuit_starting_current = _numeric_metadata_value(mcb_metadata, 'max_current', 'per_circuit_max_current')
+    if per_circuit_starting_current is None and calculation is not None:
+        per_circuit_starting_current = _to_float(calculation.starting_current)
     line_current = _numeric_metadata_value(mcb_metadata, 'line_operating_current')
     if line_current is None and calculation is not None:
         # Fallback only: total_power_consumption / voltage gives approximate line current
@@ -471,6 +475,7 @@ def build_cold_cable_sizing_input(branch, project):
         circuit_count=length_resolution.circuit_count,
         heating_cable_type=_heating_cable_type(branch),
         per_circuit_operating_current_a=per_circuit_current or 0.0,
+        per_circuit_starting_current_a=per_circuit_starting_current or 0.0,
         line_operating_current_a=line_current or 0.0,
         breaker_size_a=breaker_size or 0.0,
         length_4c_m=length_resolution.length_4c_m,
@@ -1236,6 +1241,135 @@ def _vd_defaults(vd_result, prefix):
     }
 
 
+def _startup_vd_threshold(project):
+    value = getattr(project, 'startup_vd_warning_threshold_pct', None)
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError):
+        threshold = 10.0
+    return threshold if threshold > 0 else 10.0
+
+
+def _startup_vd_for_selection(selection, conductor_temp_c, current_a, length_m, nominal_voltage):
+    if not selection or not selection.catalogue or not current_a or not length_m:
+        return None
+    resistance = get_conductor_resistance_at_temp(selection.catalogue, conductor_temp_c)
+    return calculate_vd(current_a, resistance, length_m, '1phase', nominal_voltage)
+
+
+def _startup_voltage_drop_warning(project, sizing_input, sizing_result, selection_4c, selection_3c):
+    threshold = _startup_vd_threshold(project)
+    current = float(sizing_input.per_circuit_starting_current_a or 0.0)
+    if current <= 0 or not sizing_result or sizing_result.status not in {'selected', 'review_required'}:
+        return {
+            'startup_vd_total_pct': None,
+            'startup_vd_status': 'not_calculated',
+            'startup_vd_threshold_pct': threshold,
+            'startup_vd_basis': {
+                'rule_set': 'COLD_CABLE_STARTUP_VD_WARNING_V1',
+                'status_reason': 'startup_current_or_selected_cable_unavailable',
+            },
+            'review_notes': [],
+        }
+
+    nominal_voltage = float(project.voltage)
+    circuit_count = max(1, int(sizing_input.circuit_count or 1))
+    feeder_current = current * circuit_count
+    feeder_vd = _startup_vd_for_selection(
+        selection_4c,
+        sizing_result.conductor_temp_4c_c,
+        feeder_current,
+        sizing_input.length_4c_m,
+        nominal_voltage,
+    )
+    feeder_vd_pct = feeder_vd.vd_pct if feeder_vd else 0.0
+
+    segment_totals = []
+    for segment in sizing_result.segment_3c_results or []:
+        segment_selection = _selection_from_segment_result(
+            project,
+            segment,
+            sizing_input.per_circuit_operating_current_a,
+        )
+        branch_vd = _startup_vd_for_selection(
+            segment_selection,
+            segment.get('conductor_temp_c'),
+            current,
+            segment.get('length_m'),
+            nominal_voltage,
+        )
+        if branch_vd is None:
+            continue
+        total_pct = feeder_vd_pct + branch_vd.vd_pct
+        segment_totals.append({
+            'component_id': segment.get('component_id') or '',
+            'display_tag': segment.get('display_tag') or '',
+            'circuit_index': segment.get('circuit_index'),
+            'startup_vd_total_pct': total_pct,
+            'startup_vd_branch_pct': branch_vd.vd_pct,
+        })
+
+    if not segment_totals and selection_3c:
+        branch_vd = _startup_vd_for_selection(
+            selection_3c,
+            sizing_result.conductor_temp_3c_c,
+            current,
+            sizing_input.length_3c_m,
+            nominal_voltage,
+        )
+        if branch_vd is not None:
+            segment_totals.append({
+                'component_id': '',
+                'display_tag': '',
+                'circuit_index': 1,
+                'startup_vd_total_pct': feeder_vd_pct + branch_vd.vd_pct,
+                'startup_vd_branch_pct': branch_vd.vd_pct,
+            })
+
+    if not segment_totals:
+        return {
+            'startup_vd_total_pct': None,
+            'startup_vd_status': 'not_calculated',
+            'startup_vd_threshold_pct': threshold,
+            'startup_vd_basis': {
+                'rule_set': 'COLD_CABLE_STARTUP_VD_WARNING_V1',
+                'status_reason': 'selected_branch_cable_unavailable',
+            },
+            'review_notes': [],
+        }
+
+    worst_segment = max(segment_totals, key=lambda item: item['startup_vd_total_pct'])
+    startup_vd_pct = worst_segment['startup_vd_total_pct']
+    status = 'review_required' if startup_vd_pct > threshold else 'pass'
+    note = ''
+    if status == 'review_required':
+        note = (
+            f'Startup cold-cable voltage drop {startup_vd_pct:.2f}% exceeds '
+            f'the {threshold:.2f}% warning threshold; review startup terminal '
+            'voltage and cold-start energisation. Consider a shorter route, '
+            'manual cold-cable size increase, or branch/load split if the '
+            'startup terminal voltage is not acceptable.'
+        )
+    return {
+        'startup_vd_total_pct': startup_vd_pct,
+        'startup_vd_status': status,
+        'startup_vd_threshold_pct': threshold,
+        'startup_vd_basis': {
+            'rule_set': 'COLD_CABLE_STARTUP_VD_WARNING_V1',
+            'per_circuit_starting_current_a': current,
+            'feeder_starting_current_a': feeder_current if selection_4c else None,
+            'circuit_count': circuit_count,
+            'nominal_voltage_v': nominal_voltage,
+            'threshold_pct': threshold,
+            'feeder_startup_vd_pct': feeder_vd_pct if selection_4c else None,
+            'worst_segment': worst_segment,
+            'resistance_basis': 'selected cold-cable conductor resistance at normal sizing conductor temperature',
+            'result_semantics': 'warning_only_no_automatic_upsizing',
+        },
+        'review_notes': [note] if note else [],
+    }
+
+
 def _fault_status(fault_result):
     return fault_result.status if fault_result else 'not_calculated'
 
@@ -1303,6 +1437,7 @@ def build_cold_cable_sizing_snapshot(project, sizing_input):
         'line_uid': sizing_input.line_uid,
         'heating_cable_type': sizing_input.heating_cable_type,
         'per_circuit_operating_current_a': sizing_input.per_circuit_operating_current_a,
+        'per_circuit_starting_current_a': sizing_input.per_circuit_starting_current_a,
         'line_operating_current_a': sizing_input.line_operating_current_a,
         'breaker_size_a': sizing_input.breaker_size_a,
         'circuit_count': sizing_input.circuit_count,
@@ -1331,6 +1466,18 @@ def build_cold_cable_sizing_snapshot(project, sizing_input):
         'sizing_status': sizing_status,
         'review_notes': review_notes,
     }
+    startup_vd = _startup_voltage_drop_warning(project, sizing_input, sizing_result, selection_4c, selection_3c)
+    _append_unique(review_notes, startup_vd['review_notes'])
+    if sizing_status == 'selected' and startup_vd['startup_vd_status'] == 'review_required':
+        sizing_status = 'review_required'
+    result_defaults.update({
+        'sizing_status': sizing_status,
+        'review_notes': review_notes,
+        'startup_vd_total_pct': startup_vd['startup_vd_total_pct'],
+        'startup_vd_threshold_pct': startup_vd['startup_vd_threshold_pct'],
+        'startup_vd_status': startup_vd['startup_vd_status'],
+        'startup_vd_basis': startup_vd['startup_vd_basis'],
+    })
     result_defaults.update(_ampacity_defaults(selection_4c, 'cable_4c'))
     result_defaults.update(_ampacity_defaults(selection_3c, 'cable_3c'))
     result_defaults.update({

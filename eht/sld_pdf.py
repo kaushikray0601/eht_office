@@ -4,6 +4,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import A3, landscape
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from django.utils import timezone
 
 
 COMPONENT_ORDER = {
@@ -494,7 +495,22 @@ def _start_page(pdf, project_id, page_width, page_height, margin, warning=''):
     if warning:
         pdf.setFont('Helvetica', 7)
         pdf.setFillColor(PAGE_WARNING_COLOR)
-        pdf.drawRightString(page_width - margin, page_height - margin + 4, warning[:150])
+        pdf.drawString(margin, page_height - margin - 9, warning[:150])
+    block_width = 176
+    block_height = 28
+    block_x = page_width - margin - block_width
+    block_y = page_height - margin - 20
+    pdf.setStrokeColor(colors.HexColor('#9fb4c8'))
+    pdf.setFillColor(colors.white)
+    pdf.roundRect(block_x, block_y, block_width, block_height, 2, stroke=1, fill=1)
+    pdf.setFillColor(POWER_COLOR)
+    pdf.setFont('Helvetica-Bold', 7)
+    pdf.drawString(block_x + 6, block_y + block_height - 9, 'SINGLE LINE DIAGRAM')
+    pdf.setFont('Helvetica', 6)
+    generated_at = timezone.localtime().strftime('%Y-%m-%d %H:%M')
+    pdf.drawString(block_x + 6, block_y + block_height - 18, f'Project: {project_id}')
+    pdf.drawRightString(block_x + block_width - 6, block_y + block_height - 18, f'Generated: {generated_at}')
+    pdf.drawString(block_x + 6, block_y + 4, 'Status: Generated for engineering review')
     pdf.setStrokeColor(colors.HexColor('#b7c7d6'))
     pdf.line(margin, page_height - margin - 6, page_width - margin, page_height - margin - 6)
 

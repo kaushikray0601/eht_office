@@ -6,12 +6,15 @@ from django.conf import settings
 from django.db import transaction
 from django.db.models import FloatField
 from django.db.models.functions import Cast
+from django.utils import timezone
 
 import logging
 
 from .models import (
     AlternateTracer,
     BOQ,
+    CableScheduleOverride,
+    ColdCableResult,
     ElecEHT_ASMEB36,
     ElecEHT_ThermalConductivity,
     ElecEHT_Vendor,
@@ -23,6 +26,9 @@ from .models import (
     ProjectData,
     SelectedMIHeater,
     SelectedTracer,
+    SLDNodeLayout,
+    SLDTopologyEdit,
+    TracerSelectionOverride,
 )
 
 
@@ -257,6 +263,13 @@ def clear_project_workspace_data(project_id):
     input_lines = len(project_line_ids)
     boq_items = BOQ.objects.filter(project_id=project_id).count()
     derived_rows = 0
+    project_owned_rows = (
+        CableScheduleOverride.objects.filter(project_id=project_id).count()
+        + ColdCableResult.objects.filter(project_id=project_id).count()
+        + SLDNodeLayout.objects.filter(project_id=project_id).count()
+        + SLDTopologyEdit.objects.filter(project_id=project_id).count()
+        + TracerSelectionOverride.objects.filter(project_id=project_id).count()
+    )
 
     if project_line_ids:
         derived_rows += HeatLoss.objects.filter(line_id__in=project_line_ids).count()
@@ -267,6 +280,12 @@ def clear_project_workspace_data(project_id):
         derived_rows += PowerDistributionBranch.objects.filter(distribution_id__in=project_line_uid_strings).count()
         derived_rows += ProcessLineCalculation.objects.filter(line_id__in=project_line_ids).count()
         derived_rows += BOQ.objects.filter(line_id__in=project_line_ids).count()
+
+    CableScheduleOverride.objects.filter(project_id=project_id).delete()
+    ColdCableResult.objects.filter(project_id=project_id).delete()
+    SLDNodeLayout.objects.filter(project_id=project_id).delete()
+    SLDTopologyEdit.objects.filter(project_id=project_id).delete()
+    TracerSelectionOverride.objects.filter(project_id=project_id).delete()
 
     # Delete consolidated BOQ rows explicitly. Line-scoped BOQ rows are removed via input cascade.
     consolidated_boq_rows = BOQ.objects.filter(project_id=project_id, line__isnull=True).delete()[0]
@@ -285,7 +304,7 @@ def clear_project_workspace_data(project_id):
         project_id,
         input_lines,
         boq_items,
-        derived_rows,
+        derived_rows + project_owned_rows,
         consolidated_boq_rows,
         orphan_rows,
         total_duration,
@@ -296,13 +315,14 @@ def clear_project_workspace_data(project_id):
         project_id,
         input_lines,
         boq_items,
-        derived_rows + orphan_rows,
+        derived_rows + project_owned_rows + orphan_rows,
     )
     return {
         'project_id': project_id,
         'input_lines': input_lines,
         'boq_items': boq_items,
-        'derived_rows': derived_rows + orphan_rows,
+        'derived_rows': derived_rows + project_owned_rows + orphan_rows,
+        'project_owned_rows': project_owned_rows,
     }
 
 
@@ -460,6 +480,7 @@ def store_calculated_results(project_id, aggregated_results):
         BOQ.objects.bulk_create(boq_rows, batch_size=500)
     
     process_line_calc_rows = []
+    calculation_timestamp = timezone.now()
     for item in aggregated_results.get('tracer_power_param', []):
         normalized_item = _normalize_payload(item)
         uid = str(normalized_item['uid'])
@@ -490,6 +511,7 @@ def store_calculated_results(project_id, aggregated_results):
             sr_parallel_run_basis=normalized_item.get('sr_parallel_run_basis', ''),
             sr_constructability_warning=normalized_item.get('sr_constructability_warning', ''),
             remarks=normalized_item.get('calculation_basis', ''),
+            calculated_at=calculation_timestamp,
         ))
     if process_line_calc_rows:
         ProcessLineCalculation.objects.bulk_create(process_line_calc_rows, batch_size=500)

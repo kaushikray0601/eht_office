@@ -10,7 +10,7 @@ from time import perf_counter
 import pandas as pd
 from django.conf import settings
 from django.contrib import messages
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth import login as auth_login
 from django.contrib.auth import logout as auth_logout
 from django.contrib.auth.decorators import login_required
@@ -24,6 +24,7 @@ from django.template.loader import render_to_string
 from django.urls import reverse
 from django.utils.http import url_has_allowed_host_and_scheme
 from django.utils.timezone import now, timedelta
+from django_ratelimit.decorators import ratelimit
 
 from .cable_management import (
     attach_cable_override_summaries,
@@ -32,17 +33,20 @@ from .cable_management import (
     save_cable_override,
 )
 from .cable_schedule import (
-    CABLE_SCHEDULE_EXPORT_HEADERS,
     build_cable_schedule_workspace_data,
+    cable_schedule_export_headers,
     cable_schedule_export_rows,
+    sync_cable_schedule_records,
 )
 from .cold_cable import size_cold_cables_for_project
 from .forms import PROJECT_FORM_COLD_CABLE_DEFAULTS, ProjectDataForm
 from .data_service import clear_project_workspace_data
+from .excel import polish_openpyxl_workbook
 from .manual_renderer import render_markdown_manual
 from .models import (
     AlternateTracer,
     BOQ,
+    CableScheduleOverride,
     ColdCableResult,
     DEFAULT_PROJECT_ID,
     HeatLoss,
@@ -52,6 +56,7 @@ from .models import (
     ProcessLineCalculation,
     ProjectData,
     SelectedMIHeater,
+    SLDNodeLayout,
     SLDTopologyEdit,
     TracerSelectionOverride,
     UserAttempt,
@@ -82,13 +87,73 @@ MAX_FAILED_ATTEMPTS = 3
 
 logger = logging.getLogger(__name__)
 
+CONFIRM_CLEAR_WORKSPACE_FIELD = 'confirm_clear_workspace'
+CONFIRM_CLEAR_WORKSPACE_VALUES = {'1', 'true', 'yes', 'on'}
+
 MI_MVP_RESULT_BASIS_NOTES = [
-    'Automatic MI fallback is used only when SR catalogue temperature limits are exceeded.',
+    'Automatic MI fallback is used when SR catalogue temperature limits are exceeded or no SR row can meet heat duty within the configured run/spiral limits.',
     'Each MI heater set is treated as an independently protected branch with its own breaker.',
     'Single-point/shared temperature sensing is assumed for this MVP output; final RTD placement remains an engineering review item.',
     'MI T-class status remains design-review evidence, not a calculated sheath-temperature approval.',
     'Physical JB terminal capacity and panel coordination remain deferred; cold-cable sizing results are now shown separately for engineering review.',
 ]
+
+
+def _workspace_clear_confirmed(request):
+    value = str(request.POST.get(CONFIRM_CLEAR_WORKSPACE_FIELD, '')).strip().lower()
+    return value in CONFIRM_CLEAR_WORKSPACE_VALUES
+
+
+def _project_workspace_has_data(project_id):
+    if not project_id:
+        return False
+    if HeatTracingInput.objects.filter(proj_id=project_id).exists():
+        return True
+    project_owned_checks = (
+        BOQ.objects.filter(project_id=project_id),
+        CableScheduleOverride.objects.filter(project_id=project_id),
+        ColdCableResult.objects.filter(project_id=project_id),
+        SLDNodeLayout.objects.filter(project_id=project_id),
+        SLDTopologyEdit.objects.filter(project_id=project_id),
+        TracerSelectionOverride.objects.filter(project_id=project_id),
+    )
+    return any(queryset.exists() for queryset in project_owned_checks)
+
+
+def _workspace_clear_confirmation_message():
+    return (
+        'This project already has uploaded or calculated workspace data. '
+        'Saving this setup or uploading a replacement line list will clear only this project\'s '
+        'input lines, calculated results, BOQ, SLD layout/topology edits, cable schedule overrides, '
+        'and tracer overrides. Confirm to continue, then re-upload/recalculate before issuing.'
+    )
+
+
+def _client_ip_address(request):
+    forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR', '')
+    if forwarded_for:
+        return forwarded_for.split(',')[0].strip()
+    return request.META.get('REMOTE_ADDR')
+
+
+def _login_ip_rate(group, request):
+    return getattr(settings, 'EHT_LOGIN_IP_RATE_LIMIT', '20/m')
+
+
+def _login_username_rate(group, request):
+    return getattr(settings, 'EHT_LOGIN_USERNAME_RATE_LIMIT', '5/m')
+
+
+def _upload_rate(group, request):
+    return getattr(settings, 'EHT_UPLOAD_RATE_LIMIT', '20/h')
+
+
+def _confirm_upload_rate(group, request):
+    return getattr(settings, 'EHT_CONFIRM_UPLOAD_RATE_LIMIT', '60/h')
+
+
+def _error_file_download_rate(group, request):
+    return getattr(settings, 'EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT', '60/h')
 
 PROJECT_DATA_TEMPLATE_FIELDS = [
     'min_amb_t',
@@ -126,6 +191,7 @@ PROJECT_DATA_TEMPLATE_FIELDS = [
     'tracer_temp_factor',
     'alpha_for_res',
     'allowablevdrop',
+    'startup_vd_warning_threshold_pct',
     'cable_standard',
     'cable_conductor_material',
     'cable_insulation_type',
@@ -168,7 +234,13 @@ def _timed_json_response(payload, *, status=200, context_label='response'):
 
 # Create your views here.
 def index(request):
-    return render(request, 'eht/landing.html')
+    return render(request, 'eht/landing.html', {
+        'admin_site_path': getattr(settings, 'ADMIN_SITE_PATH', 'admin/'),
+    })
+
+
+def faq_view(request):
+    return render(request, 'eht/faq.html', {})
 
 
 def design_guide_view(request):
@@ -832,11 +904,19 @@ def verification_report_view(request):
         mi_heater_pn = mi.heater.part_number if mi.heater else '—'
         mi_family_nm = mi.heater.family.family_name if (mi.heater and mi.heater.family) else '—'
         mi_set_count = mi.selection_basis.get('set_count', 1) if isinstance(mi.selection_basis, dict) else 1
+        selection_mode = mi.selection_basis.get('selection_mode') if isinstance(mi.selection_basis, dict) else ''
+        fallback_reason = (
+            'SR catalogue temperature limits exceeded'
+            if selection_mode == 'automatic_temperature_fallback'
+            else 'No SR heat-duty match was available within the configured run/spiral limits'
+            if selection_mode == 'automatic_heat_duty_fallback'
+            else 'MI heater selection was recorded for engineering review'
+        )
         steps.append({
             'section': 'C', 'section_color': 'green', 'num': 7, 'num_color': 'green',
-            'title': 'MI Heater Selection — SR temperature limits exceeded', 'available': True,
+            'title': 'MI Heater Selection — Automatic fallback', 'available': True,
             'note': (
-                f'SR catalogue temperature limits exceeded for this line. Automatic MI fallback activated. '
+                f'{fallback_reason} for this line. Automatic MI fallback activated. '
                 f'Selected: {mi_heater_pn}  ·  Family: {mi_family_nm}  ·  Sets: {mi_set_count}  ·  '
                 f'Heated length: {fmt(mi.heated_length_m, 1)} m/set  ·  Nominal power: {fmt(mi.power_nominal_w, 1)} W  ·  '
                 f'Cold lead: {mi.cold_lead_option_code}'
@@ -973,18 +1053,28 @@ def calculation_manual_view(request):
 # --------------Create project data--------------------------------------------------
 def create_project_data(request, project_id=None,):  
     form = handle_project_data(request)
-    return render(request, 'eht/project_data.html', {'form': form})
+    selected_project_id = request.POST.get('proj_id') or project_id or request.GET.get('project_id')
+    return render(request, 'eht/project_data.html', {
+        'form': form,
+        'project_id': selected_project_id,
+        'workspace_has_data': _project_workspace_has_data(selected_project_id),
+    })
 # --------------Edit project data--------------------------------------------------
 def update_project_data(request, project_id=None, *arg, **kwarg):
     form = handle_project_data(request, project_id)
+    workspace_has_data = _project_workspace_has_data(project_id)
     if request.headers.get('x-requested-with') == 'XMLHttpRequest':
         form_html = render_to_string(
             'eht/partials/project_data_form.html',
-            {'form': form, 'project_id': project_id},
+            {'form': form, 'project_id': project_id, 'workspace_has_data': workspace_has_data},
             request,
         )
         return JsonResponse({'form_html': form_html})    
-    return render (request, 'eht/project_data.html', {'form': form, 'project_id': project_id})
+    return render(request, 'eht/project_data.html', {
+        'form': form,
+        'project_id': project_id,
+        'workspace_has_data': workspace_has_data,
+    })
 
 # --------------Download Input data Template--------------------------------------------------
 @login_required
@@ -998,19 +1088,25 @@ def download_template(request):
         return redirect('some_error_page')
 
 @login_required
+@ratelimit(group='eht-upload-input', key='user_or_ip', rate=_upload_rate, method='POST', block=False)
 def calculate_view(request, project_id=None):
     project_id = project_id or request.GET.get('project_id') or request.POST.get('project_id')
 
     if request.method == 'POST':
+        if getattr(request, 'limited', False):
+            return JsonResponse({
+                'error': 'Too many upload attempts. Please wait before uploading another line list.',
+            }, status=429)
         request_started = perf_counter()
         file = request.FILES.get('file')
         if not file: return JsonResponse({'error': 'No file uploaded'}, status=400)
         if not project_id:
             return JsonResponse({'error': 'Project ID is required before uploading input data.'}, status=400)
+        posted_project_id = request.POST.get('proj_id')
+        if posted_project_id and posted_project_id != project_id:
+            return JsonResponse({'error': 'Uploaded project setup does not match the selected project.'}, status=400)
 
         try:
-            _save_project_setup_from_upload(request, project_id)
-
             # Step 1: Sanitize the file
             sanitize_started = perf_counter()
             valid_process_line_data, invalid_data, error_file_path = sanitize_file(file, request.session, request.user)
@@ -1040,6 +1136,15 @@ def calculate_view(request, project_id=None):
 
             if not valid_process_line_data:
                 return JsonResponse({'error': 'No valid uploaded data was available to process.'}, status=400)
+
+            workspace_has_data = _project_workspace_has_data(project_id)
+            if workspace_has_data and not _workspace_clear_confirmed(request):
+                return JsonResponse({
+                    'requires_confirmation': True,
+                    'error': _workspace_clear_confirmation_message(),
+                }, status=409)
+
+            _save_project_setup_from_upload(request, project_id)
 
             replace_started = perf_counter()
             clear_duration = 0.0
@@ -1306,9 +1411,15 @@ def _build_result_workspace_data(project_id):
         for item in line_results
         if _is_selected_mi_result(item.get('selected_mi_heater'))
     )
+    calculation_timestamps = [
+        item['calculation'].calculated_at
+        for item in line_results
+        if item.get('calculation') and item['calculation'].calculated_at
+    ]
 
     summary = {
         'calculated_lines': len(line_results),
+        'last_calculated_at': max(calculation_timestamps) if calculation_timestamps else None,
         'total_circuits': sum(item['calculation'].total_circuits for item in line_results if item['calculation']),
         'total_power_kw': (sr_connected_load_w + mi_connected_load_w) / 1000 if line_results else 0,
         'total_tracer_length': sr_tracer_length_m + mi_heated_length_m,
@@ -1408,10 +1519,15 @@ def _mi_export_design_basis_notes(mi_result):
     if not mi_result:
         return ''
     basis = mi_result.selection_basis or {}
+    selection_mode = basis.get('selection_mode')
+    if selection_mode == 'automatic_temperature_fallback':
+        fallback_note = 'Automatic MI fallback after SR temperature-limit exceedance'
+    elif selection_mode == 'automatic_heat_duty_fallback':
+        fallback_note = 'Automatic MI fallback after no SR heat-duty match within configured run/spiral limits'
+    else:
+        fallback_note = 'MI candidate stored for engineering review'
     notes = [
-        'Automatic MI fallback after SR temperature-limit exceedance'
-        if basis.get('selection_mode') == 'automatic_temperature_fallback'
-        else 'MI candidate stored for engineering review',
+        fallback_note,
         'Independent breaker per MI heater set',
         'Shared sensing assumed; RTD location requires project review',
         'T-class requires design review; no calculated sheath-temperature approval yet',
@@ -1873,6 +1989,7 @@ def _cold_cable_export_rows(cold_rows):
             'Topology Branch': result.branch.branch_type if result.branch else '',
             'Circuit Count': result.circuit_count,
             'Operating Current / Circuit (A)': result.per_circuit_operating_current_a,
+            'Starting Current / Circuit (A)': result.per_circuit_starting_current_a,
             'Line Operating Current (A)': result.line_operating_current_a,
             'Breaker Size (A)': result.breaker_size_a,
             'MCB Curve': result.mcb_curve,
@@ -1895,6 +2012,9 @@ def _cold_cable_export_rows(cold_rows):
             'Total VD (%)': result.vd_total_pct,
             'Load-End Voltage (V)': result.load_end_voltage_v,
             'VD Status': result.vd_status,
+            'Startup VD Warning Threshold (%)': result.startup_vd_threshold_pct,
+            'Startup VD Total (%)': result.startup_vd_total_pct,
+            'Startup VD Status': result.startup_vd_status,
             'L-PE Fault Current (A)': result.fault_current_l_pe_a,
             'L-PE Fault Loop Status': result.fault_loop_status,
             'Source Impedance (ohm)': (result.fault_loop_basis or {}).get('source_impedance_ohm'),
@@ -2040,6 +2160,8 @@ def cable_schedule_view(request):
         cable_schedule_data = build_cable_schedule_workspace_data(project_id)
         cable_schedule_rows = cable_schedule_data['cable_rows']
         cable_schedule_summary = cable_schedule_data['summary']
+        if cable_schedule_rows:
+            sync_cable_schedule_records(project_id, cable_schedule_rows, getattr(request, 'user', None))
 
     context.update({
         'cable_schedule_rows': cable_schedule_rows,
@@ -2054,6 +2176,12 @@ def cable_schedule_export_view(request):
     project_id = request.GET.get('project_id')
     if not project_id:
         return JsonResponse({'error': 'Project ID is required to export cable schedule.'}, status=400)
+    export_scope = request.GET.get('scope') or 'visible'
+    visible_fields = [
+        field.strip()
+        for field in (request.GET.get('columns') or '').split(',')
+        if field.strip()
+    ]
 
     context = _get_project_workspace_context(request, project_id)
     if not context['project_setup']:
@@ -2063,20 +2191,24 @@ def cable_schedule_export_view(request):
     cable_rows = cable_schedule_data['cable_rows']
     if not cable_rows:
         return JsonResponse({'error': 'No cable schedule rows are available for this project yet.'}, status=400)
+    sync_cable_schedule_records(project_id, cable_rows, getattr(request, 'user', None))
 
     output = BytesIO()
+    export_headers = cable_schedule_export_headers(export_scope, visible_fields)
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         pd.DataFrame(
             cable_schedule_export_rows(cable_rows),
-            columns=CABLE_SCHEDULE_EXPORT_HEADERS,
+            columns=export_headers,
         ).to_excel(writer, sheet_name='Cable Schedule', index=False)
+        polish_openpyxl_workbook(writer)
 
     output.seek(0)
     response = HttpResponse(
         output.getvalue(),
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
-    response['Content-Disposition'] = f'attachment; filename="{project_id}_cable_schedule.xlsx"'
+    filename_scope = 'full_audit' if export_scope == 'full' else 'visible'
+    response['Content-Disposition'] = f'attachment; filename="{project_id}_{filename_scope}_cable_schedule.xlsx"'
     return response
 
 
@@ -2143,6 +2275,7 @@ def input_data_export_view(request):
     output = BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         pd.DataFrame(export_rows).to_excel(writer, sheet_name='Input Data', index=False)
+        polish_openpyxl_workbook(writer)
 
     output.seek(0)
     response = HttpResponse(
@@ -3257,6 +3390,7 @@ def result_export_view(request):
         pd.DataFrame(cold_cable_segment_rows).to_excel(writer, sheet_name='Cold Cable Branch Segments', index=False)
         pd.DataFrame(alternate_rows).to_excel(writer, sheet_name='Alternate Tracers', index=False)
         pd.DataFrame(mi_rows).to_excel(writer, sheet_name='MI Selection', index=False)
+        polish_openpyxl_workbook(writer)
 
     output.seek(0)
     response = HttpResponse(
@@ -3307,6 +3441,7 @@ def boq_export_view(request):
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         pd.DataFrame(summary_rows).to_excel(writer, sheet_name='BOQ Summary', index=False)
         pd.DataFrame(detail_rows).to_excel(writer, sheet_name='BOQ Per Line', index=False)
+        polish_openpyxl_workbook(writer)
 
     output.seek(0)
     response = HttpResponse(
@@ -3318,7 +3453,11 @@ def boq_export_view(request):
 
 # -------------Download error File -------------------------------------------------------
 
+@login_required
+@ratelimit(group='eht-error-file-download', key='user_or_ip', rate=_error_file_download_rate, method='GET', block=False)
 def download_error_file(request, file_name):
+    if getattr(request, 'limited', False):
+        return JsonResponse({'error': 'Too many error-file download attempts. Please wait and try again.'}, status=429)
     if file_name != os.path.basename(file_name) or '\\' in file_name or '/' in file_name:
         raise Http404("File not found.")
 
@@ -3334,8 +3473,11 @@ def download_error_file(request, file_name):
 
 # --------------Process the valid data --------------------------------------------------
 @login_required
+@ratelimit(group='eht-confirm-upload', key='user_or_ip', rate=_confirm_upload_rate, method='POST', block=False)
 def confirm_valid_data(request):
     if request.method == 'POST':
+        if getattr(request, 'limited', False):
+            return JsonResponse({'error': 'Too many confirmation attempts. Please wait and try again.'}, status=429)
         request_started = perf_counter()
         project_id = request.POST.get('project_id')
         if not project_id:
@@ -3402,6 +3544,7 @@ def handle_project_data(request, project_id=None):
     selected_project_id = request.POST.get('proj_id') or project_id or request.GET.get('project_id')
     available_projects = ManagedProject.available_to_user(getattr(request, 'user', None))
     available_project_ids = set(available_projects.values_list('proj_id', flat=True))
+    clear_confirmed = _workspace_clear_confirmed(request)
 
     if selected_project_id and not available_projects.filter(proj_id=selected_project_id).exists() and request.method != 'POST':
         raise Http404("Project not found.")
@@ -3421,12 +3564,16 @@ def handle_project_data(request, project_id=None):
                 messages.error(request, "Default project data is not configured yet.")
             elif is_default_project_id(selected_project_id):
                 messages.error(request, "Select a working project before loading the default project data.")
+            elif _project_workspace_has_data(selected_project_id) and not clear_confirmed:
+                messages.error(request, _workspace_clear_confirmation_message())
             else:
                 copy_project_setup(default_project, instance)
                 instance.proj_id = selected_project_id
                 try:
                     instance.full_clean()
-                    instance.save()
+                    with transaction.atomic():
+                        instance.save()
+                        clear_project_workspace_data(selected_project_id)
                     messages.success(request, "Default project data loaded successfully. Review and adjust any project-specific values.")
                 except ValidationError as exc:
                     for field_errors in exc.message_dict.values():
@@ -3436,8 +3583,15 @@ def handle_project_data(request, project_id=None):
 
     form = ProjectDataForm(request.POST or None, instance=instance, user=getattr(request, 'user', None))
     if request.method == 'POST' and form.is_valid():
-        form.save()
-        messages.success(request, "Project data saved successfully.")
+        should_clear_workspace = form.has_changed() and _project_workspace_has_data(selected_project_id)
+        if should_clear_workspace and not clear_confirmed:
+            form.add_error(None, _workspace_clear_confirmation_message())
+        else:
+            with transaction.atomic():
+                saved_project = form.save()
+                if should_clear_workspace:
+                    clear_project_workspace_data(saved_project.proj_id)
+            messages.success(request, "Project data saved successfully.")
     return form
 
 
@@ -3485,33 +3639,48 @@ def _save_project_setup_from_upload(request, project_id):
     return form.save()
 
 
-#  Logic for userAtempt and limit invalid attempts.
-def log_failed_attempt(user, ip_address):
-    # Check if a user is already locked
-    attempt = UserAttempt.objects.filter(user=user).first()
-    if attempt and attempt.is_locked():
-        return {'locked': True, 'cooldown_expires': attempt.cooldown_expires}
+def _active_login_lockout(user):
+    active_lockout = (
+        UserAttempt.objects
+        .filter(user=user, lockout=True, cooldown_expires__gt=now())
+        .order_by('-cooldown_expires')
+        .first()
+    )
+    if active_lockout:
+        return {'locked': True, 'cooldown_expires': active_lockout.cooldown_expires}
+    return {'locked': False, 'cooldown_expires': None}
 
-    # Create or update an attempt entry
-    if not attempt:
-        attempt = UserAttempt.objects.create(
+
+def log_failed_attempt(user, ip_address):
+    lockout = _active_login_lockout(user)
+    if lockout['locked']:
+        return lockout
+
+    cutoff = now() - timedelta(minutes=COOLDOWN_PERIOD_MINUTES)
+    UserAttempt.objects.create(
+        user=user,
+        ip_address=ip_address,
+        failed_at=now(),
+        lockout=False,
+        cooldown_expires=None,
+    )
+    attempts_count = UserAttempt.objects.filter(
+        user=user,
+        lockout=False,
+        failed_at__gte=cutoff,
+    ).count()
+    if attempts_count >= MAX_FAILED_ATTEMPTS:
+        cooldown_expires = now() + timedelta(minutes=COOLDOWN_PERIOD_MINUTES)
+        UserAttempt.objects.create(
             user=user,
             ip_address=ip_address,
             failed_at=now(),
-            lockout=False,
-            cooldown_expires=None
+            lockout=True,
+            cooldown_expires=cooldown_expires,
         )
-    else:
-        attempt.failed_at = now()
+        return {'locked': True, 'cooldown_expires': cooldown_expires}
 
-    # Increment failed attempts and check for lockout
-    attempts_count = UserAttempt.objects.filter(user=user, lockout=False).count()
-    if attempts_count >= MAX_FAILED_ATTEMPTS:
-        attempt.lockout = True
-        attempt.cooldown_expires = now() + timedelta(minutes=COOLDOWN_PERIOD_MINUTES)
-
-    attempt.save()
-    return {'locked': attempt.lockout, 'cooldown_expires': attempt.cooldown_expires}
+    return {'locked': False, 'cooldown_expires': None}
 
 
 # Bulk upload valid/sanitized input data into database
@@ -3587,19 +3756,59 @@ def update_pending_status(project_id):
 # test Base template
 
 # --------------Create project data--------------------------------------------------
-def base(request):  
-    form = ProjectDataForm(user=getattr(request, 'user', None))
-    return render(request, 'eht/base.html', {'form': form})
+def base(request):
+    user = getattr(request, 'user', None)
+    selected_project_id = request.GET.get('project_id', '').strip()
+    available_projects = ManagedProject.available_to_user(user)
+    selected_project = None
+    project_setup = None
 
+    if selected_project_id:
+        selected_project = available_projects.filter(proj_id=selected_project_id).first()
+        if selected_project is None:
+            messages.warning(request, 'Selected project is not available to your account.')
+            selected_project_id = ''
+        else:
+            project_setup = ProjectData.objects.filter(proj_id=selected_project_id).first()
+
+    form = ProjectDataForm(
+        instance=project_setup,
+        initial={'proj_id': selected_project_id} if selected_project_id else None,
+        user=user,
+    )
+    workspace_has_data = _project_workspace_has_data(selected_project_id)
+    return render(request, 'eht/base.html', {
+        'form': form,
+        'project_id': selected_project_id,
+        'managed_project': selected_project,
+        'workspace_has_data': workspace_has_data,
+    })
+
+@ratelimit(group='eht-login-ip', key='ip', rate=_login_ip_rate, method='POST', block=False)
+@ratelimit(group='eht-login-username', key='post:username', rate=_login_username_rate, method='POST', block=False)
 def my_login(request):
     if request.user.is_authenticated:
         return redirect('base')
     error = None
     if request.method == 'POST':
+        if getattr(request, 'limited', False):
+            return render(request, 'eht/my_login.html', {
+                'error': 'Too many sign-in attempts. Please wait before trying again.',
+                'next': request.POST.get('next', ''),
+            }, status=429)
         username = request.POST.get('username', '').strip()
         password = request.POST.get('password', '')
+        login_user = get_user_model().objects.filter(username__iexact=username).first()
+        if login_user:
+            lockout = _active_login_lockout(login_user)
+            if lockout['locked']:
+                return render(request, 'eht/my_login.html', {
+                    'error': 'Invalid username or password. Please try again later.',
+                    'next': request.POST.get('next', ''),
+                }, status=429)
         user = authenticate(request, username=username, password=password)
         if user is not None:
+            UserAttempt.objects.filter(user=user).delete()
             auth_login(request, user)
             next_url = request.POST.get('next', '').strip() or 'base'
             if not url_has_allowed_host_and_scheme(
@@ -3609,6 +3818,13 @@ def my_login(request):
             ):
                 next_url = 'base'
             return redirect(next_url)
+        if login_user:
+            attempt_result = log_failed_attempt(login_user, _client_ip_address(request))
+            if attempt_result['locked']:
+                return render(request, 'eht/my_login.html', {
+                    'error': 'Invalid username or password. Please try again later.',
+                    'next': request.POST.get('next', ''),
+                }, status=429)
         error = 'Invalid username or password. Please try again.'
     return render(request, 'eht/my_login.html', {
         'error': error,
@@ -3622,4 +3838,249 @@ def my_logout(request):
 
 
 def my_register(request):
-    return redirect('my_login')
+    return HttpResponse(
+        'Self-registration is disabled. Contact your administrator for access credentials.',
+        status=410,
+    )
+
+
+# ─── Project Dashboard ────────────────────────────────────────────────────────
+
+@login_required
+def project_dashboard_view(request):
+    from django.db.models import Count, Sum
+    from .models import SelectedTracer, MICableFamily
+
+    available_managed = ManagedProject.available_to_user(request.user)
+    projects = ProjectData.objects.filter(
+        proj_id__in=available_managed.values_list('proj_id', flat=True)
+    ).exclude(proj_id__iexact=DEFAULT_PROJECT_ID).order_by('proj_id')
+
+    project_id = request.GET.get('project_id', '').strip()
+    ctx = {'projects': projects, 'selected_project_id': project_id, 'dash': None}
+
+    if not project_id:
+        return render(request, 'eht/project_dashboard.html', ctx)
+
+    project = projects.filter(proj_id=project_id).first()
+    if not project:
+        ctx['error'] = 'Project not found or unavailable.'
+        return render(request, 'eht/project_dashboard.html', ctx)
+
+    # Lines (confirmed, not deleted)
+    total_lines = HeatTracingInput.objects.filter(
+        proj_id=project_id, status='confirmed', is_deleted=False
+    ).count()
+
+    # Lifecycle counts — each walks the OneToOne / FK chain through HeatTracingInput
+    heat_loss_count = HeatLoss.objects.filter(
+        line__proj_id=project_id, line__is_deleted=False
+    ).count()
+
+    sr_count = SelectedTracer.objects.filter(
+        line__proj_id=project_id, line__is_deleted=False
+    ).count()
+
+    mi_selected_count = SelectedMIHeater.objects.filter(
+        line__proj_id=project_id, line__is_deleted=False, selection_status='selected'
+    ).count()
+    tracer_count = sr_count + mi_selected_count
+
+    power_count = ProcessLineCalculation.objects.filter(
+        line__proj_id=project_id, line__is_deleted=False
+    ).count()
+
+    # Cold cable
+    cc_qs = ColdCableResult.objects.filter(project=project_id)
+    cc_total = cc_qs.count()
+    cc_selected = cc_qs.filter(sizing_status='selected').count()
+    cc_review = cc_qs.filter(sizing_status='review_required').count()
+    vd_pass = cc_qs.filter(vd_status='pass').count()
+    startup_warn = cc_qs.filter(startup_vd_status='review_required').count()
+    fault_pass = cc_qs.filter(fault_loop_status='pass').count()
+    default_len = cc_qs.filter(length_basis='project_default').count()
+
+    # SLD: use PowerDistributionBranch (the actual SLD output) rather than cc_total
+    has_sld = PowerDistributionBranch.objects.filter(
+        distribution__line__proj_id=project_id,
+        distribution__line__is_deleted=False,
+    ).exists()
+    sld_topo_applied = SLDTopologyEdit.objects.filter(
+        project=project_id, status='applied'
+    ).count()
+
+    # Cable schedule: build dynamically from SLD + cold cable results (accurate row count)
+    try:
+        sch_data = build_cable_schedule_workspace_data(project_id)
+        sch_rows = sch_data['cable_rows']
+    except Exception:
+        sch_rows = []
+    from collections import Counter as _Counter
+    _sch_status = _Counter(r.get('review_status', 'generated') for r in sch_rows)
+    sch_issued    = _sch_status.get('issued', 0)
+    sch_checked   = _sch_status.get('checked', 0)
+    sch_review    = _sch_status.get('review_required', 0)
+    sch_generated = _sch_status.get('generated', 0)
+    sch_total     = len(sch_rows)
+    sch_advanced  = sch_issued + sch_checked
+
+    # MI catalogue validation — project-scoped: check families used by selected heaters here
+    mi_families_unvalidated_in_project = MICableFamily.objects.filter(
+        heaters__selectedmiheater__line__proj_id=project_id,
+        heaters__selectedmiheater__line__is_deleted=False,
+        heaters__selectedmiheater__selection_status='selected',
+        is_validated=False,
+    ).exists()
+    mi_cat_validated = (mi_selected_count == 0) or (not mi_families_unvalidated_in_project)
+
+    # MI fallback usage (JSONField path lookup — works on PostgreSQL and SQLite 4.0+)
+    mi_fallback_count = SelectedMIHeater.objects.filter(
+        line__proj_id=project_id,
+        line__is_deleted=False,
+        selection_basis__selection_mode__in=[
+            'automatic_temperature_fallback',
+            'automatic_heat_duty_fallback',
+        ],
+    ).count()
+
+    # Total power demand
+    total_power_w = (
+        ProcessLineCalculation.objects.filter(
+            line__proj_id=project_id, line__is_deleted=False
+        ).aggregate(total=Sum('total_power_consumption'))['total']
+        or 0.0
+    )
+    total_power_kw = round(total_power_w / 1000.0, 1)
+
+    # Thermal risk scatter — per-line design_temp vs design_heat_loss
+    scatter_data = []
+    if heat_loss_count > 0:
+        _scatter_raw = list(
+            HeatTracingInput.objects.filter(
+                proj_id=project_id, status='confirmed', is_deleted=False
+            ).values(
+                'line_id', 'design_temp',
+                'heat_loss_result__design_heat_loss',
+                'selected_tracer_result__tracer_family',
+                'selected_mi_heater_result__selection_status',
+            )
+        )
+        for r in _scatter_raw:
+            t = r['design_temp']
+            q = r['heat_loss_result__design_heat_loss']
+            if t is None or q is None:
+                continue
+            _has_sr = bool(r['selected_tracer_result__tracer_family'])
+            _has_mi = r['selected_mi_heater_result__selection_status'] == 'selected'
+            scatter_data.append({
+                't': float(t),
+                'q': round(float(q), 2),
+                'type': 'SR' if _has_sr else ('MI' if _has_mi else 'none'),
+                'id': r['line_id'],
+            })
+
+    # Pipeline stage helper
+    def _stage(done, total, zero_is_blocked=True):
+        if total == 0:
+            return 'not_started'
+        if done >= total:
+            return 'complete'
+        if done > 0:
+            return 'partial'
+        return 'blocked' if zero_is_blocked else 'not_started'
+
+    pipeline = [
+        {'label': 'Input',       'sub': f'{total_lines} lines',              'status': 'complete' if total_lines > 0 else 'not_started', 'done': total_lines,     'total': total_lines},
+        {'label': 'Heat Loss',   'sub': f'{heat_loss_count}/{total_lines}',  'status': _stage(heat_loss_count, total_lines),              'done': heat_loss_count, 'total': total_lines},
+        {'label': 'Tracer',      'sub': f'{tracer_count}/{total_lines}',     'status': _stage(tracer_count,    total_lines),              'done': tracer_count,    'total': total_lines},
+        {'label': 'Power / MCB', 'sub': f'{power_count}/{total_lines}',      'status': _stage(power_count,     total_lines),              'done': power_count,     'total': total_lines},
+        {'label': 'Cold Cable',  'sub': f'{cc_selected}/{cc_total or total_lines}', 'status': _stage(cc_selected, cc_total or total_lines), 'done': cc_selected, 'total': cc_total or total_lines},
+        {'label': 'SLD',         'sub': 'Generated' if has_sld else 'Pending', 'status': 'complete' if has_sld else 'not_started',       'done': 1 if has_sld else 0, 'total': 1},
+        {'label': 'Schedule',    'sub': f'{sch_advanced}/{sch_total} ready', 'status': _stage(sch_advanced, sch_total, zero_is_blocked=False) if sch_total else 'not_started', 'done': sch_advanced, 'total': sch_total or 1},
+    ]
+
+    # Risk radar — only populated items appear
+    no_tracer = total_lines - tracer_count
+    risks = []
+    if no_tracer > 0:
+        risks.append({'msg': f'{no_tracer} line{"s" if no_tracer != 1 else ""} without tracer selection', 'level': 'critical'})
+    if not mi_cat_validated:
+        risks.append({'msg': 'MI families used in this project have unvalidated catalogue data', 'level': 'critical'})
+    if cc_review > 0:
+        risks.append({'msg': f'{cc_review} cold cable circuit{"s" if cc_review != 1 else ""} require sizing review', 'level': 'warning'})
+    if startup_warn > 0:
+        risks.append({'msg': f'{startup_warn} circuit{"s" if startup_warn != 1 else ""} exceed startup VD threshold', 'level': 'warning'})
+    if sch_review > 0:
+        risks.append({'msg': f'{sch_review} cable schedule row{"s" if sch_review != 1 else ""} require check before issue', 'level': 'warning'})
+    if mi_fallback_count > 0:
+        risks.append({'msg': f'{mi_fallback_count} line{"s" if mi_fallback_count != 1 else ""} using automatic MI fallback — verify against design intent', 'level': 'info'})
+    if default_len > 0:
+        risks.append({'msg': f'{default_len} cold cable circuit{"s" if default_len != 1 else ""} using assumed project-default length', 'level': 'info'})
+    if sld_topo_applied > 0:
+        risks.append({'msg': f'{sld_topo_applied} SLD topology override{"s" if sld_topo_applied != 1 else ""} active — document engineering justification', 'level': 'info'})
+
+    # Issue gate (7 checks → readiness %)
+    gate_checks = [
+        ('All lines have tracer selection',        no_tracer == 0),
+        ('Heat loss calculated for all lines',     heat_loss_count >= total_lines > 0),
+        ('Cold cable VD within allowable limit',   cc_total > 0 and vd_pass >= cc_total),
+        ('Earth fault loop check passed',          cc_total > 0 and fault_pass >= cc_total),
+        ('No startup VD warnings',                 startup_warn == 0),
+        ('Schedule: no pending/generated entries (all checked or issued)', sch_total > 0 and sch_review == 0 and sch_generated == 0),
+        ('MI catalogue validation complete',       mi_cat_validated),
+    ]
+    gates_passed = sum(1 for _, ok in gate_checks if ok)
+    readiness_pct = round(gates_passed / len(gate_checks) * 100)
+
+    # Assumption exposure — line-level and project-level hidden assumptions
+    assumptions = {
+        'assumed_cable_lengths': default_len,
+        'mi_fallback_lines': mi_fallback_count,
+        'no_heat_loss': max(0, total_lines - heat_loss_count),
+        'no_tracer': no_tracer,
+        'heat_loss_sf': float(project.heat_loss_sf),
+        'voltage_var_factor': float(project.voltage_var_factor),
+        'spiral_factor': float(project.spiral_factor),
+        'wind_speed': float(project.wind_speed),
+        'min_cold_cable_size': project.min_cold_cable_size_mm2,
+        'cable_grouping_derating': float(project.cable_grouping_derating),
+        'termination_margin': float(project.termination_margin),
+        'margin_on_tracer_lengths': float(project.margin_on_tracer_lengths),
+    }
+
+    ctx['dash'] = {
+        'project': project,
+        'total_lines': total_lines,
+        'tracer_count': tracer_count,
+        'sr_count': sr_count,
+        'mi_selected_count': mi_selected_count,
+        'heat_loss_count': heat_loss_count,
+        'power_count': power_count,
+        'total_power_kw': total_power_kw,
+        'cc_total': cc_total,
+        'cc_selected': cc_selected,
+        'cc_review': cc_review,
+        'vd_pass': vd_pass,
+        'startup_warn': startup_warn,
+        'fault_pass': fault_pass,
+        'default_len': default_len,
+        'has_sld': has_sld,
+        'sld_topo_applied': sld_topo_applied,
+        'sch_issued': sch_issued,
+        'sch_checked': sch_checked,
+        'sch_review': sch_review,
+        'sch_generated': sch_generated,
+        'sch_total': sch_total,
+        'mi_cat_validated': mi_cat_validated,
+        'mi_fallback_count': mi_fallback_count,
+        'no_tracer': no_tracer,
+        'pipeline': pipeline,
+        'risks': risks,
+        'gate_checks': gate_checks,
+        'readiness_pct': readiness_pct,
+        'gates_passed': gates_passed,
+        'gates_total': len(gate_checks),
+        'assumptions': assumptions,
+        'scatter_data': scatter_data,
+    }
+    return render(request, 'eht/project_dashboard.html', ctx)

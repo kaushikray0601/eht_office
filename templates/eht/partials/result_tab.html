@@ -11,7 +11,14 @@
                 {% endif %}
             </div>
             {% if project_id %}
-                <span class="badge text-bg-light border">Project {{ project_id }}</span>
+                <div class="d-flex align-items-center gap-2 flex-wrap justify-content-end">
+                    {% if result_summary.last_calculated_at %}
+                        <span class="badge text-bg-light border">
+                            Last calculated {{ result_summary.last_calculated_at|date:"Y-m-d H:i" }}
+                        </span>
+                    {% endif %}
+                    <span class="badge text-bg-light border">Project {{ project_id }}</span>
+                </div>
             {% endif %}
         </div>
 
@@ -106,7 +113,7 @@
             {% endif %}
             {% if result_summary.mi_rejected_count %}
                 <div class="alert alert-warning">
-                    {{ result_summary.mi_rejected_count }} high-temperature line{{ result_summary.mi_rejected_count|pluralize }} triggered MI fallback but did not receive a selected MI heater. Review the MI Selection Records for the reason and next action.
+                    {{ result_summary.mi_rejected_count }} line{{ result_summary.mi_rejected_count|pluralize }} triggered MI fallback but did not receive a selected MI heater. Review the SR Selection Diagnostics and MI Selection Records for the reasons and next action.
                 </div>
             {% endif %}
             {% if result_summary.cold_cable_result_count %}
@@ -222,6 +229,7 @@
                             <th data-field="status" data-sortable="true">Status</th>
                             <th data-field="selected-cables" data-sortable="true">Selected Cables</th>
                             <th data-field="voltage-drop" data-sortable="true">Voltage Drop</th>
+                            <th data-field="startup-voltage-drop" data-sortable="true">Startup VD</th>
                             <th data-field="fault" data-sortable="true">Fault Check</th>
                             <th data-field="phase-balance" data-sortable="true">Phase Balance</th>
                             <th data-field="mass" data-sortable="true">Mass</th>
@@ -284,6 +292,20 @@
                                     {% endif %}
                                 </td>
                                 <td>
+                                    <div>{{ cold.startup_vd_status }}</div>
+                                    {% if cold.startup_vd_total_pct %}
+                                        <div class="small text-muted">{{ cold.startup_vd_total_pct|floatformat:2 }}% / {{ cold.startup_vd_threshold_pct|floatformat:2 }}%</div>
+                                    {% endif %}
+                                    {% if cold.startup_vd_status == 'review_required' %}
+                                        <div class="small text-warning">
+                                            Startup VD exceeds project threshold. Review startup terminal voltage; consider route length, manual cable size, or branch/load split.
+                                        </div>
+                                    {% endif %}
+                                    {% if cold.per_circuit_starting_current_a %}
+                                        <div class="small text-muted">{{ cold.per_circuit_starting_current_a|floatformat:2 }} A start/ckt</div>
+                                    {% endif %}
+                                </td>
+                                <td>
                                     <div>L-PE loop {{ cold.fault_loop_status }}</div>
                                     {% if cold.fault_current_l_pe_a %}
                                         <div class="small text-muted">{{ cold.fault_current_l_pe_a|floatformat:1 }} A</div>
@@ -335,12 +357,21 @@
 
             {% if line_results %}
             <div class="workspace-section mb-4">
-                <div class="d-flex justify-content-between align-items-center mb-2">
+                <div class="d-flex justify-content-between align-items-center mb-2 flex-wrap gap-2">
                     <h6 class="mb-0">Per-Line Design Summary</h6>
                     <span class="text-muted small">{{ confirmed_input_count }} confirmed input line{{ confirmed_input_count|pluralize }}</span>
                 </div>
-                <p class="text-muted small mb-2">Client-side search, sort, and pagination are enabled here for quick review. Use the Excel export for the full report package.</p>
+                <div class="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
+                    <p class="text-muted small mb-0">Client-side search, sort, and pagination are enabled here for quick review. Use the Excel export for the full report package.</p>
+                    <form class="d-flex gap-2" id="result-line-jump-form">
+                        <input class="form-control form-control-sm" id="result-line-jump-input" type="search" placeholder="Jump to line" aria-label="Jump to line">
+                        <button class="btn btn-outline-secondary btn-sm" type="submit">
+                            <i class="bi bi-search me-1"></i>Find
+                        </button>
+                    </form>
+                </div>
                 <table
+                    id="result-line-summary-table"
                     class="table table-striped table-hover align-middle"
                     data-toggle="table"
                     data-classes="table table-striped table-hover align-middle"
@@ -370,7 +401,7 @@
                     </thead>
                     <tbody>
                         {% for item in line_results %}
-                            <tr{% if item.result_mode == 'mi_only' %} class="table-light"{% endif %}>
+                            <tr data-line-id="{{ item.line.line_id }}"{% if item.result_mode == 'mi_only' %} class="table-light"{% endif %}>
                                 <td>
                                     <div class="fw-semibold">{{ item.line.line_id }}</div>
                                     <div class="small text-muted">
@@ -535,6 +566,9 @@
                     <h6 class="mb-0">MI Selection Records</h6>
                     <span class="text-muted small">{{ mi_result_rows|length }} line{{ mi_result_rows|length|pluralize }}</span>
                 </div>
+                <p class="text-muted small mb-2">
+                    Rejected MI fallback rows show the unavailable reason, catalogue evidence, and the next engineering action.
+                </p>
                 <table
                     class="table table-striped table-hover align-middle"
                     data-toggle="table"
@@ -750,3 +784,41 @@
         {% endif %}
     </div>
 </div>
+
+<script>
+    (function () {
+        const form = document.getElementById('result-line-jump-form');
+        const input = document.getElementById('result-line-jump-input');
+        const table = document.getElementById('result-line-summary-table');
+        if (!form || !input || !table) {
+            return;
+        }
+        form.addEventListener('submit', function (event) {
+            event.preventDefault();
+            const query = input.value.trim();
+            if (!query) {
+                return;
+            }
+            const $table = window.jQuery ? window.jQuery(table) : null;
+            if ($table && $table.bootstrapTable) {
+                $table.bootstrapTable('resetSearch', query);
+            }
+            window.setTimeout(function () {
+                const rows = Array.from(table.querySelectorAll('tbody tr'));
+                const match = rows.find(function (row) {
+                    return (row.dataset.lineId || '').toLowerCase() === query.toLowerCase();
+                }) || rows.find(function (row) {
+                    return (row.dataset.lineId || '').toLowerCase().includes(query.toLowerCase());
+                });
+                if (!match) {
+                    return;
+                }
+                match.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                match.classList.add('table-warning');
+                window.setTimeout(function () {
+                    match.classList.remove('table-warning');
+                }, 2200);
+            }, 150);
+        });
+    }());
+</script>

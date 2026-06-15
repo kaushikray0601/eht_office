@@ -54,6 +54,13 @@ def merge_unique(*value_lists):
     return merged
 
 
+def env_url_path(name, default):
+    value = str(env(name, default=default)).strip().strip("/")
+    if not value:
+        value = str(default).strip().strip("/")
+    return f"{value}/"
+
+
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/4.2/howto/deployment/checklist/
 
@@ -67,6 +74,7 @@ SECRET_KEY = env(
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env_bool_strict("DEBUG", default=True)
 IS_TESTING = "test" in sys.argv
+ADMIN_SITE_PATH = env_url_path("DJANGO_ADMIN_PATH", default="admin/")
 
 DEFAULT_ALLOWED_HOSTS = ["local.enggsense.com", "localhost", "127.0.0.1"]
 ALLOWED_HOSTS = merge_unique(
@@ -142,6 +150,7 @@ TEMPLATES = [
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
+                'eht.context_processors.nav_projects',
             ],
         },
     },
@@ -156,6 +165,11 @@ WSGI_APPLICATION = 'ELECSENSE.wsgi.application'
 USE_POSTGRES = env.bool("USE_POSTGRES", default=False)
 EHT_TIMING_LOGS = env.bool("EHT_TIMING_LOGS", default=False)
 USE_EXISTING_POSTGRES_TEST_DB = env.bool("USE_EXISTING_POSTGRES_TEST_DB", default=False)
+EHT_LOGIN_IP_RATE_LIMIT = env("EHT_LOGIN_IP_RATE_LIMIT", default="20/m")
+EHT_LOGIN_USERNAME_RATE_LIMIT = env("EHT_LOGIN_USERNAME_RATE_LIMIT", default="5/m")
+EHT_UPLOAD_RATE_LIMIT = env("EHT_UPLOAD_RATE_LIMIT", default="20/h")
+EHT_CONFIRM_UPLOAD_RATE_LIMIT = env("EHT_CONFIRM_UPLOAD_RATE_LIMIT", default="60/h")
+EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT = env("EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT", default="60/h")
 
 SQLITE_DB_PATH = BASE_DIR / env("SQLITE_DB_NAME", default="db.sqlite3")
 SQLITE_SOURCE_DB_PATH = BASE_DIR / env("SQLITE_SOURCE_DB_NAME", default="db.sqlite3")

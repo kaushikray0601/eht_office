@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-06-14
+Last updated: 2026-06-15
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -44,24 +44,26 @@ Phase A: production hardening of the current working path.
 
 Immediate next pass:
 
-1. KR/manual release sign-off: demo walkthrough, cold-cable label overlap
+1. Move to the next agreed audit-convergence pass outside Claude's dashboard
+   workstream.
+2. KR/manual release sign-off: demo walkthrough, cold-cable label overlap
    inspection, large-project browsing/search feel, and terminal-voltage manual
    cross-check.
-2. KR/Claude catalogue decisions: live MI validation state, SR catalogue gate
+3. KR/Claude catalogue decisions: live MI validation state, SR catalogue gate
    or warning policy, and final approved catalogue state.
-3. Keep the calculation manual aligned with any behavior changes.
+4. Keep the calculation manual aligned with any behavior changes.
 
 ## Current Repo State
 
 - Working directory: `/home/kr/mydev/eht_office`.
-- Current date at latest update: 2026-06-14.
-- Phase A code through `CAT-P1 / SEC-P1a` is implemented in the current worktree.
-- Latest full SQLite test status (verified 2026-06-14 with
-  `USE_POSTGRES=false`): 318 tests passed. SQLite quick testing remains the
+- Current date at latest update: 2026-06-15.
+- Phase A code through `CAT-P1 / SEC-P1a` and `EHT-P1` is implemented in the
+  current worktree.
+- Latest full SQLite test status (verified 2026-06-15 with
+  `USE_POSTGRES=false`): 332 tests passed. SQLite quick testing remains the
   default fast path.
-- Latest full PostgreSQL test status (verified 2026-06-12 against
-  `eht_local_test` via the programmatic runner): 306 tests passed,
-  `Failures: 0`.
+- Latest full PostgreSQL test status (verified independently by Claude on
+  2026-06-15 against local PostgreSQL): 320 tests passed.
 - `TEST-P1` is complete: `SldLayoutTests` now authenticate under the
   login-required middleware, the SLD cold-cable label assertion matches the
   CC-P5 single-phase terminology, and migration `0037` is SQLite-compatible.
@@ -108,7 +110,7 @@ Immediate next pass:
   overridden. Production-shaped `manage.py check --deploy` passed with explicit
   deployment env values. PostgreSQL `migrate --check` and direct connection
   passed against live `eht_local` after local DB access was allowed. Full
-  SQLite suite is now 318 tests passed after `CAT-P1 / SEC-P1a`. Manual release
+  SQLite suite is now 330 tests passed after `EHT-P1` close-out. Manual release
   sign-off items remain:
   demo walkthrough, cold-cable label overlap inspection, large-project
   browsing/search feel, and terminal-voltage manual cross-check.
@@ -116,9 +118,18 @@ Immediate next pass:
   blocked by default and requires `--execute` plus exact confirmation text
   before legacy CSV import; SR selection tests explicitly ignore legacy
   `Tracer_Family='MI'` vendor rows; login `next` redirects are validated with
-  `url_has_allowed_host_and_scheme`; error-file downloads reject path traversal
-  and resolve inside the error-file directory. No catalogue data or validation
-  flags were changed.
+  `url_has_allowed_host_and_scheme`; and production host/security settings are
+  environment-driven.
+- `EHT-P1` is complete: upload validation now enforces
+  `Maint_T <= Oper_T <= Design_T`, including the `Maint_T == Oper_T` boundary.
+  SR no-selection now persists diagnostics, and SR heat-duty no-match can
+  trigger automatic MI fallback with mode `automatic_heat_duty_fallback`. If
+  MI also fails, result pages show both SR and MI reasons. Cold-cable results
+  now store startup-current voltage-drop warning evidence with a project
+  threshold default of 10%; this is warning-only and does not auto-upsize.
+  Model-level `HeatTracingInput.clean()` validation is implemented. The result
+  page now tells users to review startup terminal voltage, route length, manual
+  cold-cable size, or branch/load split when startup VD exceeds threshold.
 - Testing convention from 2026-06-14: try PostgreSQL-backed tests first where
   meaningful, then fall back to SQLite if Django test-runner setup hits the
   known `psycopg.OperationalError: connection is bad`. Direct Django PostgreSQL
@@ -156,7 +167,8 @@ Immediate next pass:
 ## Frozen Engineering Decisions
 
 - SR remains the default hot-cable technology.
-- MI is automatic only when SR catalogue suitability limits are exceeded.
+- MI is automatic only when SR catalogue temperature limits are exceeded or SR
+  cannot meet heat duty within configured run/spiral limits.
 - Users do not manually choose SR versus MI in project setup.
 - Constant Power tracer is a future separate hot-engineering module.
 - SR parallel runs now use one shared 2-pole MCB per run group for cold-cable
@@ -169,7 +181,8 @@ Immediate next pass:
 - Cold cable conductor path is Cu-only for now.
 - Aluminium cold-cable catalogue path has been removed/deferred.
 - Cold cable uses RCD terminology, not GFEP terminology.
-- Cold cable sizing uses operating current, not starting current.
+- Cold cable sizing uses operating current, not starting current. Startup
+  current is checked as a warning-only voltage-drop review item.
 - Cold cable voltage-drop basis: PF = 1.0; reactance term ignored.
 - Active cold-cable rebuild basis is single-phase: `FeederCable` from MCB to
   optional `DistributionJB`, then `BranchCable` to `BranchJB`/tracer.
@@ -399,7 +412,132 @@ Recommend a new chat when:
 - Context replay becomes more expensive than reading this memory file.
 - The next task is large enough to deserve a clean brief.
 
-Current recommendation: `CC-P0` through `CC-P5`, `SLD-R1`, `DB-R1`,
-`TEST-P1`, `SLD-P2`, `SLD-P1`, and `AUD-P1` are complete. Next work:
-`CAT-P1` catalogue gate/import safety, then `SCH-P1` procurement-grade cable
-schedule fields/export.
+Current recommendation: move through `APP-P1`, `SEC-P1b`, `SCH-P2`, and
+low-risk `UX-P1` items as KR prioritizes MVP convergence, while avoiding
+overlap with Claude's dashboard work.
+
+Latest APP-P1 note, 2026-06-15: self-registration is explicitly disabled
+with HTTP 410. Upload validation error workbooks now use bounded rotating
+filenames (`error_file_01.xlsx` ... `error_file_N.xlsx`) instead of the shared
+`error_file.xlsx` or unbounded UUID files. Default retention is 10 files at
+5 MB each, with admin configurability added by migration
+`0040_errorfileretentionpolicy`, applied to PostgreSQL on 2026-06-15. No
+policy row was auto-created; runtime fallback remains 10 files at 5 MB until
+an admin-configured row is added. Upload validation now rejects path-like
+names, non-XLSX/MIME mismatches, and disguised non-XLSX content. Focused
+SQLite regression slice passed 12 tests and the full SQLite suite passed
+335 tests.
+
+Latest APP-P1 stale-workspace guard, 2026-06-15: project setup save and
+replacement line-list upload now require explicit confirmation before clearing
+an existing project workspace. Confirmed clears are scoped to the selected
+project's uploaded inputs, calculated outputs, BOQ rows, cold-cable results,
+SLD layout/topology edits, cable schedule overrides, and tracer overrides.
+Catalogue/vendor/reference tables are not in this deletion path. Focused
+SQLite tests passed 21 tests; full SQLite suite passed 338 tests.
+
+Latest SEC-P1b login-attempt hardening, 2026-06-15: the existing
+`UserAttempt` model is now wired into `my_login` without a migration. Existing
+usernames lock for the configured 30-minute cooldown after three bad password
+attempts; successful login clears prior attempt rows. Unknown usernames keep a
+generic login error and do not create user-linked attempt rows. Focused
+security tests passed 8 tests; full SQLite suite passed 341 tests.
+
+Latest SEC-P1b app-level rate limiting, 2026-06-15: `django-ratelimit==4.1.0`
+is installed and pinned. Login now has both IP and posted-username request
+limits, while upload, valid-row confirmation, and error-file download endpoints
+are limited by authenticated user or IP. These are configurable with
+`EHT_LOGIN_IP_RATE_LIMIT`, `EHT_LOGIN_USERNAME_RATE_LIMIT`,
+`EHT_UPLOAD_RATE_LIMIT`, `EHT_CONFIRM_UPLOAD_RATE_LIMIT`, and
+`EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT`. `UserAttempt` remains account-specific
+lockout; `django-ratelimit` is the request-throttle layer. Focused security
+tests passed 12 tests; full SQLite suite passed 345 tests.
+
+Latest SEC-P1b admin-path hardening, 2026-06-15: rate/security thresholds stay
+environment-owned for the MVP; do not make them casual admin-editable fields
+until validation, audit logging, and safe deployment semantics are designed.
+`DJANGO_ADMIN_PATH` now controls the Django admin mount, login-required
+middleware exemption, and staff-only landing-page admin link. Default remains
+`admin/` for local development; production should set a non-default env value
+and still use Cloudflare/IP/identity restrictions, 2FA, strong admin passwords,
+and logging. Focused security/admin-path tests passed 15 tests; quick checks
+passed; full SQLite suite passed 348 tests.
+
+Latest APP-P1 dead-code cleanup, 2026-06-15: removed legacy `eht/calculation.py`
+from the shipped app after import scans confirmed no active code imports it and
+the live path is `eht.pipeline` -> `eht.cal` -> `eht.calculations/*`. Removed the
+obsolete triple-quoted `ElecEHT_CalculatedTable` / `ElecEHT_IO` model reference
+block from `eht/models.py`. `manage.py check`, migration dry-run, and the full
+SQLite suite passed afterward; no migration was generated.
+
+Latest APP-P1 project referential-integrity pass, 2026-06-15:
+`HeatTracingInput.proj_id` is now backed by a `ProjectData` foreign key named
+`proj`, with `db_column='proj_id'` so existing raw-ID code such as
+`line.proj_id` and `filter(proj_id='P1')` still works. Migration
+`0041_heattracinginput_project_fk` includes a fail-fast pre-check for missing,
+blank, or overlength line-list project IDs; it does not silently delete or
+remap data. Added tests proving `ProjectData.delete()` cascades only project-
+owned line/calculation data and does not touch another project, `ManagedProject`,
+or catalogue/reference rows. Full SQLite suite passed 349 tests. PostgreSQL
+`0041` was applied to `eht_local` on 2026-06-15.
+Read-only PostgreSQL orphan check on 2026-06-15 returned `invalid_count: 0` for
+current line-list project IDs (`p-fault-4c`, `sp`, `P1`); no rows were modified
+during the check. `showmigrations eht`, `migrate --check`, and `manage.py check`
+passed after applying the migration.
+
+Latest SCH-P2 cable schedule lifecycle pass, 2026-06-15: schedule visible/full
+audit export behavior is complete, and migration `0042_cableschedulerecord`
+adds a derived `CableScheduleRecord` audit table keyed by project + autogenerated
+cable tag. Schedule view/export syncs active rows into this table when the
+schedule is generated for display/export. Internal revision starts at `0`, does
+not churn on unchanged schedule views, increments on schedule-relevant changes,
+and retires missing tags with timestamp/user evidence where available. The table
+is read-only in admin and does not drive calculations, SLD, BOQ, or cold-cable
+sizing. Full audit export includes generated/modified/lifecycle evidence; the
+default visible export remains compact. Added the shared-feeder/deduplication
+legend. Focused lifecycle tests passed, `ResultAndBoqViewTests` passed 81 tests,
+and the full SQLite suite passed 355 tests. Migration `0042` was applied to
+PostgreSQL `eht_local` on 2026-06-15 after `migrate --plan` confirmed it only
+creates the `CableScheduleRecord` table. `showmigrations`, `migrate --check`,
+`manage.py check`, and a read-only count query on `CableScheduleRecord` passed
+after migration.
+
+Latest UX-P1 result timestamp pass, 2026-06-15:
+`ProcessLineCalculation.calculated_at` was added by migration
+`0043_processlinecalculation_calculated_at` and applied to PostgreSQL
+`eht_local` after `migrate --plan` confirmed it only adds the timestamp field.
+`store_calculated_results` stamps all stored line calculation rows from the
+same calculation run with one timestamp, and the result tab header now shows
+`Last calculated` from the latest stored process-line calculation. Existing
+PostgreSQL rows received a migration-time timestamp; future runs will show the
+actual storage-run timestamp. Focused timestamp tests passed, the combined
+storage/result slice passed 84 tests, full SQLite suite passed 355 tests,
+`migrate --check`, `manage.py check`, and read-only PostgreSQL smoke query
+passed after migration.
+
+Latest UX-P1 polish completion pass, 2026-06-15: completed the remaining
+low-risk first-customer polish items. Added `eht.context_processors.nav_projects`
+and wired it into settings so authenticated pages can show a navbar project
+selector with coarse status badges: New, Setup, Input ready, Calculated. The
+landing page shows the same badges for active projects. `/base/?project_id=...`
+now validates the project against `ManagedProject.available_to_user()` and
+preselects the workspace form for allowed projects.
+
+Project setup forms are now grouped into logical sections, with extra help text
+for technical fields that affect heat loss, catalogue selection, cold-cable
+sizing, BOQ, and schedule basis. The full workspace setup form now includes the
+startup VD warning threshold field to match the edit partial. Result tab gained
+a `Jump to line` helper for the per-line table and a clearer MI rejected-row
+cue explaining that unavailable MI records show reason, evidence, and next
+action.
+
+Added `eht/excel.py::polish_openpyxl_workbook` and applied it to input, result,
+BOQ, and cable schedule exports for freeze panes, auto-filter, and bounded
+auto-width. SLD gained a guarded `Shift+F` fit-all shortcut reusing the existing
+Fit All button path, and SLD PDF export gained a compact title block with
+project, generated timestamp, and generated-for-review status. The first
+PostgreSQL targeted test attempt hit the known Codex-side test-runner
+`psycopg.OperationalError: connection is bad` before tests executed. SQLite
+targeted tests passed 101 tests; full SQLite `eht` suite passed 358 tests.
+`manage.py check`, SQLite migration dry-run, `node --check static/js/sld_workspace.js`,
+and `git diff --check` passed.

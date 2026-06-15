@@ -39,7 +39,7 @@ class CalculationManualGuideTests(TestCase):
         self.assertContains(response, 'Straight Parallel Runs')
         self.assertContains(response, 'Pending Activities and Phase Assignment')
         self.assertContains(response, 'Noteworthy Architectural Decisions')
-        self.assertContains(response, 'Priority P1 - Next Calculation Module')
+        self.assertContains(response, 'Priority P1 - SLD, Cold Cable, and Schedule Status')
         self.assertContains(response, 'SR straight-run path with bounded MI fallback')
         self.assertContains(response, 'Known Limitations')
         self.assertNotContains(response, 'Formulas should read like engineering notation')

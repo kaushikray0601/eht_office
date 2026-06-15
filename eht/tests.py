@@ -1,28 +1,32 @@
 import json
 import math
+import os
 from copy import deepcopy
 from datetime import date
 from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
 from uuid import uuid4
 
 import pandas as pd
 from django.contrib import admin
+from django.core.cache import cache
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
-from django.test import SimpleTestCase, TestCase, TransactionTestCase
+from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
+from django.utils.timezone import now
 from openpyxl import load_workbook
 
 from eht.cal import orchestrate_calculations
-from eht.cable_schedule import build_cable_schedule_workspace_data
+from eht.cable_schedule import build_cable_schedule_workspace_data, sync_cable_schedule_records
 from eht.calculations.boq import compute_bill_of_quantities
 from eht.calculations.heat_loss import calculate_heat_loss
 from eht.calculations.power_distribution import compute_mi_power_params, compute_power_distribution, compute_power_params
@@ -58,12 +62,14 @@ from eht.models import (
     AlternateTracer,
     BOQ,
     CableScheduleOverride,
+    CableScheduleRecord,
     ColdCableCatalogue,
     ColdCableResult,
     DEFAULT_PROJECT_ID,
     ElecEHT_ASMEB36,
     ElecEHT_ThermalConductivity,
     ElecEHT_Vendor,
+    ErrorFileRetentionPolicy,
     HeatLoss,
     HeatTracingInput,
     ManagedProject,
@@ -80,9 +86,10 @@ from eht.models import (
     SelectedMIHeater,
     SelectedTracer,
     TracerSelectionOverride,
+    UserAttempt,
     is_default_project_id,
 )
-from eht.views import _build_panel_load_summary
+from eht.views import MAX_FAILED_ATTEMPTS, _build_panel_load_summary
 from eht.sld_layout import get_project_sld_layout
 from eht.sld_payload import SLD_GRAPH_SCHEMA_VERSION, build_project_sld_payload
 from eht.sld_pdf import build_sld_pdf
@@ -92,6 +99,7 @@ from eht.sld_topology_history import compact_sld_topology_history, compact_topol
 from eht.sld_validation import validate_project_sld_payload
 from eht.pipeline import run_project_calculations
 from eht.heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD
+from eht.sanatize_input import sanitize_file
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -114,6 +122,173 @@ def make_line(**overrides):
     }
     line.update(overrides)
     return line
+
+
+class InputSanitizerValidationTests(TestCase):
+    def _uploaded_line_list(self, **overrides):
+        row = {
+            'XLID': 1,
+            'Line_ID': 'L-100',
+            'Area': 'A1',
+            'Train': 'T1',
+            'Service_Type': 'EP',
+            'Line_Size': 2.0,
+            'Line_Length': 25.0,
+            'Valve_Qty': 0,
+            'Flange_Qty': 0,
+            'Support_Qty': 0,
+            'Pipe_Mat_Class': 'CS',
+            'Ins_Mat_Type': 'MW',
+            'Insul_Thick': 50.0,
+            'Maint_T': 5.0,
+            'Oper_T': 60.0,
+            'Design_T': 120.0,
+            'IsDeleted': False,
+            'PID_No': 'P-1',
+            'Emergency_Supply': False,
+            'Discipline': 'Piping',
+            'Remarks': '',
+        }
+        row.update(overrides)
+        workbook = BytesIO()
+        pd.DataFrame([row]).to_excel(workbook, index=False, engine='openpyxl')
+        return SimpleUploadedFile(
+            'line-list.xlsx',
+            workbook.getvalue(),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+    def test_sanitize_file_accepts_maintain_operating_design_temperature_order(self):
+        valid_data, invalid_data, error_file_path = sanitize_file(
+            self._uploaded_line_list(Maint_T=5.0, Oper_T=60.0, Design_T=120.0),
+            session={},
+            user=None,
+        )
+
+        self.assertEqual(len(valid_data), 1)
+        self.assertEqual(invalid_data, [])
+        self.assertEqual(error_file_path, '')
+
+    def test_sanitize_file_accepts_maintain_equal_to_operating_temperature(self):
+        valid_data, invalid_data, error_file_path = sanitize_file(
+            self._uploaded_line_list(Maint_T=5.0, Oper_T=5.0, Design_T=120.0),
+            session={},
+            user=None,
+        )
+
+        self.assertEqual(len(valid_data), 1)
+        self.assertEqual(invalid_data, [])
+        self.assertEqual(error_file_path, '')
+
+    def test_sanitize_file_rejects_operating_temperature_below_maintain_temperature(self):
+        uploaded_file = self._uploaded_line_list(Maint_T=60.0, Oper_T=5.0, Design_T=120.0)
+        with patch.object(pd.DataFrame, 'to_excel', return_value=None):
+            valid_data, invalid_data, error_file_path = sanitize_file(
+                uploaded_file,
+                session={},
+                user=None,
+            )
+
+        self.assertEqual(valid_data, [])
+        self.assertRegex(
+            error_file_path,
+            r'^file_storage/error_file/error_file_[0-9]{2}\.xlsx$',
+        )
+        self.assertEqual(len(invalid_data), 1)
+        self.assertEqual(
+            invalid_data[0]['errors']['Temperature'],
+            'Temperatures must satisfy Maint_T <= Oper_T <= Design_T.',
+        )
+
+    def test_sanitize_file_rotates_error_workbooks_with_retention_policy(self):
+        ErrorFileRetentionPolicy.objects.create(max_error_files=3, max_file_size_mb=5)
+        with TemporaryDirectory() as tmpdir, patch('eht.sanatize_input.ERROR_FILE_DIR', tmpdir):
+            generated_paths = []
+            for offset in range(5):
+                _, invalid_data, error_file_path = sanitize_file(
+                    self._uploaded_line_list(Maint_T=60.0 + offset, Oper_T=5.0, Design_T=120.0),
+                    session={},
+                    user=None,
+                )
+                self.assertEqual(len(invalid_data), 1)
+                generated_paths.append(error_file_path)
+
+            retained_names = sorted(path.name for path in Path(tmpdir).glob('error_file_*.xlsx'))
+
+        self.assertEqual(retained_names, ['error_file_01.xlsx', 'error_file_02.xlsx', 'error_file_03.xlsx'])
+        self.assertEqual(os.path.basename(generated_paths[0]), 'error_file_01.xlsx')
+        self.assertEqual(os.path.basename(generated_paths[1]), 'error_file_02.xlsx')
+        self.assertEqual(os.path.basename(generated_paths[2]), 'error_file_03.xlsx')
+        self.assertIn(os.path.basename(generated_paths[3]), {'error_file_01.xlsx', 'error_file_02.xlsx', 'error_file_03.xlsx'})
+
+    def test_sanitize_file_rejects_path_like_upload_name(self):
+        uploaded_file = self._uploaded_line_list()
+        uploaded_file.name = '..\\line-list.xlsx'
+
+        with self.assertRaises(ValidationError) as ctx:
+            sanitize_file(uploaded_file, session={}, user=None)
+
+        self.assertIn('Invalid file name', str(ctx.exception))
+
+    def test_sanitize_file_rejects_disguised_non_xlsx_content(self):
+        uploaded_file = SimpleUploadedFile(
+            'line-list.xlsx',
+            b'not-a-zip-workbook',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        with self.assertRaises(ValidationError) as ctx:
+            sanitize_file(uploaded_file, session={}, user=None)
+
+        self.assertIn('not a valid XLSX workbook', str(ctx.exception))
+
+    def test_sanitize_file_rejects_wrong_mime_type(self):
+        uploaded_file = SimpleUploadedFile(
+            'line-list.xlsx',
+            b'PK\x03\x04fake',
+            content_type='text/plain',
+        )
+
+        with self.assertRaises(ValidationError) as ctx:
+            sanitize_file(uploaded_file, session={}, user=None)
+
+        self.assertIn('MIME type', str(ctx.exception))
+
+
+class HeatTracingInputModelValidationTests(TestCase):
+    def setUp(self):
+        make_project_record(proj_id='p-model-clean')
+
+    def _line(self, **overrides):
+        values = {
+            'proj_id': 'p-model-clean',
+            'line_id': 'LINE-MODEL-CLEAN',
+            'service_type': 'EP',
+            'line_size': Decimal('2.0'),
+            'line_length': Decimal('25.0'),
+            'ins_mat_type': 'MW',
+            'insul_thick': Decimal('50.0'),
+            'maint_temp': Decimal('5.0'),
+            'oper_temp': Decimal('60.0'),
+            'design_temp': Decimal('120.0'),
+        }
+        values.update(overrides)
+        return HeatTracingInput(**values)
+
+    def test_full_clean_accepts_maintain_equal_to_operating_temperature(self):
+        self._line(maint_temp=Decimal('5.0'), oper_temp=Decimal('5.0')).full_clean()
+
+    def test_full_clean_rejects_operating_temperature_below_maintain_temperature(self):
+        with self.assertRaises(ValidationError) as context:
+            self._line(maint_temp=Decimal('60.0'), oper_temp=Decimal('5.0')).full_clean()
+
+        self.assertIn('oper_temp', context.exception.message_dict)
+
+    def test_full_clean_rejects_design_temperature_below_operating_temperature(self):
+        with self.assertRaises(ValidationError) as context:
+            self._line(oper_temp=Decimal('120.0'), design_temp=Decimal('60.0')).full_clean()
+
+        self.assertIn('design_temp', context.exception.message_dict)
 
 
 class SldWorkspaceJavaScriptTests(SimpleTestCase):
@@ -145,6 +320,14 @@ class SldWorkspaceJavaScriptTests(SimpleTestCase):
         self.assertIn("safeRenderCurrentSldPage(root, 'page-size-change')", source)
         self.assertIn("safeRenderCurrentSldPage(root, 'page-prev')", source)
         self.assertIn("safeRenderCurrentSldPage(root, 'page-next')", source)
+
+    def test_sld_fit_all_keyboard_shortcut_is_guarded(self):
+        source = self._source()
+
+        self.assertIn("event.shiftKey", source)
+        self.assertIn("event.key.toLowerCase() === 'f'", source)
+        self.assertIn('fitPaperToContent(root);', source)
+        self.assertIn("['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)", source)
 
     def test_focused_sld_disables_topology_mutation_but_not_overrides(self):
         source = self._source()
@@ -206,6 +389,7 @@ class SldTopologyFingerprintTests(SimpleTestCase):
 
 class CatalogueAndSecurityHardeningTests(TestCase):
     def setUp(self):
+        cache.clear()
         self.user = User.objects.create_user(username='reviewer', password='safe-password-123')
 
     def test_legacy_csv_import_is_blocked_without_explicit_confirmation(self):
@@ -244,6 +428,179 @@ class CatalogueAndSecurityHardeningTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response['Location'], reverse('base'))
+
+    def test_login_records_failed_attempts_and_locks_existing_user(self):
+        for attempt_number in range(MAX_FAILED_ATTEMPTS):
+            response = self.client.post(
+                reverse('my_login'),
+                {
+                    'username': 'reviewer',
+                    'password': 'wrong-password',
+                },
+                REMOTE_ADDR='192.0.2.10',
+            )
+            expected_status = 429 if attempt_number == MAX_FAILED_ATTEMPTS - 1 else 200
+            self.assertEqual(response.status_code, expected_status)
+            self.assertContains(response, 'Invalid username or password', status_code=expected_status)
+
+        self.assertTrue(
+            UserAttempt.objects.filter(
+                user=self.user,
+                lockout=True,
+                cooldown_expires__isnull=False,
+            ).exists()
+        )
+
+        response = self.client.post(
+            reverse('my_login'),
+            {
+                'username': 'reviewer',
+                'password': 'safe-password-123',
+            },
+        )
+
+        self.assertEqual(response.status_code, 429)
+        self.assertFalse(response.wsgi_request.user.is_authenticated)
+
+    def test_successful_login_clears_previous_failed_attempts(self):
+        UserAttempt.objects.create(
+            user=self.user,
+            ip_address='192.0.2.11',
+            failed_at=now(),
+            lockout=False,
+        )
+
+        response = self.client.post(
+            reverse('my_login'),
+            {
+                'username': 'reviewer',
+                'password': 'safe-password-123',
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(UserAttempt.objects.filter(user=self.user).exists())
+
+    def test_unknown_username_uses_generic_error_without_attempt_row(self):
+        response = self.client.post(
+            reverse('my_login'),
+            {
+                'username': 'missing-user',
+                'password': 'wrong-password',
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Invalid username or password')
+        self.assertFalse(UserAttempt.objects.exists())
+
+    @override_settings(EHT_LOGIN_USERNAME_RATE_LIMIT='2/m', EHT_LOGIN_IP_RATE_LIMIT='100/m')
+    def test_login_rate_limit_blocks_repeated_unknown_username_attempts(self):
+        for _index in range(2):
+            response = self.client.post(
+                reverse('my_login'),
+                {
+                    'username': 'missing-user',
+                    'password': 'wrong-password',
+                },
+                REMOTE_ADDR='192.0.2.20',
+            )
+            self.assertEqual(response.status_code, 200)
+
+        blocked_response = None
+        for _index in range(5):
+            response = self.client.post(
+                reverse('my_login'),
+                {
+                    'username': 'missing-user',
+                    'password': 'wrong-password',
+                },
+                REMOTE_ADDR='192.0.2.20',
+            )
+            if response.status_code == 429:
+                blocked_response = response
+                break
+
+        self.assertIsNotNone(blocked_response)
+        self.assertContains(blocked_response, 'Too many sign-in attempts', status_code=429)
+        self.assertFalse(UserAttempt.objects.exists())
+
+    @override_settings(EHT_UPLOAD_RATE_LIMIT='1/m')
+    def test_upload_rate_limit_blocks_repeated_upload_attempts(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(reverse('calculate_view'), {'project_id': 'p1'})
+        self.assertEqual(response.status_code, 400)
+
+        response = self.client.post(reverse('calculate_view'), {'project_id': 'p1'})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.json()['error'],
+            'Too many upload attempts. Please wait before uploading another line list.',
+        )
+
+    @override_settings(EHT_CONFIRM_UPLOAD_RATE_LIMIT='1/m')
+    def test_confirm_upload_rate_limit_blocks_repeated_confirmation_attempts(self):
+        self.client.force_login(self.user)
+
+        response = self.client.post(reverse('confirm_valid_data'), {})
+        self.assertEqual(response.status_code, 400)
+
+        response = self.client.post(reverse('confirm_valid_data'), {})
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.json()['error'],
+            'Too many confirmation attempts. Please wait and try again.',
+        )
+
+    @override_settings(EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT='1/m')
+    def test_error_file_download_rate_limit_blocks_repeated_download_attempts(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('download_error_file', args=['missing.xlsx']))
+        self.assertEqual(response.status_code, 404)
+
+        response = self.client.get(reverse('download_error_file', args=['missing.xlsx']))
+        self.assertEqual(response.status_code, 429)
+        self.assertEqual(
+            response.json()['error'],
+            'Too many error-file download attempts. Please wait and try again.',
+        )
+
+    def test_register_endpoint_is_disabled_without_login_redirect_loop(self):
+        response = self.client.get(reverse('my_register'))
+
+        self.assertEqual(response.status_code, 410)
+        self.assertIn(b'Self-registration is disabled', response.content)
+
+    @override_settings(ADMIN_SITE_PATH='private-admin/')
+    def test_login_required_middleware_exempts_configured_admin_path(self):
+        response = self.client.get('/private-admin/')
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_landing_page_hides_admin_link_for_non_staff_users(self):
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, 'Admin Panel')
+
+    @override_settings(ADMIN_SITE_PATH='private-admin/')
+    def test_landing_page_uses_configured_admin_path_for_staff_users(self):
+        staff_user = User.objects.create_user(
+            username='staff-reviewer',
+            password='safe-password-123',
+            is_staff=True,
+        )
+        self.client.force_login(staff_user)
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Admin Panel')
+        self.assertContains(response, 'href="/private-admin/"')
 
     def test_error_file_download_rejects_traversal_paths(self):
         self.client.force_login(self.user)
@@ -392,6 +749,7 @@ def make_project_form_payload(**overrides):
         'max_cb_size': '10',
         'restrict_cb_current': '80.00',
         'allowablevdrop': '5.00',
+        'startup_vd_warning_threshold_pct': '10.00',
         'cable_standard': 'IEC_60502_1',
         'cable_conductor_material': 'Cu',
         'cable_insulation_type': 'XLPE',
@@ -1786,6 +2144,8 @@ class ProcessLineFetchTests(TestCase):
             'status': 'confirmed',
         }
         defaults.update(overrides)
+        if not ProjectData.objects.filter(proj_id=defaults['proj_id']).exists():
+            make_project_record(proj_id=defaults['proj_id'])
         return HeatTracingInput.objects.create(**defaults)
 
     def test_fetch_process_lines_returns_only_confirmed_rows(self):
@@ -1933,6 +2293,7 @@ class StoreCalculatedResultsTests(TestCase):
         self.assertEqual(process_line_calc.total_power_consumption, 460.0)
         self.assertEqual(process_line_calc.total_tracer_length, 12.6)
         self.assertEqual(process_line_calc.pipe_size_mm, 60.3)
+        self.assertIsNotNone(process_line_calc.calculated_at)
 
         self.assertEqual(
             BOQ.objects.filter(project_id='p1', scope='line', line=line).count(),
@@ -2979,6 +3340,7 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(project.min_cold_cable_size_mm2, 'CALCULATED')
         self.assertEqual(project.mcb_curve, 'C')
         self.assertTrue(project.rcd_provided)
+        self.assertEqual(float(project.startup_vd_warning_threshold_pct), 10.0)
 
     def test_project_data_install_method_excludes_single_core_method(self):
         form = ProjectDataForm()
@@ -3018,6 +3380,14 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(widget_attrs['min'], '0.25')
         self.assertEqual(widget_attrs['max'], '1.0')
         self.assertEqual(widget_attrs['step'], '0.001')
+
+    def test_project_data_form_guides_startup_voltage_drop_warning_threshold(self):
+        form = ProjectDataForm()
+        field = form.fields['startup_vd_warning_threshold_pct']
+
+        self.assertEqual(field.widget.attrs['min'], '0.1')
+        self.assertEqual(field.widget.attrs['step'], '0.1')
+        self.assertIn('Warning only', field.help_text)
 
     def test_populate_cold_cable_catalogue_command_is_idempotent(self):
         call_command('populate_cold_cable_catalogue')
@@ -3250,6 +3620,7 @@ class ColdCableFoundationTests(TestCase):
         self.assertEqual(sizing_input.branch_type, '3phJB')
         self.assertEqual(sizing_input.heating_cable_type, 'SR')
         self.assertGreater(sizing_input.per_circuit_operating_current_a, 0)
+        self.assertGreater(sizing_input.per_circuit_starting_current_a, 0)
         self.assertEqual(sizing_input.length_4c_m, 30.0)
         self.assertEqual(sizing_input.length_3c_m, 12.0)
 
@@ -3388,6 +3759,7 @@ class ColdCableFoundationTests(TestCase):
             circuit_count=2,
             heating_cable_type='SR',
             per_circuit_operating_current_a=8.0,
+            per_circuit_starting_current_a=18.0,
             line_operating_current_a=16.0,
             breaker_size_a=10.0,
             length_4c_m=150.0,
@@ -3459,6 +3831,41 @@ class ColdCableFoundationTests(TestCase):
         self.assertFalse(result.optimization_run)
         self.assertEqual(result.vd_status, 'pass')
         self.assertIsNotNone(result.cable_3c_vd_pct)
+        self.assertEqual(result.startup_vd_status, 'pass')
+        self.assertIsNotNone(result.startup_vd_total_pct)
+
+    def test_size_cold_cable_flags_startup_voltage_drop_warning_without_upsizing(self):
+        call_command('populate_cold_cable_catalogue')
+        line = make_direct_sld_project_snapshot('p-startup-vd', 'LINE-STARTUP-VD')
+        project = ProjectData.objects.get(proj_id='p-startup-vd')
+        project.startup_vd_warning_threshold_pct = 1.0
+        project.save(update_fields=['startup_vd_warning_threshold_pct'])
+        ProcessLineCalculation.objects.filter(line=line).update(starting_current=200.0)
+        branch = PowerDistributionBranch.objects.select_related(
+            'distribution',
+            'distribution__line',
+            'distribution__line__process_line_calculation',
+        ).get(distribution__line__proj_id='p-startup-vd')
+        tagged_components = deepcopy(branch.tagged_components)
+        tagged_components['component_details']['MCB']['metadata']['max_current'] = 200.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['tagged_components'])
+
+        result = size_cold_cable_for_branch(branch, project)
+
+        self.assertEqual(result.vd_status, 'pass')
+        self.assertEqual(result.startup_vd_status, 'review_required')
+        self.assertEqual(result.sizing_status, 'review_required')
+        self.assertGreater(result.startup_vd_total_pct, result.startup_vd_threshold_pct)
+        self.assertEqual(result.startup_vd_basis['result_semantics'], 'warning_only_no_automatic_upsizing')
+        self.assertTrue(any('Startup cold-cable voltage drop' in note for note in result.review_notes))
+        self.assertTrue(any('review startup terminal voltage' in note for note in result.review_notes))
+
+        payload = build_project_sld_payload('p-startup-vd')
+        cable_node = next(node for node in payload['nodes'] if node.get('component_type') == 'Cable3C')
+        cold_cable = cable_node['metadata']['cold_cable']
+        self.assertEqual(cold_cable['startup_vd_status'], 'review_required')
+        self.assertEqual(cold_cable['per_circuit_starting_current_a'], 200.0)
 
     def test_mcb_curve_threshold_uses_lower_instantaneous_bound(self):
         self.assertEqual(mcb_instantaneous_factor('B'), 3.0)
@@ -5546,6 +5953,29 @@ class ProjectDataViewTests(TestCase):
         self.assertContains(response, 'Method E is active for this phase')
         self.assertNotContains(response, 'Cold cable catalogue readiness')
 
+    def test_landing_project_list_shows_calculation_status_badge(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        make_project_record(proj_id='PLANT_A_001')
+
+        response = self.client.get(reverse('index'))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'PLANT_A_001 - Plant A')
+        self.assertContains(response, 'Setup')
+
+    def test_base_workspace_can_preselect_project_from_navbar_link(self):
+        make_managed_project(proj_id='PLANT_A_001', description='Plant A')
+        make_project_record(proj_id='PLANT_A_001')
+
+        response = self.client.get(reverse('base'), {'project_id': 'PLANT_A_001'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Projects')
+        self.assertContains(response, 'PLANT_A_001 - Plant A')
+        self.assertContains(response, 'action="/edit-project-data/PLANT_A_001/"')
+        self.assertContains(response, 'Electrical supply and protection')
+        self.assertContains(response, 'Tracer selection and heat loss basis')
+
     def test_update_project_data_workspace_form_posts_to_project_update_route(self):
         make_managed_project(proj_id='PLANT_A_001', description='Plant A')
         make_project_record(proj_id='PLANT_A_001')
@@ -5620,6 +6050,33 @@ class ProjectDataViewTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertFalse(ProjectData.objects.filter(proj_id='PLANT_C_001').exists())
         self.assertFalse(ProjectData.objects.filter(proj_id__iexact=DEFAULT_PROJECT_ID).exists())
+
+    def test_project_setup_save_requires_confirmation_before_clearing_workspace(self):
+        line = make_calculated_project_snapshot(project_id='PLANT_A_001')
+        payload = make_project_form_payload(proj_id='PLANT_A_001', vendor='SST')
+
+        response = self.client.post(reverse('update_project_data', args=['PLANT_A_001']), data=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'will clear only this project')
+        self.assertEqual(ProjectData.objects.get(proj_id='PLANT_A_001').vendor, 'CHR')
+        self.assertTrue(HeatTracingInput.objects.filter(pk=line.pk).exists())
+        self.assertTrue(HeatLoss.objects.filter(uid=str(line.uid)).exists())
+
+    def test_project_setup_save_with_confirmation_clears_workspace_for_that_project(self):
+        line = make_calculated_project_snapshot(project_id='PLANT_A_001')
+        payload = make_project_form_payload(
+            proj_id='PLANT_A_001',
+            vendor='SST',
+            confirm_clear_workspace='yes',
+        )
+
+        response = self.client.post(reverse('update_project_data', args=['PLANT_A_001']), data=payload)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(ProjectData.objects.get(proj_id='PLANT_A_001').vendor, 'SST')
+        self.assertFalse(HeatTracingInput.objects.filter(pk=line.pk).exists())
+        self.assertFalse(HeatLoss.objects.filter(uid=str(line.uid)).exists())
 
 
 class ResultAndBoqViewTests(TestCase):
@@ -5726,6 +6183,9 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'V-001')
         self.assertContains(response, 'V-ALT-001')
         self.assertContains(response, 'MCB_001')
+        self.assertContains(response, 'Last calculated')
+        self.assertContains(response, 'Jump to line')
+        self.assertContains(response, 'id="result-line-summary-table"')
 
     def test_result_view_surfaces_cold_cable_sizing_results(self):
         call_command('populate_cold_cable_catalogue')
@@ -5739,6 +6199,27 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Cold cable engineering')
         self.assertContains(response, 'Critical Branch 2.5 mm²')
         self.assertContains(response, 'MT')
+
+    def test_result_view_explains_startup_voltage_drop_review(self):
+        call_command('populate_cold_cable_catalogue')
+        line = make_direct_sld_project_snapshot('p-result-startup-vd', 'LINE-STARTUP-VD')
+        project = ProjectData.objects.get(proj_id='p-result-startup-vd')
+        project.startup_vd_warning_threshold_pct = 1.0
+        project.save(update_fields=['startup_vd_warning_threshold_pct'])
+        ProcessLineCalculation.objects.filter(line=line).update(starting_current=200.0)
+        branch = PowerDistributionBranch.objects.get(distribution__line__proj_id='p-result-startup-vd')
+        tagged_components = deepcopy(branch.tagged_components)
+        tagged_components['component_details']['MCB']['metadata']['max_current'] = 200.0
+        branch.tagged_components = tagged_components
+        branch.save(update_fields=['tagged_components'])
+        size_cold_cables_for_project('p-result-startup-vd')
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p-result-startup-vd'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'Startup VD exceeds project threshold')
+        self.assertContains(response, 'Review startup terminal voltage')
+        self.assertContains(response, 'review startup terminal voltage')
 
     def test_result_view_surfaces_panel_load_summary(self):
         call_command('populate_cold_cable_catalogue')
@@ -6021,6 +6502,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'LINE-001')
         self.assertContains(response, 'CCAB')
         self.assertContains(response, 'MCB_001')
+        self.assertContains(response, 'Shared feeder cables may appear against multiple downstream circuits')
 
     def test_cable_schedule_view_surfaces_calculated_cold_cable_size(self):
         call_command('populate_cold_cable_catalogue')
@@ -6056,6 +6538,59 @@ class ResultAndBoqViewTests(TestCase):
 
         self.assertGreater(schedule_data['summary']['total_conductor_mass_mt'], 0)
         self.assertAlmostEqual(schedule_data['summary']['total_conductor_mass_mt'], expected_mass, places=9)
+
+    def test_cable_schedule_sync_creates_internal_record_without_revision_churn(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        cable_rows = build_cable_schedule_workspace_data('p1')['cable_rows']
+
+        first_sync = sync_cable_schedule_records('p1', cable_rows)
+        second_sync = sync_cable_schedule_records('p1', cable_rows)
+
+        record = CableScheduleRecord.objects.get(project_id='p1', cable_tag=cable_rows[0]['cable_tag'])
+        self.assertEqual(record.internal_revision, 0)
+        self.assertEqual(record.lifecycle_status, 'active')
+        self.assertEqual(first_sync[record.cable_tag].id, record.id)
+        self.assertEqual(second_sync[record.cable_tag].id, record.id)
+        self.assertEqual(cable_rows[0]['revision_no'], '0')
+
+    def test_cable_schedule_sync_increments_revision_when_schedule_state_changes(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        cable_rows = build_cable_schedule_workspace_data('p1')['cable_rows']
+        sync_cable_schedule_records('p1', cable_rows)
+
+        changed_rows = [dict(row) for row in cable_rows]
+        changed_rows[0]['cable_length_m'] = changed_rows[0]['cable_length_m'] + 5
+        sync_cable_schedule_records('p1', changed_rows)
+
+        record = CableScheduleRecord.objects.get(project_id='p1', cable_tag=changed_rows[0]['cable_tag'])
+        self.assertEqual(record.internal_revision, 1)
+        self.assertIsNotNone(record.modified_at)
+        self.assertEqual(changed_rows[0]['revision_no'], '1')
+
+    def test_cable_schedule_sync_retires_missing_cable_tags(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+        cable_rows = build_cable_schedule_workspace_data('p1')['cable_rows']
+        sync_cable_schedule_records('p1', cable_rows)
+        retired_tag = cable_rows[0]['cable_tag']
+
+        sync_cable_schedule_records('p1', cable_rows[1:])
+
+        record = CableScheduleRecord.objects.get(project_id='p1', cable_tag=retired_tag)
+        self.assertEqual(record.lifecycle_status, 'retired')
+        self.assertEqual(record.internal_revision, 1)
+        self.assertIsNotNone(record.retired_at)
+
+    def test_cable_schedule_export_syncs_internal_revision_evidence(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1', 'scope': 'full'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(CableScheduleRecord.objects.filter(project_id='p1', lifecycle_status='active').exists())
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        self.assertIn('Generated At', rows[0])
+        self.assertIn('Lifecycle Status', rows[0])
 
     def test_cable_schedule_view_shows_manual_override_status_and_remarks(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -6131,7 +6666,7 @@ class ResultAndBoqViewTests(TestCase):
             manual_cable_size='3C x 1.5',
         )
 
-        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1'})
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1', 'scope': 'full'})
 
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(BytesIO(response.content))
@@ -6177,7 +6712,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'DR-77')
         self.assertContains(response, 'LOT-9')
         self.assertContains(response, '<td>checked</td>', html=True)
-        self.assertContains(response, '<td>B</td>', html=True)
+        self.assertContains(response, '<td>0</td>', html=True)
 
     def test_cable_schedule_export_includes_procurement_annotations(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001'])
@@ -6204,7 +6739,7 @@ class ResultAndBoqViewTests(TestCase):
             checked_date=date(2026, 6, 13),
         )
 
-        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1'})
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1', 'scope': 'full'})
 
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(BytesIO(response.content))
@@ -6219,7 +6754,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertEqual(export_row[header.index('Review Status')], 'checked')
         self.assertEqual(export_row[header.index('Checked By')], 'KR')
         self.assertEqual(export_row[header.index('Checked Date')], '2026-06-13')
-        self.assertEqual(export_row[header.index('Rev. No.')], 'B')
+        self.assertEqual(export_row[header.index('Rev. No.')], '0')
 
     def test_cable_schedule_view_uses_applied_topology_rows(self):
         make_rich_sld_project_snapshot('p1', ['LINE-001', 'LINE-002'])
@@ -6266,7 +6801,7 @@ class ResultAndBoqViewTests(TestCase):
             response['Content-Type'],
             'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
         )
-        self.assertIn('p1_cable_schedule.xlsx', response['Content-Disposition'])
+        self.assertIn('p1_visible_cable_schedule.xlsx', response['Content-Disposition'])
 
         workbook = load_workbook(BytesIO(response.content))
         self.assertEqual(workbook.sheetnames, ['Cable Schedule'])
@@ -6277,42 +6812,51 @@ class ResultAndBoqViewTests(TestCase):
             'Cable Tag',
             'Cable Specification',
             'Calculated Cold Cable Size',
-            'Cold Cable Segment Role',
-            'Cold Cable Circuit Index',
             'Cold Cable Status',
-            'Voltage Drop Status',
-            'Fault Protection Status',
-            'Total Path VD (%)',
-            'Load-End Voltage (V)',
-            'Fault Current (A)',
-            'Length Basis',
-            'Critical Branch Segment',
-            'Conductor Mass (MT)',
             'Cable Length (m)',
             'Connected From',
             'Connected To',
             'Line IDs',
             'Purpose',
-            'Route Reference',
-            'Installation Area',
-            'Installation Basis',
-            'Cable Drum Tag',
-            'Cable Lot',
-            'Remarks',
-            'Manual Size Review',
-            'Manual Size Review Note',
             'Review Status',
-            'Checked By',
-            'Checked Date',
             'Rev. No.',
         ))
         self.assertTrue(any(row[1] and str(row[1]).startswith('CCAB') for row in rows[1:]))
-        self.assertTrue(any(row[18] == 'LINE-001' for row in rows[1:]))
+        self.assertTrue(any(row[8] == 'LINE-001' for row in rows[1:]))
+
+    def test_cable_schedule_export_honors_requested_visible_columns(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {
+            'project_id': 'p1',
+            'columns': 'sr-no,cable-tag,route-reference,checked-by,unknown-field',
+        })
+
+        self.assertEqual(response.status_code, 200)
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        self.assertEqual(rows[0], ('Sr. No', 'Cable Tag', 'Route Reference', 'Checked By'))
+
+    def test_cable_schedule_full_audit_export_keeps_hidden_fields(self):
+        make_rich_sld_project_snapshot('p1', ['LINE-001'])
+
+        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p1', 'scope': 'full'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('p1_full_audit_cable_schedule.xlsx', response['Content-Disposition'])
+        workbook = load_workbook(BytesIO(response.content))
+        rows = list(workbook['Cable Schedule'].iter_rows(values_only=True))
+        self.assertIn('Route Reference', rows[0])
+        self.assertIn('Manual Size Review Note', rows[0])
+        self.assertIn('Total Path VD (%)', rows[0])
 
     def test_cable_schedule_export_includes_per_3c_segment_evidence(self):
         self._make_variable_3c_cold_cable_project()
 
-        response = self.client.get(reverse('cable_schedule_export_view'), {'project_id': 'p-variable-3c-report'})
+        response = self.client.get(reverse('cable_schedule_export_view'), {
+            'project_id': 'p-variable-3c-report',
+            'scope': 'full',
+        })
 
         self.assertEqual(response.status_code, 200)
         workbook = load_workbook(BytesIO(response.content))
@@ -6392,6 +6936,9 @@ class ResultAndBoqViewTests(TestCase):
             'Alternate Tracers',
             'MI Selection',
         ])
+        self.assertEqual(workbook['Line Results'].freeze_panes, 'A2')
+        self.assertEqual(workbook['Line Results'].auto_filter.ref, workbook['Line Results'].dimensions)
+        self.assertGreater(workbook['Line Results'].column_dimensions['A'].width, 10)
 
         line_rows = list(workbook['Line Results'].iter_rows(values_only=True))
         branch_rows = list(workbook['Power Distribution'].iter_rows(values_only=True))
@@ -6431,11 +6978,16 @@ class ResultAndBoqViewTests(TestCase):
         workbook = load_workbook(BytesIO(response.content))
         rows = list(workbook['Cold Cable Sizing'].iter_rows(values_only=True))
         header = rows[0]
+        line_index = header.index('Line ID')
+        branch_size_index = header.index('Branch Cable Size (mm2)')
+        startup_vd_status_index = header.index('Startup VD Status')
+        review_notes_index = header.index('Review Notes')
         phase_basis_index = header.index('Phase Balance Basis')
         phase_l1_index = header.index('L1 Current (A)')
         phase_imbalance_index = header.index('Phase Imbalance (A)')
-        self.assertTrue(any(row[1] == line.line_id and row[15] == 2.5 for row in rows[1:]))
-        self.assertTrue(any(row[39] and 'project default' in row[39] for row in rows[1:]))
+        self.assertTrue(any(row[line_index] == line.line_id and row[branch_size_index] == 2.5 for row in rows[1:]))
+        self.assertTrue(any(row[startup_vd_status_index] in {'pass', 'review_required'} for row in rows[1:]))
+        self.assertTrue(any(row[review_notes_index] and 'project default' in row[review_notes_index] for row in rows[1:]))
         self.assertTrue(any(row[phase_basis_index] and 'round-robin' in row[phase_basis_index] for row in rows[1:]))
         self.assertTrue(any(row[phase_l1_index] and row[phase_l1_index] > 0 for row in rows[1:]))
         self.assertTrue(any(row[phase_imbalance_index] is not None for row in rows[1:]))
@@ -6560,6 +7112,109 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Validate reviewed MI catalogue rows for the selected vendor')
         self.assertNotContains(response, '0.00 W/m')
         self.assertNotContains(response, '0.00 W total')
+
+    def test_result_view_explains_sr_heat_duty_rejection_without_mi_fallback(self):
+        make_project_record(proj_id='p-sr-rejected')
+        line = HeatTracingInput.objects.create(
+            proj_id='p-sr-rejected',
+            line_id='LINE-SR-REJECTED',
+            service_type='EP',
+            line_size=2.0,
+            line_length=25.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=45.0,
+            oper_temp=60.0,
+            design_temp=120.0,
+            status='confirmed',
+        )
+        store_calculated_results('p-sr-rejected', {
+            'heat_loss': [{
+                'uid': line.uid,
+                'heat_loss': 120.0,
+                'design_heat_loss': 120.0,
+                'tracer_adder': 0.0,
+                'selection_status': 'rejected',
+                'selection_rejection_reasons': [{
+                    'rule_set': 'SR_SELECTION_REJECTION_REASON_V1',
+                    'code': 'NO_SPIRAL_FACTOR_MATCH',
+                    'message': 'No SR rows satisfied the configured spiral factor limits.',
+                    'details': {
+                        'attempted_run_counts': [1],
+                        'best_candidate_v_uid': 'SR-LOW',
+                        'best_per_run_duty_ratio_at_max_runs': 1.6,
+                        'max_heat_delivery_at_run_cap_w_m': 75.0,
+                    },
+                }],
+            }],
+        })
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p-sr-rejected'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'LINE-SR-REJECTED')
+        self.assertContains(response, 'No SR rows satisfied the configured spiral factor limits')
+        self.assertContains(response, 'Best per-run duty at cap: 1.60 using SR-LOW')
+        self.assertContains(response, 'Max heat delivery at cap: 75.00 W/m')
+        self.assertNotContains(response, 'MI fallback selected')
+
+    def test_result_view_explains_both_sr_heat_duty_and_rejected_mi_fallback(self):
+        make_project_record(proj_id='p-sr-mi-rejected', vendor='THR')
+        line = HeatTracingInput.objects.create(
+            proj_id='p-sr-mi-rejected',
+            line_id='LINE-SR-MI-REJECTED',
+            service_type='EP',
+            line_size=2.0,
+            line_length=25.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=45.0,
+            oper_temp=60.0,
+            design_temp=120.0,
+            status='confirmed',
+        )
+        store_calculated_results('p-sr-mi-rejected', {
+            'heat_loss': [{
+                'uid': line.uid,
+                'heat_loss': 120.0,
+                'design_heat_loss': 120.0,
+                'tracer_adder': 0.0,
+                'selection_status': 'rejected',
+                'selection_rejection_reasons': [{
+                    'rule_set': 'SR_SELECTION_REJECTION_REASON_V1',
+                    'code': 'NO_SPIRAL_FACTOR_MATCH',
+                    'message': 'No SR rows satisfied the configured spiral factor limits.',
+                    'details': {
+                        'attempted_run_counts': [1],
+                        'best_candidate_v_uid': 'SR-LOW',
+                        'best_per_run_duty_ratio_at_max_runs': 1.6,
+                        'max_heat_delivery_at_run_cap_w_m': 75.0,
+                    },
+                }],
+            }],
+            'selected_mi_heaters': [{
+                'uid': line.uid,
+                'mi_selection_status': 'rejected',
+                'mi_selection_rejection_reasons': [{
+                    'rule_set': 'MI_SELECTION_REJECTION_REASON_V1',
+                    'code': 'NO_VALIDATED_MI_CATALOGUE_DATA',
+                    'message': 'No validated MI catalogue rows are available for the selected vendor.',
+                    'details': {'vendor': 'THR', 'catalogue_rows': 3},
+                }],
+                'selection_basis': {'selection_mode': 'automatic_heat_duty_fallback'},
+            }],
+        })
+
+        response = self.client.get(reverse('result_view'), {'project_id': 'p-sr-mi-rejected'})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'LINE-SR-MI-REJECTED')
+        self.assertContains(response, 'Review the SR Selection Diagnostics and MI Selection Records')
+        self.assertContains(response, 'No SR rows satisfied the configured spiral factor limits')
+        self.assertContains(response, 'Best per-run duty at cap: 1.60 using SR-LOW')
+        self.assertContains(response, 'NO_VALIDATED_MI_CATALOGUE_DATA')
+        self.assertContains(response, '3 MI family row(s) exist for THR, but none are marked as validated')
+        self.assertContains(response, 'automatic_heat_duty_fallback')
 
     def test_result_export_identifies_mi_fallback_heater_type_and_lengths(self):
         line = make_mi_calculated_project_snapshot()
@@ -6710,6 +7365,7 @@ class ResultAndBoqViewTests(TestCase):
         self.assertContains(response, 'Generated Topology')
         self.assertContains(response, 'Save Layout')
         self.assertContains(response, 'Reset Layout')
+        self.assertContains(response, 'Fit all to screen (Shift+F)')
         self.assertContains(response, 'Apply Edit')
         self.assertContains(response, reverse('sld_cable_override_save_view'))
         self.assertContains(response, 'id="sld-cable-editor"')
@@ -7198,13 +7854,144 @@ class ResultAndBoqViewTests(TestCase):
 
 
 class ProjectWorkspaceCleanupTests(TestCase):
+    def test_project_delete_cascades_project_owned_rows_without_touching_catalogue_data(self):
+        line = make_calculated_project_snapshot(project_id='p1')
+        other_line = make_calculated_project_snapshot(project_id='p2')
+        project = ProjectData.objects.get(proj_id='p1')
+        CableScheduleOverride.objects.create(
+            project=project,
+            component_id='cable:p1',
+            display_tag='C-P1',
+            component_type='Cable3C',
+        )
+        SLDNodeLayout.objects.create(
+            project=project,
+            component_id='node:p1',
+            display_tag='NODE-P1',
+            component_type='Cable3C',
+            x_position=10,
+            y_position=20,
+        )
+        SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            remarks='p1 topology',
+        )
+        TracerSelectionOverride.objects.create(
+            project=project,
+            line=line,
+            selected_v_uid='V-001',
+        )
+        vendor_row = ElecEHT_Vendor.objects.create(
+            V_UID='SAFE-CAT',
+            Vendor='Thermon',
+            Tracer_Family='Self Regulating',
+            Tracer_Model='BTV',
+            Tracer_Cat_No='SAFE',
+            Voltage=230,
+            A_Coeff=0,
+            B_Coeff=0,
+            C_Coeff=10,
+            Maint_T=120,
+            Max_Op_T=150,
+            Max_Exp_T_On=200,
+            Power_at_Startup_T=30,
+            Ohm_per_km=100,
+            Res_corrFactor_Mica=1,
+        )
+        pipe_row = ElecEHT_ASMEB36.objects.create(
+            Nominal_Pipe_Size=2,
+            Outside_Diameter_mm=60.3,
+        )
+        insulation_row = ElecEHT_ThermalConductivity.objects.create(
+            Ins_Mat_Type='SAFE-INS',
+            K_factor_A=0,
+            K_factor_B=0,
+            K_factor_C=0.04,
+        )
+        cold_catalogue_row = ColdCableCatalogue.objects.create(
+            cable_standard='IEC_60502_1',
+            cable_type_code='SAFE-COLD',
+            conductor_material='Cu',
+            insulation_type='XLPE',
+            core_count=3,
+            conductor_size_mm2=2.5,
+            installation_method='E',
+            ampacity_a=20,
+            resistance_mohm_per_m=7.41,
+            is_validated=True,
+        )
+        mi_family = MICableFamily.objects.create(
+            vendor='THR',
+            family_name='SAFE-MI',
+            alloy_type='Alloy 825',
+            max_voltage=600,
+            max_sheath_temp_c=600,
+            max_maintain_temp_c=500,
+            max_exposure_temp_c=600,
+            max_watt_density_w_m=150,
+            is_validated=True,
+        )
+
+        project.delete()
+
+        self.assertFalse(ProjectData.objects.filter(proj_id='p1').exists())
+        self.assertFalse(HeatTracingInput.objects.filter(proj_id='p1').exists())
+        self.assertFalse(HeatLoss.objects.filter(uid=str(line.uid)).exists())
+        self.assertFalse(SelectedTracer.objects.filter(line_id=line.uid).exists())
+        self.assertFalse(AlternateTracer.objects.filter(line_id=line.uid).exists())
+        self.assertFalse(PowerDistribution.objects.filter(uid=str(line.uid)).exists())
+        self.assertFalse(ProcessLineCalculation.objects.filter(uid=str(line.uid)).exists())
+        self.assertFalse(BOQ.objects.filter(project_id='p1').exists())
+        self.assertFalse(CableScheduleOverride.objects.filter(project_id='p1').exists())
+        self.assertFalse(SLDNodeLayout.objects.filter(project_id='p1').exists())
+        self.assertFalse(SLDTopologyEdit.objects.filter(project_id='p1').exists())
+        self.assertFalse(TracerSelectionOverride.objects.filter(project_id='p1').exists())
+
+        self.assertTrue(ProjectData.objects.filter(proj_id='p2').exists())
+        self.assertTrue(HeatTracingInput.objects.filter(pk=other_line.pk).exists())
+        self.assertTrue(ManagedProject.objects.filter(proj_id='p1').exists())
+        self.assertTrue(ElecEHT_Vendor.objects.filter(pk=vendor_row.pk).exists())
+        self.assertTrue(ElecEHT_ASMEB36.objects.filter(pk=pipe_row.pk).exists())
+        self.assertTrue(ElecEHT_ThermalConductivity.objects.filter(pk=insulation_row.pk).exists())
+        self.assertTrue(ColdCableCatalogue.objects.filter(pk=cold_catalogue_row.pk).exists())
+        self.assertTrue(MICableFamily.objects.filter(pk=mi_family.pk).exists())
+
     def test_clear_project_workspace_data_removes_input_and_derived_outputs(self):
         line = make_calculated_project_snapshot()
+        project = ProjectData.objects.get(proj_id='p1')
+        CableScheduleOverride.objects.create(
+            project=project,
+            component_id='cable:stale',
+            display_tag='C-STALE',
+            component_type='Cable3C',
+        )
+        SLDNodeLayout.objects.create(
+            project=project,
+            component_id='node:stale',
+            display_tag='NODE-STALE',
+            component_type='Cable3C',
+            x_position=10,
+            y_position=20,
+        )
+        SLDTopologyEdit.objects.create(
+            project=project,
+            edit_type='combine_feeders',
+            status='applied',
+            remarks='stale topology',
+        )
+        TracerSelectionOverride.objects.create(
+            project=project,
+            line=line,
+            selected_v_uid='V-001',
+        )
 
         cleanup_summary = clear_project_workspace_data('p1')
 
         self.assertEqual(cleanup_summary['project_id'], 'p1')
         self.assertGreaterEqual(cleanup_summary['input_lines'], 1)
+        self.assertGreaterEqual(cleanup_summary['project_owned_rows'], 4)
         self.assertFalse(HeatTracingInput.objects.filter(proj_id='p1').exists())
         self.assertFalse(HeatLoss.objects.filter(uid=str(line.uid)).exists())
         self.assertFalse(SelectedTracer.objects.filter(line_id=line.uid).exists())
@@ -7213,6 +8000,10 @@ class ProjectWorkspaceCleanupTests(TestCase):
         self.assertFalse(ProcessLineCalculation.objects.filter(uid=str(line.uid)).exists())
         self.assertFalse(PowerDistributionBranch.objects.exists())
         self.assertFalse(BOQ.objects.filter(project_id='p1').exists())
+        self.assertFalse(CableScheduleOverride.objects.filter(project_id='p1').exists())
+        self.assertFalse(SLDNodeLayout.objects.filter(project_id='p1').exists())
+        self.assertFalse(SLDTopologyEdit.objects.filter(project_id='p1').exists())
+        self.assertFalse(TracerSelectionOverride.objects.filter(project_id='p1').exists())
 
 
 class ConfirmValidDataViewTests(TransactionTestCase):
@@ -7389,7 +8180,7 @@ class CalculateViewHardeningTests(TransactionTestCase):
         with patch('eht.views.sanitize_file', return_value=(valid_rows, [{'row_number': 3, 'errors': ['bad row']}], '/tmp/error.xlsx')):
             response = self.client.post(
                 reverse('calculate_view'),
-                {'project_id': 'p1', 'file': upload},
+                {'project_id': 'p1', 'file': upload, 'confirm_clear_workspace': 'yes'},
             )
 
         self.assertEqual(response.status_code, 200)
@@ -7398,6 +8189,63 @@ class CalculateViewHardeningTests(TransactionTestCase):
         replacement_line = HeatTracingInput.objects.get(proj_id='p1', line_id='LINE-NEW')
         self.assertEqual(replacement_line.status, 'pending')
         self.assertEqual(HeatTracingInput.objects.filter(proj_id='p1').count(), 1)
+
+    def test_calculate_view_requires_confirmation_before_replacing_existing_workspace(self):
+        stale_line = HeatTracingInput.objects.create(
+            proj_id='p1',
+            line_id='LINE-OLD',
+            service_type='EP',
+            line_size=2.0,
+            line_length=10.0,
+            ins_mat_type='Mineral Wool',
+            insul_thick=50.0,
+            maint_temp=120.0,
+            oper_temp=100.0,
+            design_temp=140.0,
+            status='confirmed',
+        )
+        HeatLoss.objects.create(uid=str(stale_line.uid), line=stale_line, heat_loss=12.5, tracer_adder=1.2)
+
+        valid_rows = [{
+            'XLID': 1,
+            'Line_ID': 'LINE-NEW',
+            'Service_Type': 'EP',
+            'Line_Size': 2.0,
+            'Line_Length': 11.0,
+            'Ins_Mat_Type': 'Mineral Wool',
+            'Insul_Thick': 50.0,
+            'Maint_T': 120.0,
+            'Oper_T': 100.0,
+            'Design_T': 140.0,
+            'IsDeleted': False,
+            'PID_No': '',
+            'Area': '',
+            'Train': '',
+            'Valve_Qty': 0,
+            'Flange_Qty': 0,
+            'Support_Qty': 0,
+            'Pipe_Mat_Class': '',
+            'Emergency_Supply': False,
+            'Discipline': '',
+            'Remarks': '',
+        }]
+        upload = SimpleUploadedFile(
+            'input.xlsx',
+            b'fake-xlsx-content',
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        )
+
+        with patch('eht.views.sanitize_file', return_value=(valid_rows, [], '')):
+            response = self.client.post(
+                reverse('calculate_view'),
+                {'project_id': 'p1', 'file': upload},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertTrue(response.json()['requires_confirmation'])
+        self.assertTrue(HeatTracingInput.objects.filter(pk=stale_line.pk).exists())
+        self.assertTrue(HeatLoss.objects.filter(uid=str(stale_line.uid)).exists())
+        self.assertFalse(HeatTracingInput.objects.filter(proj_id='p1', line_id='LINE-NEW').exists())
 
     def test_calculate_view_runs_calculations_outside_upload_transaction(self):
         valid_rows = [{

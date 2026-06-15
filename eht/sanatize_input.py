@@ -1,10 +1,12 @@
 import logging
 import os
 from time import perf_counter
+from pathlib import Path
 import pandas as pd
 from mimetypes import guess_type
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db.utils import DatabaseError
 from django.utils.timezone import now, timedelta
 from django.http import JsonResponse
 import math
@@ -33,16 +35,41 @@ def emit_timing(message):
 
 # Constants
 ALLOWED_EXTENSIONS = ['.xlsx']
+ALLOWED_XLSX_MIME_TYPES = {
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+}
+XLSX_ZIP_SIGNATURES = (b'PK\x03\x04', b'PK\x05\x06', b'PK\x07\x08')
 MAX_FILE_SIZE_MB = 10
+ERROR_FILE_DIR = os.path.join('file_storage', 'error_file')
+DEFAULT_ERROR_RETENTION_MAX_FILES = 10
+DEFAULT_ERROR_FILE_MAX_SIZE_MB = 5
 MAX_FAILED_ATTEMPTS = 3
 LOCKOUT_THRESHOLD = 6
 COOLDOWN_PERIOD_MINUTES = 30
 
 
+def _read_file_start(file, byte_count=4):
+    position = None
+    try:
+        position = file.tell()
+    except (AttributeError, OSError):
+        position = None
+    start = file.read(byte_count)
+    if position is not None:
+        try:
+            file.seek(position)
+        except (AttributeError, OSError):
+            pass
+    return start
+
+
 def sanitize_file_basic_check(file, session, user):   
     if file.size > MAX_FILE_SIZE_MB * 1024 * 1024:                                       # 1. Check file size
         raise ValidationError(f"File size exceeds {MAX_FILE_SIZE_MB}MB limit.")
-   
+
+    if file.name != os.path.basename(file.name) or '\\' in file.name or '/' in file.name:
+        raise ValidationError("Invalid file name.")
+
     _, ext = os.path.splitext(file.name)                                                    # 2. Check file extension
     if ext.lower() not in ALLOWED_EXTENSIONS:
         raise ValidationError("Invalid file extension. Only .xlsx is allowed.")
@@ -50,7 +77,56 @@ def sanitize_file_basic_check(file, session, user):
     mime_type, _ = guess_type(file.name)                                                    # 3. Check MIME type
     if mime_type != 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet':
         raise ValidationError("File is not a valid Excel file.")
+    content_type = getattr(file, 'content_type', '') or ''
+    if content_type and content_type not in ALLOWED_XLSX_MIME_TYPES:
+        raise ValidationError("File MIME type is not a valid Excel workbook.")
+    if not _read_file_start(file).startswith(XLSX_ZIP_SIGNATURES):
+        raise ValidationError("File content is not a valid XLSX workbook.")
     return True
+
+
+def _error_file_retention_policy():
+    try:
+        from .models import ErrorFileRetentionPolicy
+        policy = ErrorFileRetentionPolicy.objects.filter(is_active=True).order_by('-updated_at', '-id').first()
+    except DatabaseError:
+        policy = None
+    if policy is None:
+        return DEFAULT_ERROR_RETENTION_MAX_FILES, DEFAULT_ERROR_FILE_MAX_SIZE_MB * 1024 * 1024
+    return int(policy.max_error_files), int(float(policy.max_file_size_mb) * 1024 * 1024)
+
+
+def _error_file_slot_name(index):
+    return f'error_file_{index:02d}.xlsx'
+
+
+def _cleanup_error_file_directory(error_dir, max_files, max_file_size_bytes):
+    error_path = Path(error_dir)
+    error_path.mkdir(parents=True, exist_ok=True)
+    allowed_names = {_error_file_slot_name(index) for index in range(1, max_files + 1)}
+    for path in error_path.glob('error_file*.xlsx'):
+        if not path.is_file():
+            continue
+        try:
+            too_large = path.stat().st_size > max_file_size_bytes
+        except OSError:
+            continue
+        if path.name not in allowed_names or too_large:
+            path.unlink(missing_ok=True)
+
+
+def _next_error_file_path():
+    max_files, max_file_size_bytes = _error_file_retention_policy()
+    error_dir = ERROR_FILE_DIR
+    _cleanup_error_file_directory(error_dir, max_files, max_file_size_bytes)
+    error_path = Path(error_dir)
+    for index in range(1, max_files + 1):
+        candidate = error_path / _error_file_slot_name(index)
+        if not candidate.exists():
+            return str(candidate), max_file_size_bytes
+    candidates = [error_path / _error_file_slot_name(index) for index in range(1, max_files + 1)]
+    oldest = min(candidates, key=lambda path: path.stat().st_mtime_ns)
+    return str(oldest), max_file_size_bytes
 
     
 def log_failed_attempt(session, user):                                          # """Track and log failed attempts."""
@@ -159,9 +235,9 @@ def sanitize_file(file, session, user):
         # Temperature constraints
         temperature_fields = ['Oper_T', 'Maint_T', 'Design_T']
         if not any(field in row_errors for field in temperature_fields) and not (
-            numeric_values['Oper_T'] <= numeric_values['Maint_T'] <= numeric_values['Design_T']
+            numeric_values['Maint_T'] <= numeric_values['Oper_T'] <= numeric_values['Design_T']
         ):
-            row_errors['Temperature'] = "Temperatures must satisfy Oper_T <= Maint_T <= Design_T."
+            row_errors['Temperature'] = "Temperatures must satisfy Maint_T <= Oper_T <= Design_T."
 
         # Append to valid/invalid data
         if row_errors:
@@ -219,8 +295,14 @@ def sanitize_file(file, session, user):
             df.loc[df['_error_row_number'] == row_number, error_column] = "; ".join(messages)
 
         error_write_started = perf_counter()
-        error_file_path = os.path.join('file_storage/error_file', 'error_file.xlsx')
+        error_file_path, max_error_file_size_bytes = _next_error_file_path()
         df.drop(columns=['_error_row_number']).to_excel(error_file_path, index=False, engine='openpyxl')
+        if os.path.exists(error_file_path) and os.path.getsize(error_file_path) > max_error_file_size_bytes:
+            os.remove(error_file_path)
+            raise ValidationError(
+                'Validation error workbook exceeded the configured retention file-size limit. '
+                'Reduce the upload size or ask an administrator to increase the error-file policy.'
+            )
         error_write_duration = perf_counter() - error_write_started
     else:
         error_write_duration = 0.0

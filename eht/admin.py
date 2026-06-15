@@ -9,8 +9,10 @@ from eht.cold_cable_readiness import cold_cable_method_readiness
 from eht.mi_catalogue_readiness import evaluate_mi_family_readiness
 from eht.models import (
     CableScheduleOverride,
+    CableScheduleRecord,
     ColdCableCatalogue,
     ColdCableResult,
+    ErrorFileRetentionPolicy,
     ManagedProject,
     MIAlloyTempFactor,
     MICableFamily,
@@ -68,6 +70,17 @@ class ProjectDataAdmin(admin.ModelAdmin):
             missing = ', '.join(f'{core_count}C' for core_count in readiness['missing_core_counts'])
             return f"Partial: {readiness['validated_rows']} row(s), missing {missing}"
         return f"Ready: {readiness['validated_rows']} row(s)"
+
+
+@admin.register(ErrorFileRetentionPolicy)
+class ErrorFileRetentionPolicyAdmin(admin.ModelAdmin):
+    list_display = ('name', 'is_active', 'max_error_files', 'max_file_size_mb', 'max_total_size_mb_display', 'updated_at')
+    list_filter = ('is_active',)
+    readonly_fields = ('updated_at', 'max_total_size_mb_display')
+
+    @admin.display(description='Max total retained size (MB)')
+    def max_total_size_mb_display(self, obj):
+        return f'{obj.max_total_size_mb:g}'
 
 
 def _cold_cable_row_ready(row):
@@ -245,6 +258,38 @@ class CableScheduleOverrideAdmin(admin.ModelAdmin):
         }),
     )
     readonly_fields = ('created_at', 'updated_at')
+
+
+@admin.register(CableScheduleRecord)
+class CableScheduleRecordAdmin(admin.ModelAdmin):
+    list_display = (
+        'project',
+        'cable_tag',
+        'internal_revision',
+        'lifecycle_status',
+        'review_status',
+        'line_ids',
+        'cable_specification',
+        'calculated_cold_cable_size',
+        'generated_at',
+        'modified_at',
+        'retired_at',
+    )
+    list_filter = ('project', 'lifecycle_status', 'review_status')
+    search_fields = (
+        'project__proj_id',
+        'cable_tag',
+        'component_id',
+        'line_ids',
+        'cable_specification',
+    )
+    readonly_fields = tuple(field.name for field in CableScheduleRecord._meta.fields)
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
 
 
 @admin.register(SLDNodeLayout)

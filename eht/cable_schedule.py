@@ -1,6 +1,10 @@
+import hashlib
+import json
 from math import ceil
 
-from .models import ColdCableResult, ProjectData
+from django.utils import timezone
+
+from .models import CableScheduleRecord, ColdCableResult, ProjectData
 from .sld_payload import build_project_sld_payload
 
 
@@ -44,7 +48,208 @@ CABLE_SCHEDULE_EXPORT_HEADERS = [
     'Checked By',
     'Checked Date',
     'Rev. No.',
+    'Generated At',
+    'Modified At',
+    'Lifecycle Status',
 ]
+CABLE_SCHEDULE_EXPORT_FIELD_HEADERS = {
+    'sr-no': 'Sr. No',
+    'cable-tag': 'Cable Tag',
+    'cable-specification': 'Cable Specification',
+    'calculated-cold-cable': 'Calculated Cold Cable Size',
+    'cold-cable-segment-role': 'Cold Cable Segment Role',
+    'cold-cable-circuit-index': 'Cold Cable Circuit Index',
+    'cold-cable-status': 'Cold Cable Status',
+    'voltage-drop-status': 'Voltage Drop Status',
+    'fault-protection-status': 'Fault Protection Status',
+    'total-path-vd': 'Total Path VD (%)',
+    'load-end-voltage': 'Load-End Voltage (V)',
+    'fault-current': 'Fault Current (A)',
+    'length-basis': 'Length Basis',
+    'critical-branch-segment': 'Critical Branch Segment',
+    'conductor-mass': 'Conductor Mass (MT)',
+    'cable-length': 'Cable Length (m)',
+    'connected-from': 'Connected From',
+    'connected-to': 'Connected To',
+    'line-ids': 'Line IDs',
+    'purpose': 'Purpose',
+    'manual-edit': 'Manual Edit',
+    'route-reference': 'Route Reference',
+    'installation-area': 'Installation Area',
+    'installation-basis': 'Installation Basis',
+    'cable-drum-tag': 'Cable Drum Tag',
+    'cable-lot': 'Cable Lot',
+    'remarks': 'Remarks',
+    'manual-size-review': 'Manual Size Review',
+    'manual-size-review-note': 'Manual Size Review Note',
+    'review-status': 'Review Status',
+    'checked-by': 'Checked By',
+    'checked-date': 'Checked Date',
+    'rev-no': 'Rev. No.',
+    'generated-at': 'Generated At',
+    'modified-at': 'Modified At',
+    'lifecycle-status': 'Lifecycle Status',
+}
+CABLE_SCHEDULE_DEFAULT_VISIBLE_FIELDS = [
+    'sr-no',
+    'cable-tag',
+    'cable-specification',
+    'calculated-cold-cable',
+    'cold-cable-status',
+    'cable-length',
+    'connected-from',
+    'connected-to',
+    'line-ids',
+    'purpose',
+    'review-status',
+    'rev-no',
+]
+CABLE_SCHEDULE_SIGNATURE_FIELDS = [
+    'cable_tag',
+    'component_id',
+    'component_type',
+    'line_ids',
+    'cable_specification',
+    'calculated_cold_cable_size',
+    'cold_cable_status',
+    'cold_cable_vd_status',
+    'cold_cable_fault_status',
+    'cold_cable_vd_total_pct',
+    'cold_cable_load_end_voltage_v',
+    'cold_cable_fault_current_a',
+    'cold_cable_length_basis',
+    'cold_cable_is_critical_3c_segment',
+    'cable_length_m',
+    'connected_from',
+    'connected_to',
+    'purpose',
+    'route_reference',
+    'installation_area',
+    'installation_basis',
+    'cable_drum_tag',
+    'cable_lot',
+    'remarks',
+    'manual_override_active',
+    'manual_size_review_status',
+    'manual_size_review_note',
+    'review_status',
+]
+
+
+def cable_schedule_export_headers(export_scope='visible', visible_fields=None):
+    if export_scope == 'full':
+        return CABLE_SCHEDULE_EXPORT_HEADERS
+
+    selected_fields = visible_fields or CABLE_SCHEDULE_DEFAULT_VISIBLE_FIELDS
+    headers = [
+        CABLE_SCHEDULE_EXPORT_FIELD_HEADERS[field]
+        for field in selected_fields
+        if field in CABLE_SCHEDULE_EXPORT_FIELD_HEADERS
+    ]
+    if not headers:
+        return [
+            CABLE_SCHEDULE_EXPORT_FIELD_HEADERS[field]
+            for field in CABLE_SCHEDULE_DEFAULT_VISIBLE_FIELDS
+        ]
+    return headers
+
+
+def _schedule_signature(row):
+    payload = {
+        field: row.get(field)
+        for field in CABLE_SCHEDULE_SIGNATURE_FIELDS
+    }
+    encoded = json.dumps(payload, sort_keys=True, default=str, separators=(',', ':')).encode('utf-8')
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _record_defaults(row, signature, user=None):
+    return {
+        'component_id': row.get('component_id', ''),
+        'component_type': row.get('component_type', ''),
+        'line_ids': row.get('line_ids', ''),
+        'cable_specification': row.get('cable_specification', ''),
+        'calculated_cold_cable_size': row.get('calculated_cold_cable_size', ''),
+        'cable_length_m': row.get('cable_length_m'),
+        'connected_from': row.get('connected_from', ''),
+        'connected_to': row.get('connected_to', ''),
+        'purpose': row.get('purpose', ''),
+        'review_status': row.get('review_status') or 'generated',
+        'schedule_signature': signature,
+        'lifecycle_status': 'active',
+        'retired_at': None,
+    }
+
+
+def sync_cable_schedule_records(project_id, cable_rows, user=None):
+    project = ProjectData.objects.filter(proj_id=project_id).first()
+    if project is None:
+        return {}
+
+    actor = user if getattr(user, 'is_authenticated', False) else None
+    sync_time = timezone.now()
+    active_tags = {row.get('cable_tag') for row in cable_rows if row.get('cable_tag')}
+    existing = {
+        record.cable_tag: record
+        for record in CableScheduleRecord.objects.filter(project=project)
+    }
+    synced = {}
+
+    for row in cable_rows:
+        cable_tag = row.get('cable_tag')
+        if not cable_tag:
+            continue
+        signature = _schedule_signature(row)
+        record = existing.get(cable_tag)
+        if record is None:
+            record = CableScheduleRecord.objects.create(
+                project=project,
+                cable_tag=cable_tag,
+                generated_by=actor,
+                **_record_defaults(row, signature, actor),
+            )
+        else:
+            changed = record.schedule_signature != signature
+            reactivated = record.lifecycle_status != 'active'
+            update_fields = []
+            for field, value in _record_defaults(row, signature, actor).items():
+                if getattr(record, field) != value:
+                    setattr(record, field, value)
+                    update_fields.append(field)
+            if changed or reactivated:
+                record.internal_revision += 1
+                record.modified_at = sync_time
+                record.modified_by = actor
+                update_fields.extend(['internal_revision', 'modified_at', 'modified_by'])
+            if update_fields:
+                record.save(update_fields=sorted(set(update_fields)))
+        synced[cable_tag] = record
+        row['revision_no'] = str(record.internal_revision)
+        row['generated_at'] = record.generated_at
+        row['modified_at'] = record.modified_at
+        row['lifecycle_status'] = record.lifecycle_status
+
+    retire_qs = CableScheduleRecord.objects.filter(project=project, lifecycle_status='active')
+    if active_tags:
+        retire_qs = retire_qs.exclude(cable_tag__in=active_tags)
+    for record in retire_qs:
+        record.lifecycle_status = 'retired'
+        record.internal_revision += 1
+        record.retired_at = sync_time
+        record.retired_by = actor
+        record.modified_at = sync_time
+        record.modified_by = actor
+        record.save(update_fields=[
+            'lifecycle_status',
+            'internal_revision',
+            'retired_at',
+            'retired_by',
+            'modified_at',
+            'modified_by',
+        ])
+        synced[record.cable_tag] = record
+
+    return synced
 
 
 def _to_float(value):
@@ -54,6 +259,14 @@ def _to_float(value):
         return float(value)
     except (TypeError, ValueError):
         return 0
+
+
+def _format_audit_datetime(value):
+    if not value:
+        return ''
+    if hasattr(value, 'strftime'):
+        return timezone.localtime(value).strftime('%Y-%m-%d %H:%M')
+    return str(value)
 
 
 def _node_lookup(payload):
@@ -291,11 +504,14 @@ def _cable_schedule_rows(payload, cold_results=None, project=None):
         outgoing_edges = outgoing_by_id.get(component_id, [])
         metadata = _metadata(node)
         cold_fields = _cold_cable_fields(node, cold_results)
+        component_type = node.get('component_type') or ''
         connected_from = _connected_tags(incoming_edges, node_by_id, 'from_component_id')
         connected_to = _connected_tags(outgoing_edges, node_by_id, 'to_component_id')
         rows.append({
             'sr_no': index,
             'cable_tag': _display_tag(node),
+            'component_id': component_id or '',
+            'component_type': component_type,
             'cable_specification': _cable_specification(node),
             **cold_fields,
             'cable_length_m': _cable_length_m(node),
@@ -380,6 +596,7 @@ def cable_schedule_export_rows(cable_rows):
             'Connected To': row.get('connected_to', ''),
             'Line IDs': row.get('line_ids', ''),
             'Purpose': row.get('purpose', ''),
+            'Manual Edit': 'Yes' if row.get('manual_override_active') else 'No',
             'Route Reference': row.get('route_reference', ''),
             'Installation Area': row.get('installation_area', ''),
             'Installation Basis': row.get('installation_basis', ''),
@@ -392,6 +609,9 @@ def cable_schedule_export_rows(cable_rows):
             'Checked By': row.get('checked_by', ''),
             'Checked Date': row.get('checked_date', ''),
             'Rev. No.': row.get('revision_no', ''),
+            'Generated At': _format_audit_datetime(row.get('generated_at')),
+            'Modified At': _format_audit_datetime(row.get('modified_at')),
+            'Lifecycle Status': row.get('lifecycle_status', ''),
         }
         for row in cable_rows
     ]

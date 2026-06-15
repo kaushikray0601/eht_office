@@ -5,7 +5,7 @@ from django.shortcuts import redirect
 _EXEMPT_PREFIXES = (
     '/login/',
     '/logout/',
-    '/admin/',
+    '/register/',
 )
 
 
@@ -18,7 +18,8 @@ class LoginRequiredMiddleware:
     def __call__(self, request):
         if not request.user.is_authenticated:
             path = request.path_info
-            if not (path == '/' or any(path.startswith(p) for p in _EXEMPT_PREFIXES)):
+            admin_prefix = f"/{getattr(settings, 'ADMIN_SITE_PATH', 'admin/')}"
+            if not (path == '/' or path.startswith(admin_prefix) or any(path.startswith(p) for p in _EXEMPT_PREFIXES)):
                 login_url = getattr(settings, 'LOGIN_URL', '/login/')
                 return redirect(f'{login_url}?next={path}')
         return self.get_response(request)

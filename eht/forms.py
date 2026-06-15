@@ -77,6 +77,7 @@ class ProjectDataForm(forms.ModelForm):
             'max_cb_size',
             'restrict_cb_current',
             'allowablevdrop',
+            'startup_vd_warning_threshold_pct',
             'cable_standard',
             'cable_conductor_material',
             'cable_insulation_type',
@@ -116,6 +117,7 @@ class ProjectDataForm(forms.ModelForm):
             'max_cb_size':'Max. circuit breaker size (A)',            
             'restrict_cb_current':'Max. circuit breaker loading (%)',
             'allowablevdrop':'Allowed voltage drop for cold cable (%)',
+            'startup_vd_warning_threshold_pct': 'Startup VD warning threshold (%)',
             'cable_standard': 'Cold cable standard',
             'cable_conductor_material': 'Cold cable conductor material',
             'cable_insulation_type': 'Cold cable insulation type',
@@ -156,6 +158,7 @@ class ProjectDataForm(forms.ModelForm):
             'max_cb_size',
             'restrict_cb_current',
             'allowablevdrop',
+            'startup_vd_warning_threshold_pct',
             'cable_standard',
             'cable_conductor_material',
             'cable_insulation_type',
@@ -205,6 +208,29 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['min_amb_t'].widget.attrs.update({'placeholder': 'Min. ambient temperature (°C)'})
         self.fields['max_amb_t'].widget.attrs.update({'placeholder': 'Max. ambient temperature (°C)'})
         self.fields['startup_t'].widget.attrs.update({'placeholder': 'Startup temperature (°C)'})
+        self.fields['vendor'].help_text = 'Catalogue vendor used for SR selection and MI fallback checks.'
+        self.fields['startup_t'].help_text = 'Minimum expected pipe/fluid temperature at energization.'
+        self.fields['min_amb_t'].help_text = 'Minimum ambient temperature used for steady-state heat-loss design.'
+        self.fields['max_amb_t'].help_text = 'Maximum ambient basis used for catalogue suitability review.'
+        self.fields['voltage'].help_text = 'Nominal supply voltage for load, breaker, and voltage-drop calculations.'
+        self.fields['max_cb_size'].help_text = 'Upper breaker-size limit allowed for generated EHT circuits.'
+        self.fields['restrict_cb_current'].help_text = 'Maximum continuous-current loading allowed as a percentage of breaker rating.'
+        self.fields['allowablevdrop'].help_text = 'Operating-current voltage-drop limit used for cold cable sizing.'
+        self.fields['voltage_var_factor'].help_text = 'Voltage variation margin applied to tracer power calculations.'
+        self.fields['res_tol'].help_text = 'Tracer resistance tolerance used when estimating startup current.'
+        self.fields['spiral_factor'].help_text = 'Maximum permitted spiral factor before SR straight-run alternatives are preferred.'
+        self.fields['spiral_wrap_allowed'].help_text = 'Controls whether spiral wrapping can be used before straight parallel runs.'
+        self.fields['heat_loss_sf'].help_text = 'Multiplier applied to base heat loss to produce design heat loss.'
+        self.fields['wind_speed'].help_text = 'Current MVP records this basis; advanced wind heat-loss correction is deferred.'
+        self.fields['margin_on_tracer_lengths'].help_text = 'Project allowance added to generated heating cable lengths.'
+        self.fields['termination_margin'].help_text = 'Extra SR cable length allowed for field terminations.'
+        self.fields['rtd_thrm'].help_text = 'Temperature control device type carried into BOQ and schedule outputs.'
+        self.fields['isolator_location'].help_text = 'Location basis used for local isolator quantities and notes.'
+        self.fields['caution_label_interval'].help_text = 'Spacing basis for EHT caution labels in BOQ estimates.'
+        self.fields['ckt_ln'].help_text = 'Default DB-to-JB cold-cable length when route-specific lengths are not available.'
+        self.fields['loop_ln'].help_text = 'Default JB-to-JB / branch loop length when route-specific lengths are not available.'
+        self.fields['area_class'].help_text = 'Hazardous-area classification basis carried into design records.'
+        self.fields['temp_class'].help_text = 'Temperature-class limit used for tracer suitability and review notes.'
         self.fields['heat_loss_method'].widget.attrs.update({'title': (
             'Mean temperature is active by default. Table, integrated k(T), and fixed-basis methods are placeholders for future releases.'
         )})
@@ -223,6 +249,10 @@ class ProjectDataForm(forms.ModelForm):
         self.fields['cable_grouping_derating'].help_text = (
             'User-entered grouping/spacing derating factor. Use 1.0 only when no grouping derating is required.'
         )
+        self.fields['startup_vd_warning_threshold_pct'].help_text = (
+            'Warning only. Cold cable sizing still uses operating current; this flags high startup-current voltage drop for review.'
+        )
+        self.fields['startup_vd_warning_threshold_pct'].widget.attrs.update({'min': '0.1', 'step': '0.1'})
         self.fields['cable_standard'].help_text = 'Default basis for LV EHT cold-cable sizing.'
         self.fields['cable_conductor_material'].help_text = 'Used for resistance correction and conductor mass estimate.'
         self.fields['cable_insulation_type'].help_text = 'XLPE uses 90 C and PVC uses 70 C conductor temperature basis.'

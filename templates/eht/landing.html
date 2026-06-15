@@ -34,6 +34,7 @@
             </div>
 
             <!-- Call to action -->
+            <div class="mt-4"></div>
             {% if user.is_authenticated %}
                 <p class="text-muted mb-3">
                     Welcome back, <strong>{{ user.username }}</strong>
@@ -41,10 +42,22 @@
                 <a href="{% url 'base' %}" class="btn btn-primary btn-lg px-5 mb-3">
                     Open eTrace &nbsp;<i class="bi bi-arrow-right-circle"></i>
                 </a>
-                <br>
-                <a href="/admin/" class="text-muted small text-decoration-none">
-                    <i class="bi bi-gear me-1"></i>Admin Panel
-                </a>
+                {% if nav_projects %}
+                    <div class="list-group text-start shadow-sm mb-3">
+                        {% for nav_project in nav_projects|slice:":5" %}
+                            <a href="{{ nav_project.workspace_url }}" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center">
+                                <span>{{ nav_project.display_name }}</span>
+                                <span class="badge text-bg-{{ nav_project.status_tone }}">{{ nav_project.status_label }}</span>
+                            </a>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+                {% if user.is_staff %}
+                    <br>
+                    <a href="/{{ admin_site_path }}" class="text-muted small text-decoration-none">
+                        <i class="bi bi-gear me-1"></i>Admin Panel
+                    </a>
+                {% endif %}
             {% else %}
                 <a href="{% url 'my_login' %}" class="btn btn-primary btn-lg px-5">
                     Sign In &nbsp;<i class="bi bi-box-arrow-in-right"></i>

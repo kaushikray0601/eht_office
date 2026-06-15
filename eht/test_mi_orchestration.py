@@ -198,7 +198,7 @@ class MIOrchestrationBoundaryTests(TestCase):
         self.assertEqual(rejection['mi_selection_rejection_reasons'][0]['code'], 'NO_VALIDATED_MI_CATALOGUE_DATA')
         self.assertEqual(result['power_distribution'], [])
 
-    def test_non_temperature_sr_rejection_does_not_trigger_mi_fallback(self):
+    def test_sr_heat_duty_rejection_records_mi_rejection_when_catalogue_is_empty(self):
         result = orchestrate_calculations(
             process_lines=make_process_lines(),
             vendor_data=make_vendor_data(C_Coeff=1.0),
@@ -212,8 +212,52 @@ class MIOrchestrationBoundaryTests(TestCase):
         )
 
         self.assertEqual(result['selected_tracers'], [])
-        self.assertEqual(result['selected_mi_heaters'], [])
         self.assertEqual(result['power_distribution'], [])
+        self.assertEqual(result['heat_loss'][0]['selection_status'], 'rejected')
+        self.assertEqual(
+            result['heat_loss'][0]['selection_rejection_reasons'][0]['code'],
+            'NO_SPIRAL_FACTOR_MATCH',
+        )
+        self.assertIn(
+            'max_heat_delivery_at_run_cap_w_m',
+            result['heat_loss'][0]['selection_rejection_reasons'][0]['details'],
+        )
+        self.assertEqual(len(result['selected_mi_heaters']), 1)
+        rejection = result['selected_mi_heaters'][0]
+        self.assertEqual(rejection['mi_selection_status'], 'rejected')
+        self.assertEqual(rejection['selection_basis']['selection_mode'], 'automatic_heat_duty_fallback')
+        self.assertEqual(rejection['mi_selection_rejection_reasons'][0]['code'], 'NO_VALIDATED_MI_CATALOGUE_DATA')
+
+    def test_sr_heat_duty_rejection_falls_back_to_validated_mi_catalogue(self):
+        make_validated_mi_catalogue()
+
+        result = orchestrate_calculations(
+            process_lines=make_process_lines(),
+            vendor_data=make_vendor_data(C_Coeff=1.0),
+            project_settings=make_project_settings(
+                spiral_factor=1.0,
+                spiral_wrap_allowed=False,
+                sr_max_parallel_runs=1,
+            ),
+            asme_b36_table=make_asme_table(),
+            thermal_cond_data=make_thermal_table(),
+        )
+
+        self.assertEqual(result['selected_tracers'], [])
+        self.assertEqual(result['heat_loss'][0]['selection_status'], 'rejected')
+        self.assertEqual(
+            result['heat_loss'][0]['selection_rejection_reasons'][0]['code'],
+            'NO_SPIRAL_FACTOR_MATCH',
+        )
+        self.assertEqual(len(result['selected_mi_heaters']), 1)
+        self.assertEqual(result['selected_mi_heaters'][0]['selection_status'], 'selected')
+        self.assertEqual(result['selected_mi_heaters'][0]['heater_part_number'], 'MIQ-R001')
+        self.assertEqual(
+            result['selected_mi_heaters'][0]['selection_basis']['selection_mode'],
+            'automatic_heat_duty_fallback',
+        )
+        self.assertEqual(len(result['power_distribution']), 1)
+        self.assertEqual(result['tracer_power_param'][0]['selected_tracer'], 'MIQ-R001')
 
     def test_zero_tcr_is_treated_as_explicit_linear_constant_resistance(self):
         family = MICableFamily.objects.create(

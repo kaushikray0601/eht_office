@@ -277,6 +277,7 @@
         const coldCable = metadata.cold_cable || {};
         const status = coldCable.sizing_status || metadata.cold_cable_status || '';
         const vdStatus = coldCable.vd_status || metadata.cold_cable_vd_status || '';
+        const startupVdStatus = coldCable.startup_vd_status || '';
         const faultStatus = coldCable.fault_status || metadata.cold_cable_fault_status || '';
         if (status === 'unsizeable' || status === 'length_missing' || vdStatus === 'fail' || faultStatus === 'fail') {
             return 'danger';
@@ -284,6 +285,7 @@
         if (
             status === 'review_required'
             || vdStatus === 'review_required'
+            || startupVdStatus === 'review_required'
             || faultStatus === 'review_required'
             || metadata.manual_size_review_status === 'undersized'
             || metadata.manual_size_review_status === 'review_required'
@@ -2114,6 +2116,10 @@
             rows.push(['Segment VD', formatPercent(coldCable.vd_pct, 2)]);
             rows.push(['Total Path VD', formatPercent(coldCable.vd_total_pct, 2)]);
             rows.push(['VD Allowable', formatPercent(coldCable.vd_allowable_pct, 2)]);
+            rows.push(['Startup VD', formatPercent(coldCable.startup_vd_total_pct, 2)]);
+            rows.push(['Startup VD Threshold', formatPercent(coldCable.startup_vd_threshold_pct, 2)]);
+            rows.push(['Startup VD Status', formatStatusText(coldCable.startup_vd_status)]);
+            rows.push(['Start Current / Ckt', formatUnit(coldCable.per_circuit_starting_current_a, 'A', 2)]);
             rows.push(['Load End Voltage', formatUnit(coldCable.load_end_voltage_v, 'V', 1)]);
             rows.push(['Fault Current', formatUnit(coldCable.fault_current_a, 'A', 2)]);
             rows.push(['K Temp', hasValue(coldCable.k_temp) ? formatEngineeringNumber(coldCable.k_temp, 4) : '-']);
@@ -4553,6 +4559,18 @@
     $(document).on('keydown', function (event) {
         if (event.key === 'Escape' && document.body.classList.contains('sld-zen-mode')) {
             setSldZenMode(false);
+        }
+        const target = event.target;
+        const isTypingTarget = target && (
+            target.isContentEditable ||
+            ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName)
+        );
+        if (!isTypingTarget && event.shiftKey && !event.ctrlKey && !event.metaKey && event.key && event.key.toLowerCase() === 'f') {
+            const root = document.getElementById('sld-diagram-shell');
+            if (ensureSldWorkspaceReady(root)) {
+                event.preventDefault();
+                fitPaperToContent(root);
+            }
         }
     });
 

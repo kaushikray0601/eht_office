@@ -100,7 +100,7 @@ def _mi_selection_result(line, heat_loss, project_settings, selection_mode, sele
         project_settings,
     )
     if not selected_mi_heater:
-        if selection_mode == 'automatic_temperature_fallback':
+        if selection_mode in {'automatic_temperature_fallback', 'automatic_heat_duty_fallback'}:
             return _mi_rejection_result(line, mi_heat_loss, selection_mode)
         return None
 
@@ -115,6 +115,42 @@ def _mi_selection_result(line, heat_loss, project_settings, selection_mode, sele
         "selection_rejection_reasons": [],
         "selection_basis": selection_basis,
     }
+
+
+def _ensure_sr_rejection_reason(heat_loss, line):
+    """Guarantee no unselected SR line can continue without a diagnostic."""
+    if heat_loss.get('selection_rejection_reasons'):
+        return
+    heat_loss['selection_status'] = 'rejected'
+    heat_loss['selection_rejection_reasons'] = [{
+        'rule_set': 'SR_SELECTION_REJECTION_REASON_V1',
+        'code': 'SR_SELECTION_UNRESOLVED',
+        'message': (
+            'SR selection did not produce a selected tracer and no detailed '
+            'selection rejection reason was recorded. Review catalogue data, '
+            'line heat duty, and project selection settings.'
+        ),
+        'details': {
+            'line_uid': line.get('uid'),
+            'required_heat_loss_w_m': heat_loss.get('heat_loss'),
+        },
+    }]
+
+
+def _sr_heat_duty_fallback_applicable(heat_loss):
+    """Return true when SR failed only after catalogue rows could not meet duty."""
+    return any(
+        isinstance(reason, dict) and reason.get('code') == 'NO_SPIRAL_FACTOR_MATCH'
+        for reason in heat_loss.get('selection_rejection_reasons', [])
+    )
+
+
+def _sr_fallback_selection_mode(line, heat_loss, vendor_data):
+    if _sr_temperature_limit_exceeded(line, vendor_data):
+        return 'automatic_temperature_fallback'
+    if _sr_heat_duty_fallback_applicable(heat_loss):
+        return 'automatic_heat_duty_fallback'
+    return ''
 
 
 def _append_mi_electrical_outputs(aggregated_results, line, project_settings, asme_b36_table, tag_factory, mi_result):
@@ -180,12 +216,14 @@ def orchestrate_calculations(process_lines, vendor_data, project_settings, asme_
                 vendor_data,
             )
             if not selected_tracer:
-                if _sr_temperature_limit_exceeded(line, vendor_data):
+                _ensure_sr_rejection_reason(heat_loss, line)
+                fallback_mode = _sr_fallback_selection_mode(line, heat_loss, vendor_data)
+                if fallback_mode:
                     mi_result = _mi_selection_result(
                         line,
                         heat_loss,
                         project_settings,
-                        selection_mode='automatic_temperature_fallback',
+                        selection_mode=fallback_mode,
                         selection_status='selected',
                     )
                     if mi_result:

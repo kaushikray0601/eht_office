@@ -115,4 +115,16 @@ Objective: build features that exceed manufacturer tools.
 17. `QA-P1`: Worked examples and verification report alignment. Complete.
 18. `RELEASE-P1`: Production readiness sweep. Code sweep complete; manual release sign-off pending.
 19. `CAT-P1 / SEC-P1a`: Catalogue import and exposure safety. Code safety complete; KR catalogue validation decisions pending.
-20. KR/manual release sign-off: demo walkthrough, visual/large-project acceptance, and terminal-voltage manual cross-check.
+20. `SCH-P2`: Cable schedule UX and internal lifecycle. Planned from KR/Claude audit convergence.
+21. `EHT-P1`: Temperature rule correction, startup voltage-drop warning, and MI heat-duty fallback. Planned.
+22. `APP-P1`: Data integrity, cleanup, project lifecycle, and dashboard foundations. Planned.
+23. `SEC-P1b`: Upload/authentication/admin/dependency hardening. Planned before production release.
+24. `UX-P1`: Low-risk first-customer polish. Planned after higher-risk blockers.
+25. KR/manual release sign-off: demo walkthrough, visual/large-project acceptance, and terminal-voltage manual cross-check.
+
+## Future Engineering Notes
+
+See `NOTES/project_management/FUTURE_ENGINEERING_NOTES.md` for post-MVP items
+that should be visible as roadmap intent but not allowed to expand Phase A:
+advanced heat-loss methods, true three-phase heat-tracing design, Constant
+Power tracer, and model-based routing/3D workflow.

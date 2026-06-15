@@ -3,8 +3,9 @@
 Document status: Production-hardening revision — 2026-06-14
 Module covered: Electrical heat tracing calculation module
 Current calculation technologies: Self-regulating tracer cable (SR) with
-automatic MI fallback for validated high-temperature cases; single-phase
-cold cable sizing (FeederCable / BranchCable / DistributionJB model)
+automatic MI fallback for validated high-temperature and SR heat-duty no-match
+cases; single-phase cold cable sizing (FeederCable / BranchCable /
+DistributionJB model)
 Future technology: Constant wattage cable and advanced MI zoning will be added
 as separate calculation modules
 
@@ -23,10 +24,11 @@ generates per-line and consolidated BOQ quantities, creates cable schedule data,
 and builds SLD-ready power-distribution information.
 
 For lines whose temperatures exceed the available SR catalogue temperature
-limits, the module can automatically select a validated mineral insulated, or
-MI, heater set. MI selection is a separate calculation path with its own
-catalogue validation, resistance-temperature correction, cold-lead option, and
-heater-set output evidence.
+limits, or where SR cannot meet the required heat duty within configured
+run/spiral limits, the module can automatically select a validated mineral
+insulated, or MI, heater set. MI selection is a separate calculation path with
+its own catalogue validation, resistance-temperature correction, cold-lead
+option, and heater-set output evidence.
 
 The manual also explains the engineering meaning of important result fields so
 that users do not misinterpret values such as heat loss, current, tracer
@@ -36,8 +38,9 @@ length, or rejected tracer selections.
 
 The current calculation engine supports SR cable calculation and a bounded MI
 automatic-fallback MVP. SR remains the normal default. MI is selected only when
-SR catalogue temperature limits are exceeded and validated MI catalogue data is
-available for the selected vendor.
+SR catalogue temperature limits are exceeded or no SR heat-duty match is
+available within configured run/spiral limits, and validated MI catalogue data
+is available for the selected vendor.
 
 MI is intentionally kept as a separate calculation path because MI cable
 engineering uses different selection logic, factory heater-set constraints,
@@ -65,7 +68,8 @@ The current SR calculation module includes:
 - Cable schedule generation from the active SLD/power-distribution model.
 - SLD graph generation and SLD PDF export.
 - Structured diagnostics when a line cannot receive a suitable SR tracer.
-- Automatic MI fallback when SR temperature limits are exceeded.
+- Automatic MI fallback when SR temperature limits are exceeded or no SR
+  heat-duty match is available within configured run/spiral limits.
 - Validated MI family/heater/cold-lead catalogue selection.
 - MI resistance-temperature correction using heater-level TCR values, with
   alloy factor table fallback where available.
@@ -171,8 +175,13 @@ Temperature validation:
 
 - Minimum ambient temperature cannot be greater than maximum ambient
   temperature.
-- In line-list input, operating, maintain, and design temperatures must satisfy:
-  `Oper_T <= Maint_T <= Design_T`.
+- In line-list input, maintain, operating, and design temperatures must satisfy:
+  `Maint_T <= Oper_T <= Design_T`.
+  Maintain temperature is the minimum pipe temperature to be maintained (the
+  heat tracing setpoint). Operating temperature is the normal process temperature,
+  which is always at or above the maintain setpoint. Design temperature is the
+  maximum exposure temperature (upset / steam-out), which must be at or above
+  the operating temperature.
 
 ### 5.3 Electrical Design Fields
 
@@ -252,9 +261,9 @@ The following columns are mandatory for calculation:
 | Line_Length | Pipe length, in meters. |
 | Ins_Mat_Type | Insulation material type matching the conductivity database. |
 | Insul_Thick | Insulation thickness, in mm. |
-| Maint_T | Maintain temperature, in deg C. |
-| Oper_T | Operating temperature, in deg C. |
-| Design_T | Design temperature, in deg C. |
+| Maint_T | Maintain temperature, in deg C. The minimum pipe surface temperature the heat tracing system must maintain under design cold ambient conditions. This is the heat tracing setpoint — the lowest acceptable pipe temperature. It is the value used directly in the heat-loss formula. Must be less than or equal to Oper_T. |
+| Oper_T | Operating temperature, in deg C. The normal process operating temperature of the fluid in the pipe. During normal operation the fluid is at this temperature and the heat tracer is mostly off (SR self-regulating behaviour). Used for SR catalogue maximum-operating-temperature suitability check. Must be greater than or equal to Maint_T and less than or equal to Design_T. |
+| Design_T | Design temperature, in deg C. The maximum process temperature the pipe or fluid can reach, including upset conditions, steam-out, and pressure-relief scenarios. The heat tracing cable must survive at this temperature without damage. Drives the SR catalogue maximum-exposure-temperature check. Must be greater than or equal to Oper_T. |
 
 ### 6.2 Optional or Defaulted Input Columns
 
@@ -282,7 +291,7 @@ The upload validation checks:
 - Mandatory fields are present.
 - Numeric fields are numeric.
 - Line size, line length, and insulation thickness are not negative.
-- Temperatures satisfy `Oper_T <= Maint_T <= Design_T`.
+- Temperatures satisfy `Maint_T <= Oper_T <= Design_T` (maintain ≤ operating ≤ design/exposure).
 - Duplicate rows are detected using key line and design fields.
 
 If invalid rows are found, the module generates an error workbook. The error
@@ -396,7 +405,12 @@ Where:
 - `k` is insulation conductivity.
 - `t` is insulation thickness.
 - `D` is pipe outside diameter.
-- `Maint_T` is maintain temperature.
+- `Maint_T` is the maintain temperature — the minimum pipe surface temperature to be
+  maintained. This is the pipe temperature at the design cold condition (not the
+  operating temperature or the design maximum). The heat-loss formula calculates the
+  watts per metre needed to keep the pipe at exactly this temperature when the ambient
+  is at its minimum. For freeze protection this is typically just above 0 °C; for pour-point
+  maintenance it is the minimum pumpable temperature of the fluid.
 - `Min_Ambient_T` is project minimum ambient temperature.
 
 The module then applies wind correction and heat-loss safety factor:
@@ -441,6 +455,10 @@ Current accessory basis:
 These are not currently vendor-specific adders. If a project requires
 vendor-specific accessory allowance rules, those rules should be added as a
 future engineering enhancement.
+
+Because these are empirical adders, they should be reviewed when the project
+specification mandates vendor-published valve/flange/support allowance tables
+or when unusual accessories materially change heat-loss geometry.
 
 ## 9. SR Tracer Selection Basis
 
@@ -839,6 +857,10 @@ equals or exceeds the circuit operating current.
 
 Note: the cold cable is sized for operating current, not starting current.
 The starting current is transient and the MCB is already selected to handle it.
+The module separately calculates a startup-current voltage-drop warning using
+the selected cold-cable path. If the startup voltage drop exceeds the project
+warning threshold, 10% by default, the cold-cable result is marked review
+required. This warning does not automatically upsize the cable.
 
 #### Step 3 — Voltage Drop
 
@@ -860,6 +882,11 @@ Voltage drop formulas:
 The single-phase cold-cable rebuild evaluates the complete terminal path:
 `VD_total = VD_feeder + VD_branch`. The load-end voltage is:
 `V_load = V_nominal - VD_total`.
+
+Startup-current voltage drop uses the same selected Feeder/Branch Cable path
+and flags review when:
+
+`VD_startup_total (%) > Project startup VD warning threshold (%)`
 
 #### Step 4 — Optimisation for Feeder/Branch Distribution Paths
 
@@ -906,6 +933,13 @@ Type B → 3×, Type C → 5×, Type D → 10×.
 
 If the fault current does not meet the threshold, the rebuild upsizes the
 Feeder/Branch cable path as needed, subject to the current RCD/hard-gate rules.
+
+The source impedance term is derived from the project EHT DB prospective fault
+level. It is a practical design approximation, not a measured upstream network
+impedance study. It does not model upstream X/R ratio, transformer impedance
+details, or every upstream distribution segment. If a project requires final
+protection coordination, the project electrical engineer should verify the
+issued cable sizes against the approved short-circuit and protection study.
 
 #### Step 6 — Earth Fault on Single-Phase Outgoing Circuits
 
@@ -1632,7 +1666,7 @@ The following assumptions are active in the MI MVP:
 
 | Area | Current assumption |
 | --- | --- |
-| Technology choice | SR is attempted first; MI is automatic only for SR temperature-limit exceedance. |
+| Technology choice | SR is attempted first; MI is automatic only for SR temperature-limit exceedance or SR heat-duty no-match within configured run/spiral limits. |
 | User choice | The user does not manually choose SR or MI in project setup. |
 | Catalogue authority | MI families must be marked validated before selection. |
 | Catalogue provenance | MI family source document is recorded; validation remains an engineering/admin responsibility. |
@@ -1661,10 +1695,10 @@ The following architectural decisions were made deliberately:
 - `is_validated` is a hard catalogue gate for MI selection.
 - MI result persistence uses snapshot fields so historical results do not drift
   if catalogue data is later edited.
-- MI rejected rows are persisted and displayed; rejected high-temperature lines
-  are not allowed to disappear silently.
+- MI rejected rows are persisted and displayed; rejected high-temperature and
+  SR heat-duty no-match lines are not allowed to disappear silently.
 - The project setup page does not expose a manual SR/MI selector. Automation is
-  based on temperature suitability.
+  based on SR temperature suitability and SR heat-duty availability.
 - MI SLD override identifiers use stable heater part number and cold-lead option
   code, not transient database row IDs.
 - T-class is not auto-approved by comparing published maximum sheath rating
@@ -1873,8 +1907,11 @@ product development.
 
 | Term | Meaning |
 | --- | --- |
+| Maint_T | Maintain temperature. The minimum pipe surface temperature the heat tracing system must maintain under the coldest design ambient condition. Used directly in the heat-loss formula. The lowest of the three process temperatures. For freeze protection this is typically just above 0 °C; for pour-point maintenance it is the minimum pumpable temperature of the process fluid. Correct ordering: Maint_T ≤ Oper_T ≤ Design_T. |
+| Oper_T | Operating temperature. The normal steady-state process temperature of the fluid in the pipe. The heat tracer is mostly off during normal operation because the process fluid is warmer than the heat-tracing setpoint. Drives the SR catalogue maximum-operating-temperature suitability check (catalogue field Max_Op_T). Must satisfy Maint_T ≤ Oper_T. |
+| Design_T | Design temperature (also called exposure temperature or maximum exposure temperature). The highest temperature the pipe or fluid can reach, including upsets, steam-out, pressure-relief blowdown, or regeneration cycles. The heating cable must survive this temperature without damage when the power is on. Drives the SR catalogue maximum-exposure-temperature check (catalogue field Max_Exp_T_On). Must satisfy Oper_T ≤ Design_T. |
 | SR cable | Self-regulating heating cable. |
-| MI cable | Mineral insulated heating cable. In the current MVP it is selected automatically for validated high-temperature fallback cases. |
+| MI cable | Mineral insulated heating cable. In the current MVP it is selected automatically for validated high-temperature fallback and SR heat-duty no-match cases. |
 | MI heater set | Factory-engineered MI heating cable set with heated section, hot-cold transition, cold lead, and selected resistance code. |
 | MI multi-set selection | Multiple identical MI heater sets selected for one process line when one heater set cannot satisfy heat delivery within per-set limits. |
 | Base heat loss | Heat loss before heat-loss safety factor. |

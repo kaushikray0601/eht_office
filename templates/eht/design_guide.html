@@ -154,7 +154,7 @@
     <div class="dg-card dg-fact">
         <div class="dg-fact-icon amber"><i class="bi bi-layers-half"></i></div>
         <h3>SR with MI Fallback</h3>
-        <p>SR is the default with straight parallel runs (up to 4×). Validated MI heater sets activate automatically when SR temperature limits are exceeded.</p>
+        <p>SR is the default with straight parallel runs (up to 4×). Validated MI heater sets activate automatically when SR temperature limits are exceeded or no SR row can meet the required heat duty within configured run limits.</p>
     </div>
     <div class="dg-card dg-fact">
         <div class="dg-fact-icon green"><i class="bi bi-shield-check"></i></div>
@@ -281,7 +281,7 @@
             <div class="dg-step-body">
                 <div>
                     <p><strong style="color:var(--blue)">SR path:</strong> Catalogue rows are filtered by family, temperature suitability, hazardous-area zone, gas group, temperature class, and voltage compatibility. Power output at Maint_T uses the vendor polynomial. The selector tries 1 → 4 straight parallel runs. Each candidate is ranked by run count, ordered length, and power fit.</p>
-                    <p style="margin-top:10px;"><strong style="color:var(--amber)">MI path (automatic):</strong> Triggered only when SR catalogue temperature limits are exceeded. Only validated MI families are used. The MVP selects identical factory heater sets, with multiple sets allowed where one set under-delivers heat within per-set limits. Each set is independently protected.</p>
+                    <p style="margin-top:10px;"><strong style="color:var(--amber)">MI path (automatic):</strong> Triggered when SR catalogue temperature limits are exceeded or when SR cannot meet heat duty within configured run/spiral limits. Only validated MI families are used. The MVP selects identical factory heater sets, with multiple sets allowed where one set under-delivers heat within per-set limits. Each set is independently protected.</p>
                 </div>
                 <div class="dg-step-outputs">
                     <div class="dg-output-chip"><i class="bi bi-check-circle-fill"></i> Duty ratio = Q_design / (P_LV × N_SR)</div>
@@ -634,7 +634,7 @@
                 <span class="dg-tech-badge mvp">MVP</span>
             </div>
             <h3>Mineral Insulated Cable</h3>
-            <p>Automatic fallback when SR temperature limits are exceeded. Uses validated MI catalogue families only. Multi-set selection for high heat-duty lines.</p>
+            <p>Automatic fallback when SR temperature limits are exceeded or no SR heat-duty match is available. Uses validated MI catalogue families only. Multi-set selection for high heat-duty lines.</p>
             <ul class="dg-tech-checklist">
                 <li><i class="bi bi-check-circle-fill"></i> Validated catalogue gate (is_validated flag)</li>
                 <li><i class="bi bi-check-circle-fill"></i> TCR-based resistance–temperature correction</li>
@@ -660,8 +660,10 @@
                 <li><i class="bi bi-check-circle-fill"></i> <strong>Conductor volume optimisation</strong> — minimises copper tonnage by distributing VD budget across Feeder Cable and Branch Cable pairs</li>
                 <li><i class="bi bi-check-circle-fill"></i> Series VD check: Feeder + Branch VD ≤ project limit; load-end voltage reported in V</li>
                 <li><i class="bi bi-check-circle-fill"></i> L-PE fault loop: EHT DB source impedance + Feeder/Branch phase and PE resistance</li>
+                <li><i class="bi bi-exclamation-triangle-fill"></i> Source impedance is derived from project DB fault level; final protection studies should verify upstream network assumptions</li>
                 <li><i class="bi bi-check-circle-fill"></i> RCD-aware MCB instantaneous sizing gate</li>
                 <li><i class="bi bi-check-circle-fill"></i> Conductor mass per branch (metric tonnes) — material takeoff</li>
+                <li><i class="bi bi-exclamation-triangle-fill"></i> Startup VD over threshold is warning-only and prompts terminal-voltage review, not automatic upsizing</li>
                 <li><i class="bi bi-clock"></i> Tracer PE-path in earth loop (pending SR/MI catalogue data)</li>
             </ul>
         </div>
