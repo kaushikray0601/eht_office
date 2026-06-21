@@ -14,6 +14,7 @@ The app started as an IDF-only viewer, then expanded into a broader engineering 
 - `planning/` - baseline notes, near-term plans, and integration direction.
 - `tracking/` - active todo/progress records for this workstream.
 - `decisions/` - durable design decisions, including naming and migration choices.
+- `prompts/` - reusable handoff prompts for Codex implementation and Claude architecture/review passes.
 
 ## Recovery Snapshot
 
@@ -22,4 +23,3 @@ Pre-pass recovery point created on 2026-06-18:
 - Branch: `snapshot/mvp-before-idfviewer-3d-2026-06-18`
 - Tag: `snapshot-mvp-before-idfviewer-3d-2026-06-18`
 - Snapshot commit: `1c15ef4`
-
