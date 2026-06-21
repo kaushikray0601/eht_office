@@ -15,6 +15,7 @@ from .forms import PipelineUploadForm
 from .analysis_utils import nearest_structure_report
 from .eht_tools import (
     EHT_TOOL_DEFINITIONS,
+    annotate_connection_validation,
     clean_eht_metadata,
     eht_tool_definition_payload,
     geometry_with_metrics,
@@ -108,6 +109,13 @@ def _eht_element_payload(element):
         "metadata": element.metadata,
         "updated_at": element.updated_at.isoformat() if element.updated_at else "",
     }
+
+
+def _annotated_eht_payloads(elements):
+    return annotate_connection_validation([
+        _eht_element_payload(element)
+        for element in elements
+    ])
 
 
 def _get_overlay_file(request, project):
@@ -335,7 +343,7 @@ def eht_design_elements_view(request, project_id):
     if request.method == "GET":
         elements = EHTDesignElement.objects.filter(project=project, idf_file=saved_file)
         return JsonResponse({
-            "elements": [_eht_element_payload(element) for element in elements],
+            "elements": _annotated_eht_payloads(elements),
             "tool_definitions": eht_tool_definition_payload(),
             "scope": {
                 "project_id": project.proj_id,
@@ -364,6 +372,8 @@ def eht_design_elements_view(request, project_id):
     except ValueError as exc:
         return JsonResponse({"error": str(exc)}, status=400)
 
+    cleaned = annotate_connection_validation(cleaned)
+
     with transaction.atomic():
         EHTDesignElement.objects.filter(project=project, idf_file=saved_file).delete()
         created = [
@@ -383,7 +393,7 @@ def eht_design_elements_view(request, project_id):
 
     elements = EHTDesignElement.objects.filter(project=project, idf_file=saved_file)
     return JsonResponse({
-        "elements": [_eht_element_payload(element) for element in elements],
+        "elements": _annotated_eht_payloads(elements),
         "tool_definitions": eht_tool_definition_payload(),
         "count": len(created),
     })

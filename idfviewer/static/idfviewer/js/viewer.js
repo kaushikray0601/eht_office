@@ -145,6 +145,11 @@ let pendingEhtGeometryEdit = null;
 let selectedEhtObjects = [];
 let hoveredEhtPlacementKey = "";
 let routeStartElementUid = "";
+let activeEhtDrag = null;
+let suppressNextViewerClick = false;
+let ehtAxisLock = "";
+const ehtUndoStack = [];
+const EHT_UNDO_LIMIT = 30;
 
 let selectedGroup = null;
 
@@ -311,6 +316,11 @@ let EHT_ELEMENT_DEFS = {
         label: "SR Tracer",
         geometry_type: "polyline",
         color: 0xf59e0b,
+        connection_rules: {
+            from_types: ["junction_box", "isolator"],
+            to_types: ["end_termination", "rtd", "junction_box", "isolator"],
+            endpoint_required: true,
+        },
         fields: [
             { key: "tag", label: "Tag", type: "text" },
             { key: "tracer_family", label: "Tracer Family", type: "select", options: ["SR"], default: "SR" },
@@ -324,6 +334,11 @@ let EHT_ELEMENT_DEFS = {
         label: "MI Tracer",
         geometry_type: "polyline",
         color: 0xea580c,
+        connection_rules: {
+            from_types: ["junction_box", "isolator"],
+            to_types: ["end_termination", "rtd", "junction_box", "isolator"],
+            endpoint_required: true,
+        },
         fields: [
             { key: "tag", label: "Tag", type: "text" },
             { key: "tracer_family", label: "Tracer Family", type: "select", options: ["MI"], default: "MI" },
@@ -348,6 +363,11 @@ let EHT_ELEMENT_DEFS = {
         label: "Cold Cable",
         geometry_type: "polyline",
         color: 0x0284c7,
+        connection_rules: {
+            from_types: ["distribution_board", "junction_box", "isolator"],
+            to_types: ["junction_box", "isolator", "rtd", "end_termination"],
+            endpoint_required: true,
+        },
         fields: [
             { key: "tag", label: "Tag", type: "text" },
             { key: "from", label: "From", type: "text" },
@@ -380,6 +400,15 @@ let EHT_ELEMENT_DEFS = {
         ],
     },
 };
+
+const INTERNAL_EHT_METADATA_KEYS = new Set([
+    "from_element_uid",
+    "from_element_type",
+    "to_element_uid",
+    "to_element_type",
+    "connection_status",
+    "connection_warnings",
+]);
 
 function getEhtDef(elementType) {
     return EHT_ELEMENT_DEFS[elementType] || EHT_ELEMENT_DEFS.junction_box;
@@ -1353,6 +1382,51 @@ function markEhtLayerClean() {
     }
 }
 
+function cloneEhtElements(elements = ehtElements) {
+    return JSON.parse(JSON.stringify(elements || []));
+}
+
+function updateEhtUndoButtonState() {
+    document.querySelectorAll('.eht-undo-btn').forEach(button => {
+        button.disabled = ehtUndoStack.length === 0;
+        button.classList.toggle('opacity-45', ehtUndoStack.length === 0);
+        button.classList.toggle('cursor-not-allowed', ehtUndoStack.length === 0);
+    });
+}
+
+function pushEhtUndo(label = "EHT edit") {
+    ehtUndoStack.push({
+        label,
+        elements: cloneEhtElements(),
+        selectedEhtElementUid,
+    });
+    if (ehtUndoStack.length > EHT_UNDO_LIMIT) {
+        ehtUndoStack.shift();
+    }
+    updateEhtUndoButtonState();
+}
+
+function undoLastEhtEdit() {
+    const snapshot = ehtUndoStack.pop();
+    if (!snapshot) {
+        ehtStatus("No EHT edits to undo.");
+        updateEhtUndoButtonState();
+        return;
+    }
+    ehtElements = cloneEhtElements(snapshot.elements);
+    selectedEhtElementUid = snapshot.selectedEhtElementUid || "";
+    renderEhtElements();
+    markEhtLayerDirty();
+    const selected = findEhtElement(selectedEhtElementUid);
+    if (selected) {
+        renderEhtProperties(selected);
+    } else if (propsContent) {
+        propsContent.innerHTML = `<div class="text-center text-slate-400 mt-12 text-[12px]">EHT edit undone. Save the layer to persist.</div>`;
+    }
+    ehtStatus(`Undid ${snapshot.label}. Save EHT Layer when ready.`);
+    updateEhtUndoButtonState();
+}
+
 function clearEhtRoutePreview() {
     while (ehtRoutePreviewObjects.length) {
         disposeThreeObject(ehtRoutePreviewObjects.pop());
@@ -1444,7 +1518,7 @@ function addEhtPlacementPreviewLabel(candidate) {
         : 0;
     const sourceElement = findEhtElement(routeStartElementUid);
     const target = sourceElement
-        ? findNearestEhtElementToPoint(candidate.point, { excludeUid: sourceElement.element_uid, maxDistance: THREE.MathUtils.clamp(sizes.pipeRad * 28, 0.12, 1.2) })
+        ? findNearestEhtConnectionTarget(candidate.point, sourceElement, activeEhtTool, { maxDistance: THREE.MathUtils.clamp(sizes.pipeRad * 28, 0.12, 1.2) })
         : null;
     const routeText = def && def.geometry_type === "polyline" && pendingEhtRoutePoints.length
         ? ` | leg ${formatSceneLength(nextLength)}`
@@ -1466,8 +1540,7 @@ function addEhtPlacementPreviewLabel(candidate) {
 function addEhtConnectionTargetPreview(candidate) {
     const sourceElement = findEhtElement(routeStartElementUid);
     if (!sourceElement || !pendingEhtRoutePoints.length) return;
-    const target = findNearestEhtElementToPoint(candidate.point, {
-        excludeUid: sourceElement.element_uid,
+    const target = findNearestEhtConnectionTarget(candidate.point, sourceElement, activeEhtTool, {
         maxDistance: THREE.MathUtils.clamp(sizes.pipeRad * 28, 0.12, 1.2),
     });
     if (!target) return;
@@ -1678,7 +1751,7 @@ function getPointElementCoordinate(element) {
     return points.length ? [...points[0]] : [0, 0, 0];
 }
 
-function setPointElementCoordinate(element, pointArray) {
+function setPointElementCoordinate(element, pointArray, { renderPanel = true, statusMessage = "" } = {}) {
     const geometry = element.geometry || {};
     geometry.points = [[
         Number(pointArray[0]) || 0,
@@ -1689,7 +1762,29 @@ function setPointElementCoordinate(element, pointArray) {
     updateEhtGeometryMetrics(element);
     markEhtLayerDirty();
     renderEhtElements();
-    renderEhtProperties(element);
+    if (renderPanel) {
+        renderEhtProperties(element);
+    } else {
+        applyEhtHighlight(element);
+    }
+    if (statusMessage) {
+        ehtStatus(statusMessage);
+    }
+}
+
+function setEhtAxisLock(axis) {
+    ehtAxisLock = ["x", "y", "z"].includes(axis) ? axis : "";
+    document.querySelectorAll('.eht-axis-lock-btn').forEach(button => {
+        const isActive = (button.dataset.axisLock || "") === ehtAxisLock;
+        button.classList.toggle('bg-slate-800', isActive);
+        button.classList.toggle('text-white', isActive);
+        button.classList.toggle('border-slate-800', isActive);
+        button.classList.toggle('bg-white', !isActive);
+        button.classList.toggle('text-slate-700', !isActive);
+        button.classList.toggle('border-slate-200', !isActive);
+    });
+    const axisText = ehtAxisLock ? `${ehtAxisLock.toUpperCase()} axis locked` : "Free move";
+    ehtStatus(`Transform mode: ${axisText}.`);
 }
 
 function applyPointCoordinateInputs(element) {
@@ -1700,8 +1795,10 @@ function applyPointCoordinateInputs(element) {
         ehtStatus("Enter valid X, Y, and Z coordinates.");
         return;
     }
-    setPointElementCoordinate(element, [x, y, z]);
-    ehtStatus(`${getEhtElementLabel(element)} coordinate updated. Save EHT Layer when ready.`);
+    pushEhtUndo(`coordinate update for ${getEhtElementLabel(element)}`);
+    setPointElementCoordinate(element, [x, y, z], {
+        statusMessage: `${getEhtElementLabel(element)} coordinate updated. Save EHT Layer when ready.`,
+    });
 }
 
 function nudgePointElement(element, axis, direction) {
@@ -1710,9 +1807,11 @@ function nudgePointElement(element, axis, direction) {
     const point = getPointElementCoordinate(element);
     const axisIndex = { x: 0, y: 1, z: 2 }[axis];
     if (axisIndex === undefined) return;
+    pushEhtUndo(`nudge ${getEhtElementLabel(element)}`);
     point[axisIndex] = Number(point[axisIndex] || 0) + safeStep * direction;
-    setPointElementCoordinate(element, point);
-    ehtStatus(`${getEhtElementLabel(element)} nudged ${axis.toUpperCase()} ${direction > 0 ? "+" : "-"}${safeStep}. Save EHT Layer when ready.`);
+    setPointElementCoordinate(element, point, {
+        statusMessage: `${getEhtElementLabel(element)} nudged ${axis.toUpperCase()} ${direction > 0 ? "+" : "-"}${safeStep}. Save EHT Layer when ready.`,
+    });
 }
 
 function getEhtElementAnchorPoint(element) {
@@ -1720,8 +1819,9 @@ function getEhtElementAnchorPoint(element) {
     return points.length ? vecFromArray(points[0]) : null;
 }
 
-function findNearestEhtElementToPoint(point, { excludeUid = "", maxDistance = null } = {}) {
+function findNearestEhtElementToPoint(point, { excludeUid = "", maxDistance = null, allowedTypes = null } = {}) {
     if (!point) return null;
+    const allowed = Array.isArray(allowedTypes) && allowedTypes.length ? new Set(allowedTypes) : null;
     const limit = Number.isFinite(maxDistance)
         ? maxDistance
         : THREE.MathUtils.clamp(sizes.pipeRad * 16, 0.08, 0.65);
@@ -1729,6 +1829,7 @@ function findNearestEhtElementToPoint(point, { excludeUid = "", maxDistance = nu
     let bestDistance = Infinity;
     ehtElements.forEach(element => {
         if (excludeUid && element.element_uid === excludeUid) return;
+        if (allowed && !allowed.has(element.element_type)) return;
         const anchor = getEhtElementAnchorPoint(element);
         if (!anchor) return;
         const distance = anchor.distanceTo(point);
@@ -1740,16 +1841,27 @@ function findNearestEhtElementToPoint(point, { excludeUid = "", maxDistance = nu
     return best ? { element: best, distance: bestDistance } : null;
 }
 
+function findNearestEhtConnectionTarget(point, sourceElement, routeType, { maxDistance = null } = {}) {
+    const rules = getEhtConnectionRules(routeType) || {};
+    return findNearestEhtElementToPoint(point, {
+        excludeUid: sourceElement ? sourceElement.element_uid : "",
+        maxDistance,
+        allowedTypes: rules.to_types || null,
+    });
+}
+
 function startEhtRouteFromElement(element, tool) {
     const point = getEhtElementAnchorPoint(element);
     const def = getEhtDef(tool);
     if (!point || !def || def.geometry_type !== "polyline") return;
+    const rules = getEhtConnectionRules(tool) || {};
+    const sourceAllowed = !(rules.from_types || []).length || rules.from_types.includes(element.element_type);
     setActiveEhtTool(tool);
     routeStartElementUid = element.element_uid;
     pendingEhtRoutePoints = [point];
     renderEhtRoutePreview();
     setEhtRouteControlsVisible(true);
-    ehtStatus(`${def.label}: started from ${getEhtElementLabel(element)}. Pick the next route point.`);
+    ehtStatus(`${def.label}: started from ${getEhtElementLabel(element)}${sourceAllowed ? "" : " (source type warning)"}. Pick the next route point.`);
 }
 
 function applyRouteConnectionMetadata(element, points, sourceElement) {
@@ -1763,8 +1875,7 @@ function applyRouteConnectionMetadata(element, points, sourceElement) {
     }
 
     const lastPoint = points.length ? points[points.length - 1] : null;
-    const target = findNearestEhtElementToPoint(lastPoint, {
-        excludeUid: sourceElement.element_uid,
+    const target = findNearestEhtConnectionTarget(lastPoint, sourceElement, element.element_type, {
         maxDistance: THREE.MathUtils.clamp(sizes.pipeRad * 28, 0.12, 1.2),
     });
     if (target) {
@@ -1775,6 +1886,7 @@ function applyRouteConnectionMetadata(element, points, sourceElement) {
         }
     }
     element.metadata = metadata;
+    annotateLocalConnectionValidation(element);
 }
 
 function cancelPendingEhtGeometryEdit({ updateStatus = true } = {}) {
@@ -1813,6 +1925,7 @@ function applyEhtGeometryEditAtPoint(point) {
     const points = Array.isArray(geometry.points) ? [...geometry.points] : [];
     const pointArray = [point.x, point.y, point.z];
     const vertexIndex = THREE.MathUtils.clamp(pendingEhtGeometryEdit.vertexIndex, 0, Math.max(points.length - 1, 0));
+    pushEhtUndo(`geometry edit for ${getEhtElementLabel(element)}`);
 
     if (pendingEhtGeometryEdit.action === "move_element") {
         geometry.points = [pointArray];
@@ -2132,6 +2245,79 @@ function getEhtElementLabel(element) {
     return element.label || getEhtTypeLabel(element.element_type);
 }
 
+function getEhtConnectionRules(elementType) {
+    return getEhtDef(elementType).connection_rules || null;
+}
+
+function getEhtTypeLabels(types) {
+    return (types || []).map(type => getEhtTypeLabel(type)).join(", ");
+}
+
+function getEhtEndpointElement(element, side) {
+    const uid = String(((element || {}).metadata || {})[`${side}_element_uid`] || "").trim();
+    return uid ? findEhtElement(uid) : null;
+}
+
+function validateEhtElementConnection(element) {
+    const rules = getEhtConnectionRules(element.element_type);
+    const metadata = element.metadata || {};
+    if (!rules) {
+        return { status: "", warnings: [], fromElement: null, toElement: null };
+    }
+
+    const warnings = [];
+    const result = {
+        status: "ok",
+        warnings,
+        fromElement: null,
+        toElement: null,
+    };
+
+    [
+        ["from", "from_types", "source"],
+        ["to", "to_types", "target"],
+    ].forEach(([side, allowedKey, label]) => {
+        const uid = String(metadata[`${side}_element_uid`] || "").trim();
+        const allowed = rules[allowedKey] || [];
+        if (!uid) {
+            if (rules.endpoint_required) {
+                warnings.push(`Missing ${label} endpoint.`);
+            }
+            return;
+        }
+
+        const endpoint = findEhtElement(uid);
+        result[`${side}Element`] = endpoint;
+        if (!endpoint) {
+            warnings.push(`${label[0].toUpperCase()}${label.slice(1)} endpoint no longer exists.`);
+            return;
+        }
+        if (allowed.length && !allowed.includes(endpoint.element_type)) {
+            warnings.push(`${label[0].toUpperCase()}${label.slice(1)} endpoint ${getEhtElementLabel(endpoint)} is ${getEhtTypeLabel(endpoint.element_type)}; expected ${getEhtTypeLabels(allowed)}.`);
+        }
+    });
+
+    result.status = warnings.length ? "warning" : "ok";
+    return result;
+}
+
+function annotateLocalConnectionValidation(element) {
+    if (!element) return element;
+    const rules = getEhtConnectionRules(element.element_type);
+    if (!rules) return element;
+    const validation = validateEhtElementConnection(element);
+    element.metadata = {
+        ...(element.metadata || {}),
+        connection_status: validation.status,
+        connection_warnings: validation.warnings.join(" | "),
+    };
+    return element;
+}
+
+function annotateAllLocalConnectionValidation() {
+    ehtElements.forEach(element => annotateLocalConnectionValidation(element));
+}
+
 function parsePositiveNumber(value, fallback, { min = 0.02, max = 5 } = {}) {
     const parsed = Number.parseFloat(String(value ?? "").replace(/,/g, ""));
     if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
@@ -2190,8 +2376,9 @@ function renderEhtProperties(element) {
         ? "Front-left-lower Coordinate"
         : "Anchor Coordinate";
     const schemaKeys = new Set(def.fields.map(field => field.key));
+    const connectionValidation = validateEhtElementConnection(element);
     const extraFields = Object.keys(metadata)
-        .filter(key => !schemaKeys.has(key))
+        .filter(key => !schemaKeys.has(key) && !INTERNAL_EHT_METADATA_KEYS.has(key))
         .map(key => ({ key, label: key.replace(/_/g, " "), type: "textarea" }));
     const rows = [...def.fields, ...extraFields];
     propsContent.innerHTML = `
@@ -2209,6 +2396,33 @@ function renderEhtProperties(element) {
                         <div class="mt-0.5 font-semibold text-slate-800">${escapeHtml(geometry.segment_count || Math.max((geometry.points || []).length - 1, 0))}</div>
                     </div>
                 </div>
+                ${getEhtConnectionRules(element.element_type) ? `
+                    <div class="mt-3 rounded border ${connectionValidation.status === "warning" ? "border-amber-200 bg-amber-50/80" : "border-emerald-100 bg-emerald-50/60"} p-3">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="text-[10px] font-semibold uppercase tracking-[0.18em] ${connectionValidation.status === "warning" ? "text-amber-700" : "text-emerald-700"}">Connection Check</div>
+                            <div class="rounded-full px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${connectionValidation.status === "warning" ? "bg-amber-100 text-amber-800" : "bg-emerald-100 text-emerald-800"}">${connectionValidation.status === "warning" ? "Warning" : "OK"}</div>
+                        </div>
+                        <div class="mt-2 grid grid-cols-2 gap-2 text-[10px]">
+                            <div class="rounded border border-white/70 bg-white/70 px-2 py-1.5">
+                                <div class="font-semibold uppercase tracking-wide text-slate-400">From</div>
+                                <div class="mt-0.5 truncate text-slate-700" title="${escapeHtml(connectionValidation.fromElement ? getEhtElementLabel(connectionValidation.fromElement) : "Not linked")}">${escapeHtml(connectionValidation.fromElement ? getEhtElementLabel(connectionValidation.fromElement) : "Not linked")}</div>
+                            </div>
+                            <div class="rounded border border-white/70 bg-white/70 px-2 py-1.5">
+                                <div class="font-semibold uppercase tracking-wide text-slate-400">To</div>
+                                <div class="mt-0.5 truncate text-slate-700" title="${escapeHtml(connectionValidation.toElement ? getEhtElementLabel(connectionValidation.toElement) : "Not linked")}">${escapeHtml(connectionValidation.toElement ? getEhtElementLabel(connectionValidation.toElement) : "Not linked")}</div>
+                            </div>
+                        </div>
+                        ${connectionValidation.warnings.length ? `
+                            <div class="mt-2 space-y-1">
+                                ${connectionValidation.warnings.map(warning => `
+                                    <div class="rounded border border-amber-100 bg-white/75 px-2 py-1 text-[10px] leading-relaxed text-amber-800">${escapeHtml(warning)}</div>
+                                `).join("")}
+                            </div>
+                        ` : `
+                            <div class="mt-2 text-[10px] leading-relaxed text-emerald-700">Endpoints match the current EHT connection rules.</div>
+                        `}
+                    </div>
+                ` : ""}
                 <div class="mt-3 rounded border border-amber-100 bg-white/70 p-3">
                     <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Route Geometry</div>
                     <select id="ehtRoutePointSelect" class="mt-2 w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-[11px] text-slate-800 outline-none focus:border-slate-400">
@@ -2226,6 +2440,23 @@ function renderEhtProperties(element) {
                 <div class="mt-3 rounded border border-amber-100 bg-white/70 p-3">
                     <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Geometry</div>
                     <button id="ehtMoveElementBtn" type="button" class="mt-2 w-full rounded border border-slate-200 bg-white px-2 py-1.5 text-[11px] font-medium text-slate-700 shadow-sm hover:bg-slate-50">Move Element</button>
+                    <div class="mt-3 rounded border border-slate-200 bg-slate-50/75 p-2">
+                        <div class="flex items-center justify-between gap-2">
+                            <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Transform</div>
+                            <button type="button" class="eht-undo-btn rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-slate-600 shadow-sm hover:bg-slate-50" ${ehtUndoStack.length ? "" : "disabled"}>Undo</button>
+                        </div>
+                        <div class="mt-2 grid grid-cols-4 gap-1">
+                            ${[
+                                ["", "Free"],
+                                ["x", "X"],
+                                ["y", "Y"],
+                                ["z", "Z"],
+                            ].map(([axis, label]) => `
+                                <button type="button" class="eht-axis-lock-btn rounded border px-2 py-1.5 text-[10px] font-medium shadow-sm transition hover:bg-slate-100 ${axis === ehtAxisLock ? "border-slate-800 bg-slate-800 text-white" : "border-slate-200 bg-white text-slate-700"}" data-axis-lock="${axis}">${label}</button>
+                            `).join("")}
+                        </div>
+                        <div class="mt-2 text-[10px] leading-relaxed text-slate-500">Drag selected point elements. Use X/Y/Z to constrain movement.</div>
+                    </div>
                     <div class="mt-3 border-t border-amber-100 pt-3">
                         <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">${coordinateLabel}</div>
                         <div class="mt-2 grid grid-cols-3 gap-1.5">
@@ -2316,11 +2547,13 @@ function renderEhtProperties(element) {
     `;
 
     document.getElementById('ehtApplyEditBtn').addEventListener('click', () => {
+        pushEhtUndo(`metadata edit for ${getEhtElementLabel(element)}`);
         element.label = document.getElementById('ehtEditLabel').value.trim();
         element.metadata = {};
         document.querySelectorAll('.eht-metadata-input').forEach(input => {
             element.metadata[input.dataset.key] = input.value.trim();
         });
+        annotateLocalConnectionValidation(element);
         markEhtLayerDirty();
         renderEhtElements();
         renderEhtProperties(element);
@@ -2345,6 +2578,19 @@ function renderEhtProperties(element) {
             applyPointCoordinateInputs(element);
         });
     }
+
+    propsContent.querySelectorAll('.eht-axis-lock-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            setEhtAxisLock(button.dataset.axisLock || "");
+        });
+    });
+
+    propsContent.querySelectorAll('.eht-undo-btn').forEach(button => {
+        button.addEventListener('click', () => {
+            undoLastEhtEdit();
+        });
+    });
+    updateEhtUndoButtonState();
 
     document.querySelectorAll('.eht-nudge-btn').forEach(button => {
         button.addEventListener('click', () => {
@@ -2380,6 +2626,7 @@ function renderEhtProperties(element) {
                 ehtStatus("A route must keep at least two points.");
                 return;
             }
+            pushEhtUndo(`delete route point from ${getEhtElementLabel(element)}`);
             points.splice(parseInt(routePointSelect.value || "0", 10), 1);
             geometry.points = points;
             element.geometry = geometry;
@@ -2406,13 +2653,102 @@ function isTextEntryTarget(target) {
     return tagName === "input" || tagName === "textarea" || tagName === "select" || Boolean(target.isContentEditable);
 }
 
-function findEhtHitFromEvent(event) {
+function findEhtIntersectionFromEvent(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
     const hits = raycaster.intersectObjects(ehtSelectableMeshes.filter(object => object.visible && object.parent), false);
-    return hits.length ? findEhtElement(hits[0].object.userData.ehtElementUid) : null;
+    if (!hits.length) return null;
+    const object = hits[0].object;
+    const element = findEhtElement(object.userData.ehtElementUid);
+    return element ? { object, element } : null;
+}
+
+function findEhtHitFromEvent(event) {
+    const hit = findEhtIntersectionFromEvent(event);
+    return hit ? hit.element : null;
+}
+
+function canDragEhtElement(element) {
+    return Boolean(element && ((element.geometry || {}).type !== "polyline"));
+}
+
+function beginEhtDrag(event) {
+    if (measureModeActive || activeEhtTool || pendingEhtGeometryEdit || event.button !== 0) return false;
+    const hit = findEhtIntersectionFromEvent(event);
+    if (!hit || !canDragEhtElement(hit.element)) return false;
+
+    event.preventDefault();
+    event.stopPropagation();
+    selectEhtElement(hit.element);
+    activeEhtDrag = {
+        elementUid: hit.element.element_uid,
+        started: false,
+        undoPushed: false,
+        lastPoint: getEhtElementAnchorPoint(hit.element),
+        startPoint: getEhtElementAnchorPoint(hit.element),
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        unitsPerPixel: camera.position.distanceTo(controls.target) / Math.max(container.clientHeight || 1, 1),
+    };
+    controls.enabled = false;
+    renderer.domElement.setPointerCapture?.(event.pointerId);
+    return true;
+}
+
+function getConstrainedDragPoint(event, rawPoint) {
+    if (!activeEhtDrag || !activeEhtDrag.startPoint) return rawPoint;
+    if (!ehtAxisLock) return rawPoint;
+    const constrained = activeEhtDrag.startPoint.clone();
+    if (ehtAxisLock === "x") {
+        constrained.x = rawPoint.x;
+    } else if (ehtAxisLock === "z") {
+        constrained.z = rawPoint.z;
+    } else if (ehtAxisLock === "y") {
+        const pixelDelta = activeEhtDrag.startClientY - event.clientY;
+        constrained.y = activeEhtDrag.startPoint.y + pixelDelta * activeEhtDrag.unitsPerPixel;
+    }
+    return constrained;
+}
+
+function updateEhtDrag(event) {
+    if (!activeEhtDrag) return false;
+    const element = findEhtElement(activeEhtDrag.elementUid);
+    if (!element) {
+        finishEhtDrag(event);
+        return true;
+    }
+    const point = pointFromEhtPlacementEvent(event);
+    if (!point) return true;
+    const constrainedPoint = getConstrainedDragPoint(event, point);
+    if (!activeEhtDrag.undoPushed) {
+        pushEhtUndo(`move ${getEhtElementLabel(element)}`);
+        activeEhtDrag.undoPushed = true;
+    }
+    activeEhtDrag.started = true;
+    activeEhtDrag.lastPoint = constrainedPoint.clone();
+    setPointElementCoordinate(element, [constrainedPoint.x, constrainedPoint.y, constrainedPoint.z], { renderPanel: false });
+    const lockText = ehtAxisLock ? ` (${ehtAxisLock.toUpperCase()} locked)` : "";
+    ehtStatus(`${getEhtElementLabel(element)} moving${lockText}. Release mouse to finish.`);
+    return true;
+}
+
+function finishEhtDrag(event) {
+    if (!activeEhtDrag) return false;
+    const element = findEhtElement(activeEhtDrag.elementUid);
+    const moved = activeEhtDrag.started;
+    activeEhtDrag = null;
+    controls.enabled = true;
+    if (event && event.pointerId !== undefined) {
+        renderer.domElement.releasePointerCapture?.(event.pointerId);
+    }
+    if (element && moved) {
+        renderEhtProperties(element);
+        ehtStatus(`${getEhtElementLabel(element)} moved. Save EHT Layer when ready.`);
+        suppressNextViewerClick = true;
+    }
+    return true;
 }
 
 function pointFromEhtPlacementEvent(event) {
@@ -2442,6 +2778,7 @@ function handleEhtPlacementClick(event) {
 
     const element = createEhtElement(activeEhtTool, [point]);
     clearEhtPlacementPreview();
+    pushEhtUndo(`place ${getEhtElementLabel(element)}`);
     ehtElements.push(element);
     markEhtLayerDirty();
     renderEhtElements();
@@ -2461,6 +2798,7 @@ function finishPendingEhtRoute() {
     const sourceElement = findEhtElement(routeStartElementUid);
     const element = createEhtElement(activeEhtTool, routePoints);
     applyRouteConnectionMetadata(element, routePoints, sourceElement);
+    pushEhtUndo(`place ${getEhtElementLabel(element)}`);
     ehtElements.push(element);
     clearEhtPlacementPreview();
     cancelPendingEhtRoute({ updateStatus: false });
@@ -2481,6 +2819,8 @@ async function loadEhtLayer() {
         }
         applyEhtToolDefinitions(payload.tool_definitions);
         ehtElements = Array.isArray(payload.elements) ? payload.elements : [];
+        ehtUndoStack.length = 0;
+        updateEhtUndoButtonState();
         renderEhtElements();
         markEhtLayerClean();
         ehtStatus(ehtElements.length ? `${ehtElements.length} EHT element(s) loaded.` : "Select a tool, then click the model.");
@@ -2492,6 +2832,7 @@ async function loadEhtLayer() {
 async function saveEhtLayer({ successMessage = null, quiet = false } = {}) {
     const url = getEhtOverlayUrl();
     if (!url) return false;
+    annotateAllLocalConnectionValidation();
     if (ehtSaveLayerBtn) {
         ehtSaveLayerBtn.disabled = true;
         if (!quiet) {
@@ -2540,6 +2881,7 @@ async function deleteEhtElement(element, { confirmDelete = true } = {}) {
     }
 
     const previousElements = ehtElements;
+    pushEhtUndo(`delete ${label}`);
     ehtElements = ehtElements.filter(row => row.element_uid !== element.element_uid);
     selectedEhtElementUid = "";
     clearEhtHighlight();
@@ -3201,12 +3543,14 @@ function buildEhtHierarchySection() {
                         <div class="eht-type-children mt-2 space-y-1 pl-5 ${typeCollapsed ? "hidden" : ""}">
                             ${elements.map(element => {
                                 const elementVisible = isEhtElementVisible(element);
+                                const connectionValidation = validateEhtElementConnection(element);
                                 return `
                                     <div class="eht-hierarchy-row flex items-center gap-2 rounded px-1.5 py-1 text-[11px] text-slate-600 transition hover:bg-white/70" data-eht-uid="${escapeHtml(element.element_uid)}" data-search-text="${escapeHtml(getEhtSearchText(element))}">
                                         <input type="checkbox" class="eht-element-toggle h-3 w-3 rounded border-slate-300 text-amber-600 focus:ring-0" data-eht-uid="${escapeHtml(element.element_uid)}" ${elementVisible ? "checked" : ""}>
                                         <button type="button" class="eht-select-row min-w-0 flex-1 truncate text-left" data-eht-uid="${escapeHtml(element.element_uid)}" title="${escapeHtml(getEhtElementLabel(element))}">
                                             ${escapeHtml(getEhtElementLabel(element))}
                                         </button>
+                                        ${connectionValidation.status === "warning" ? `<span class="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800" title="${escapeHtml(connectionValidation.warnings.join(" | "))}">!</span>` : ""}
                                     </div>
                                 `;
                             }).join("")}
@@ -4150,6 +4494,13 @@ function applyHighlight(selectGroup) {
 }
 
 renderer.domElement.addEventListener("click", (event) => {
+    if (suppressNextViewerClick) {
+        event.preventDefault();
+        event.stopPropagation();
+        suppressNextViewerClick = false;
+        return;
+    }
+
     if (measureModeActive) {
         event.preventDefault();
         event.stopPropagation();
@@ -4220,7 +4571,16 @@ renderer.domElement.addEventListener("click", (event) => {
     renderProperties(item);
 });
 
+renderer.domElement.addEventListener("pointerdown", (event) => {
+    beginEhtDrag(event);
+});
+
 renderer.domElement.addEventListener("pointermove", (event) => {
+    if (updateEhtDrag(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+    }
     updateMeasurementPreview(event);
     updateEhtPlacementPreview(event);
 });
@@ -4228,6 +4588,10 @@ renderer.domElement.addEventListener("pointermove", (event) => {
 renderer.domElement.addEventListener("pointerleave", () => {
     clearMeasurementPreview();
     clearEhtPlacementPreview();
+});
+
+window.addEventListener("pointerup", (event) => {
+    finishEhtDrag(event);
 });
 
 renderer.domElement.addEventListener("dblclick", (event) => {
@@ -4380,6 +4744,13 @@ if (ehtSaveLayerBtn) {
     });
 }
 
+document.querySelectorAll('.eht-undo-btn').forEach(button => {
+    button.addEventListener('click', () => {
+        undoLastEhtEdit();
+    });
+});
+updateEhtUndoButtonState();
+
 if (ehtFinishRouteBtn) {
     ehtFinishRouteBtn.addEventListener('click', () => {
         finishPendingEhtRoute();
@@ -4393,6 +4764,21 @@ if (ehtCancelRouteBtn) {
 }
 
 function handleGlobalKeyDown(event) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z' && !isTextEntryTarget(event.target)) {
+        event.preventDefault();
+        event.stopPropagation();
+        undoLastEhtEdit();
+        return;
+    }
+    if (!event.ctrlKey && !event.metaKey && !event.altKey && selectedEhtElementUid && !isTextEntryTarget(event.target)) {
+        const key = event.key.toLowerCase();
+        if (["x", "y", "z", "f"].includes(key)) {
+            event.preventDefault();
+            event.stopPropagation();
+            setEhtAxisLock(key === "f" ? "" : key);
+            return;
+        }
+    }
     const isDeleteKey = event.key === 'Delete' || event.key === 'Backspace' || event.code === 'Delete' || event.code === 'Backspace';
     if (isDeleteKey && selectedEhtElementUid && !isTextEntryTarget(event.target)) {
         const selected = findEhtElement(selectedEhtElementUid);

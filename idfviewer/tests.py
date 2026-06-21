@@ -849,3 +849,58 @@ class SavedPipelineFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("Tracer Family", response.json()["error"])
+
+    def test_eht_design_elements_annotate_connection_warnings(self):
+        url = f"/idfviewer/projects/{self.project.proj_id}/eht-elements/"
+        payload = {
+            "elements": [
+                {
+                    "element_uid": "db-1",
+                    "element_type": "distribution_board",
+                    "label": "DB-001",
+                    "geometry": {"type": "point", "points": [[0.0, 0.0, 0.0]]},
+                    "metadata": {"tag": "DB-001"},
+                },
+                {
+                    "element_uid": "jb-1",
+                    "element_type": "junction_box",
+                    "label": "JB-001",
+                    "geometry": {"type": "point", "points": [[1.0, 0.0, 0.0]]},
+                    "metadata": {"tag": "JB-001"},
+                },
+                {
+                    "element_uid": "rtd-1",
+                    "element_type": "rtd",
+                    "label": "RTD-001",
+                    "geometry": {"type": "point", "points": [[2.0, 0.0, 0.0]]},
+                    "metadata": {"tag": "RTD-001"},
+                },
+                {
+                    "element_uid": "cc-ok",
+                    "element_type": "cold_cable",
+                    "label": "CC-OK",
+                    "geometry": {"type": "polyline", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]},
+                    "metadata": {"from_element_uid": "db-1", "to_element_uid": "jb-1"},
+                },
+                {
+                    "element_uid": "cc-warning",
+                    "element_type": "cold_cable",
+                    "label": "CC-Warning",
+                    "geometry": {"type": "polyline", "points": [[2.0, 0.0, 0.0], [1.0, 0.0, 0.0]]},
+                    "metadata": {"from_element_uid": "rtd-1", "to_element_uid": "jb-1"},
+                },
+            ],
+        }
+
+        response = self.client.post(url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        by_uid = {element["element_uid"]: element for element in response.json()["elements"]}
+        self.assertEqual(by_uid["cc-ok"]["metadata"]["connection_status"], "ok")
+        self.assertEqual(by_uid["cc-ok"]["metadata"]["connection_warnings"], "")
+        self.assertEqual(by_uid["cc-warning"]["metadata"]["connection_status"], "warning")
+        self.assertIn("expected", by_uid["cc-warning"]["metadata"]["connection_warnings"])
+
+        reload_response = self.client.get(url)
+        self.assertEqual(reload_response.status_code, 200)
+        reloaded = {element["element_uid"]: element for element in reload_response.json()["elements"]}
+        self.assertEqual(reloaded["cc-warning"]["metadata"]["connection_status"], "warning")
