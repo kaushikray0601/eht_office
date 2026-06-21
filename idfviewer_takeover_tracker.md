@@ -25,10 +25,13 @@ Tracking convention:
    - Manual hide now stores hidden logical items separately from hierarchy filters.
    - Restore/show-hidden now respects the current checkbox state instead of blindly turning every mesh back on.
 
-3. `todo` Upload ingest safety: make imports idempotent and transactional.
+3. `done` Upload ingest safety: make imports idempotent and transactional.
    Why it matters:
-   - Re-uploading the same folder currently duplicates `IDFFile` and `IDFComponent` records.
-   - A failed import can leave partial data in PostgreSQL.
+   - Re-uploading the same folder should not duplicate `IDFFile` and `IDFComponent` records.
+   - A failed save should not leave partial data in PostgreSQL.
+   Current state:
+   - `services.persist_preview_scene()` uses content signatures, conflict detection, `transaction.atomic()`, duplicate cleanup, and `bulk_create()`.
+   - The preview upload itself remains in-memory until the user explicitly saves IDF/PCF components.
 
 4. `todo` Folder provenance: stop collapsing uploaded folder entries to basename-only filenames.
    Why it matters:

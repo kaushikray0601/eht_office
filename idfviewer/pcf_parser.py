@@ -3,6 +3,7 @@ from copy import deepcopy
 from textwrap import dedent
 
 from .parser import _filter_scene, derive_material_properties
+from .units import coordinate_unit_stats, normalize_unit
 
 
 COMPONENT_TYPES = {
@@ -38,6 +39,8 @@ PCF_RECORD_IDS = {
     "END-CONNECTION-EQUIPMENT": 149,
     "END-CONNECTION-PIPELINE": 149,
 }
+
+COORDINATE_UNIT_KEY = "UNITS-CO-ORDS"
 
 
 def _clean_line(line: str) -> str:
@@ -215,6 +218,31 @@ def _parse_document(text: str):
         i += 1
 
     return file_meta, components, materials
+
+
+def _coordinate_unit_from_meta(file_meta):
+    value = file_meta.get(COORDINATE_UNIT_KEY)
+    if isinstance(value, list):
+        value = value[0] if value else ""
+    return normalize_unit(value, default="MM")
+
+
+def _coordinate_stats_from_scene(scene):
+    units = set()
+    for bucket in ("pipes", "fittings", "welds", "supports", "markers"):
+        for item in scene.get(bucket, []):
+            metadata = item.get("properties", {}).get("pipeline_metadata", {})
+            value = metadata.get(COORDINATE_UNIT_KEY)
+            if isinstance(value, list):
+                value = value[0] if value else ""
+            if value:
+                units.add(normalize_unit(value, default="MM"))
+
+    if len(units) == 1:
+        return coordinate_unit_stats("PCF", next(iter(units)), "declared")
+    if units:
+        return coordinate_unit_stats("PCF", "MM", "mixed_or_missing")
+    return coordinate_unit_stats("PCF", "MM", "assumed")
 
 
 def _kind_for_component(comp_type: str, comp: dict):
@@ -451,6 +479,8 @@ def _normalize_scene(scene):
             all_points.append(tuple(item["point_raw"]))
 
     if not all_points:
+        if "coordinate_scale_to_m" not in scene["stats"]:
+            scene["stats"].update(_coordinate_stats_from_scene(scene))
         scene["stats"]["scale_factor"] = 1.0
         scene["stats"]["raw_bounds"] = {}
         return scene
@@ -466,7 +496,9 @@ def _normalize_scene(scene):
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     cz = (min_z + max_z) / 2.0
-    scale = 0.001
+    if "coordinate_scale_to_m" not in scene["stats"]:
+        scene["stats"].update(_coordinate_stats_from_scene(scene))
+    scale = scene["stats"]["coordinate_scale_to_m"]
 
     def tx(point):
         return [(point[0] - cx) * scale, (point[2] - cz) * scale, (point[1] - cy) * scale]
@@ -518,8 +550,10 @@ def parse_multiple_pcf_texts(file_payloads, project):
         },
     }
 
+    coordinate_units = set()
     for filename, text in file_payloads:
         file_meta, components, materials = _parse_document(text)
+        coordinate_units.add(_coordinate_unit_from_meta(file_meta))
         combined_scene["stats"]["total_lines"] += len(text.splitlines())
 
         next_uid = 1
@@ -531,6 +565,10 @@ def parse_multiple_pcf_texts(file_payloads, project):
     combined_scene = _filter_scene(combined_scene)
     combined_scene["stats"]["source_format"] = "PCF"
     combined_scene["stats"]["source_label"] = "PCF Scene"
+    if len(coordinate_units) == 1:
+        combined_scene["stats"].update(coordinate_unit_stats("PCF", next(iter(coordinate_units)), "declared"))
+    else:
+        combined_scene["stats"].update(coordinate_unit_stats("PCF", "MM", "mixed_or_missing"))
     combined_scene = _normalize_scene(combined_scene)
 
     return _strip_internal(combined_scene)

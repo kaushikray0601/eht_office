@@ -4,6 +4,8 @@ from copy import deepcopy
 
 import numpy as np
 
+from .units import coordinate_unit_stats
+
 
 IFC_RECORD_ID = 9100
 IFC_SUPPORTED_EXTENSIONS = (".ifc",)
@@ -332,6 +334,7 @@ def _normalize_ifc_scene(scene):
     )
 
     if not all_points:
+        stats.update(coordinate_unit_stats("IFC", "M", "assumed"))
         stats["scale_factor"] = 1.0
         stats["raw_bounds"] = {}
         return scene
@@ -346,10 +349,8 @@ def _normalize_ifc_scene(scene):
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     cz = (min_z + max_z) / 2.0
-    # IfcOpenShell geometry is already returned in a viewer-friendly meter scale
-    # for the current Tekla sample, so applying the IDF/PCF shrink factor makes
-    # the objects effectively invisible.
-    scale = 1.0
+    stats.update(coordinate_unit_stats("IFC", "M", "assumed"))
+    scale = stats["coordinate_scale_to_m"]
 
     def tx(point):
         return [

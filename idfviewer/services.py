@@ -6,6 +6,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .models import IDFComponent, IDFFile, IDFFileSaveEvent
+from .units import coordinate_unit_stats, normalize_unit
 
 
 SCENE_BUCKETS = ("pipes", "fittings", "welds", "supports", "markers")
@@ -177,6 +178,30 @@ def file_counts(file_obj):
     return _counts_from_component_queryset(file_obj.components.all())
 
 
+def _coordinate_unit_from_saved_scene(scene, source_format):
+    if source_format == "IFC":
+        return "M", "assumed"
+    if source_format == "IDF":
+        return "MM", "assumed"
+
+    units = set()
+    for bucket in SCENE_BUCKETS:
+        for item in scene.get(bucket, []) or []:
+            properties = item.get("properties") or {}
+            metadata = properties.get("pipeline_metadata") or {}
+            unit = metadata.get("UNITS-CO-ORDS")
+            if isinstance(unit, list):
+                unit = unit[0] if unit else ""
+            if unit:
+                units.add(normalize_unit(unit, default="MM"))
+
+    if len(units) == 1:
+        return next(iter(units)), "declared"
+    if len(units) > 1:
+        return "MM", "mixed_or_missing"
+    return "MM", "assumed"
+
+
 def _summary_to_response(file_obj):
     return {
         "id": file_obj.id,
@@ -338,6 +363,17 @@ def _normalize_scene(scene):
         }
     )
     scene["stats"]["parsed_records"] = sum(scene["stats"][f"{name}_count"] for name in ("pipe", "fitting", "weld", "support", "marker"))
+    unit, confidence = _coordinate_unit_from_saved_scene(
+        scene,
+        str(scene["stats"].get("source_format") or "IDF").upper(),
+    )
+    scene["stats"].update(
+        coordinate_unit_stats(
+            str(scene["stats"].get("source_format") or "IDF").upper(),
+            unit,
+            confidence,
+        )
+    )
 
     if not all_points:
         scene["stats"]["scale_factor"] = 1.0
@@ -354,7 +390,7 @@ def _normalize_scene(scene):
     cx = (min_x + max_x) / 2.0
     cy = (min_y + max_y) / 2.0
     cz = (min_z + max_z) / 2.0
-    scale = 0.001
+    scale = scene["stats"]["coordinate_scale_to_m"]
 
     def tx(point):
         return [(point[0] - cx) * scale, (point[2] - cz) * scale, (point[1] - cy) * scale]

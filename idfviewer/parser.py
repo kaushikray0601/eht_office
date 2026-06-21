@@ -1,6 +1,8 @@
 import re
 from statistics import median
 
+from .units import coordinate_unit_stats
+
 RECORD_ID_RE = re.compile(r"^\s*([+-]?\d+)")
 DN_RE = re.compile(r"\bDN\s*(\d+)\b", re.I)
 SCH_RE = re.compile(r"\bSch\s*([A-Z0-9/]+)\b", re.I)
@@ -356,6 +358,7 @@ def _normalize_points(scene):
             all_points.append(tuple(item["point_raw"]))
 
     if not all_points:
+        scene["stats"].update(coordinate_unit_stats("IDF", "MM", "assumed"))
         scene["stats"]["scale_factor"], scene["stats"]["raw_bounds"] = 1.0, {}
         return scene
 
@@ -365,8 +368,8 @@ def _normalize_points(scene):
     min_z, max_z = min(zs), max(zs)
     
     cx, cy, cz = (min_x + max_x) / 2.0, (min_y + max_y) / 2.0, (min_z + max_z) / 2.0
-    # Convert typical mm measurements to meters for stable WebGL scale without collapsing faraway pipelines
-    scale = 0.001
+    scene["stats"].update(coordinate_unit_stats("IDF", "MM", "assumed"))
+    scale = scene["stats"]["coordinate_scale_to_m"]
 
     def tx(p):
         return [(p[0] - cx) * scale, (p[2] - cz) * scale, (p[1] - cy) * scale]
@@ -381,9 +384,14 @@ def _normalize_points(scene):
             item["point"] = tx(item["point_raw"])
             item["properties"] = _build_properties(item)
 
-    scene["stats"].update({"scale_factor": scale, "raw_bounds": {
-        "min_x": min_x, "max_x": max_x, "min_y": min_y, "max_y": max_y, "min_z": min_z, "max_z": max_z
-    }})
+    scene["stats"].update({
+        "scale_factor": scale,
+        "raw_bounds": {
+            "min_x": min_x, "max_x": max_x,
+            "min_y": min_y, "max_y": max_y,
+            "min_z": min_z, "max_z": max_z,
+        },
+    })
     return scene
 
 

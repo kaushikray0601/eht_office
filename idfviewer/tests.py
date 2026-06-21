@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.contrib.auth import get_user_model
 from django.test import RequestFactory
 from django.test import SimpleTestCase, TestCase
 
@@ -11,7 +12,7 @@ from eht.models import ProjectData
 
 from .analysis_utils import nearest_structure_report
 from .ifc_parser import _normalize_ifc_scene, parse_multiple_ifc_uploads
-from .models import IDFComponent, IDFFile, IDFFileSaveEvent
+from .models import EHTDesignElement, IDFComponent, IDFFile, IDFFileSaveEvent, ProjectAttributeMapping
 from .parser import _collect_candidate_records, _filter_scene, _normalize_points, parse_multiple_idf_texts
 from .pcf_parser import _component_to_scene_items, _normalize_scene as _normalize_pcf_scene
 from .pcf_parser import _parse_document, _strip_internal as _strip_pcf_internal
@@ -63,6 +64,9 @@ class ParserRegressionTests(SimpleTestCase):
         )
 
         first_pipe, second_pipe = scene["pipes"]
+        self.assertEqual(scene["stats"]["coordinate_unit"], "MM")
+        self.assertEqual(scene["stats"]["coordinate_scale_to_m"], 0.001)
+        self.assertEqual(scene["stats"]["unit_confidence"], "assumed")
         self.assertEqual(first_pipe["properties"]["pipeline_ref"], "")
         self.assertEqual(second_pipe["properties"]["pipeline_ref"], "LINE-ABC-01")
         self.assertEqual(first_pipe["properties"]["component_ref"], "PREV")
@@ -84,10 +88,13 @@ class ParserRegressionTests(SimpleTestCase):
     def test_pcf_parser_maps_pipeline_metadata_and_support_details(self):
         scene = _parse_pcf_scene(
             """
+            UNITS-CO-ORDS         MM
             PIPELINE-REFERENCE   A09-01-LS0051-01
                 PIPING-SPEC   13470
                 INSULATION-SPEC   E  60 mm
                 TRACING-SPEC   ELECTRIC
+                ATTRIBUTE63   559-0051-LS-2"-13470-E
+                ATTRIBUTE72   WATER
             PIPE
                 COMPONENT-IDENTIFIER    4
                 END-POINT    5474674.800    10209900.200    102650.000     2
@@ -120,6 +127,9 @@ class ParserRegressionTests(SimpleTestCase):
         )
 
         self.assertEqual(scene["stats"]["source_format"], "PCF")
+        self.assertEqual(scene["stats"]["coordinate_unit"], "MM")
+        self.assertEqual(scene["stats"]["coordinate_scale_to_m"], 0.001)
+        self.assertEqual(scene["stats"]["unit_confidence"], "declared")
         self.assertEqual(len(scene["pipes"]), 1)
         self.assertEqual(len(scene["supports"]), 1)
         self.assertEqual(len(scene["markers"]), 1)
@@ -131,6 +141,8 @@ class ParserRegressionTests(SimpleTestCase):
         self.assertEqual(pipe_props["tracing_spec"], "ELECTRIC")
         self.assertTrue(pipe_props["tracing_on"])
         self.assertEqual(pipe_props["item_code"], "PIPM0005660")
+        self.assertEqual(pipe_props["pipeline_metadata"]["ATTRIBUTE63"], '559-0051-LS-2"-13470-E')
+        self.assertEqual(pipe_props["pipeline_metadata"]["ATTRIBUTE72"], "WATER")
 
         support_props = scene["supports"][0]["properties"]
         self.assertEqual(support_props["support_type"], "Pipe Support")
@@ -203,6 +215,9 @@ class ParserRegressionTests(SimpleTestCase):
         self.assertEqual(normalized["stats"]["mesh_count"], 1)
         self.assertFalse(normalized["stats"]["save_supported"])
         self.assertEqual(normalized["stats"]["scale_factor"], 1.0)
+        self.assertEqual(normalized["stats"]["coordinate_unit"], "M")
+        self.assertEqual(normalized["stats"]["coordinate_scale_to_m"], 1.0)
+        self.assertEqual(normalized["stats"]["unit_confidence"], "assumed")
         self.assertEqual(normalized["meshes"][0]["mesh"]["indices"], [0, 1, 2])
         self.assertEqual(len(normalized["meshes"][0]["mesh"]["positions"]), 9)
 
@@ -540,6 +555,11 @@ def make_ifc_preview_scene(filename="sample.ifc"):
 class SavedPipelineFlowTests(TestCase):
     def setUp(self):
         self.project = make_project()
+        self.user = get_user_model().objects.create_user(
+            username="idfviewer-tester",
+            password="safe-password-123",
+        )
+        self.client.force_login(self.user)
 
     def test_parse_multiple_idf_texts_no_longer_persists_automatically(self):
         scene = parse_multiple_idf_texts(
@@ -660,6 +680,8 @@ class SavedPipelineFlowTests(TestCase):
         scene = build_scene_from_saved_file(saved_file)
         self.assertEqual(scene["stats"]["pipe_count"], 1)
         self.assertEqual(scene["stats"]["support_count"], 1)
+        self.assertEqual(scene["stats"]["coordinate_unit"], "MM")
+        self.assertEqual(scene["stats"]["coordinate_scale_to_m"], 0.001)
         self.assertEqual(len(scene["pipes"]), 1)
         self.assertEqual(len(scene["supports"]), 1)
 
@@ -684,7 +706,7 @@ class SavedPipelineFlowTests(TestCase):
 
         response = self.client.post(
             "/idfviewer/",
-            data={"project": self.project.proj_id, "idf_files": [upload]},
+            data={"project": self.project.pk, "idf_files": [upload]},
         )
 
         self.assertEqual(response.status_code, 200)
@@ -701,3 +723,129 @@ class SavedPipelineFlowTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("IFC preview save is not enabled yet", response.json()["error"])
+
+    def test_project_attribute_mappings_are_project_scoped_and_persistent(self):
+        url = f"/idfviewer/projects/{self.project.proj_id}/attribute-mappings/"
+
+        empty_response = self.client.get(url)
+        self.assertEqual(empty_response.status_code, 200)
+        self.assertEqual(empty_response.json()["mappings"], [])
+
+        save_response = self.client.post(
+            url,
+            data=json.dumps({
+                "mappings": [
+                    {"attribute_key": "ATTRIBUTE63", "display_name": "Line ID"},
+                    {"attribute_key": "attribute72", "display_name": "Fluid"},
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(ProjectAttributeMapping.objects.count(), 2)
+        payload = save_response.json()
+        self.assertEqual(
+            [(row["attribute_key"], row["display_name"]) for row in payload["mappings"]],
+            [("ATTRIBUTE63", "Line ID"), ("ATTRIBUTE72", "Fluid")],
+        )
+
+        reload_response = self.client.get(url)
+        self.assertEqual(reload_response.status_code, 200)
+        self.assertEqual(reload_response.json()["mappings"][0]["display_name"], "Line ID")
+
+    def test_project_attribute_mapping_rejects_invalid_attribute_key(self):
+        response = self.client.post(
+            f"/idfviewer/projects/{self.project.proj_id}/attribute-mappings/",
+            data=json.dumps({"mappings": [{"attribute_key": "LINE_ID", "display_name": "Line ID"}]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Invalid attribute key", response.json()["error"])
+
+    def test_eht_design_elements_are_project_and_file_scoped(self):
+        self.client.post(
+            "/idfviewer/save/",
+            data=json.dumps({"project_id": self.project.proj_id, "scene": make_preview_scene()}),
+            content_type="application/json",
+        )
+        saved_file = IDFFile.objects.get()
+        url = f"/idfviewer/projects/{self.project.proj_id}/eht-elements/?file_id={saved_file.id}"
+
+        payload = {
+            "elements": [
+                {
+                    "element_uid": "db-1",
+                    "element_type": "distribution_board",
+                    "label": "DB-001",
+                    "geometry": {"type": "point", "points": [[0.0, 0.0, 0.0]]},
+                    "metadata": {"tag": "DB-001", "note": "Existing board"},
+                },
+                {
+                    "element_uid": "tracer-1",
+                    "element_type": "tracer_sr",
+                    "label": "SR-001",
+                    "geometry": {"type": "polyline", "points": [[0.0, 0.0, 0.0], [1.5, 0.0, 0.0], [1.5, 2.0, 0.0]]},
+                    "metadata": {"tracer_family": "SR", "tracer_type": "Self-reg"},
+                },
+            ]
+        }
+
+        save_response = self.client.post(url, data=json.dumps(payload), content_type="application/json")
+        self.assertEqual(save_response.status_code, 200)
+        self.assertEqual(EHTDesignElement.objects.count(), 2)
+        self.assertEqual(save_response.json()["count"], 2)
+
+        reload_response = self.client.get(url)
+        self.assertEqual(reload_response.status_code, 200)
+        elements = reload_response.json()["elements"]
+        self.assertEqual(len(elements), 2)
+        self.assertEqual(elements[0]["label"], "DB-001")
+        self.assertEqual(elements[1]["metadata"]["tracer_family"], "SR")
+        self.assertEqual(elements[1]["geometry"]["segment_count"], 2)
+        self.assertEqual(elements[1]["geometry"]["length_m"], 3.5)
+        self.assertIn("tracer_sr", reload_response.json()["tool_definitions"])
+
+        project_scope_response = self.client.get(f"/idfviewer/projects/{self.project.proj_id}/eht-elements/")
+        self.assertEqual(project_scope_response.status_code, 200)
+        self.assertEqual(project_scope_response.json()["elements"], [])
+
+    def test_eht_design_elements_reject_invalid_geometry(self):
+        response = self.client.post(
+            f"/idfviewer/projects/{self.project.proj_id}/eht-elements/",
+            data=json.dumps({
+                "elements": [
+                    {
+                        "element_uid": "bad-1",
+                        "element_type": "cold_cable",
+                        "geometry": {"type": "polyline", "points": [[0.0, 0.0, 0.0]]},
+                        "metadata": {},
+                    }
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("polyline geometry", response.json()["error"])
+
+    def test_eht_design_elements_validate_metadata_schema(self):
+        response = self.client.post(
+            f"/idfviewer/projects/{self.project.proj_id}/eht-elements/",
+            data=json.dumps({
+                "elements": [
+                    {
+                        "element_uid": "tracer-1",
+                        "element_type": "tracer_sr",
+                        "label": "Bad tracer",
+                        "geometry": {"type": "polyline", "points": [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0]]},
+                        "metadata": {"tracer_family": "MI"},
+                    }
+                ]
+            }),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Tracer Family", response.json()["error"])

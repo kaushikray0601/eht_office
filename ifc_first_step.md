@@ -33,14 +33,15 @@ That is acceptable for IDF and PCF, but not a good long-term storage shape for I
 - quantities
 - normalized triangle mesh data for preview rendering
 
-## Current Limitation
+## Current Status
 
-`IfcOpenShell` is not yet installed in this environment, so IFC upload support is coded but requires dependency installation before real parsing can run.
+`IfcOpenShell` is installed and pinned in `requirements.txt` as `ifcopenshell==0.8.5`.
+
+IFC support remains preview-only. Upload, parse, render, metadata display, and nearest-structure analysis are available, but persistent IFC storage is deliberately deferred until a dedicated large-model backend strategy is designed.
 
 ## Likely Next Steps
 
-1. Install and verify `IfcOpenShell` against the sample Tekla IFC.
-2. Add a proper IFC import model instead of reusing the lightweight component-save path.
-3. Decide whether heavy geometry stays in JSON, GLB, cached mesh blobs, or a viewer-oriented conversion format.
-4. Add class filters and better hierarchy grouping for structural/reference models.
-5. Evaluate xeokit later if browser-side IFC model scale outgrows the current Three.js viewer.
+1. Add a proper IFC import model instead of reusing the lightweight component-save path.
+2. Decide whether heavy geometry stays in JSON, GLB, cached mesh blobs, or a viewer-oriented conversion format.
+3. Add class filters and better hierarchy grouping for structural/reference models.
+4. Evaluate xeokit later if browser-side IFC model scale outgrows the current Three.js viewer.

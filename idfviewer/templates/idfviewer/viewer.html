@@ -32,13 +32,14 @@
         #viewer {
             position: absolute; top: 60px; left: 300px; right: 340px; bottom: 0;
             background: radial-gradient(circle at center, #f8fafc 0%, #e2e8f0 100%);
-            transition: left 0.22s ease;
+            transition: left 0.22s ease, right 0.22s ease;
         }
         #sidepanel {
             position: absolute; top: 60px; right: 0; width: 340px; bottom: 0;
             border-left: 1px solid rgba(226, 232, 240, 0.8);
             overflow-y: auto; padding: 24px; z-index: 15;
             box-shadow: -4px 0 20px rgba(0,0,0,0.02);
+            transition: transform 0.22s ease, opacity 0.22s ease;
         }
         body.nav-collapsed #navpanel {
             transform: translateX(-100%);
@@ -48,15 +49,44 @@
         body.nav-collapsed #viewer {
             left: 0;
         }
+        body.sidepanel-collapsed #sidepanel {
+            transform: translateX(100%);
+            opacity: 0;
+            pointer-events: none;
+        }
+        body.sidepanel-collapsed #viewer {
+            right: 0;
+        }
         #navpanel-reopen {
             position: absolute;
-            top: 72px;
+            top: 64px;
             left: 12px;
+            z-index: 18;
+            display: none;
+        }
+        #sidepanel-reopen {
+            position: absolute;
+            top: 72px;
+            right: 12px;
             z-index: 18;
             display: none;
         }
         body.nav-collapsed #navpanel-reopen {
             display: inline-flex;
+        }
+        body.sidepanel-collapsed #sidepanel-reopen {
+            display: inline-flex;
+        }
+        body.nav-collapsed #viewerUnitBadge,
+        body.nav-collapsed #ehtToolPalette {
+            left: 128px;
+        }
+        #ehtToolPalette.palette-collapsed {
+            width: 235px;
+            padding-bottom: 10px;
+        }
+        #ehtToolPalette.palette-collapsed .eht-palette-body {
+            display: none;
         }
         
         /* Minimalist scrollbars */
@@ -98,6 +128,15 @@
         </div>
 
         <div class="flex items-center gap-2">
+            <button id="measureToggleBtn" type="button" class="text-[12px] font-medium text-slate-700 bg-white hover:bg-slate-50 px-3 py-2 rounded-md shadow-md border border-slate-200 transition" aria-pressed="false">
+                Measure
+            </button>
+            <button id="scaleToggleBtn" type="button" class="text-[12px] font-medium text-slate-700 bg-white hover:bg-slate-50 px-3 py-2 rounded-md shadow-md border border-slate-200 transition" aria-pressed="true">
+                Grid On
+            </button>
+            <button id="attributeSettingsBtn" type="button" data-mapping-url="{% url 'idf_attribute_mappings' project.proj_id %}" class="text-[12px] font-medium text-slate-700 bg-white hover:bg-slate-50 px-4 py-2 rounded-md shadow-md border border-slate-200 transition">
+                Attribute Settings
+            </button>
             {% if is_saved_scene and saved_file %}
                 <a href="{% url 'idf_saved_file_download' saved_file.id %}" class="text-[12px] font-medium text-slate-700 bg-white hover:bg-slate-50 px-4 py-2 rounded-md shadow-md border border-slate-200 transition">Download JSON</a>
             {% elif save_supported %}
@@ -114,6 +153,9 @@
 
         <button id="navpanel-reopen" class="glass-sidebar items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm hover:bg-white/90 transition">
             <span>Show Assets</span>
+        </button>
+        <button id="sidepanel-reopen" class="glass-sidebar items-center gap-2 rounded-md border border-slate-200 px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm hover:bg-white/90 transition">
+            <span>Show Properties</span>
         </button>
 
 	    <!-- LEFT HIERARCHY PANEL -->
@@ -168,11 +210,52 @@
     </div>
 
     <!-- MAIN 3D VIEWER -->
-    <div id="viewer"></div>
+    <div id="viewer" data-eht-url="{% url 'idf_eht_design_elements' project.proj_id %}{% if saved_file %}?file_id={{ saved_file.id }}{% endif %}">
+        <div id="viewerUnitBadge" class="pointer-events-none absolute left-4 top-4 z-10 max-w-[360px] rounded-md border border-slate-200 bg-white/90 px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm backdrop-blur">
+            Loading coordinate basis...
+        </div>
+        <div id="ehtToolPalette" class="absolute left-4 top-[86px] z-10 w-[235px] rounded-md border border-slate-200 bg-white/92 p-3 text-[11px] text-slate-700 shadow-lg backdrop-blur">
+            <div class="mb-2 flex items-center justify-between gap-2">
+                <div>
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">EHT Tools</div>
+                    <div id="ehtToolStatus" class="mt-1 text-[10px] leading-relaxed text-slate-500">Select a tool, then click the model.</div>
+                </div>
+                <div class="flex shrink-0 items-center gap-1">
+                    <button id="ehtPaletteToggleBtn" type="button" class="rounded border border-slate-200 bg-white px-2 py-1 text-[10px] font-medium text-slate-600 shadow-sm transition hover:bg-slate-50">Hide</button>
+                    <button id="ehtSelectToolBtn" type="button" class="rounded border border-slate-200 bg-slate-900 px-2 py-1 text-[10px] font-medium text-white shadow-sm transition">Select</button>
+                </div>
+            </div>
+            <div class="eht-palette-body">
+                <div class="grid grid-cols-2 gap-1.5">
+                    <button type="button" class="eht-tool-btn rounded border border-slate-200 bg-white px-2 py-1.5 text-left font-medium shadow-sm transition hover:bg-slate-50" data-eht-tool="distribution_board">Distribution Board</button>
+                    <button type="button" class="eht-tool-btn rounded border border-slate-200 bg-white px-2 py-1.5 text-left font-medium shadow-sm transition hover:bg-slate-50" data-eht-tool="junction_box">Junction Box</button>
+                    <button type="button" class="eht-tool-btn rounded border border-slate-200 bg-white px-2 py-1.5 text-left font-medium shadow-sm transition hover:bg-slate-50" data-eht-tool="isolator">Isolator</button>
+                    <button type="button" class="eht-tool-btn rounded border border-slate-200 bg-white px-2 py-1.5 text-left font-medium shadow-sm transition hover:bg-slate-50" data-eht-tool="rtd">RTD</button>
+                    <button type="button" class="eht-tool-btn rounded border border-slate-200 bg-white px-2 py-1.5 text-left font-medium shadow-sm transition hover:bg-slate-50" data-eht-tool="end_termination">End Termination</button>
+                    <button type="button" class="eht-tool-btn rounded border border-slate-200 bg-white px-2 py-1.5 text-left font-medium shadow-sm transition hover:bg-slate-50" data-eht-tool="pipe_strap">Pipe Strap</button>
+                    <button type="button" class="eht-tool-btn rounded border border-amber-200 bg-amber-50 px-2 py-1.5 text-left font-medium text-amber-900 shadow-sm transition hover:bg-amber-100" data-eht-tool="tracer_sr">SR Tracer</button>
+                    <button type="button" class="eht-tool-btn rounded border border-orange-200 bg-orange-50 px-2 py-1.5 text-left font-medium text-orange-900 shadow-sm transition hover:bg-orange-100" data-eht-tool="tracer_mi">MI Tracer</button>
+                    <button type="button" class="eht-tool-btn col-span-2 rounded border border-sky-200 bg-sky-50 px-2 py-1.5 text-left font-medium text-sky-900 shadow-sm transition hover:bg-sky-100" data-eht-tool="cold_cable">Cold Cable</button>
+                </div>
+                <div id="ehtRouteControls" class="mt-3 hidden grid grid-cols-2 gap-2">
+                    <button id="ehtFinishRouteBtn" type="button" class="rounded-md bg-amber-600 px-3 py-2 text-[11px] font-medium text-white shadow-sm transition hover:bg-amber-500">Finish Route</button>
+                    <button id="ehtCancelRouteBtn" type="button" class="rounded-md border border-slate-200 bg-white px-3 py-2 text-[11px] font-medium text-slate-700 shadow-sm transition hover:bg-slate-50">Cancel</button>
+                </div>
+                <button id="ehtSaveLayerBtn" type="button" class="mt-3 w-full rounded-md bg-slate-800 px-3 py-2 text-[11px] font-medium text-white shadow-sm transition hover:bg-slate-700">Save EHT Layer</button>
+            </div>
+        </div>
+        <div id="measurementHud" class="pointer-events-none absolute bottom-4 left-4 z-10 hidden max-w-[420px] rounded-md border border-slate-200 bg-white/92 px-4 py-3 text-[11px] text-slate-700 shadow-lg backdrop-blur">
+            <div class="text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500">Measurement</div>
+            <div id="measurementStatus" class="mt-1 leading-relaxed">Pick two snap points.</div>
+        </div>
+    </div>
 
     <!-- RIGHT PROPERTIES PANEL -->
     <div id="sidepanel" class="glass-sidebar flex flex-col">
-        <h3 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest mb-5">Properties</h3>
+        <div class="mb-5 flex items-center justify-between gap-3">
+            <h3 class="text-[12px] font-medium text-slate-800 uppercase tracking-widest">Properties</h3>
+            <button id="sidepanel-toggle" class="rounded border border-slate-200 bg-white/70 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-600 shadow-sm hover:bg-white transition">Hide</button>
+        </div>
 
         <div class="mb-6 rounded-lg border {% if is_saved_scene %}border-emerald-200 bg-emerald-50/80{% else %}border-amber-200 bg-amber-50/80{% endif %} p-4 shadow-sm">
             <div class="flex items-start justify-between gap-3">
@@ -295,6 +378,34 @@
         </div>
     </div>
 
+    <div id="attributeSettingsModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-slate-900/45 px-4 backdrop-blur-sm">
+        <div class="w-full max-w-3xl overflow-hidden rounded-lg border border-slate-200 bg-white shadow-2xl">
+            <div class="flex items-start justify-between gap-4 border-b border-slate-200 bg-slate-50 px-6 py-5">
+                <div>
+                    <div class="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">Project Attribute Dictionary</div>
+                    <h2 class="mt-1 text-lg font-semibold text-slate-900">Name PCF Attributes</h2>
+                    <p class="mt-1 max-w-2xl text-[12px] leading-relaxed text-slate-600">
+                        Map project-specific PCF keys such as ATTRIBUTE63 to engineering names. The values stay unchanged; only the display labels in this viewer are renamed.
+                    </p>
+                </div>
+                <button id="attributeSettingsCloseBtn" type="button" class="rounded border border-slate-200 bg-white px-3 py-2 text-[11px] font-medium text-slate-600 shadow-sm transition hover:bg-slate-50">Close</button>
+            </div>
+            <div class="max-h-[60vh] overflow-y-auto px-6 py-5">
+                <div id="attributeSettingsEmpty" class="hidden rounded-md border border-slate-200 bg-slate-50 p-5 text-center text-sm text-slate-500">
+                    No PCF ATTRIBUTE fields were found in this scene.
+                </div>
+                <div id="attributeSettingsRows" class="space-y-3"></div>
+            </div>
+            <div class="flex items-center justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+                <button id="attributeSettingsResetBtn" type="button" class="rounded-md border border-slate-200 bg-white px-4 py-2 text-[12px] font-medium text-slate-600 shadow-sm transition hover:bg-slate-100">Clear Names</button>
+                <div class="flex items-center gap-2">
+                    <span id="attributeSettingsStatus" class="text-[11px] text-slate-500"></span>
+                    <button id="attributeSettingsSaveBtn" type="button" class="rounded-md bg-slate-900 px-5 py-2 text-[12px] font-medium text-white shadow-sm transition hover:bg-slate-700">Save Names</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {{ scene|json_script:"scene-data" }}
 
     <script type="importmap">
@@ -306,7 +417,7 @@
     }
     </script>
 
-    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260423_ifc_tools_01"></script>
+    <script type="module" src="{% static 'idfviewer/js/viewer.js' %}?v=20260621_eht_tools_08"></script>
     <script>
         (function () {
             const body = document.body;
