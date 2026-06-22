@@ -27,7 +27,11 @@
     {% if source.source_format == "IFC" %}
       <form method="post" action="{% url 'plant3d_source_ifc_geometry_convert' source.pk %}" data-conversion-form>
         {% csrf_token %}
-        <button type="submit">Queue IFC Geometry Conversion</button>
+        <button type="submit">Queue IFC JSON Debug Conversion</button>
+      </form>
+      <form method="post" action="{% url 'plant3d_source_ifc_glb_convert' source.pk %}" data-conversion-form>
+        {% csrf_token %}
+        <button type="submit">Queue IFC GLB Conversion</button>
       </form>
     {% endif %}
     <div id="conversionQueueStatus"></div>

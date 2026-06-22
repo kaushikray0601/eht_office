@@ -7,7 +7,8 @@ Purpose: first real-file check of the `plant3d` source-to-render-package pipelin
 ## Environment
 
 - Project used for local spike records: `P1`
-- Parser path: current `idfviewer.ifc_parser.parse_multiple_ifc_uploads`
+- Parser path at original measurement time: `idfviewer.ifc_parser.parse_multiple_ifc_uploads`
+- Parser path after 2026-06-23 extraction pass: `plant3d.parsers.ifc.parse_multiple_ifc_uploads`
 - Converter path: `plant3d.ifc-json`
 - Runtime package: single-tile JSON debug package
 - Storage: local/self-hosted media storage
@@ -22,11 +23,10 @@ Purpose: first real-file check of the `plant3d` source-to-render-package pipelin
 
 ## Coordinate And Unit Notes
 
-- The Revit sample header is IFC2X3 and includes metre SI units plus foot conversion units.
-- The Tekla samples are IFC2X3 and declare millimetre SI length units in the header.
-- The current parser reports geometry package unit as `M` with `unit_confidence=assumed`.
-- This may be correct if IfcOpenShell is already returning SI-normalized vertices, but it is not proven yet.
-- Unit extraction and scale verification must be treated as an open spike risk before measurement, snapping, or cross-discipline federation are trusted.
+- The Revit sample is IFC2X3. Parser-level `IfcUnitAssignment` extraction reports source-declared length unit `ft` with scale `0.3048`.
+- The Tekla samples are IFC2X3. Parser-level `IfcUnitAssignment` extraction reports source-declared length unit `mm` with scale `0.001`.
+- Render geometry remains stored as `M` with `unit_confidence=ifcopenshell_geometry_si`; the IfcOpenShell geometry iterator reports `length-unit=1.0` and `convert-back-units=False`.
+- This resolves the metadata ambiguity between source-declared units and render units, but final scale trust still needs a known-dimension or source-system validation before measurement, snapping, or cross-discipline federation are trusted.
 
 Update after unit-hint pass:
 
@@ -35,7 +35,16 @@ Update after unit-hint pass:
   - `Ifc2s3_Duplex_Electrical.ifc`: primary SI length unit `m`, plus conversion-based `FOOT`.
   - `8-SSPAR-800203.ifc`: primary SI length unit `mm`, plus conversion-based `FOOT`.
   - `8-SSPAR-800205B.ifc`: primary SI length unit `mm`, plus conversion-based `FOOT`.
-- For non-metre or conversion-based declarations combined with parser `M / assumed`, new conversions now include unit warnings. This is a visibility improvement, not a final proof of coordinate scale.
+- At that intermediate stage, non-metre or conversion-based declarations combined with parser `M / assumed` produced unit warnings. The later parser unit-extraction pass below supersedes the `assumed` label, but not the need for a final known-dimension proof.
+
+Update after parser unit-extraction pass:
+
+- `plant3d.parsers.ifc` now extracts declared length units from `IfcUnitAssignment` through IfcOpenShell model data.
+- Direct parser checks reported:
+  - `Ifc2s3_Duplex_Electrical.ifc`: declared `ft`, scale `0.3048`, render coordinate unit `M`.
+  - `8-SSPAR-800203.ifc`: declared `mm`, scale `0.001`, render coordinate unit `M`.
+  - `8-SSPAR-800205B.ifc`: declared `mm`, scale `0.001`, render coordinate unit `M`.
+- Package/tile/job metadata now carries both source-declared unit evidence and render-unit evidence.
 
 ## First Observations
 
@@ -45,6 +54,22 @@ Update after unit-hint pass:
   - the 4.8 MB Tekla sample became a 7.5 MB JSON tile.
 - Conversion time is acceptable for small samples, but the 2.8 MB Tekla sample already took about 17 seconds.
 - The current package remains a single JSON tile, so these results do not prove EPC-scale tiling, streaming, or browser memory behavior.
+
+## First GLB Package Results
+
+Purpose: compare the new `plant3d.ifc-glb` package path against the JSON debug package. Each GLB package stores one binary `.glb` tile plus one JSON metadata sidecar.
+
+| File | Objects | JSON tile size | GLB size | Sidecar size | GLB total | GLB conversion time | Package ID |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `ifc/Ifc2s3_Duplex_Electrical.ifc` | 104 | 1,510,791 bytes | 560,296 bytes | 26,266 bytes | 586,562 bytes | not separately recorded in first shell print | 4 |
+| `ifc/8-SSPAR-800203.ifc` | 867 | 10,487,263 bytes | 5,376,268 bytes | 167,948 bytes | 5,544,216 bytes | 17,546 ms | 5 |
+
+Interpretation:
+
+- GLB materially reduces runtime payload size versus the debug JSON package.
+- IFC parsing/conversion time is still the dominant cost; GLB does not remove the need for proper async workers.
+- The GLB sidecar carries object spans and metadata, but browser object picking for GLB is deliberately deferred until feature IDs / binary picking strategy are designed.
+- Browser GLB rendering still needs a Playwright/manual GPU probe before performance is accepted.
 
 ## Manual Viewer Check
 
@@ -92,9 +117,11 @@ Interpretation:
 
 ## Next Technical Risks
 
-- Verify IFC units and geometry scale rather than relying on `M / assumed`.
+- Prove geometry scale with a known dimension or source-system benchmark, rather than relying only on IfcOpenShell geometry settings.
 - Compare header unit hints against known dimensions or source-system exported coordinates to prove whether IfcOpenShell is returning SI-normalized geometry.
 - Move beyond JSON if larger sample payloads show high parse time or browser memory pressure.
+- Browser-test the GLB package path and compare FPS/draw calls/load time against JSON.
+- Design feature/object picking for GLB/binary packages without duplicating hidden per-object geometry.
 - Implement real tile/chunk manifests before treating RTC and streaming as solved.
-- Extract or neutralize the parser dependency on `idfviewer` after this first measurement round.
+- Refactor the copied parser when needed; the runtime dependency on `idfviewer` has been removed.
 - Reduce or replace hidden pick-proxy geometry before larger samples; visible draw calls are low, but browser FPS is still below target on Tekla samples in the headless probe.

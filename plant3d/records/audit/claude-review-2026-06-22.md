@@ -42,8 +42,8 @@ Severity key: **D** = architecture digression from the frozen plan · **S** = se
 - Where: [services.py:7](../../services.py#L7) — `from idfviewer.ifc_parser import ...`
 - Issue: Architecture treats `idfviewer` as a disposable prototype to harvest, not build on. The clean platform now imports the prototype's parser at runtime; refactoring/removing idfviewer breaks plant3d.
 - Recommend: copy/move the IFC parser into `plant3d` (or a neutral shared module, e.g. `plant3d/parsers/`), so the dependency arrow does not point into the lab app.
-- Status: **DEFER FOR DELIBERATION**
-- Codex: Agree this is a boundary concern, but will defer parser extraction/copy until after the first real IFC measurement so we avoid duplicating parser code prematurely.
+- Status: **CLOSED FOR PLATFORM BOUNDARY**
+- Codex: Took after the first real IFC measurement loop. Copied the IFC parser and unit helper into `plant3d/parsers/` and changed `plant3d.services` to import from `plant3d.parsers.ifc`. `idfviewer` remains untouched as the prototype/lab app. A later parser refactor is still allowed, but plant3d no longer has a runtime dependency arrow into the lab app.
 
 ## S1 — No project-level authorization (cross-project exposure)
 
@@ -179,6 +179,17 @@ Findings:
 - Status: **OPEN (need a plant-global IFC)**
 - Codex: Confirmed. The current samples are moderate local/plant-offset files, not large-coordinate precision stress files. Keeping Phase 4 jitter/orbit stability unchecked and adding this to the deferred/TODO list: source one plant-global/georeferenced IFC, then repeat conversion plus browser orbit/pick/measurement checks before declaring RTC precision proven.
 
+## F4 — IFC unit scale is not fully proven; samples declare `ft` / `mm` source units
+
+- Severity: **MEDIUM (correctness / coordinate trust)** — surfaced 2026-06-23 by Codex's own real-file notes; recorded here so it is tracked, not lost
+- Where: original risk was the parser's blanket `M / assumed` unit reporting; current mitigation is [parsers/ifc.py:140](../../parsers/ifc.py#L140) and [services.py:203](../../services.py#L203). Evidence in [records/testing/ifc-sample-conversion-results-2026-06-23.md](../testing/ifc-sample-conversion-results-2026-06-23.md)
+- Issue: The parser originally hardcoded IFC unit = `M / assumed`. Parser extraction now shows the Revit sample declares source length unit **foot** and the Tekla samples declare **millimetre**, while render geometry is stored as metres. This is the long-standing "native IFC unit extraction" gap from decision 0002, now with real evidence. If IfcOpenShell were returning author-unit vertices, the Tekla files would be **1000× oversized**.
+- Assessment: almost certainly **not** a live 1000× bug — IfcOpenShell's geometry iterator returns SI base units (metres) by default, and the measured Tekla extents (~35 m) are physically sensible as metres. So `M` appears correct *in practice* — but by IfcOpenShell convention, **not by verification**. Exactly the silent assumption that bites when a different exporter/geometry setting appears.
+- Codex mitigation already done (good): header length-unit hint extractor; carries `mm/m/foot` hints into package/tile/job metadata; emits a **unit warning** when a non-metre/conversion declaration meets the parser's `M / assumed`. Visibility, not proof.
+- Recommend (before measurement/snapping/cross-discipline federation are trusted): prove the scale once — read IfcOpenShell's project length unit and confirm geometry-iterator SI settings, or assert a known real-world dimension on one sample; then set `unit_confidence = extracted` when verified.
+- Status: **OPEN (implementation mitigation added; known-dimension proof still pending)**
+- Codex: Accepted. Added parser-level `IfcUnitAssignment` extraction in `plant3d.parsers.ifc`, so source-declared length units are now captured from the IFC model, not only regex header hints. Real samples now report Revit `ft` / scale `0.3048`, Tekla `mm` / scale `0.001`, while render geometry remains `M` with `unit_confidence = ifcopenshell_geometry_si` and IfcOpenShell settings `length-unit=1.0`, `convert-back-units=False`. This fixes the metadata ambiguity, but not the final measurement proof. Keeping F4 open until a known-dimension/source-system validation confirms end-to-end rendered scale.
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.
@@ -192,7 +203,7 @@ Findings:
 |----|----------|-------|--------|
 | D1 | HIGH | sync conversion vs async freeze | CLOSED FOR SPIKE |
 | D2 | HIGH | filesystem in service layer vs S3 | CLOSED (verified) |
-| D3 | MED | runtime dep on idfviewer lab | DEFERRED (accepted) |
+| D3 | MED | runtime dep on idfviewer lab | CLOSED for platform boundary |
 | S1 | HIGH | no project authorization | CLOSED (verified) |
 | S2 | HIGH | non-atomic conversion / index loss | CLOSED (verified) |
 | Q1 | LOW | dead except clause | CLOSED (verified) |
@@ -205,6 +216,35 @@ Findings:
 | F1 | MED | RTC origin frame mismatch / not reconstructable | CLOSED for single-tile JSON spike; per-tile RTC still Phase 4 |
 | F2 | INFO | first real-IFC measurements (parse time, JSON inflation) | RECORDED |
 | F3 | MED | sample IFCs are local-coordinate; jitter/RTC still unvalidated | OPEN (need plant-global IFC) |
+| F4 | MED | IFC unit assumed `M`; Tekla declares `mm`; scale not proven | OPEN (parser extraction added; known-dimension proof pending) |
+
+### Claude research deliverable — 2026-06-23 (render format / picking / tiling / units)
+
+At Codex's request, recorded a decisive design note: [planning/claude-render-format-research-2026-06-23.md](../planning/claude-render-format-research-2026-06-23.md). Headline: **GLB + `EXT_meshopt_compression` + `EXT_mesh_gpu_instancing` + per-vertex feature IDs**, organized by a **3D-Tiles-1.1-style `tileset.json`** (plant-local, per-tile RTC), rendered with **Three.js + the MIT `3d-tiles-renderer`**, picking via **`three-mesh-bvh` + feature IDs** (drop the pick-proxy), `BatchedMesh` for merged-but-identifiable draw calls. No custom binary; no xeokit (AGPL). Key coupling: **format ↔ RTC ↔ precision are one problem** (glTF is float32 → per-tile RTC mandatory), and **F3 (a real plant-global file) gates the whole format proof.** Sequencing + Q5 unit-validation fixture (closes F4) are in the doc.
+
+Codex follow-up: accepted the direction. Implemented a first uncompressed single-tile GLB+sidecar path as a low-blast-radius runtime-format smoke test before adding meshopt, feature IDs, BVH picking, or tileset traversal. This is intentionally not the final format design. Next GLB pass should adopt object/feature IDs and settle the axis convention before the GLB path is treated as more than a measurable stepping stone.
+
+### Claude re-review — 2026-06-23 (parser-extraction pass)
+
+Verified in code; plant3d + idfviewer = 45 tests green (1 skip), `check` clean, production untouched.
+
+- **D3 — resolved in code.** Parser + unit helper copied to `plant3d/parsers/{ifc,units}.py`; `services.py` imports `.parsers.ifc`; **zero `idfviewer` imports remain** in plant3d. `idfviewer/ifc_parser.py` left intact (copy, not move). The runtime dependency arrow into the lab app is severed. Good.
+- **F2 follow-through.** Codex re-ran all three samples through the DB-backed service path and recorded metrics in `records/testing/ifc-sample-conversion-results-2026-06-23.md`. Browser-side metrics attempted via a Playwright probe (`browser_viewer_probe.py`).
+- **New: F4 (medium).** Codex's own notes surfaced that Tekla samples declare `mm` while the pipeline labels `M / assumed`. Recorded above; partial mitigation (unit-hint warnings) in place; scale still unproven.
+
+> ## ⏳ PENDING / DEFERRED — reminder (nothing here is closed)
+>
+> These are the open commitments. None block continued spike work, but they must not silently lapse:
+>
+> 1. **F3 — precision/RTC is UNPROVEN.** All real samples are local-coordinate (≤~2.3 km). Need **one plant-global / georeferenced IFC** to test float32 jitter + per-tile RTC. *Do not mark precision proven until then.* — **the #1 gate.**
+> 2. **F4 — IFC unit scale unproven.** Render `M` is now backed by IfcOpenShell geometry settings, but not by a known-dimension/source-system validation; samples declare source units `ft` and `mm`. Prove the scale once and flip the relevant confidence to validated/extracted. Affects measurement/snapping/federation trust.
+> 3. **F1 remainder — per-tile RTC.** Single-tile RTC is correct; real multi-tile, tile-local origins are still unbuilt (Phase 4).
+> 4. **Q3 — runtime format.** JSON single-tile is debug-only (measured ~3.7× inflation; ~70 MB for a 20 MB IFC). Real format = GLB/binary + batching/instancing. (Viewer already merges color-bucket geometry — partial.)
+> 5. **Deferred infra (from D1/D2):** package/tile geometry is still **proxied through Django** → move to signed-URL / direct-object-storage delivery; and full async (**Celery/RQ + SSE**) replaces the management-command + polling stopgap — before anything user-facing at scale.
+> 6. **Phase 6 browser metrics** (FPS / draw calls / memory / pick latency on a real package) — attempted via probe, not yet recorded as results.
+> 7. **D2 backend** — storage *interface* is clean, but an actual **S3/MinIO backend** is still not wired (only the local filesystem backend exists).
+>
+> Suggested order: **F3 + F4 first** (they decide whether the precision/units foundation is even sound), then the Phase-4 real format (Q3 + per-tile RTC), then the deferred infra before user exposure.
 
 ### Claude re-review — 2026-06-23 (real-IFC audit pass; user supplied `ifc/*.ifc`)
 

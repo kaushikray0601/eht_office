@@ -1,6 +1,6 @@
 import json
 
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
@@ -14,8 +14,13 @@ from .access import (
 )
 from .forms import SourceModelUploadForm
 from .models import SourceModel
-from .services import create_source_model_from_upload, queue_ifc_geometry_conversion, queue_metadata_conversion
-from .storage import exists as storage_exists, read_text
+from .services import (
+    create_source_model_from_upload,
+    queue_ifc_geometry_conversion,
+    queue_ifc_glb_conversion,
+    queue_metadata_conversion,
+)
+from .storage import exists as storage_exists, read_bytes, read_text
 
 
 def platform_home_view(request):
@@ -124,6 +129,26 @@ def source_ifc_geometry_convert_view(request, source_id):
     )
 
 
+@require_http_methods(["POST"])
+def source_ifc_glb_convert_view(request, source_id):
+    source = get_object_or_404(source_models_for_user(request.user), pk=source_id)
+    job = queue_ifc_glb_conversion(source)
+    return JsonResponse(
+        {
+            "job": {
+                "id": job.pk,
+                "job_type": job.job_type,
+                "status": job.status,
+                "progress_percent": job.progress_percent,
+                "metrics": job.metrics,
+                "url": reverse("plant3d_job_json", args=[job.pk]),
+            },
+            "process_hint": f"venv/bin/python manage.py process_plant3d_job {job.pk}",
+        },
+        status=202,
+    )
+
+
 def job_json_view(request, job_id):
     job = get_object_or_404(conversion_jobs_for_user(request.user).select_related("source_model"), pk=job_id)
     package = job.render_packages.order_by("-created_at").first()
@@ -209,6 +234,9 @@ def package_json_view(request, package_id):
                     "bounds": tile.bounds,
                     "rtc_origin": tile.rtc_origin,
                     "url": reverse("plant3d_tile_json", args=[tile.pk]),
+                    "metadata_url": reverse("plant3d_tile_json", args=[tile.pk]),
+                    "blob_url": reverse("plant3d_tile_blob", args=[tile.pk]),
+                    "content_type": tile.metadata.get("tile_type", ""),
                 }
                 for tile in tiles
             ],
@@ -238,12 +266,23 @@ def model_object_json_view(request, object_id):
 
 def tile_json_view(request, tile_id):
     tile = get_object_or_404(render_tiles_for_user(request.user), pk=tile_id)
-    if not storage_exists(tile.storage_key):
+    storage_key = tile.metadata.get("sidecar_storage_key") or tile.storage_key
+    if not storage_exists(storage_key):
         return JsonResponse({"error": "Tile payload is missing from storage."}, status=404)
 
     try:
-        payload = json.loads(read_text(tile.storage_key))
+        payload = json.loads(read_text(storage_key))
     except json.JSONDecodeError:
         return JsonResponse({"error": "Tile payload is not valid JSON."}, status=500)
 
     return JsonResponse(payload)
+
+
+def tile_blob_view(request, tile_id):
+    tile = get_object_or_404(render_tiles_for_user(request.user), pk=tile_id)
+    if not storage_exists(tile.storage_key):
+        return JsonResponse({"error": "Tile blob is missing from storage."}, status=404)
+    response = HttpResponse(read_bytes(tile.storage_key), content_type="model/gltf-binary")
+    response["Content-Length"] = str(tile.byte_size)
+    response["Content-Disposition"] = f'inline; filename="{tile.tile_id}.glb"'
+    return response

@@ -79,23 +79,28 @@ The spike should answer:
 - [x] Write first render-package manifest blob.
 - [x] Record conversion job, package, and tile metadata for the scaffold.
 - [x] Add first IFC geometry conversion service using the existing Python/IfcOpenShell parser path.
+- [x] Extract the IFC parser dependency into `plant3d/parsers/` after first real-file measurements, so plant3d no longer imports the `idfviewer` lab parser at runtime.
 - [x] Produce first JSON geometry runtime package from stored IFC source blobs.
 - [x] Record IFC geometry conversion job, package, tile, mesh count, byte size, and object index metadata.
 - [x] Add package/tile JSON API URLs so the browser does not depend on storage-key details.
 - [x] Wrap conversion package/tile/object-index writes in database transactions.
 - [x] Keep queued -> running -> completed/failed state transitions real for management-command processing.
 - [x] Run the IFC geometry conversion against real project/sample IFC files and record actual metrics.
-- [ ] Evaluate GLB/glTF output path.
-- [ ] Evaluate mesh compression feasibility if setup cost is reasonable.
+- [x] Evaluate first GLB/glTF output path with a binary GLB tile plus metadata sidecar.
+- [ ] Add feature/object IDs to the first GLB path before treating GLB as more than a render smoke test.
+- [ ] Evaluate meshopt compression feasibility if setup cost is reasonable.
 - [x] Record metadata-manifest output size.
 - [x] Record sample-file geometry conversion time and output size.
 - [x] Record extracted units, bounds, object count, and coordinate frame assumptions for available samples.
 - [x] Add IFC header length-unit hint extraction and propagate unit warnings into metadata/package/tile/job records for new conversions.
+- [x] Extract IFC `IfcUnitAssignment` declared length units through the plant3d parser and store render-unit-vs-source-unit evidence in package/tile/job metadata.
 - [ ] Repeat conversion metrics against the target 20 MB real project IFC.
 
 ## Phase 4 - Tiling And Precision Experiment
 
 - [ ] Create a tiled or chunked package manifest.
+- [ ] Define glTF axis convention before expanding GLB output: keep current render `x,z,y` frame consistently or emit glTF-standard Y-up with a root transform.
+- [ ] Start a primitive 3D-Tiles-style `tileset.json` manifest after feature IDs are in the single-tile GLB.
 - [x] Add tile-local origin/RTC metadata for the current single JSON geometry tile.
 - [x] Store the source-coordinate origin on the tile row and tile payload.
 - [x] Add transform metadata showing source axis/order, render axis/order, origin, and scale.
@@ -109,6 +114,7 @@ The spike should answer:
 
 - [x] Build a minimal Three.js viewer for the JSON spike package.
 - [x] Load JSON geometry package/tile manifest through platform APIs.
+- [x] Load first GLB package tile through the same package API using Three.js `GLTFLoader`.
 - [x] Show basic runtime metrics: loaded meshes, triangles, tiles, load time, package bytes, raw bounds.
 - [x] Show tile RTC origin in runtime metrics.
 - [x] Show live browser-side FPS, draw calls, and WebGL geometry/texture counters.
@@ -159,6 +165,7 @@ Decision rules:
 - [ ] Precision failure means fix package coordinate format/RTC strategy before changing renderer.
 - [ ] FPS failure after batching/instancing/LOD means compare Babylon.js or another renderer path.
 - [ ] JSON payload size or parse-time failure means move to GLB/binary tiles; do not keep expanding JSON.
+- [ ] Binary package proof requires format + RTC + precision to be validated together on a plant-global/georeferenced file.
 
 ## Phase 7 - Decision Report
 
@@ -178,13 +185,16 @@ Decision rules:
 - Coordinate precision problems may not show unless source files use large coordinates.
 - Browser memory and draw calls can become the limiting factor before triangle count.
 - Conversion now runs off-request through a management-command worker for the spike. Full Celery/RQ/SSE infrastructure is still required before user-facing or long-running production workflows.
-- `plant3d` still imports the prototype `idfviewer` IFC parser. Parser extraction into `plant3d/parsers/` or a neutral shared module remains a deliberate follow-up.
+- The IFC parser is now copied under `plant3d/parsers/`, closing the immediate platform-boundary dependency on `idfviewer`. Future parser refactor/shared ownership is still possible.
 - Package/tile JSON is still served through Django. This is acceptable for the spike but must move toward signed object-storage URLs before real-scale use.
+- First GLB package output is now available and is materially smaller than JSON on the tested samples, but still served through Django during the spike.
+- Claude's render-format research confirms the next serious stack direction: GLB + meshopt + GPU instancing + feature IDs, arranged by a 3D-Tiles-style manifest and rendered in Three.js with `3d-tiles-renderer` / `three-mesh-bvh` where needed. The current GLB pass is a smoke-test step, not the final runtime format.
 - RTC metadata is now frame-correct for the current single-tile JSON package, but real per-tile origins are still unproven until actual spatial tiling begins.
 - The debug viewer now reduces visible draw calls by merging geometry by color, but object picking currently keeps per-object geometry proxies in memory. This is acceptable for the spike but not a final large-model strategy.
 - Source-detail job polling is a practical spike bridge, not the final progress architecture. Production still needs a real worker process plus SSE/WebSocket or push-style progress.
-- Real sample conversion exposed a unit-confidence risk: parser packages report `M / assumed` while IFC headers may declare millimetre or conversion-based foot units. Header hints are now extracted for new conversions, but explicit scale validation is still required before trusting measurements or federation.
+- Real sample conversion exposed a unit-confidence risk. The parser now reports source-declared IFC units separately from render units: Revit sample declares `ft`, Tekla samples declare `mm`, while IfcOpenShell geometry settings report metre output (`length-unit=1.0`, `convert-back-units=False`). A known-dimension scale fixture is still required before trusting measurement/federation workflows.
 - JSON expansion is already visible on small samples; one 2.8 MB Tekla IFC produced a 10.5 MB JSON tile.
+- GLB reduces payload size materially on first samples: Revit JSON 1.51 MB -> GLB 0.56 MB plus 0.03 MB sidecar; Tekla JSON 10.49 MB -> GLB 5.38 MB plus 0.17 MB sidecar. Conversion time remains dominated by IFC parsing.
 - Browser probe rendered all three real converted packages, but Tekla samples measured only 15-17 FPS in headless Chromium after orbit movement. This fails the 30 FPS target in that environment and needs GPU/manual confirmation plus format/picking optimization.
 
 ## Available Local IFC Inputs
@@ -227,21 +237,30 @@ Confirmed:
 Deferred / TODO:
 
 - F3 remains open: obtain one plant-global/georeferenced IFC with large coordinates before marking jitter, orbit stability, or RTC precision as proven.
-- D3 remains deferred: extract the parser from `idfviewer` after the current real-sample/browser measurement loop.
+- D3 is closed for the platform boundary: `plant3d` now imports from `plant3d.parsers.ifc`, not `idfviewer.ifc_parser`.
 - Production delivery remains deferred: package/tile payloads should move from Django JSON responses to signed object-storage URLs before real scale.
-- Production package format remains deferred: evaluate GLB/glTF, 3D Tiles style manifests, meshopt, or custom binary chunks before expanding the JSON path.
-- Unit/scale proof remains deferred: header hints are visible now, but we still need a known-dimension or source-system validation to confirm rendered geometry scale.
+- Production package format remains partially deferred: first GLB+sidecar path exists, but compression, tiling, feature IDs, and 3D Tiles-style manifests remain open.
+- GLB feature IDs are now the next format task. Retrofitting identity later would repeat the RTC mistake; add object/feature IDs before investing more in GLB viewer behavior.
+- Unit/scale proof remains partially deferred: IFC `IfcUnitAssignment` and IfcOpenShell geometry settings are visible now, but we still need a known-dimension or source-system validation to confirm rendered geometry scale end-to-end.
+- Parser cleanup remains a TODO: the extracted parser is a direct copy for boundary safety, not yet a deeply refactored production parser.
 
 ## Immediate Next Actions
 
-1. Gather the real 20 MB IFC input when available.
-2. Upload one available local sample IFC from `ifc/` through `/plant3d/sources/upload/`.
-3. Run metadata conversion through the source detail page or POST endpoint.
-4. Process the queued job with `venv/bin/python manage.py process_plant3d_job <job_id>` or `venv/bin/python manage.py process_plant3d_job --next`.
-5. Run IFC geometry conversion through the source detail page or POST endpoint.
-6. Process that queued job with the same management command.
-7. Open the resulting package viewer and record load behavior.
-8. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+1. Add stable feature/object IDs to the single-tile GLB path before treating GLB as the main runtime package.
+2. Decide and document the first GLB axis convention. Current renderer uses `x,z,y`; either keep that consistently or emit glTF-standard Y-up via a root transform.
+3. Re-run GLB conversion and viewer checks on the Revit and Tekla samples after feature IDs.
+4. Add the known-dimension unit validation fixture to close F4 when practical.
+5. Gather the real 20 MB and/or plant-global IFC input when available.
+6. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+
+Current manual check path:
+
+1. Upload one available local sample IFC from `ifc/` through `/plant3d/sources/upload/`.
+2. Run metadata conversion through the source detail page or POST endpoint.
+3. Process the queued job with `venv/bin/python manage.py process_plant3d_job <job_id>` or `venv/bin/python manage.py process_plant3d_job --next`.
+4. Run IFC JSON debug conversion and process the queued job.
+5. Queue the IFC GLB conversion and process that queued job.
+6. Open both package viewers and compare package size/load behavior.
 
 ## Verification Log
 
@@ -290,11 +309,31 @@ Deferred / TODO:
 - 2026-06-23: `node --check plant3d/static/plant3d/js/source_detail.js` passed.
 - 2026-06-23: `node --check /tmp/package_viewer.mjs` passed after copying the browser module to `.mjs`.
 - 2026-06-23: Added IFC header length-unit hint extraction and warnings to metadata/package/tile/job records for new conversions; sample headers report Revit `m + FOOT` and Tekla `mm + FOOT`.
+- 2026-06-23: Closed D3 platform-boundary dependency by copying the IFC parser/unit helper into `plant3d/parsers/` and changing `plant3d.services` to import from `plant3d.parsers.ifc`.
+- 2026-06-23: `venv/bin/python -m py_compile plant3d/parsers/ifc.py plant3d/parsers/units.py plant3d/services.py` passed.
+- 2026-06-23: Direct extracted-parser check on `ifc/Ifc2s3_Duplex_Electrical.ifc` returned 104 meshes.
+- 2026-06-23: `venv/bin/python manage.py check` passed after parser extraction.
+- 2026-06-23: `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 22 tests. The default reused PostgreSQL test database failed during setup on an unrelated auth/content-type integrity issue before plant3d tests ran.
+- 2026-06-23: Added parser-level IFC `IfcUnitAssignment` extraction. Real samples now report Revit `ft` and Tekla `mm` as source-declared units while render geometry remains `M` with `ifcopenshell_geometry_si` confidence.
+- 2026-06-23: `venv/bin/python -m py_compile plant3d/parsers/ifc.py plant3d/services.py plant3d/tests.py` passed after parser unit extraction.
+- 2026-06-23: `venv/bin/python manage.py check` passed after parser unit extraction.
+- 2026-06-23: `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 24 tests.
+- 2026-06-23: Real parser unit check: `Ifc2s3_Duplex_Electrical.ifc` declares `ft` scale `0.3048`; `8-SSPAR-800203.ifc` and `8-SSPAR-800205B.ifc` declare `mm` scale `0.001`; all report render coordinate unit `M`, IfcOpenShell `length-unit=1.0`, `convert-back-units=False`.
+- 2026-06-23: Added first GLB package path: `plant3d.ifc-glb` queued conversion, binary GLB tile, JSON metadata sidecar, blob endpoint, and GLB viewer loading through `GLTFLoader`.
+- 2026-06-23: `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/views.py plant3d/tests.py` passed after GLB pass.
+- 2026-06-23: `venv/bin/python manage.py check` passed after GLB pass.
+- 2026-06-23: `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 28 tests.
+- 2026-06-23: `node --check /tmp/package_viewer.mjs` passed after refreshing the viewer module copy.
+- 2026-06-23: Real GLB conversion metrics: `Ifc2s3_Duplex_Electrical.ifc` produced 560,296 byte GLB plus 26,266 byte sidecar for 104 objects; `8-SSPAR-800203.ifc` produced 5,376,268 byte GLB plus 167,948 byte sidecar for 867 objects in 17,546 ms.
+- 2026-06-23: Claude render-format research reviewed. Accepted stack direction: GLB first, meshopt over Draco for default compression, feature IDs before serious picking, no custom binary, no xeokit/AGPL, 3D-Tiles-style manifest for streaming/LOD. Recorded that format, RTC, and precision must be proven together on plant-global coordinates.
+- 2026-06-23: Admin cleanup note: deleting local spike `ModelObject` / `ConversionJob` rows from Django admin is DB-safe, but it does not remove stored source/render files. Deleting only jobs leaves packages; deleting only objects leaves package counts stale. For a clean local reset, delete `SourceModel` records or add a dedicated cleanup command that also removes storage keys.
 
 ## Platform Rules Discovered During Implementation
 
 - Browser viewers should load render packages through stable platform API URLs, not direct storage keys. This preserves freedom to move from local/self-hosted storage to MinIO, Oracle Object Storage, S3, signed URLs, or CDN delivery later.
 - The current JSON geometry viewer is useful for proving flow and debugging, but it is not the final large-model runtime format.
+- GLB+sidecar is the first serious runtime package candidate. The sidecar keeps metadata available while the GLB focuses on renderable geometry; feature/object picking inside GLB is deliberately deferred until feature IDs are designed.
+- Do not treat a renderable GLB as a final engineering package until it carries stable object identity. Engineering selection, filtering, highlighting, and linking all depend on feature/object IDs.
 - Browser verification should include a real converted package, not only mocked API tests.
 - Access checks must be applied at source, package, and tile levels because package/tile IDs are enough to expose cross-project data if left unscoped.
 - Conversion writes must be transactional so a failed package/index rebuild does not destroy the previous object index.
@@ -304,8 +343,11 @@ Deferred / TODO:
 - Coordinate metadata must name its frame explicitly. A stored RTC origin is only useful if it is in the same frame as the geometry vertices and can reconstruct source/world coordinates with a tested formula.
 - Measurement should be built into the spike UI and job records from the start; otherwise real-file testing will produce subjective impressions instead of architecture evidence.
 - Merged visible geometry and per-object pick proxies are a useful bridge for the JSON debug viewer, but the production format should move picking IDs/feature metadata into the render package rather than duplicating geometry in browser memory.
+- GLB packages should not reintroduce hidden per-object pick-proxy geometry. The next picking strategy should use feature IDs, object spans, BVH picking, or metadata-backed selection designed for binary packages.
+- Local spike DB cleanup through Django admin is acceptable, but storage cleanup needs an explicit tool/command. Otherwise media blobs under `MEDIA_ROOT/plant3d` will become orphaned.
 - Spike UX should expose the exact worker command and poll job status from the source page so manual IFC testing does not depend on raw JSON pages or repeated full-page refreshes.
 - Browser verification should distinguish nonblank render success from performance success. The current real-sample probe renders correctly, but Tekla FPS is below target.
+- Source-declared IFC units and render geometry units are different facts. Store both: source unit from `IfcUnitAssignment`, render unit from parser/IfcOpenShell geometry settings, and only mark measurement scale trusted after a known-dimension validation.
 
 ## Manual Testing Checklist
 
@@ -319,11 +361,13 @@ When an IFC sample is available, test manually:
 6. Refresh the source detail page and confirm a metadata package appears.
 7. Run IFC geometry conversion and confirm JSON response shows `status: queued`.
 8. Process that queued job with `venv/bin/python manage.py process_plant3d_job <job_id>` or `venv/bin/python manage.py process_plant3d_job --all`.
-9. Refresh the source detail page and open the package viewer link.
-10. Confirm the model appears, can orbit/pan/zoom, and shows load status.
-11. Record conversion duration from the source detail job metrics.
-12. Record viewer load time, rough FPS, draw calls, render batches, pick proxies, triangles, mesh count, tile origin, pick latency, metadata latency, and visible jitter from the viewer sidebar.
-13. Log in as a user not assigned to that project and confirm source/package/tile URLs return 404.
+9. Queue and process IFC GLB conversion for the same source.
+10. Refresh the source detail page and open both JSON and GLB package viewer links.
+11. Confirm each model appears, can orbit/pan/zoom, and shows load status.
+12. Record conversion duration from the source detail job metrics.
+13. Record viewer load time, rough FPS, draw calls, render batches, pick proxies, triangles, mesh count, tile origin, pick latency, metadata latency, and visible jitter from the viewer sidebar.
+14. For GLB packages, record that object picking is currently deferred rather than broken.
+15. Log in as a user not assigned to that project and confirm source/package/tile URLs return 404.
 
 ## Claude Research / Review Asks
 
@@ -334,6 +378,8 @@ When an IFC sample is available, test manually:
   - custom binary tile chunks
 - Review whether Three.js JSON loading should be kept only as a debug path once GLB/tiling begins.
 - Review the merged-visible-geometry plus hidden-pick-proxy strategy and recommend the production picking approach for GLB/binary tiles.
+- Review the new GLB+sidecar path: validate GLB structure, sidecar contents, and recommend the next feature-ID/object-picking strategy.
+- Review the glTF axis convention decision: current render frame uses `x,z,y`; choose whether to keep that convention in GLB or emit glTF-standard Y-up with a root transform.
 - Recommend measurable thresholds for when JSON payload size becomes unacceptable and we must move to GLB/binary tiles.
 - Independently review API delivery strategy: direct platform JSON API now versus signed object-storage URLs later.
 - Review the right timing and minimal implementation for moving inline conversion to queued worker/SSE progress.

@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const viewer = document.getElementById('viewer');
@@ -52,6 +53,7 @@ let lastFpsSampleAt = performance.now();
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
+const gltfLoader = new GLTFLoader();
 const pickProxyMaterial = new THREE.MeshBasicMaterial({ visible: false });
 const highlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffb020,
@@ -209,6 +211,14 @@ async function loadPackage() {
   const response = await fetch(packageUrl);
   if (!response.ok) throw new Error(`Package request failed: ${response.status}`);
   const pkg = await response.json();
+  if (pkg.package_format === 'GLB') {
+    await loadGlbPackage(pkg, started);
+    return;
+  }
+  await loadJsonPackage(pkg, started);
+}
+
+async function loadJsonPackage(pkg, started) {
   objectIndex = new Map();
   for (const obj of pkg.objects || []) {
     if (obj.stable_id) objectIndex.set(obj.stable_id, obj);
@@ -263,6 +273,43 @@ async function loadPackage() {
   setMetrics(pkg, meshCount, renderBatchCount, selectableMeshes.length, tileCount, triangleCount, elapsedMs);
 }
 
+async function loadGlbPackage(pkg, started) {
+  runtimeStats.renderMode = 'glb-sidecar';
+  objectIndex = new Map();
+  selectableMeshes = [];
+  let meshCount = 0;
+  let renderBatchCount = 0;
+  let triangleCount = 0;
+  let tileCount = 0;
+
+  for (const tile of pkg.tiles || []) {
+    const blobUrl = tile.blob_url || tile.url;
+    if (!blobUrl) continue;
+    const gltf = await gltfLoader.loadAsync(blobUrl);
+    const tileRoot = gltf.scene || new THREE.Group();
+    tileRoot.traverse(node => {
+      if (!node.isMesh) return;
+      meshCount += 1;
+      renderBatchCount += 1;
+      const geometry = node.geometry;
+      const index = geometry?.index;
+      const position = geometry?.getAttribute?.('position');
+      if (index) {
+        triangleCount += Math.floor(index.count / 3);
+      } else if (position) {
+        triangleCount += Math.floor(position.count / 3);
+      }
+    });
+    root.add(tileRoot);
+    tileCount += 1;
+  }
+
+  frameScene();
+  const elapsedMs = Math.round(performance.now() - started);
+  setStatus(`Loaded GLB package with ${meshCount} render mesh(es) from ${tileCount} tile(s) in ${elapsedMs} ms. Object picking is deferred for GLB packages.`);
+  setMetrics(pkg, meshCount, renderBatchCount, 0, tileCount, triangleCount, elapsedMs);
+}
+
 function clearSelection() {
   if (selectedHighlight) {
     root.remove(selectedHighlight);
@@ -312,6 +359,12 @@ async function showSelection(mesh) {
 }
 
 function pick(event) {
+  if (!selectableMeshes.length) {
+    runtimeStats.pickLatencyMs = 0;
+    renderMetrics();
+    if (selectionEl) selectionEl.textContent = 'Object picking is not available for this package format yet.';
+    return;
+  }
   const pickStarted = performance.now();
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;

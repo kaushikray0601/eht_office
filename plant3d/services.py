@@ -6,7 +6,8 @@ import time
 from django.db import transaction
 from django.utils import timezone
 
-from idfviewer.ifc_parser import parse_multiple_ifc_uploads
+from .glb import build_glb_from_meshes
+from .parsers.ifc import parse_multiple_ifc_uploads
 
 from .models import ConversionJob, RenderPackage, RenderTile, SourceModel
 from .storage import (
@@ -183,6 +184,8 @@ def _ifc_unit_warnings(unit_hints, parser_stats):
     parser_unit = str(parser_stats.get("coordinate_unit") or "").upper()
     parser_confidence = str(parser_stats.get("unit_confidence") or "").lower()
     header_scale = unit_hints.get("primary_length_scale_to_m")
+    declared_scale = parser_stats.get("ifc_declared_length_scale_to_m")
+    declared_unit = parser_stats.get("ifc_declared_length_unit") or unit_hints.get("primary_length_display_unit") or ""
     if header_scale not in (None, 1.0) and parser_unit == "M" and parser_confidence == "assumed":
         warnings.append(
             "IFC header declares a non-metre primary length unit, while parser output reports M/assumed. Verify whether IfcOpenShell normalized coordinates before using measurements."
@@ -191,7 +194,34 @@ def _ifc_unit_warnings(unit_hints, parser_stats):
         warnings.append(
             "IFC header includes conversion-based length units; measurement/federation should verify source units against rendered coordinates."
         )
+    if declared_scale not in (None, 1.0) and parser_unit == "M" and parser_confidence == "ifcopenshell_geometry_si":
+        warnings.append(
+            f"IFC source declares length unit {declared_unit}, while render geometry is stored in metres from IfcOpenShell. Keep source-declared units and render units separate for measurement/federation."
+        )
     return warnings
+
+
+def _ifc_unit_metadata(unit_hints, parser_stats):
+    return {
+        "render_coordinate_unit": parser_stats.get("coordinate_unit") or "",
+        "render_coordinate_scale_to_m": parser_stats.get("coordinate_scale_to_m"),
+        "render_unit_confidence": parser_stats.get("unit_confidence") or "",
+        "display_unit": parser_stats.get("display_unit") or "",
+        "source_unit_hints": unit_hints,
+        "ifc_declared_length_units": parser_stats.get("ifc_declared_length_units") or [],
+        "ifc_declared_length_unit": parser_stats.get("ifc_declared_length_unit") or "",
+        "ifc_declared_length_unit_name": parser_stats.get("ifc_declared_length_unit_name") or "",
+        "ifc_declared_length_unit_entity": parser_stats.get("ifc_declared_length_unit_entity") or "",
+        "ifc_declared_length_scale_to_m": parser_stats.get("ifc_declared_length_scale_to_m"),
+        "ifc_declared_length_confidence": parser_stats.get("ifc_declared_length_confidence") or "",
+        "geometry_unit": parser_stats.get("geometry_unit") or "",
+        "geometry_scale_to_m": parser_stats.get("geometry_scale_to_m"),
+        "geometry_unit_basis": parser_stats.get("geometry_unit_basis") or "",
+        "ifcopenshell_length_unit_setting": parser_stats.get("ifcopenshell_length_unit_setting"),
+        "ifcopenshell_convert_back_units": parser_stats.get("ifcopenshell_convert_back_units"),
+        "ifcopenshell_geometry_note": parser_stats.get("ifcopenshell_geometry_note") or "",
+        "source_files": parser_stats.get("source_files") or [],
+    }
 
 
 def build_metadata_manifest(source_model):
@@ -237,6 +267,12 @@ def queue_ifc_geometry_conversion(source_model, tool_name="plant3d.ifc-json", to
         tool_version=tool_version,
         input_storage_key=source_model.storage_key,
     )
+
+
+def queue_ifc_glb_conversion(source_model, tool_name="plant3d.ifc-glb", tool_version="0.1"):
+    if source_model.source_format != "IFC":
+        raise ValueError("IFC GLB conversion requires an IFC source model.")
+    return queue_ifc_geometry_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
 
 
 def _mark_job_running(job, progress_percent):
@@ -312,8 +348,8 @@ def run_metadata_conversion(source_model, job=None, tool_name="plant3d.metadata"
         raise
 
 
-def _render_tile_storage_key(source_id, tile_id):
-    return f"plant3d/render/{source_id}/{tile_id}.json"
+def _render_tile_storage_key(source_id, tile_id, extension="json"):
+    return f"plant3d/render/{source_id}/{tile_id}.{extension}"
 
 
 def _raw_bounds_center(raw_bounds):
@@ -388,25 +424,68 @@ def run_ifc_geometry_conversion(source_model, tool_name="plant3d.ifc-json", tool
     return _run_ifc_geometry_conversion(source_model, job=job, tool_name=tool_name, tool_version=tool_version)
 
 
+def run_ifc_glb_conversion(source_model, tool_name="plant3d.ifc-glb", tool_version="0.1"):
+    job = None
+    return _run_ifc_glb_conversion(source_model, job=job, tool_name=tool_name, tool_version=tool_version)
+
+
+def _ifc_scene_context(source_model):
+    raw = read_bytes(source_model.storage_key)
+    scene = parse_multiple_ifc_uploads([(source_model.original_filename, raw)], source_model.project)
+    meshes = scene.get("meshes") or []
+    stats = scene.get("stats") or {}
+    unit_hints = extract_ifc_unit_hints(raw[:2_000_000].decode("utf-8", errors="ignore"))
+    unit_warnings = _ifc_unit_warnings(unit_hints, stats)
+    unit_metadata = _ifc_unit_metadata(unit_hints, stats)
+    raw_bounds = stats.get("raw_bounds") or {}
+    scale_to_m = stats.get("coordinate_scale_to_m")
+    origin_source_xyz, rtc_origin_render_xyz = _rtc_origins_from_raw_bounds(raw_bounds, scale_to_m=scale_to_m)
+    coordinate_transform = {
+        "source_axis_order": ["x", "y", "z"],
+        "render_axis_order": ["x", "z", "y"],
+        "origin_source_xyz": origin_source_xyz,
+        "rtc_origin_render_xyz": rtc_origin_render_xyz,
+        "scale_to_m": scale_to_m,
+        "local_position_frame": "render_xyz_m_relative_to_rtc_origin_render_xyz",
+        "render_world_formula": "render_world_xyz_m = rtc_origin_render_xyz + local_position_xyz_m",
+        "source_reconstruction_formula": "source_xyz = [render_world.x/scale, render_world.z/scale, render_world.y/scale]",
+        "note": "IFC vertices are local render-frame coordinates produced by axis swap and scale after subtracting the source bbox center.",
+    }
+    return {
+        "raw": raw,
+        "scene": scene,
+        "meshes": meshes,
+        "stats": stats,
+        "unit_hints": unit_hints,
+        "unit_warnings": unit_warnings,
+        "unit_metadata": unit_metadata,
+        "raw_bounds": raw_bounds,
+        "scale_to_m": scale_to_m,
+        "origin_source_xyz": origin_source_xyz,
+        "rtc_origin_render_xyz": rtc_origin_render_xyz,
+        "coordinate_transform": coordinate_transform,
+    }
+
+
 def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-json", tool_version="0.1"):
     if source_model.source_format != "IFC":
         raise ValueError("IFC geometry conversion requires an IFC source model.")
 
-    raw = read_bytes(source_model.storage_key)
     job = job or queue_ifc_geometry_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
     _mark_job_running(job, 5)
     started = time.perf_counter()
 
     try:
-        scene = parse_multiple_ifc_uploads([(source_model.original_filename, raw)], source_model.project)
-        meshes = scene.get("meshes") or []
-        stats = scene.get("stats") or {}
-        unit_hints = extract_ifc_unit_hints(raw[:2_000_000].decode("utf-8", errors="ignore"))
-        unit_warnings = _ifc_unit_warnings(unit_hints, stats)
-        raw_bounds = stats.get("raw_bounds") or {}
-        scale_to_m = stats.get("coordinate_scale_to_m")
-        origin_source_xyz, rtc_origin_render_xyz = _rtc_origins_from_raw_bounds(raw_bounds, scale_to_m=scale_to_m)
-        tile_key = _render_tile_storage_key(source_model.pk, "geometry-0001")
+        context = _ifc_scene_context(source_model)
+        meshes = context["meshes"]
+        stats = context["stats"]
+        unit_hints = context["unit_hints"]
+        unit_warnings = context["unit_warnings"]
+        unit_metadata = context["unit_metadata"]
+        raw_bounds = context["raw_bounds"]
+        origin_source_xyz = context["origin_source_xyz"]
+        rtc_origin_render_xyz = context["rtc_origin_render_xyz"]
+        tile_key = _render_tile_storage_key(source_model.pk, "geometry-0001", "json")
         tile_payload = {
             "package_version": 1,
             "tile_id": "geometry-0001",
@@ -417,21 +496,12 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
             "display_unit": stats.get("display_unit") or "",
             "unit_confidence": stats.get("unit_confidence") or "",
             "source_unit_hints": unit_hints,
+            "unit_metadata": unit_metadata,
             "unit_warnings": unit_warnings,
             "raw_bounds": raw_bounds,
             "rtc_origin": rtc_origin_render_xyz,
             "rtc_origin_frame": "render_xyz_m",
-            "coordinate_transform": {
-                "source_axis_order": ["x", "y", "z"],
-                "render_axis_order": ["x", "z", "y"],
-                "origin_source_xyz": origin_source_xyz,
-                "rtc_origin_render_xyz": rtc_origin_render_xyz,
-                "scale_to_m": scale_to_m,
-                "local_position_frame": "render_xyz_m_relative_to_rtc_origin_render_xyz",
-                "render_world_formula": "render_world_xyz_m = rtc_origin_render_xyz + local_position_xyz_m",
-                "source_reconstruction_formula": "source_xyz = [render_world.x/scale, render_world.z/scale, render_world.y/scale]",
-                "note": "IFC vertices are local render-frame coordinates produced by axis swap and scale after subtracting the source bbox center.",
-            },
+            "coordinate_transform": context["coordinate_transform"],
             "meshes": meshes,
         }
         tile_text = json.dumps(tile_payload, separators=(",", ":"))
@@ -456,6 +526,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                     "display_unit": stats.get("display_unit") or "",
                     "unit_confidence": stats.get("unit_confidence") or "",
                     "source_unit_hints": unit_hints,
+                    "unit_metadata": unit_metadata,
                     "unit_warnings": unit_warnings,
                     "origin_source_xyz": origin_source_xyz,
                     "rtc_origin_render_xyz": rtc_origin_render_xyz,
@@ -476,12 +547,15 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                     "tile_type": "ifc-geometry-json",
                     "coordinate_transform": tile_payload["coordinate_transform"],
                     "source_unit_hints": unit_hints,
+                    "unit_metadata": unit_metadata,
                     "unit_warnings": unit_warnings,
                 },
             )
             indexed_count = _index_scene_objects(source_model, package, tile, meshes)
 
-            source_model.declared_unit = source_model.declared_unit or (stats.get("coordinate_unit") or "")
+            source_model.declared_unit = source_model.declared_unit or (
+                str(stats.get("ifc_declared_length_unit") or stats.get("coordinate_unit") or "").upper()
+            )
             source_model.bounds = raw_bounds or source_model.bounds
             source_model.metadata = {
                 **(source_model.metadata or {}),
@@ -489,6 +563,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                 "ifc_mesh_count": len(meshes),
                 "model_object_count": indexed_count,
                 "ifc_unit_hints": unit_hints,
+                "ifc_unit_metadata": unit_metadata,
                 "ifc_unit_warnings": unit_warnings,
                 "last_origin_source_xyz": origin_source_xyz,
                 "last_rtc_origin_render_xyz": rtc_origin_render_xyz,
@@ -507,6 +582,168 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                 "conversion_scope": "ifc-geometry-json",
                 "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
                 "source_unit_hints": unit_hints,
+                "unit_metadata": unit_metadata,
+                "unit_warnings": unit_warnings,
+            }
+            job.save(update_fields=[
+                "status",
+                "progress_percent",
+                "output_storage_prefix",
+                "completed_at",
+                "metrics",
+                "updated_at",
+            ])
+        return job, package
+    except Exception as exc:
+        job.status = "failed"
+        job.error_message = str(exc)
+        job.completed_at = timezone.now()
+        job.save(update_fields=["status", "error_message", "completed_at", "updated_at"])
+        raise
+
+
+def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb", tool_version="0.1"):
+    if source_model.source_format != "IFC":
+        raise ValueError("IFC GLB conversion requires an IFC source model.")
+
+    job = job or queue_ifc_glb_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
+    _mark_job_running(job, 5)
+    started = time.perf_counter()
+
+    try:
+        context = _ifc_scene_context(source_model)
+        meshes = context["meshes"]
+        stats = context["stats"]
+        unit_hints = context["unit_hints"]
+        unit_warnings = context["unit_warnings"]
+        unit_metadata = context["unit_metadata"]
+        raw_bounds = context["raw_bounds"]
+        origin_source_xyz = context["origin_source_xyz"]
+        rtc_origin_render_xyz = context["rtc_origin_render_xyz"]
+        tile_id = "geometry-0001"
+        glb_key = _render_tile_storage_key(source_model.pk, tile_id, "glb")
+        sidecar_key = _render_tile_storage_key(source_model.pk, f"{tile_id}-metadata", "json")
+        glb_metadata = {
+            "package_version": 1,
+            "tile_id": tile_id,
+            "source_model_id": source_model.pk,
+            "source_format": source_model.source_format,
+            "coordinate_unit": stats.get("coordinate_unit") or "",
+            "coordinate_scale_to_m": stats.get("coordinate_scale_to_m"),
+            "display_unit": stats.get("display_unit") or "",
+            "unit_confidence": stats.get("unit_confidence") or "",
+            "unit_metadata": unit_metadata,
+            "unit_warnings": unit_warnings,
+            "raw_bounds": raw_bounds,
+            "rtc_origin": rtc_origin_render_xyz,
+            "rtc_origin_frame": "render_xyz_m",
+            "coordinate_transform": context["coordinate_transform"],
+        }
+        glb_bytes, sidecar = build_glb_from_meshes(meshes, metadata=glb_metadata)
+        sidecar.update(
+            {
+                "tile_id": tile_id,
+                "source_model_id": source_model.pk,
+                "glb_storage_key": glb_key,
+                "sidecar_storage_key": sidecar_key,
+                "coordinate_transform": context["coordinate_transform"],
+                "unit_metadata": unit_metadata,
+                "unit_warnings": unit_warnings,
+                "raw_bounds": raw_bounds,
+            }
+        )
+        write_bytes(glb_key, glb_bytes)
+        write_text(sidecar_key, json.dumps(sidecar, separators=(",", ":")))
+        glb_size = stat_size(glb_key)
+        sidecar_size = stat_size(sidecar_key)
+
+        with transaction.atomic():
+            package = RenderPackage.objects.create(
+                source_model=source_model,
+                conversion_job=job,
+                package_format="GLB",
+                storage_prefix=f"plant3d/render/{source_model.pk}",
+                manifest_storage_key=sidecar_key,
+                object_count=len(meshes),
+                tile_count=1,
+                byte_size=glb_size + sidecar_size,
+                coordinate_unit=stats.get("coordinate_unit") or "",
+                coordinate_frame=source_model.coordinate_frame,
+                bounds=raw_bounds,
+                metadata={
+                    "conversion_scope": "ifc-glb",
+                    "display_unit": stats.get("display_unit") or "",
+                    "unit_confidence": stats.get("unit_confidence") or "",
+                    "source_unit_hints": unit_hints,
+                    "unit_metadata": unit_metadata,
+                    "unit_warnings": unit_warnings,
+                    "origin_source_xyz": origin_source_xyz,
+                    "rtc_origin_render_xyz": rtc_origin_render_xyz,
+                    "glb_storage_key": glb_key,
+                    "sidecar_storage_key": sidecar_key,
+                    "render_batch_count": sidecar["render_batch_count"],
+                    "picking_strategy": "metadata-sidecar-only; GLB object picking deferred until feature IDs are designed",
+                },
+            )
+            tile = RenderTile.objects.create(
+                render_package=package,
+                tile_id=tile_id,
+                storage_key=glb_key,
+                sequence=1,
+                rtc_origin_x=rtc_origin_render_xyz[0],
+                rtc_origin_y=rtc_origin_render_xyz[1],
+                rtc_origin_z=rtc_origin_render_xyz[2],
+                object_count=len(meshes),
+                byte_size=glb_size,
+                bounds=raw_bounds,
+                metadata={
+                    "tile_type": "ifc-glb",
+                    "sidecar_storage_key": sidecar_key,
+                    "sidecar_bytes": sidecar_size,
+                    "coordinate_transform": context["coordinate_transform"],
+                    "source_unit_hints": unit_hints,
+                    "unit_metadata": unit_metadata,
+                    "unit_warnings": unit_warnings,
+                    "render_batch_count": sidecar["render_batch_count"],
+                },
+            )
+            indexed_count = _index_scene_objects(source_model, package, tile, meshes)
+
+            source_model.declared_unit = source_model.declared_unit or (
+                str(stats.get("ifc_declared_length_unit") or stats.get("coordinate_unit") or "").upper()
+            )
+            source_model.bounds = raw_bounds or source_model.bounds
+            source_model.metadata = {
+                **(source_model.metadata or {}),
+                "last_glb_conversion_job_id": job.pk,
+                "ifc_mesh_count": len(meshes),
+                "model_object_count": indexed_count,
+                "ifc_unit_hints": unit_hints,
+                "ifc_unit_metadata": unit_metadata,
+                "ifc_unit_warnings": unit_warnings,
+                "last_origin_source_xyz": origin_source_xyz,
+                "last_rtc_origin_render_xyz": rtc_origin_render_xyz,
+                "last_glb_storage_key": glb_key,
+                "last_glb_sidecar_storage_key": sidecar_key,
+            }
+            source_model.save(update_fields=["declared_unit", "bounds", "metadata", "updated_at"])
+
+            job.status = "completed"
+            job.progress_percent = 100
+            job.output_storage_prefix = package.storage_prefix
+            job.completed_at = timezone.now()
+            job.metrics = {
+                "glb_storage_key": glb_key,
+                "glb_bytes": glb_size,
+                "sidecar_storage_key": sidecar_key,
+                "sidecar_bytes": sidecar_size,
+                "mesh_count": len(meshes),
+                "render_batch_count": sidecar["render_batch_count"],
+                "model_object_count": indexed_count,
+                "conversion_scope": "ifc-glb",
+                "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
+                "source_unit_hints": unit_hints,
+                "unit_metadata": unit_metadata,
                 "unit_warnings": unit_warnings,
             }
             job.save(update_fields=[
@@ -535,6 +772,8 @@ def execute_conversion_job(job):
         return run_metadata_conversion(source_model, job=job)
     if job.job_type == "render_package":
         if source_model.source_format == "IFC":
+            if job.tool_name == "plant3d.ifc-glb":
+                return _run_ifc_glb_conversion(source_model, job=job)
             return _run_ifc_geometry_conversion(source_model, job=job)
         raise ValueError(f"Render package conversion is not implemented for {source_model.source_format}.")
     raise ValueError(f"Unsupported conversion job type: {job.job_type}")
