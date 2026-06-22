@@ -9,8 +9,15 @@ const resetBtn = document.getElementById('resetViewBtn');
 const metricsEl = document.getElementById('runtimeMetrics');
 const selectionEl = document.getElementById('selectionPanel');
 
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+const devicePixelRatio = window.devicePixelRatio || 1;
+const maxIdlePixelRatio = Math.max(0.75, Math.min(devicePixelRatio, 1.5));
+const interactionPixelRatio = Math.max(0.75, Math.min(maxIdlePixelRatio, 1.0));
+const minPixelRatio = Math.min(interactionPixelRatio, 0.75);
+
+const renderer = new THREE.WebGLRenderer({
+  antialias: false,
+  powerPreference: 'high-performance',
+});
 renderer.setClearColor(0xf4f6f8, 1);
 viewer.appendChild(renderer.domElement);
 
@@ -29,6 +36,7 @@ scene.add(root);
 
 let packageBounds = new THREE.Box3();
 let objectIndex = new Map();
+let featureIndex = new Map();
 let selectableMeshes = [];
 let selectedMesh = null;
 let selectedHighlight = null;
@@ -37,6 +45,7 @@ let runtimeStats = {
   meshCount: 0,
   renderBatchCount: 0,
   pickProxyCount: 0,
+  featureCount: 0,
   tileCount: 0,
   triangleCount: 0,
   elapsedMs: 0,
@@ -44,12 +53,18 @@ let runtimeStats = {
   drawCalls: 0,
   geometryCount: 0,
   textureCount: 0,
+  pixelRatio: maxIdlePixelRatio,
+  qualityMode: 'adaptive-idle',
   pickLatencyMs: 0,
   metadataLatencyMs: 0,
   package: null,
 };
 let framesSinceFpsSample = 0;
 let lastFpsSampleAt = performance.now();
+let isInteracting = false;
+let lowFpsSamples = 0;
+let highFpsSamples = 0;
+let restoreQualityTimer = null;
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
@@ -66,6 +81,19 @@ const highlightMaterial = new THREE.MeshBasicMaterial({
 function setStatus(text) {
   if (statusEl) statusEl.textContent = text;
 }
+
+function applyPixelRatio(value, qualityMode) {
+  const nextRatio = Math.max(minPixelRatio, Math.min(maxIdlePixelRatio, Number(value) || maxIdlePixelRatio));
+  if (Math.abs(runtimeStats.pixelRatio - nextRatio) > 0.01) {
+    renderer.setPixelRatio(nextRatio);
+    const rect = viewer.getBoundingClientRect();
+    renderer.setSize(Math.max(1, rect.width), Math.max(1, rect.height), false);
+  }
+  runtimeStats.pixelRatio = Number(nextRatio.toFixed(2));
+  runtimeStats.qualityMode = qualityMode;
+}
+
+applyPixelRatio(maxIdlePixelRatio, 'adaptive-idle');
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -87,6 +115,7 @@ function renderMetrics() {
     `<p class="kv"><span>Loaded Meshes</span><strong>${runtimeStats.meshCount}</strong></p>`,
     `<p class="kv"><span>Render Batches</span><strong>${runtimeStats.renderBatchCount}</strong></p>`,
     `<p class="kv"><span>Pick Proxies</span><strong>${runtimeStats.pickProxyCount}</strong></p>`,
+    `<p class="kv"><span>Feature IDs</span><strong>${runtimeStats.featureCount}</strong></p>`,
     `<p class="kv"><span>Triangles</span><strong>${runtimeStats.triangleCount}</strong></p>`,
     `<p class="kv"><span>Tiles</span><strong>${runtimeStats.tileCount}</strong></p>`,
     `<p class="kv"><span>Load Time</span><strong>${runtimeStats.elapsedMs} ms</strong></p>`,
@@ -94,6 +123,8 @@ function renderMetrics() {
     `<p class="kv"><span>Draw Calls</span><strong>${runtimeStats.drawCalls}</strong></p>`,
     `<p class="kv"><span>GPU Geometries</span><strong>${runtimeStats.geometryCount}</strong></p>`,
     `<p class="kv"><span>GPU Textures</span><strong>${runtimeStats.textureCount}</strong></p>`,
+    `<p class="kv"><span>Pixel Ratio</span><strong>${runtimeStats.pixelRatio}</strong></p>`,
+    `<p class="kv"><span>Quality Mode</span><strong>${escapeHtml(runtimeStats.qualityMode)}</strong></p>`,
     `<p class="kv"><span>Pick Latency</span><strong>${runtimeStats.pickLatencyMs} ms</strong></p>`,
     `<p class="kv"><span>Metadata Latency</span><strong>${runtimeStats.metadataLatencyMs} ms</strong></p>`,
     `<p class="kv"><span>Package Bytes</span><strong>${pkg.byte_size || 0}</strong></p>`,
@@ -102,13 +133,14 @@ function renderMetrics() {
   ].join('');
 }
 
-function setMetrics(pkg, meshCount, renderBatchCount, pickProxyCount, tileCount, triangleCount, elapsedMs) {
+function setMetrics(pkg, meshCount, renderBatchCount, pickProxyCount, tileCount, triangleCount, elapsedMs, featureCount = 0) {
   runtimeStats = {
     ...runtimeStats,
     package: pkg,
     meshCount,
     renderBatchCount,
     pickProxyCount,
+    featureCount,
     tileCount,
     triangleCount,
     elapsedMs,
@@ -130,6 +162,14 @@ function objectSummaryForItem(item) {
     if (objectIndex.has(key)) return objectIndex.get(key);
   }
   return null;
+}
+
+function indexPackageObjects(pkg) {
+  objectIndex = new Map();
+  for (const obj of pkg.objects || []) {
+    if (obj.stable_id) objectIndex.set(obj.stable_id, obj);
+    if (obj.source_object_id) objectIndex.set(obj.source_object_id, obj);
+  }
 }
 
 function colorArrayForItem(item) {
@@ -178,9 +218,53 @@ function userDataFromPayload(item) {
 
 function resize() {
   const rect = viewer.getBoundingClientRect();
+  applyPixelRatio(runtimeStats.pixelRatio, runtimeStats.qualityMode);
   renderer.setSize(Math.max(1, rect.width), Math.max(1, rect.height), false);
   camera.aspect = Math.max(1, rect.width) / Math.max(1, rect.height);
   camera.updateProjectionMatrix();
+}
+
+function beginInteraction() {
+  isInteracting = true;
+  if (restoreQualityTimer) {
+    window.clearTimeout(restoreQualityTimer);
+    restoreQualityTimer = null;
+  }
+  applyPixelRatio(interactionPixelRatio, 'adaptive-interaction');
+  renderMetrics();
+}
+
+function endInteraction() {
+  isInteracting = false;
+  if (restoreQualityTimer) window.clearTimeout(restoreQualityTimer);
+  restoreQualityTimer = window.setTimeout(() => {
+    const restoredRatio = lowFpsSamples >= 2 ? Math.max(minPixelRatio, interactionPixelRatio) : maxIdlePixelRatio;
+    applyPixelRatio(restoredRatio, lowFpsSamples >= 2 ? 'adaptive-fps-limited' : 'adaptive-idle');
+    renderMetrics();
+  }, 450);
+}
+
+function updateAdaptiveQuality(fps) {
+  if (isInteracting) return;
+  if (fps > 0 && fps < 28) {
+    lowFpsSamples += 1;
+    highFpsSamples = 0;
+    if (lowFpsSamples >= 2 && runtimeStats.pixelRatio > minPixelRatio) {
+      applyPixelRatio(runtimeStats.pixelRatio - 0.25, 'adaptive-fps-downshift');
+    }
+    return;
+  }
+
+  if (fps >= 50) {
+    highFpsSamples += 1;
+    if (highFpsSamples >= 4 && lowFpsSamples > 0) {
+      lowFpsSamples = Math.max(0, lowFpsSamples - 1);
+    }
+    if (highFpsSamples >= 6 && runtimeStats.pixelRatio < maxIdlePixelRatio) {
+      applyPixelRatio(runtimeStats.pixelRatio + 0.25, 'adaptive-fps-upshift');
+      highFpsSamples = 0;
+    }
+  }
 }
 
 function frameScene() {
@@ -219,11 +303,8 @@ async function loadPackage() {
 }
 
 async function loadJsonPackage(pkg, started) {
-  objectIndex = new Map();
-  for (const obj of pkg.objects || []) {
-    if (obj.stable_id) objectIndex.set(obj.stable_id, obj);
-    if (obj.source_object_id) objectIndex.set(obj.source_object_id, obj);
-  }
+  indexPackageObjects(pkg);
+  featureIndex = new Map();
 
   let meshCount = 0;
   let renderBatchCount = 0;
@@ -275,22 +356,59 @@ async function loadJsonPackage(pkg, started) {
 
 async function loadGlbPackage(pkg, started) {
   runtimeStats.renderMode = 'glb-sidecar';
-  objectIndex = new Map();
+  indexPackageObjects(pkg);
+  featureIndex = new Map();
   selectableMeshes = [];
+  const packageOrigin = Array.isArray(pkg.metadata?.rtc_origin_render_xyz)
+    ? pkg.metadata.rtc_origin_render_xyz
+    : [0, 0, 0];
   let meshCount = 0;
   let renderBatchCount = 0;
   let triangleCount = 0;
   let tileCount = 0;
+  let featureCount = 0;
 
   for (const tile of pkg.tiles || []) {
     const blobUrl = tile.blob_url || tile.url;
     if (!blobUrl) continue;
+    if (tile.metadata_url) {
+      try {
+        const sidecarResponse = await fetch(tile.metadata_url);
+        if (sidecarResponse.ok) {
+          const sidecar = await sidecarResponse.json();
+          const objectFeatures = Array.isArray(sidecar.object_features) ? sidecar.object_features : [];
+          featureCount += objectFeatures.length;
+          for (const feature of objectFeatures) {
+            const featureId = Number(feature.feature_id);
+            if (!Number.isFinite(featureId)) continue;
+            const objectSummary = objectIndex.get(feature.stable_id) || objectIndex.get(feature.source_object_id);
+            featureIndex.set(featureId, {
+              ...feature,
+              objectSummary: objectSummary || null,
+            });
+          }
+        }
+      } catch (error) {
+        // Sidecar metrics are useful, but GLB rendering should not depend on them.
+      }
+    }
     const gltf = await gltfLoader.loadAsync(blobUrl);
     const tileRoot = gltf.scene || new THREE.Group();
+    const tileOrigin = Array.isArray(tile.rtc_origin) ? tile.rtc_origin : packageOrigin;
+    tileRoot.position.set(
+      Number(tileOrigin[0] || 0) - Number(packageOrigin[0] || 0),
+      Number(tileOrigin[1] || 0) - Number(packageOrigin[1] || 0),
+      Number(tileOrigin[2] || 0) - Number(packageOrigin[2] || 0),
+    );
     tileRoot.traverse(node => {
       if (!node.isMesh) return;
       meshCount += 1;
       renderBatchCount += 1;
+      node.userData = {
+        ...(node.userData || {}),
+        packageFormat: 'GLB',
+      };
+      selectableMeshes.push(node);
       const geometry = node.geometry;
       const index = geometry?.index;
       const position = geometry?.getAttribute?.('position');
@@ -306,8 +424,8 @@ async function loadGlbPackage(pkg, started) {
 
   frameScene();
   const elapsedMs = Math.round(performance.now() - started);
-  setStatus(`Loaded GLB package with ${meshCount} render mesh(es) from ${tileCount} tile(s) in ${elapsedMs} ms. Object picking is deferred for GLB packages.`);
-  setMetrics(pkg, meshCount, renderBatchCount, 0, tileCount, triangleCount, elapsedMs);
+  setStatus(`Loaded GLB package with ${meshCount} render mesh(es), ${featureCount} feature id(s), from ${tileCount} tile(s) in ${elapsedMs} ms. Picking uses feature IDs; BVH acceleration is deferred.`);
+  setMetrics(pkg, meshCount, renderBatchCount, 0, tileCount, triangleCount, elapsedMs, featureCount);
 }
 
 function clearSelection() {
@@ -358,6 +476,63 @@ async function showSelection(mesh) {
   }
 }
 
+function featureIdFromHit(hit) {
+  const geometry = hit.object?.geometry;
+  if (!geometry || !Number.isInteger(hit.faceIndex)) return null;
+  const featureAttribute = geometry.getAttribute('_FEATURE_ID_0') || geometry.getAttribute('_feature_id_0');
+  if (!featureAttribute) return null;
+
+  const firstVertex = hit.faceIndex * 3;
+  const vertexIndex = geometry.index ? geometry.index.getX(firstVertex) : firstVertex;
+  const featureId = featureAttribute.getX(vertexIndex);
+  return Number.isFinite(featureId) ? Math.round(featureId) : null;
+}
+
+async function showGlbFeatureSelection(hit) {
+  clearSelection();
+  const featureId = featureIdFromHit(hit);
+  if (!featureId || !featureIndex.has(featureId)) {
+    if (selectionEl) selectionEl.textContent = 'No feature metadata was found for this GLB face.';
+    return;
+  }
+
+  const feature = featureIndex.get(featureId);
+  const objectSummary = feature.objectSummary;
+  const baseRows = [
+    `<p class="kv"><span>Feature ID</span><strong>${featureId}</strong></p>`,
+    `<p class="kv"><span>Stable ID</span><strong>${escapeHtml(feature.stable_id || '')}</strong></p>`,
+    `<p class="kv"><span>Type</span><strong>${escapeHtml(feature.object_type || objectSummary?.object_type || '')}</strong></p>`,
+    `<p class="kv"><span>Source Object</span><strong>${escapeHtml(feature.source_object_id || objectSummary?.source_object_id || '')}</strong></p>`,
+  ];
+  if (!selectionEl) return;
+  selectionEl.innerHTML = baseRows.join('') + '<p class="meta">Loading indexed metadata...</p>';
+
+  if (!objectSummary?.url) {
+    selectionEl.innerHTML = baseRows.join('') + '<p class="meta">Feature ID is present, but no indexed object URL is available.</p>';
+    return;
+  }
+
+  try {
+    const metadataStarted = performance.now();
+    const response = await fetch(objectSummary.url);
+    if (!response.ok) throw new Error(`Metadata request failed: ${response.status}`);
+    const data = await response.json();
+    runtimeStats.metadataLatencyMs = Math.round(performance.now() - metadataStarted);
+    renderMetrics();
+    selectionEl.innerHTML = [
+      `<p class="kv"><span>Feature ID</span><strong>${featureId}</strong></p>`,
+      `<p class="kv"><span>Stable ID</span><strong>${escapeHtml(data.stable_id)}</strong></p>`,
+      `<p class="kv"><span>Type</span><strong>${escapeHtml(data.object_type)}</strong></p>`,
+      `<p class="kv"><span>Tag</span><strong>${escapeHtml(data.tag)}</strong></p>`,
+      `<p class="kv"><span>Source Object</span><strong>${escapeHtml(data.source_object_id)}</strong></p>`,
+      `<p class="kv"><span>Bounds</span><strong>${escapeHtml(JSON.stringify(data.bounds || {}))}</strong></p>`,
+      `<p class="kv"><span>Metadata</span><strong>${escapeHtml(JSON.stringify(data.metadata || {}))}</strong></p>`,
+    ].join('');
+  } catch (error) {
+    selectionEl.innerHTML = baseRows.join('') + `<p class="meta">${escapeHtml(error.message || 'Unable to load metadata.')}</p>`;
+  }
+}
+
 function pick(event) {
   if (!selectableMeshes.length) {
     runtimeStats.pickLatencyMs = 0;
@@ -378,6 +553,10 @@ function pick(event) {
     if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
     return;
   }
+  if (hits[0].object?.userData?.packageFormat === 'GLB') {
+    showGlbFeatureSelection(hits[0]);
+    return;
+  }
   showSelection(hits[0].object);
 }
 
@@ -393,12 +572,15 @@ function animate() {
     runtimeStats.fps = Math.round((framesSinceFpsSample * 1000) / (now - lastFpsSampleAt));
     framesSinceFpsSample = 0;
     lastFpsSampleAt = now;
+    updateAdaptiveQuality(runtimeStats.fps);
     renderMetrics();
   }
   requestAnimationFrame(animate);
 }
 
 window.addEventListener('resize', resize);
+controls.addEventListener('start', beginInteraction);
+controls.addEventListener('end', endInteraction);
 if (resetBtn) resetBtn.addEventListener('click', frameScene);
 renderer.domElement.addEventListener('click', pick);
 resize();

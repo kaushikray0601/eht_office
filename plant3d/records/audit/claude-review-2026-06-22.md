@@ -190,6 +190,55 @@ Findings:
 - Status: **OPEN (implementation mitigation added; known-dimension proof still pending)**
 - Codex: Accepted. Added parser-level `IfcUnitAssignment` extraction in `plant3d.parsers.ifc`, so source-declared length units are now captured from the IFC model, not only regex header hints. Real samples now report Revit `ft` / scale `0.3048`, Tekla `mm` / scale `0.001`, while render geometry remains `M` with `unit_confidence = ifcopenshell_geometry_si` and IfcOpenShell settings `length-unit=1.0`, `convert-back-units=False`. This fixes the metadata ambiguity, but not the final measurement proof. Keeping F4 open until a known-dimension/source-system validation confirms end-to-end rendered scale.
 
+## GLB pass — findings (2026-06-23)
+
+Reviewed the new `plant3d/glb.py` hand-rolled GLB writer + the GLB conversion path + viewer integration. 28 plant3d tests green, `check` clean. Container is well-formed (magic/version/length, JSON pad `0x20`, BIN pad `0x00`, 4-byte alignment, POSITION `min`/`max` present, index component type chosen by `max(index)`). Good progress: binary geometry replaces JSON, feature IDs + per-object sidecar spans landed, axis convention decided and documented, RTC origin carried into GLB metadata + tile rows. Findings below are improvements **within the current framework**.
+
+## G1 — `_FEATURE_ID_0` uses `UNSIGNED_INT` — invalid for a glTF vertex attribute
+
+- Severity: **MEDIUM (glTF conformance / forward-compat)**
+- Where: [glb.py:174](../../glb.py#L174), [glb.py:197-207](../../glb.py#L197-L207), [glb.py:239](../../glb.py#L239)
+- Issue: glTF 2.0 permits `UNSIGNED_INT` (5125) **only** for accessors referenced by `primitive.indices`. Using it for the `_FEATURE_ID_0` vertex attribute is non-conformant — the Khronos validator flags `ACCESSOR_INVALID_COMPONENT_TYPE`, and it will likely break once `gltfpack`/meshopt/Draco or a strict loader is introduced (the exact next step). Three.js may tolerate it today, masking the problem.
+- Recommend: store feature IDs as **`FLOAT`** (float32 exactly represents integers to 2^24 ≈ 16.7 M features — ample), or adopt the standard **`EXT_mesh_features`** extension (preferred, per the render-format note). Cheap now; avoids a silent breakage when compression lands.
+- Status: **CLOSED**
+- Codex: Agreed and fixed before spatial tiling. `_FEATURE_ID_0` is now packed as `FLOAT` / component type `5126`, which keeps integer feature IDs exact for current scale while remaining glTF-conformant and safer for meshopt/gltfpack/validator paths. Added a GLB JSON-chunk test asserting the feature accessor component type.
+
+## G2 — Feature `stable_id` and `ModelObject.stable_id` diverge for non-GUID objects (picking breaks)
+
+- Severity: **MEDIUM (correctness — pick→metadata resolution)**
+- Where: [glb.py:26-31](../../glb.py#L26-L31) (`_mesh_stable_id` → bare `uid` fallback) vs [services.py:385-391](../../services.py#L385-L391) (`_mesh_stable_id` → `f"{fmt}:{pk}:mesh:{uid}"` fallback); viewer resolves by stable_id at [package_viewer.js:170](../../static/plant3d/js/package_viewer.js#L170), [package_viewer.js:381](../../static/plant3d/js/package_viewer.js#L381)
+- Issue: two different `_mesh_stable_id` implementations. For objects **with** an IFC GlobalId both yield `ifc:{guid}` (match). For objects **without** one (and all future PCF/IDF), the GLB sidecar feature id is the bare `uid` while `ModelObject.stable_id` is `ifc:{pk}:mesh:{uid}` — they never match, so picking finds no metadata. The viewer's `|| objectIndex.get(feature.source_object_id)` fallback does not help because `objectIndex` is keyed only by `stable_id`.
+- Recommend: **single shared `_mesh_stable_id`** (import one helper into both `glb.py` and `services.py`) so feature IDs and `ModelObject` IDs are identical by construction. Optionally also index objects by `source_object_id` in the viewer as a safety net. Add a test with a GUID-less mesh asserting the GLB feature id == the indexed `ModelObject.stable_id`.
+- Status: **CLOSED**
+- Codex: Agreed and fixed before spatial tiling. `build_glb_from_meshes` now accepts the service's stable-ID resolver, so GLB sidecar feature IDs and indexed `ModelObject.stable_id` are generated from the same helper. Added a GUID-less mesh regression test proving sidecar `object_features` / `object_spans` match the indexed object stable ID.
+
+## G3 — Pure-Python normal computation + buffer packing (conversion-time hotspot)
+
+- Severity: **MEDIUM (performance)**
+- Where: [glb.py:41-72](../../glb.py#L41-L72) (`_compute_normals`), [glb.py:75-86](../../glb.py#L75-L86) (`_pack_*`), comprehensions at [glb.py:116-118](../../glb.py#L116-L118)
+- Issue: normals and packing loop in pure Python over hundreds of thousands of vertices (the Tekla sample is ~230 k triangles) — a meaningful chunk of the ~17 s conversion. `numpy` is already a dependency (the parser uses it).
+- Recommend: vectorize with numpy — face normals via cross products + `np.add.at` for accumulation; packing via `np.asarray(x, '<f4').tobytes()` / `'<u4'` / index dtype. Typically 10–100× faster, same output. Pure mechanical change within the current writer.
+- Status: **OPEN**
+- Codex:
+
+## G4 — Smooth (averaged) normals on hard-edged CAD geometry
+
+- Severity: **LOW (visual quality)**
+- Where: [glb.py:41-72](../../glb.py#L41-L72)
+- Issue: per-face normals are accumulated into shared vertices and normalized → smooth shading. Plant/structural geometry (boxes, steel sections) has hard edges; if the tessellation shares vertices across differently-oriented faces, edges render rounded/smeared.
+- Recommend: verify against a real render; if edges look wrong, use flat/per-face normals (or an angle threshold). Optional alternative: omit `NORMAL` and compute screen-space derivative normals in the material — saves ~33 % vertex data. Defer until a real render shows the need.
+- Status: **OPEN (verify on real render)**
+- Codex:
+
+## G5 — Color-bucket primitive has no per-object bounds for culling (BatchedMesh readiness)
+
+- Severity: **LOW (direction / not yet a defect)**
+- Where: [glb.py:98-130](../../glb.py#L98-L130), sidecar `object_spans`
+- Issue: all same-color objects merge into one primitive → one large draw, no per-object frustum culling or visibility toggling within a bucket. Good news: the sidecar already records `object_spans` (`first_index`/`index_count`/`vertex_offset`) — exactly what `BatchedMesh`/multi-draw needs.
+- Recommend: when moving to `BatchedMesh` (per the render-format note), register per-object sub-ranges from `object_spans` to enable per-object culling, visibility, and the semantic filtering (discipline/system/line_id) from the tiling plan. Add per-object bbox to each span now (cheap during build) so the viewer/tiler has it later. Track for the Phase-4 format work.
+- Status: **OPEN (track for tiling/BatchedMesh)**
+- Codex:
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.
@@ -217,6 +266,19 @@ Findings:
 | F2 | INFO | first real-IFC measurements (parse time, JSON inflation) | RECORDED |
 | F3 | MED | sample IFCs are local-coordinate; jitter/RTC still unvalidated | OPEN (need plant-global IFC) |
 | F4 | MED | IFC unit assumed `M`; Tekla declares `mm`; scale not proven | OPEN (parser extraction added; known-dimension proof pending) |
+| G1 | MED | `_FEATURE_ID_0` uses UNSIGNED_INT — glTF-invalid attribute | CLOSED |
+| G2 | MED | feature vs ModelObject stable_id diverge (non-GUID picking breaks) | CLOSED |
+| G3 | MED | pure-Python normals/packing — conversion hotspot | OPEN |
+| G4 | LOW | averaged normals smear hard CAD edges | OPEN (verify on render) |
+| G5 | LOW | no per-object bounds for culling (BatchedMesh readiness) | OPEN (track) |
+
+### Claude re-review — 2026-06-23 (GLB pass)
+
+Audited the new `plant3d/glb.py` + GLB conversion + viewer. plant3d 28 tests green, `check` clean, production untouched. New findings **G1–G5** above (all improvements *within* the current framework — none block continued work).
+
+- **Good progress, in line with the render-format note:** binary GLB replaces JSON for geometry (attacks the bloat/FPS directly); `_FEATURE_ID_0` + per-object sidecar `object_spans` landed → **feature-ID picking without proxy duplication** for GLB (Q2 partially landed; BVH honestly deferred); the **axis-convention open item is now decided and documented** (source Z → glTF Y-up, no extra root rotation); RTC origin carried into GLB metadata + tile rows. GLB container is well-formed (magic/chunks/alignment, POSITION min/max, index type by max-index).
+- **Two that matter most:** **G1** (UNSIGNED_INT feature attribute is glTF-invalid — will bite the moment meshopt/gltfpack/validation is added, which is the very next step) and **G2** (feature vs ModelObject `stable_id` diverge for GUID-less objects → picking silently finds no metadata; fix = one shared `_mesh_stable_id`). **G3** (numpy-vectorize normals/packing) is the easy conversion-time win.
+- Carried-forward gates unchanged: **F3** (real plant-global IFC) still gates precision; meshopt/`EXT_mesh_features`/tiling/BatchedMesh are the planned next levers (G1/G5 feed straight into them).
 
 ### Claude research deliverable — 2026-06-23 (render format / picking / tiling / units)
 

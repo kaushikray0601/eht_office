@@ -1,4 +1,6 @@
+import copy
 import json
+import struct
 import tempfile
 from decimal import Decimal
 from unittest.mock import patch
@@ -60,6 +62,16 @@ def create_project(proj_id="P3D-TEST"):
 
 def assign_project(user, project):
     ManagedProject.objects.get(proj_id=project.proj_id).assigned_users.add(user)
+
+
+def glb_json_chunk(glb_bytes):
+    magic, version, _length = struct.unpack_from("<III", glb_bytes, 0)
+    if magic != 0x46546C67 or version != 2:
+        raise AssertionError("Not a GLB v2 payload.")
+    chunk_length, chunk_type = struct.unpack_from("<I4s", glb_bytes, 12)
+    if chunk_type != b"JSON":
+        raise AssertionError("First GLB chunk is not JSON.")
+    return json.loads(glb_bytes[20:20 + chunk_length].decode("utf-8"))
 
 
 class FakeIfcEntity:
@@ -416,6 +428,37 @@ class Plant3DIntakeTests(TestCase):
             },
         }
 
+    def _sample_ifc_scene_many_meshes(self, count=501):
+        scene = self._sample_ifc_scene()
+        template = scene["meshes"][0]
+        meshes = []
+        for index in range(count):
+            mesh = copy.deepcopy(template)
+            mesh["uid"] = index + 1
+            mesh["properties"]["global_id"] = f"beam-guid-{index + 1}"
+            mesh["properties"]["component_ref"] = f"B-{index + 1:03d}"
+            base_x = 500000.0 + index
+            base_y = 2800000.0 + (index % 11)
+            mesh["properties"]["raw_bounds"] = {
+                "min_x": base_x,
+                "max_x": base_x + 1.0,
+                "min_y": base_y,
+                "max_y": base_y + 1.0,
+                "min_z": 100.0,
+                "max_z": 101.0,
+            }
+            meshes.append(mesh)
+        scene["meshes"] = meshes
+        scene["stats"]["raw_bounds"] = {
+            "min_x": 500000.0,
+            "max_x": 500000.0 + count,
+            "min_y": 2800000.0,
+            "max_y": 2800012.0,
+            "min_z": 100.0,
+            "max_z": 101.0,
+        }
+        return scene
+
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_geometry_conversion_writes_tile_and_object_index(self, mock_parse):
         mock_parse.return_value = self._sample_ifc_scene()
@@ -518,20 +561,71 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(source.model_objects.count(), 1)
         self.assertEqual(job.metrics["conversion_scope"], "ifc-glb")
         self.assertEqual(job.metrics["render_batch_count"], 1)
+        self.assertEqual(job.metrics["feature_count"], 1)
 
         tile = package.tiles.get()
         self.assertEqual(tile.metadata["tile_type"], "ifc-glb")
+        self.assertEqual(tile.metadata["feature_id_attribute"], "_FEATURE_ID_0")
         self.assertEqual(tile.rtc_origin, [500000.5, 100.5, 2800000.5])
         self.assertGreater(tile.byte_size, 20)
-        self.assertEqual(path_for_storage_key(tile.storage_key).read_bytes()[:4], b"glTF")
+        glb_bytes = path_for_storage_key(tile.storage_key).read_bytes()
+        self.assertEqual(glb_bytes[:4], b"glTF")
+        gltf = glb_json_chunk(glb_bytes)
+        primitive = gltf["meshes"][0]["primitives"][0]
+        self.assertIn("_FEATURE_ID_0", primitive["attributes"])
+        feature_accessor = gltf["accessors"][primitive["attributes"]["_FEATURE_ID_0"]]
+        self.assertEqual(feature_accessor["componentType"], 5126)
 
-        sidecar_path = path_for_storage_key(package.manifest_storage_key)
+        tileset_path = path_for_storage_key(package.manifest_storage_key)
+        tileset = json.loads(tileset_path.read_text(encoding="utf-8"))
+        self.assertEqual(tileset["asset"]["version"], "1.1")
+        self.assertEqual(tileset["metadata"]["tiling_strategy"], "single-root-tile-spike")
+        self.assertEqual(tileset["root"]["extras"]["tile_id"], "geometry-0001")
+        self.assertEqual(tileset["root"]["extras"]["feature_id_attribute"], "_FEATURE_ID_0")
+        self.assertEqual(tileset["root"]["content"]["uri"], tile.storage_key)
+        self.assertEqual(package.metadata["tileset_storage_key"], package.manifest_storage_key)
+        self.assertEqual(job.metrics["tileset_storage_key"], package.manifest_storage_key)
+
+        sidecar_path = path_for_storage_key(tile.metadata["sidecar_storage_key"])
         sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
         self.assertEqual(sidecar["format"], "GLB")
         self.assertEqual(sidecar["mesh_count"], 1)
         self.assertEqual(sidecar["render_batch_count"], 1)
+        self.assertEqual(sidecar["feature_id_attribute"], "_FEATURE_ID_0")
+        self.assertEqual(sidecar["object_features"][0]["feature_id"], 1)
+        self.assertEqual(sidecar["object_features"][0]["stable_id"], "ifc:beam-guid-1")
+        self.assertEqual(sidecar["object_spans"][0]["feature_id"], 1)
         self.assertEqual(sidecar["object_spans"][0]["stable_id"], "ifc:beam-guid-1")
+        self.assertEqual(sidecar["gltf_axis_convention"]["up_axis"], "Y")
+        self.assertEqual(sidecar["gltf_axis_convention"]["source_to_buffer_axis_order"], ["x", "z", "y"])
+        self.assertFalse(sidecar["gltf_axis_convention"]["root_transform_required"])
+        self.assertEqual(sidecar["metadata"]["gltf_axis_convention"]["buffer_frame"], "render_xyz_m")
         self.assertEqual(sidecar["unit_metadata"]["ifc_declared_length_unit"], "mm")
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_ifc_glb_guidless_feature_stable_id_matches_indexed_object(self, mock_parse):
+        scene = self._sample_ifc_scene()
+        scene["meshes"][0]["properties"]["global_id"] = ""
+        mock_parse.return_value = scene
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile(
+                "guidless-glb.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;",
+            ),
+        )
+
+        from .services import run_ifc_glb_conversion
+
+        _, package = run_ifc_glb_conversion(source)
+
+        indexed_object = source.model_objects.get()
+        tile = package.tiles.get()
+        sidecar_path = path_for_storage_key(tile.metadata["sidecar_storage_key"])
+        sidecar = json.loads(sidecar_path.read_text(encoding="utf-8"))
+        self.assertEqual(indexed_object.stable_id, f"ifc:{source.pk}:mesh:1")
+        self.assertEqual(sidecar["object_features"][0]["stable_id"], indexed_object.stable_id)
+        self.assertEqual(sidecar["object_spans"][0]["stable_id"], indexed_object.stable_id)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_glb_conversion_endpoint_queues_glb_job(self, mock_parse):
@@ -686,18 +780,73 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(package_response.status_code, 200)
         package_payload = package_response.json()
         self.assertEqual(package_payload["package_format"], "GLB")
+        self.assertEqual(package_payload["manifest_storage_key"], package.manifest_storage_key)
+        self.assertEqual(package_payload["tileset"]["asset"]["version"], "1.1")
+        self.assertEqual(package_payload["tileset"]["root"]["content"]["url"], package_payload["tiles"][0]["blob_url"])
+        self.assertEqual(package_payload["tileset"]["root"]["extras"]["metadata_url"], package_payload["tiles"][0]["metadata_url"])
+        self.assertEqual(package_payload["tileset"]["root"]["extras"]["feature_id_attribute"], "_FEATURE_ID_0")
+        self.assertEqual(package_payload["objects"][0]["stable_id"], "ifc:beam-guid-1")
+        self.assertIn("/plant3d/objects/", package_payload["objects"][0]["url"])
         self.assertIn("/plant3d/tiles/", package_payload["tiles"][0]["metadata_url"])
         self.assertIn("/plant3d/tiles/", package_payload["tiles"][0]["blob_url"])
 
         tile = package.tiles.get()
         sidecar_response = self.client.get(reverse("plant3d_tile_json", args=[tile.pk]))
         self.assertEqual(sidecar_response.status_code, 200)
-        self.assertEqual(sidecar_response.json()["format"], "GLB")
+        sidecar_payload = sidecar_response.json()
+        self.assertEqual(sidecar_payload["format"], "GLB")
+        self.assertEqual(sidecar_payload["object_features"][0]["feature_id"], 1)
+        self.assertEqual(sidecar_payload["object_features"][0]["stable_id"], package_payload["objects"][0]["stable_id"])
 
         blob_response = self.client.get(reverse("plant3d_tile_blob", args=[tile.pk]))
         self.assertEqual(blob_response.status_code, 200)
         self.assertEqual(blob_response["Content-Type"], "model/gltf-binary")
         self.assertEqual(blob_response.content[:4], b"glTF")
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_ifc_glb_conversion_splits_large_scene_into_spatial_child_tiles(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene_many_meshes()
+        user = get_user_model().objects.create_user(username="plant3d-glb-tiles-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("multi-tile-glb.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_glb_conversion
+
+        job, package = run_ifc_glb_conversion(source)
+
+        self.assertEqual(job.status, "completed")
+        self.assertGreater(package.tile_count, 1)
+        self.assertEqual(package.tiles.count(), package.tile_count)
+        self.assertEqual(source.model_objects.count(), 501)
+        self.assertEqual(job.metrics["tiling_strategy"], "source-bounds-grid")
+        self.assertEqual(job.metrics["tile_count"], package.tile_count)
+        self.assertEqual(len(job.metrics["tile_ids"]), package.tile_count)
+
+        tileset = json.loads(path_for_storage_key(package.manifest_storage_key).read_text(encoding="utf-8"))
+        self.assertEqual(tileset["metadata"]["tiling_strategy"], "source-bounds-grid")
+        self.assertEqual(len(tileset["root"]["children"]), package.tile_count)
+        self.assertNotIn("content", tileset["root"])
+
+        package_response = self.client.get(reverse("plant3d_package_json", args=[package.pk]))
+        self.assertEqual(package_response.status_code, 200)
+        package_payload = package_response.json()
+        children = package_payload["tileset"]["root"]["children"]
+        self.assertEqual(len(children), package.tile_count)
+        self.assertTrue(all(child["content"]["url"].startswith("/plant3d/tiles/") for child in children))
+        self.assertTrue(all(child["extras"]["metadata_url"].startswith("/plant3d/tiles/") for child in children))
+
+        feature_ids = []
+        for tile in package.tiles.order_by("sequence"):
+            sidecar = json.loads(path_for_storage_key(tile.metadata["sidecar_storage_key"]).read_text(encoding="utf-8"))
+            feature_ids.extend(feature["feature_id"] for feature in sidecar["object_features"])
+            self.assertEqual(tile.object_count, len(sidecar["object_features"]))
+            self.assertEqual(tile.metadata["package_rtc_origin_render_xyz"], package.metadata["rtc_origin_render_xyz"])
+        self.assertEqual(len(feature_ids), 501)
+        self.assertEqual(len(feature_ids), len(set(feature_ids)))
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_package_viewer_page_exposes_package_api_url(self, mock_parse):

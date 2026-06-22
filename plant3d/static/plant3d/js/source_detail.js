@@ -20,12 +20,16 @@ function jobLine(data) {
   const packageLinks = data.package
     ? ` <a href="${escapeHtml(data.package.viewer_url)}">View</a> <a href="${escapeHtml(data.package.json_url)}">Package JSON</a>`
     : '';
+  const processHint = !data.package && data.process_hint
+    ? `<br>Worker command: <code>${escapeHtml(data.process_hint)}</code>`
+    : '';
   const metrics = data.metrics && Object.keys(data.metrics).length
     ? `<br>Metrics: ${escapeHtml(JSON.stringify(data.metrics))}`
     : '';
   const error = data.error_message ? `<br>Error: ${escapeHtml(data.error_message)}` : '';
   return [
     `Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')} - ${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%`,
+    processHint,
     metrics,
     error,
     ` <a href="${escapeHtml(data.url || `/plant3d/jobs/${data.id}/json/`)}">JSON</a>`,
@@ -35,6 +39,8 @@ function jobLine(data) {
 
 function upsertJobRow(data) {
   if (!jobList) return null;
+  const emptyRow = document.getElementById('conversionJobEmpty');
+  if (emptyRow) emptyRow.remove();
   const rowId = `plant3d-job-${data.id}`;
   let row = document.getElementById(rowId);
   if (!row) {
@@ -60,7 +66,13 @@ async function pollJob(jobUrl) {
     setQueueStatus(data.status === 'completed' ? 'Conversion completed.' : `Conversion ${data.status}.`);
     return;
   }
-  window.setTimeout(() => watchJob(jobUrl), 2000);
+  setQueueStatus(data.process_hint ? `Waiting for worker. Run: ${data.process_hint}` : `Conversion ${data.status}.`);
+  window.setTimeout(() => {
+    pollJob(jobUrl).catch(error => {
+      watchedJobs.delete(jobUrl);
+      setQueueStatus(error.message || 'Unable to poll job.');
+    });
+  }, 2000);
 }
 
 function watchJob(jobUrl) {

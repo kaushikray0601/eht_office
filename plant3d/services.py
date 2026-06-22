@@ -1,5 +1,6 @@
 import hashlib
 import json
+import math
 import re
 import time
 
@@ -47,6 +48,7 @@ IFC_UNIT_DISPLAY = {
     ("CENTI", "METRE"): "cm",
     ("KILO", "METRE"): "km",
 }
+GLB_TARGET_OBJECTS_PER_TILE = 500
 
 
 def detect_source_format(filename, sample_bytes=b""):
@@ -352,6 +354,10 @@ def _render_tile_storage_key(source_id, tile_id, extension="json"):
     return f"plant3d/render/{source_id}/{tile_id}.{extension}"
 
 
+def _render_tileset_storage_key(source_id):
+    return f"plant3d/render/{source_id}/tileset.json"
+
+
 def _raw_bounds_center(raw_bounds):
     if not raw_bounds:
         return [0.0, 0.0, 0.0]
@@ -368,6 +374,24 @@ def _raw_bounds_center(raw_bounds):
         return [0.0, 0.0, 0.0]
 
 
+def _raw_bounds_union(bounds_list):
+    valid_bounds = []
+    required_keys = ("min_x", "max_x", "min_y", "max_y", "min_z", "max_z")
+    for bounds in bounds_list:
+        if bounds and all(key in bounds for key in required_keys):
+            valid_bounds.append(bounds)
+    if not valid_bounds:
+        return {}
+    return {
+        "min_x": min(float(bounds["min_x"]) for bounds in valid_bounds),
+        "max_x": max(float(bounds["max_x"]) for bounds in valid_bounds),
+        "min_y": min(float(bounds["min_y"]) for bounds in valid_bounds),
+        "max_y": max(float(bounds["max_y"]) for bounds in valid_bounds),
+        "min_z": min(float(bounds["min_z"]) for bounds in valid_bounds),
+        "max_z": max(float(bounds["max_z"]) for bounds in valid_bounds),
+    }
+
+
 def _source_to_render_coordinates(source_xyz, scale_to_m=1.0):
     scale = float(scale_to_m or 1.0)
     return [
@@ -382,6 +406,309 @@ def _rtc_origins_from_raw_bounds(raw_bounds, scale_to_m=1.0):
     return source_origin, _source_to_render_coordinates(source_origin, scale_to_m=scale_to_m)
 
 
+def _raw_bounds_half_extents(raw_bounds, scale_to_m=1.0):
+    required_keys = ("min_x", "max_x", "min_y", "max_y", "min_z", "max_z")
+    try:
+        if not raw_bounds or not all(key in raw_bounds for key in required_keys):
+            return [1.0, 1.0, 1.0]
+        scale = float(scale_to_m or 1.0)
+        half_x = abs(float(raw_bounds["max_x"]) - float(raw_bounds["min_x"])) * scale / 2.0
+        half_y = abs(float(raw_bounds["max_y"]) - float(raw_bounds["min_y"])) * scale / 2.0
+        half_z = abs(float(raw_bounds["max_z"]) - float(raw_bounds["min_z"])) * scale / 2.0
+        return [max(half_x, 0.001), max(half_z, 0.001), max(half_y, 0.001)]
+    except (TypeError, ValueError):
+        return [1.0, 1.0, 1.0]
+
+
+def _translation_matrix_xyz(origin_xyz):
+    x, y, z = [float(value or 0.0) for value in origin_xyz[:3]]
+    return [
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.0,
+        0.0,
+        x,
+        y,
+        z,
+        1.0,
+    ]
+
+
+def _tileset_box_for_bounds(raw_bounds, scale_to_m=1.0):
+    half_x, half_y, half_z = _raw_bounds_half_extents(raw_bounds, scale_to_m=scale_to_m)
+    return [
+        0.0,
+        0.0,
+        0.0,
+        half_x,
+        0.0,
+        0.0,
+        0.0,
+        half_y,
+        0.0,
+        0.0,
+        0.0,
+        half_z,
+    ]
+
+
+def _tileset_box_for_bounds_at_center(raw_bounds, center_xyz, scale_to_m=1.0):
+    half_x, half_y, half_z = _raw_bounds_half_extents(raw_bounds, scale_to_m=scale_to_m)
+    return [
+        float(center_xyz[0] or 0.0),
+        float(center_xyz[1] or 0.0),
+        float(center_xyz[2] or 0.0),
+        half_x,
+        0.0,
+        0.0,
+        0.0,
+        half_y,
+        0.0,
+        0.0,
+        0.0,
+        half_z,
+    ]
+
+
+def _tile_coordinate_transform(context, tile_raw_bounds, tile_rtc_origin_render_xyz):
+    tile_origin_source_xyz = _raw_bounds_center(tile_raw_bounds)
+    return {
+        **context["coordinate_transform"],
+        "origin_source_xyz": tile_origin_source_xyz,
+        "rtc_origin_render_xyz": tile_rtc_origin_render_xyz,
+        "local_position_frame": "render_xyz_m_relative_to_tile_rtc_origin_render_xyz",
+        "render_world_formula": "render_world_xyz_m = tile_rtc_origin_render_xyz + tile_local_position_xyz_m",
+        "note": "GLB tile vertices are local render-frame coordinates relative to this tile's RTC origin.",
+    }
+
+
+def _mesh_bounds(mesh):
+    return (mesh.get("properties") or {}).get("raw_bounds") or {}
+
+
+def _mesh_center_source_xy(mesh, fallback_bounds):
+    bounds = _mesh_bounds(mesh) or fallback_bounds or {}
+    center = _raw_bounds_center(bounds)
+    return center[0], center[1]
+
+
+def _grid_dimensions(tile_count, raw_bounds):
+    width = abs(float(raw_bounds.get("max_x", 0.0)) - float(raw_bounds.get("min_x", 0.0)))
+    depth = abs(float(raw_bounds.get("max_y", 0.0)) - float(raw_bounds.get("min_y", 0.0)))
+    if tile_count <= 1:
+        return 1, 1
+    if width >= depth:
+        cols = max(1, math.ceil(math.sqrt(tile_count)))
+        rows = max(1, math.ceil(tile_count / cols))
+    else:
+        rows = max(1, math.ceil(math.sqrt(tile_count)))
+        cols = max(1, math.ceil(tile_count / rows))
+    return cols, rows
+
+
+def _spatial_mesh_groups(meshes, raw_bounds, target_objects_per_tile=GLB_TARGET_OBJECTS_PER_TILE):
+    meshes = list(meshes)
+    if not meshes:
+        return []
+    target = max(1, int(target_objects_per_tile or GLB_TARGET_OBJECTS_PER_TILE))
+    desired_tile_count = max(1, math.ceil(len(meshes) / target))
+    if desired_tile_count <= 1:
+        return [{"tile_id": "geometry-0001", "meshes": meshes, "bounds": raw_bounds or {}}]
+
+    raw_bounds = raw_bounds or _raw_bounds_union(_mesh_bounds(mesh) for mesh in meshes)
+    if not raw_bounds:
+        return [{"tile_id": "geometry-0001", "meshes": meshes, "bounds": {}}]
+    cols, rows = _grid_dimensions(desired_tile_count, raw_bounds)
+    min_x = float(raw_bounds.get("min_x", 0.0))
+    max_x = float(raw_bounds.get("max_x", min_x))
+    min_y = float(raw_bounds.get("min_y", 0.0))
+    max_y = float(raw_bounds.get("max_y", min_y))
+    width = max(max_x - min_x, 0.000001)
+    depth = max(max_y - min_y, 0.000001)
+    buckets = {}
+    for mesh in meshes:
+        cx, cy = _mesh_center_source_xy(mesh, raw_bounds)
+        col = min(cols - 1, max(0, int(((cx - min_x) / width) * cols)))
+        row = min(rows - 1, max(0, int(((cy - min_y) / depth) * rows)))
+        buckets.setdefault((row, col), []).append(mesh)
+
+    groups = []
+    for sequence, ((row, col), bucket_meshes) in enumerate(sorted(buckets.items()), start=1):
+        tile_bounds = _raw_bounds_union(_mesh_bounds(mesh) for mesh in bucket_meshes) or raw_bounds
+        groups.append(
+            {
+                "tile_id": f"geometry-{sequence:04d}",
+                "grid_row": row,
+                "grid_col": col,
+                "meshes": bucket_meshes,
+                "bounds": tile_bounds,
+            }
+        )
+    return groups
+
+
+def _mesh_with_tile_local_positions(mesh, package_rtc_origin_render_xyz, tile_rtc_origin_render_xyz):
+    mesh_data = mesh.get("mesh") or {}
+    positions = mesh_data.get("positions") or []
+    delta = [
+        float(package_rtc_origin_render_xyz[index] or 0.0) - float(tile_rtc_origin_render_xyz[index] or 0.0)
+        for index in range(3)
+    ]
+    shifted_positions = []
+    for cursor in range(0, len(positions), 3):
+        shifted_positions.extend(
+            [
+                float(positions[cursor] or 0.0) + delta[0],
+                float(positions[cursor + 1] or 0.0) + delta[1],
+                float(positions[cursor + 2] or 0.0) + delta[2],
+            ]
+        )
+    return {
+        **mesh,
+        "mesh": {
+            **mesh_data,
+            "positions": shifted_positions,
+        },
+    }
+
+
+def _build_single_tile_tileset(
+    source_model,
+    tile_id,
+    glb_key,
+    sidecar_key,
+    raw_bounds,
+    rtc_origin_render_xyz,
+    context,
+    glb_metadata,
+    sidecar,
+    glb_size,
+    sidecar_size,
+):
+    scale_to_m = context.get("scale_to_m")
+    geometric_error = max(_raw_bounds_half_extents(raw_bounds, scale_to_m=scale_to_m)) * 2.0
+    return {
+        "asset": {
+            "version": "1.1",
+            "tilesetVersion": "plant3d-spike-1",
+            "generator": "plant3d.ifc-glb",
+        },
+        "geometricError": geometric_error,
+        "metadata": {
+            "source_model_id": source_model.pk,
+            "source_format": source_model.source_format,
+            "package_format": "GLB",
+            "coordinate_transform": context["coordinate_transform"],
+            "gltf_axis_convention": glb_metadata["gltf_axis_convention"],
+            "feature_id_attribute": sidecar["feature_id_attribute"],
+            "tiling_strategy": "single-root-tile-spike",
+        },
+        "root": {
+            "boundingVolume": {
+                "box": _tileset_box_for_bounds(raw_bounds, scale_to_m=scale_to_m),
+            },
+            "geometricError": 0.0,
+            "refine": "ADD",
+            "transform": _translation_matrix_xyz(rtc_origin_render_xyz),
+            "content": {
+                "uri": glb_key,
+                "mimeType": "model/gltf-binary",
+                "byteLength": glb_size,
+            },
+            "extras": {
+                "tile_id": tile_id,
+                "sidecar_uri": sidecar_key,
+                "sidecar_byte_length": sidecar_size,
+                "object_count": len(sidecar["object_features"]),
+                "render_batch_count": sidecar["render_batch_count"],
+                "feature_id_attribute": sidecar["feature_id_attribute"],
+                "rtc_origin_render_xyz": rtc_origin_render_xyz,
+                "raw_bounds": raw_bounds,
+                "note": "Single-tile 3D-Tiles-style manifest. Future spatial tiling should add children under this root.",
+            },
+        },
+    }
+
+
+def _build_child_tile_tileset(source_model, raw_bounds, package_rtc_origin_render_xyz, context, glb_metadata, tile_descriptors):
+    scale_to_m = context.get("scale_to_m")
+    root_center = package_rtc_origin_render_xyz
+    root_error = max(_raw_bounds_half_extents(raw_bounds, scale_to_m=scale_to_m)) * 2.0
+    children = []
+    for descriptor in tile_descriptors:
+        children.append(
+            {
+                "boundingVolume": {
+                    "box": _tileset_box_for_bounds(descriptor["bounds"], scale_to_m=scale_to_m),
+                },
+                "geometricError": 0.0,
+                "refine": "ADD",
+                "transform": _translation_matrix_xyz(descriptor["rtc_origin_render_xyz"]),
+                "content": {
+                    "uri": descriptor["glb_key"],
+                    "mimeType": "model/gltf-binary",
+                    "byteLength": descriptor["glb_size"],
+                },
+                "extras": {
+                    "tile_id": descriptor["tile_id"],
+                    "sequence": descriptor["sequence"],
+                    "sidecar_uri": descriptor["sidecar_key"],
+                    "sidecar_byte_length": descriptor["sidecar_size"],
+                    "object_count": descriptor["object_count"],
+                    "render_batch_count": descriptor["render_batch_count"],
+                    "feature_id_attribute": descriptor["feature_id_attribute"],
+                    "rtc_origin_render_xyz": descriptor["rtc_origin_render_xyz"],
+                    "raw_bounds": descriptor["bounds"],
+                    "grid_row": descriptor.get("grid_row"),
+                    "grid_col": descriptor.get("grid_col"),
+                },
+            }
+        )
+
+    return {
+        "asset": {
+            "version": "1.1",
+            "tilesetVersion": "plant3d-spike-1",
+            "generator": "plant3d.ifc-glb",
+        },
+        "geometricError": root_error,
+        "metadata": {
+            "source_model_id": source_model.pk,
+            "source_format": source_model.source_format,
+            "package_format": "GLB",
+            "coordinate_transform": context["coordinate_transform"],
+            "gltf_axis_convention": glb_metadata["gltf_axis_convention"],
+            "feature_id_attribute": tile_descriptors[0]["feature_id_attribute"] if tile_descriptors else "_FEATURE_ID_0",
+            "tiling_strategy": "source-bounds-grid",
+            "tile_count": len(tile_descriptors),
+            "target_objects_per_tile": GLB_TARGET_OBJECTS_PER_TILE,
+        },
+        "root": {
+            "boundingVolume": {
+                "box": _tileset_box_for_bounds_at_center(raw_bounds, root_center, scale_to_m=scale_to_m),
+            },
+            "geometricError": root_error,
+            "refine": "ADD",
+            "children": children,
+            "extras": {
+                "tile_id": "root",
+                "object_count": sum(descriptor["object_count"] for descriptor in tile_descriptors),
+                "rtc_origin_render_xyz": package_rtc_origin_render_xyz,
+                "raw_bounds": raw_bounds,
+                "note": "First spatial GLB tiling pass. Viewer still loads all child tiles; culling/streaming comes next.",
+            },
+        },
+    }
+
+
 def _mesh_stable_id(source_model, mesh):
     properties = mesh.get("properties") or {}
     global_id = str(properties.get("global_id") or "").strip()
@@ -390,30 +717,40 @@ def _mesh_stable_id(source_model, mesh):
     return f"{source_model.source_format.lower()}:{source_model.pk}:mesh:{mesh.get('uid')}"
 
 
+def _model_object_for_mesh(source_model, package, tile, mesh):
+    properties = mesh.get("properties") or {}
+    return source_model.model_objects.model(
+        source_model=source_model,
+        render_package=package,
+        render_tile=tile,
+        stable_id=_mesh_stable_id(source_model, mesh),
+        source_object_id=str(properties.get("global_id") or mesh.get("uid") or ""),
+        object_type=str(properties.get("ifc_class") or properties.get("kind") or mesh.get("kind") or ""),
+        tag=str(properties.get("tag") or properties.get("component_ref") or ""),
+        line_id=str(properties.get("line_id") or ""),
+        bounds=properties.get("raw_bounds") or {},
+        metadata={
+            "name": properties.get("name") or "",
+            "description": properties.get("description") or "",
+            "hierarchy_group": properties.get("hierarchy_group") or "",
+            "spatial_path": properties.get("spatial_path") or [],
+        },
+    )
+
+
 def _index_scene_objects(source_model, package, tile, meshes):
     source_model.model_objects.all().delete()
+    objects = [_model_object_for_mesh(source_model, package, tile, mesh) for mesh in meshes]
+    if objects:
+        source_model.model_objects.bulk_create(objects)
+    return len(objects)
+
+
+def _index_scene_objects_by_tile(source_model, package, tile_mesh_pairs):
+    source_model.model_objects.all().delete()
     objects = []
-    for mesh in meshes:
-        properties = mesh.get("properties") or {}
-        objects.append(
-            source_model.model_objects.model(
-                source_model=source_model,
-                render_package=package,
-                render_tile=tile,
-                stable_id=_mesh_stable_id(source_model, mesh),
-                source_object_id=str(properties.get("global_id") or mesh.get("uid") or ""),
-                object_type=str(properties.get("ifc_class") or properties.get("kind") or mesh.get("kind") or ""),
-                tag=str(properties.get("tag") or properties.get("component_ref") or ""),
-                line_id=str(properties.get("line_id") or ""),
-                bounds=properties.get("raw_bounds") or {},
-                metadata={
-                    "name": properties.get("name") or "",
-                    "description": properties.get("description") or "",
-                    "hierarchy_group": properties.get("hierarchy_group") or "",
-                    "spatial_path": properties.get("spatial_path") or [],
-                },
-            )
-        )
+    for tile, meshes in tile_mesh_pairs:
+        objects.extend(_model_object_for_mesh(source_model, package, tile, mesh) for mesh in meshes)
     if objects:
         source_model.model_objects.bulk_create(objects)
     return len(objects)
@@ -620,14 +957,18 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
         raw_bounds = context["raw_bounds"]
         origin_source_xyz = context["origin_source_xyz"]
         rtc_origin_render_xyz = context["rtc_origin_render_xyz"]
-        tile_id = "geometry-0001"
-        glb_key = _render_tile_storage_key(source_model.pk, tile_id, "glb")
-        sidecar_key = _render_tile_storage_key(source_model.pk, f"{tile_id}-metadata", "json")
-        glb_metadata = {
+        tileset_key = _render_tileset_storage_key(source_model.pk)
+        base_glb_metadata = {
             "package_version": 1,
-            "tile_id": tile_id,
             "source_model_id": source_model.pk,
             "source_format": source_model.source_format,
+            "gltf_axis_convention": {
+                "buffer_frame": "render_xyz_m",
+                "up_axis": "Y",
+                "source_to_buffer_axis_order": ["x", "z", "y"],
+                "root_transform_required": False,
+                "note": "GLB buffers use the existing plant3d render frame: source Z is emitted as glTF/Three.js Y-up. Do not apply an additional Y/Z root rotation.",
+            },
             "coordinate_unit": stats.get("coordinate_unit") or "",
             "coordinate_scale_to_m": stats.get("coordinate_scale_to_m"),
             "display_unit": stats.get("display_unit") or "",
@@ -639,23 +980,108 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
             "rtc_origin_frame": "render_xyz_m",
             "coordinate_transform": context["coordinate_transform"],
         }
-        glb_bytes, sidecar = build_glb_from_meshes(meshes, metadata=glb_metadata)
-        sidecar.update(
-            {
+        tile_groups = _spatial_mesh_groups(meshes, raw_bounds)
+        tile_descriptors = []
+        feature_id_offset = 0
+        for sequence, group in enumerate(tile_groups, start=1):
+            tile_id = group["tile_id"]
+            tile_bounds = group["bounds"]
+            tile_origin_source_xyz, tile_rtc_origin_render_xyz = _rtc_origins_from_raw_bounds(
+                tile_bounds,
+                scale_to_m=context["scale_to_m"],
+            )
+            tile_transform = _tile_coordinate_transform(context, tile_bounds, tile_rtc_origin_render_xyz)
+            tile_meshes = [
+                _mesh_with_tile_local_positions(mesh, rtc_origin_render_xyz, tile_rtc_origin_render_xyz)
+                for mesh in group["meshes"]
+            ]
+            glb_key = _render_tile_storage_key(source_model.pk, tile_id, "glb")
+            sidecar_key = _render_tile_storage_key(source_model.pk, f"{tile_id}-metadata", "json")
+            glb_metadata = {
+                **base_glb_metadata,
                 "tile_id": tile_id,
-                "source_model_id": source_model.pk,
-                "glb_storage_key": glb_key,
-                "sidecar_storage_key": sidecar_key,
-                "coordinate_transform": context["coordinate_transform"],
-                "unit_metadata": unit_metadata,
-                "unit_warnings": unit_warnings,
-                "raw_bounds": raw_bounds,
+                "tile_sequence": sequence,
+                "raw_bounds": tile_bounds,
+                "rtc_origin": tile_rtc_origin_render_xyz,
+                "coordinate_transform": tile_transform,
+                "package_rtc_origin_render_xyz": rtc_origin_render_xyz,
+                "tile_origin_source_xyz": tile_origin_source_xyz,
             }
-        )
-        write_bytes(glb_key, glb_bytes)
-        write_text(sidecar_key, json.dumps(sidecar, separators=(",", ":")))
-        glb_size = stat_size(glb_key)
-        sidecar_size = stat_size(sidecar_key)
+            glb_bytes, sidecar = build_glb_from_meshes(
+                tile_meshes,
+                metadata=glb_metadata,
+                stable_id_resolver=lambda mesh: _mesh_stable_id(source_model, mesh),
+                feature_id_offset=feature_id_offset,
+            )
+            sidecar.update(
+                {
+                    "tile_id": tile_id,
+                    "tile_sequence": sequence,
+                    "source_model_id": source_model.pk,
+                    "glb_storage_key": glb_key,
+                    "sidecar_storage_key": sidecar_key,
+                    "coordinate_transform": tile_transform,
+                    "unit_metadata": unit_metadata,
+                    "unit_warnings": unit_warnings,
+                    "raw_bounds": tile_bounds,
+                    "gltf_axis_convention": base_glb_metadata["gltf_axis_convention"],
+                    "rtc_origin_render_xyz": tile_rtc_origin_render_xyz,
+                    "package_rtc_origin_render_xyz": rtc_origin_render_xyz,
+                }
+            )
+            write_bytes(glb_key, glb_bytes)
+            write_text(sidecar_key, json.dumps(sidecar, separators=(",", ":")))
+            glb_size = stat_size(glb_key)
+            sidecar_size = stat_size(sidecar_key)
+            feature_id_offset += len(sidecar["object_features"])
+            tile_descriptors.append(
+                {
+                    **group,
+                    "sequence": sequence,
+                    "glb_key": glb_key,
+                    "sidecar_key": sidecar_key,
+                    "glb_size": glb_size,
+                    "sidecar_size": sidecar_size,
+                    "sidecar": sidecar,
+                    "tile_meshes": group["meshes"],
+                    "rtc_origin_render_xyz": tile_rtc_origin_render_xyz,
+                    "origin_source_xyz": tile_origin_source_xyz,
+                    "coordinate_transform": tile_transform,
+                    "object_count": len(group["meshes"]),
+                    "render_batch_count": sidecar["render_batch_count"],
+                    "feature_id_attribute": sidecar["feature_id_attribute"],
+                }
+            )
+
+        if len(tile_descriptors) == 1:
+            only_tile = tile_descriptors[0]
+            tileset = _build_single_tile_tileset(
+                source_model=source_model,
+                tile_id=only_tile["tile_id"],
+                glb_key=only_tile["glb_key"],
+                sidecar_key=only_tile["sidecar_key"],
+                raw_bounds=only_tile["bounds"],
+                rtc_origin_render_xyz=only_tile["rtc_origin_render_xyz"],
+                context=context,
+                glb_metadata=base_glb_metadata,
+                sidecar=only_tile["sidecar"],
+                glb_size=only_tile["glb_size"],
+                sidecar_size=only_tile["sidecar_size"],
+            )
+        else:
+            tileset = _build_child_tile_tileset(
+                source_model=source_model,
+                raw_bounds=raw_bounds,
+                package_rtc_origin_render_xyz=rtc_origin_render_xyz,
+                context=context,
+                glb_metadata=base_glb_metadata,
+                tile_descriptors=tile_descriptors,
+            )
+        write_text(tileset_key, json.dumps(tileset, separators=(",", ":")))
+        tileset_size = stat_size(tileset_key)
+        total_glb_size = sum(descriptor["glb_size"] for descriptor in tile_descriptors)
+        total_sidecar_size = sum(descriptor["sidecar_size"] for descriptor in tile_descriptors)
+        total_render_batch_count = sum(descriptor["render_batch_count"] for descriptor in tile_descriptors)
 
         with transaction.atomic():
             package = RenderPackage.objects.create(
@@ -663,10 +1089,10 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 conversion_job=job,
                 package_format="GLB",
                 storage_prefix=f"plant3d/render/{source_model.pk}",
-                manifest_storage_key=sidecar_key,
+                manifest_storage_key=tileset_key,
                 object_count=len(meshes),
-                tile_count=1,
-                byte_size=glb_size + sidecar_size,
+                tile_count=len(tile_descriptors),
+                byte_size=total_glb_size + total_sidecar_size + tileset_size,
                 coordinate_unit=stats.get("coordinate_unit") or "",
                 coordinate_frame=source_model.coordinate_frame,
                 bounds=raw_bounds,
@@ -679,35 +1105,49 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                     "unit_warnings": unit_warnings,
                     "origin_source_xyz": origin_source_xyz,
                     "rtc_origin_render_xyz": rtc_origin_render_xyz,
-                    "glb_storage_key": glb_key,
-                    "sidecar_storage_key": sidecar_key,
-                    "render_batch_count": sidecar["render_batch_count"],
-                    "picking_strategy": "metadata-sidecar-only; GLB object picking deferred until feature IDs are designed",
+                    "tileset_storage_key": tileset_key,
+                    "tileset_bytes": tileset_size,
+                    "glb_bytes": total_glb_size,
+                    "sidecar_bytes": total_sidecar_size,
+                    "render_batch_count": total_render_batch_count,
+                    "feature_id_attribute": tile_descriptors[0]["feature_id_attribute"] if tile_descriptors else "_FEATURE_ID_0",
+                    "tiling_strategy": "source-bounds-grid" if len(tile_descriptors) > 1 else "single-root-tile-spike",
+                    "target_objects_per_tile": GLB_TARGET_OBJECTS_PER_TILE,
+                    "picking_strategy": "feature-id sidecar available; GLB BVH acceleration/highlighting deferred",
                 },
             )
-            tile = RenderTile.objects.create(
-                render_package=package,
-                tile_id=tile_id,
-                storage_key=glb_key,
-                sequence=1,
-                rtc_origin_x=rtc_origin_render_xyz[0],
-                rtc_origin_y=rtc_origin_render_xyz[1],
-                rtc_origin_z=rtc_origin_render_xyz[2],
-                object_count=len(meshes),
-                byte_size=glb_size,
-                bounds=raw_bounds,
-                metadata={
-                    "tile_type": "ifc-glb",
-                    "sidecar_storage_key": sidecar_key,
-                    "sidecar_bytes": sidecar_size,
-                    "coordinate_transform": context["coordinate_transform"],
-                    "source_unit_hints": unit_hints,
-                    "unit_metadata": unit_metadata,
-                    "unit_warnings": unit_warnings,
-                    "render_batch_count": sidecar["render_batch_count"],
-                },
-            )
-            indexed_count = _index_scene_objects(source_model, package, tile, meshes)
+            tile_mesh_pairs = []
+            for descriptor in tile_descriptors:
+                tile = RenderTile.objects.create(
+                    render_package=package,
+                    tile_id=descriptor["tile_id"],
+                    storage_key=descriptor["glb_key"],
+                    sequence=descriptor["sequence"],
+                    rtc_origin_x=descriptor["rtc_origin_render_xyz"][0],
+                    rtc_origin_y=descriptor["rtc_origin_render_xyz"][1],
+                    rtc_origin_z=descriptor["rtc_origin_render_xyz"][2],
+                    object_count=descriptor["object_count"],
+                    byte_size=descriptor["glb_size"],
+                    bounds=descriptor["bounds"],
+                    metadata={
+                        "tile_type": "ifc-glb",
+                        "sidecar_storage_key": descriptor["sidecar_key"],
+                        "sidecar_bytes": descriptor["sidecar_size"],
+                        "tileset_storage_key": tileset_key,
+                        "coordinate_transform": descriptor["coordinate_transform"],
+                        "origin_source_xyz": descriptor["origin_source_xyz"],
+                        "package_rtc_origin_render_xyz": rtc_origin_render_xyz,
+                        "source_unit_hints": unit_hints,
+                        "unit_metadata": unit_metadata,
+                        "unit_warnings": unit_warnings,
+                        "render_batch_count": descriptor["render_batch_count"],
+                        "feature_id_attribute": descriptor["feature_id_attribute"],
+                        "grid_row": descriptor.get("grid_row"),
+                        "grid_col": descriptor.get("grid_col"),
+                    },
+                )
+                tile_mesh_pairs.append((tile, descriptor["tile_meshes"]))
+            indexed_count = _index_scene_objects_by_tile(source_model, package, tile_mesh_pairs)
 
             source_model.declared_unit = source_model.declared_unit or (
                 str(stats.get("ifc_declared_length_unit") or stats.get("coordinate_unit") or "").upper()
@@ -723,8 +1163,8 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 "ifc_unit_warnings": unit_warnings,
                 "last_origin_source_xyz": origin_source_xyz,
                 "last_rtc_origin_render_xyz": rtc_origin_render_xyz,
-                "last_glb_storage_key": glb_key,
-                "last_glb_sidecar_storage_key": sidecar_key,
+                "last_glb_tileset_storage_key": tileset_key,
+                "last_glb_tile_count": len(tile_descriptors),
             }
             source_model.save(update_fields=["declared_unit", "bounds", "metadata", "updated_at"])
 
@@ -733,13 +1173,18 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
             job.output_storage_prefix = package.storage_prefix
             job.completed_at = timezone.now()
             job.metrics = {
-                "glb_storage_key": glb_key,
-                "glb_bytes": glb_size,
-                "sidecar_storage_key": sidecar_key,
-                "sidecar_bytes": sidecar_size,
+                "glb_bytes": total_glb_size,
+                "sidecar_bytes": total_sidecar_size,
+                "tileset_storage_key": tileset_key,
+                "tileset_bytes": tileset_size,
+                "tile_count": len(tile_descriptors),
+                "tile_ids": [descriptor["tile_id"] for descriptor in tile_descriptors],
                 "mesh_count": len(meshes),
-                "render_batch_count": sidecar["render_batch_count"],
+                "render_batch_count": total_render_batch_count,
                 "model_object_count": indexed_count,
+                "feature_count": sum(len(descriptor["sidecar"]["object_features"]) for descriptor in tile_descriptors),
+                "tiling_strategy": "source-bounds-grid" if len(tile_descriptors) > 1 else "single-root-tile-spike",
+                "target_objects_per_tile": GLB_TARGET_OBJECTS_PER_TILE,
                 "conversion_scope": "ifc-glb",
                 "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
                 "source_unit_hints": unit_hints,

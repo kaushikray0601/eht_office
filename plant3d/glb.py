@@ -23,7 +23,7 @@ def _color_key(mesh):
     return tuple(round(float(value or 0), 4) for value in color)
 
 
-def _mesh_stable_id(mesh):
+def _default_mesh_stable_id(mesh):
     properties = mesh.get("properties") or {}
     global_id = str(properties.get("global_id") or "").strip()
     if global_id:
@@ -91,9 +91,11 @@ def _bounds_for_positions(positions):
     return [min(xs), min(ys), min(zs)], [max(xs), max(ys), max(zs)]
 
 
-def build_glb_from_meshes(meshes, metadata=None):
+def build_glb_from_meshes(meshes, metadata=None, stable_id_resolver=None, feature_id_offset=0):
+    stable_id_resolver = stable_id_resolver or _default_mesh_stable_id
     buckets = OrderedDict()
     object_spans = []
+    object_features = []
     for mesh in meshes:
         mesh_data = mesh.get("mesh") or {}
         positions = mesh_data.get("positions") or []
@@ -102,23 +104,36 @@ def build_glb_from_meshes(meshes, metadata=None):
             continue
 
         key = _color_key(mesh)
-        bucket = buckets.setdefault(key, {"positions": [], "indices": [], "objects": []})
+        bucket = buckets.setdefault(key, {"positions": [], "indices": [], "feature_ids": [], "objects": []})
         vertex_offset = len(bucket["positions"]) // 3
         first_index = len(bucket["indices"])
+        vertex_count = len(positions) // 3
+        feature_id = int(feature_id_offset or 0) + len(object_features) + 1
+        stable_id = stable_id_resolver(mesh)
         bucket["positions"].extend(float(value or 0.0) for value in positions)
         bucket["indices"].extend(int(index) + vertex_offset for index in indices)
+        bucket["feature_ids"].extend([feature_id] * vertex_count)
         span = {
-            "stable_id": _mesh_stable_id(mesh),
+            "feature_id": feature_id,
+            "stable_id": stable_id,
             "uid": mesh.get("uid"),
             "object_type": (mesh.get("properties") or {}).get("ifc_class") or mesh.get("kind") or "",
             "bucket_color": list(key),
             "first_index": first_index,
             "index_count": len(indices),
             "vertex_offset": vertex_offset,
-            "vertex_count": len(positions) // 3,
+            "vertex_count": vertex_count,
         }
         bucket["objects"].append(span)
         object_spans.append(span)
+        object_features.append(
+            {
+                "feature_id": feature_id,
+                "stable_id": stable_id,
+                "source_object_id": (mesh.get("properties") or {}).get("global_id") or mesh.get("uid") or "",
+                "object_type": span["object_type"],
+            }
+        )
 
     bin_blob = b""
     buffer_views = []
@@ -146,12 +161,14 @@ def build_glb_from_meshes(meshes, metadata=None):
     for color, bucket in buckets.items():
         positions = bucket["positions"]
         indices = bucket["indices"]
+        feature_ids = bucket["feature_ids"]
         normals = _compute_normals(positions, indices)
         min_pos, max_pos = _bounds_for_positions(positions)
         index_component_type = GL_UNSIGNED_SHORT if indices and max(indices) <= 65535 else GL_UNSIGNED_INT
 
         position_view = append_view(_pack_f32(positions), GL_ARRAY_BUFFER)
         normal_view = append_view(_pack_f32(normals), GL_ARRAY_BUFFER)
+        feature_view = append_view(_pack_f32(feature_ids), GL_ARRAY_BUFFER)
         index_view = append_view(_pack_indices(indices, index_component_type), GL_ELEMENT_ARRAY_BUFFER)
 
         position_accessor = len(accessors)
@@ -172,6 +189,17 @@ def build_glb_from_meshes(meshes, metadata=None):
                 "componentType": GL_FLOAT,
                 "count": len(normals) // 3,
                 "type": "VEC3",
+            }
+        )
+        feature_accessor = len(accessors)
+        accessors.append(
+            {
+                "bufferView": feature_view,
+                "componentType": GL_FLOAT,
+                "count": len(feature_ids),
+                "type": "SCALAR",
+                "min": [min(feature_ids)] if feature_ids else [0],
+                "max": [max(feature_ids)] if feature_ids else [0],
             }
         )
         index_accessor = len(accessors)
@@ -205,6 +233,7 @@ def build_glb_from_meshes(meshes, metadata=None):
                         "attributes": {
                             "POSITION": position_accessor,
                             "NORMAL": normal_accessor,
+                            "_FEATURE_ID_0": feature_accessor,
                         },
                         "indices": index_accessor,
                         "material": material_index,
@@ -245,6 +274,8 @@ def build_glb_from_meshes(meshes, metadata=None):
         "format": "GLB",
         "mesh_count": len(meshes),
         "render_batch_count": len(buckets),
+        "feature_id_attribute": "_FEATURE_ID_0",
+        "object_features": object_features,
         "object_spans": object_spans,
         "metadata": metadata or {},
     }

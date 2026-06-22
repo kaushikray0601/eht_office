@@ -198,12 +198,68 @@ def package_json_view(request, package_id):
     package = get_object_or_404(render_packages_for_user(request.user).select_related("source_model"), pk=package_id)
     tiles = package.tiles.order_by("sequence", "pk")
     objects = package.model_objects.order_by("stable_id", "pk")
+    object_payload = [
+        {
+            "id": obj.pk,
+            "stable_id": obj.stable_id,
+            "source_object_id": obj.source_object_id,
+            "object_type": obj.object_type,
+            "tag": obj.tag,
+            "line_id": obj.line_id,
+            "bounds": obj.bounds,
+            "url": reverse("plant3d_model_object_json", args=[obj.pk]),
+        }
+        for obj in objects
+    ]
+    tile_payload = [
+        {
+            "id": tile.pk,
+            "tile_id": tile.tile_id,
+            "sequence": tile.sequence,
+            "object_count": tile.object_count,
+            "byte_size": tile.byte_size,
+            "bounds": tile.bounds,
+            "rtc_origin": tile.rtc_origin,
+            "url": reverse("plant3d_tile_json", args=[tile.pk]),
+            "metadata_url": reverse("plant3d_tile_json", args=[tile.pk]),
+            "blob_url": reverse("plant3d_tile_blob", args=[tile.pk]),
+            "content_type": tile.metadata.get("tile_type", ""),
+        }
+        for tile in tiles
+    ]
+    tileset_payload = None
+    if package.package_format == "GLB" and package.manifest_storage_key and storage_exists(package.manifest_storage_key):
+        try:
+            tileset_payload = json.loads(read_text(package.manifest_storage_key))
+        except json.JSONDecodeError:
+            tileset_payload = None
+        if not (isinstance(tileset_payload, dict) and "asset" in tileset_payload and "root" in tileset_payload):
+            tileset_payload = None
+
+    if tileset_payload and tile_payload:
+        tiles_by_id = {tile["tile_id"]: tile for tile in tile_payload}
+
+        def enrich_tileset_node(node):
+            extras = node.get("extras") or {}
+            tile = tiles_by_id.get(extras.get("tile_id"))
+            if tile:
+                content = node.get("content") or {}
+                content["url"] = tile["blob_url"]
+                extras["metadata_url"] = tile["metadata_url"]
+                node["content"] = content
+            node["extras"] = extras
+            node["children"] = [enrich_tileset_node(child) for child in node.get("children") or []]
+            return node
+
+        tileset_payload["root"] = enrich_tileset_node(tileset_payload.get("root") or {})
+
     return JsonResponse(
         {
             "id": package.pk,
             "source_model_id": package.source_model_id,
             "source_display_name": package.source_model.display_name,
             "package_format": package.package_format,
+            "manifest_storage_key": package.manifest_storage_key,
             "object_count": package.object_count,
             "tile_count": package.tile_count,
             "byte_size": package.byte_size,
@@ -211,35 +267,9 @@ def package_json_view(request, package_id):
             "coordinate_frame": package.coordinate_frame,
             "bounds": package.bounds,
             "metadata": package.metadata,
-            "objects": [
-                {
-                    "id": obj.pk,
-                    "stable_id": obj.stable_id,
-                    "source_object_id": obj.source_object_id,
-                    "object_type": obj.object_type,
-                    "tag": obj.tag,
-                    "line_id": obj.line_id,
-                    "bounds": obj.bounds,
-                    "url": reverse("plant3d_model_object_json", args=[obj.pk]),
-                }
-                for obj in objects
-            ],
-            "tiles": [
-                {
-                    "id": tile.pk,
-                    "tile_id": tile.tile_id,
-                    "sequence": tile.sequence,
-                    "object_count": tile.object_count,
-                    "byte_size": tile.byte_size,
-                    "bounds": tile.bounds,
-                    "rtc_origin": tile.rtc_origin,
-                    "url": reverse("plant3d_tile_json", args=[tile.pk]),
-                    "metadata_url": reverse("plant3d_tile_json", args=[tile.pk]),
-                    "blob_url": reverse("plant3d_tile_blob", args=[tile.pk]),
-                    "content_type": tile.metadata.get("tile_type", ""),
-                }
-                for tile in tiles
-            ],
+            "tileset": tileset_payload,
+            "objects": object_payload,
+            "tiles": tile_payload,
         }
     )
 

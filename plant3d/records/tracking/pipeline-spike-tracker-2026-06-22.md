@@ -85,9 +85,10 @@ The spike should answer:
 - [x] Add package/tile JSON API URLs so the browser does not depend on storage-key details.
 - [x] Wrap conversion package/tile/object-index writes in database transactions.
 - [x] Keep queued -> running -> completed/failed state transitions real for management-command processing.
+- [x] Keep the source-detail page polling queued/running jobs until completion and show worker command hints clearly.
 - [x] Run the IFC geometry conversion against real project/sample IFC files and record actual metrics.
 - [x] Evaluate first GLB/glTF output path with a binary GLB tile plus metadata sidecar.
-- [ ] Add feature/object IDs to the first GLB path before treating GLB as more than a render smoke test.
+- [x] Add feature/object IDs to the first GLB path before treating GLB as more than a render smoke test.
 - [ ] Evaluate meshopt compression feasibility if setup cost is reasonable.
 - [x] Record metadata-manifest output size.
 - [x] Record sample-file geometry conversion time and output size.
@@ -99,8 +100,10 @@ The spike should answer:
 ## Phase 4 - Tiling And Precision Experiment
 
 - [ ] Create a tiled or chunked package manifest.
-- [ ] Define glTF axis convention before expanding GLB output: keep current render `x,z,y` frame consistently or emit glTF-standard Y-up with a root transform.
-- [ ] Start a primitive 3D-Tiles-style `tileset.json` manifest after feature IDs are in the single-tile GLB.
+- [x] Define glTF axis convention before expanding GLB output: GLB buffers use current `render_xyz_m` frame, source Z is emitted as glTF/Three.js Y-up, and no additional root transform is applied.
+- [x] Start a primitive 3D-Tiles-style `tileset.json` manifest after feature IDs are in the single-tile GLB.
+- [x] Split GLB output into first spatial child tiles under the `tileset.json` root.
+- [ ] Add viewer-side tile culling/streaming so child tiles are not all loaded at once.
 - [x] Add tile-local origin/RTC metadata for the current single JSON geometry tile.
 - [x] Store the source-coordinate origin on the tile row and tile payload.
 - [x] Add transform metadata showing source axis/order, render axis/order, origin, and scale.
@@ -118,11 +121,14 @@ The spike should answer:
 - [x] Show basic runtime metrics: loaded meshes, triangles, tiles, load time, package bytes, raw bounds.
 - [x] Show tile RTC origin in runtime metrics.
 - [x] Show live browser-side FPS, draw calls, and WebGL geometry/texture counters.
+- [x] Show adaptive viewer quality state and effective renderer pixel ratio.
 - [x] Render merged color-bucket geometry rather than one visible mesh per object for the JSON debug viewer.
 - [x] Keep per-object pick proxies outside the rendered scene so metadata picking still works with merged visible geometry.
 - [x] Show basic model/package bounds in the viewer sidebar.
 - [x] Add basic object picking and highlight in the viewer.
 - [x] Add minimal metadata panel backed by `ModelObject` API.
+- [x] Add first GLB feature-ID click-to-metadata path without hidden per-object pick proxies.
+- [x] Add interaction-time adaptive pixel ratio and high-performance WebGL context for smoother orbit/pan on heavy packages.
 - [ ] Avoid polishing UI beyond what is needed to measure the pipeline.
 - [x] Verify viewer with real converted IFC packages using Playwright screenshot/pixel checks through a temporary static probe.
 
@@ -148,6 +154,7 @@ Measurement hooks now implemented:
 - [x] Source detail page surfaces job metrics after processing.
 - [x] Viewer sidebar reports draw calls and rough FPS during orbit/pan/zoom.
 - [x] Viewer sidebar reports WebGL geometry and texture counts.
+- [x] Viewer sidebar reports effective pixel ratio and adaptive quality mode.
 - [x] Viewer sidebar reports render batch count, pick proxy count, pick latency, and metadata lookup latency.
 
 Acceptance thresholds for the first real IFC spike:
@@ -192,6 +199,7 @@ Decision rules:
 - RTC metadata is now frame-correct for the current single-tile JSON package, but real per-tile origins are still unproven until actual spatial tiling begins.
 - The debug viewer now reduces visible draw calls by merging geometry by color, but object picking currently keeps per-object geometry proxies in memory. This is acceptable for the spike but not a final large-model strategy.
 - Source-detail job polling is a practical spike bridge, not the final progress architecture. Production still needs a real worker process plus SSE/WebSocket or push-style progress.
+- Source-detail polling must keep polling queued/running jobs until the worker completes them. A bug briefly made the page poll only once, which could hide completed package links until manual refresh.
 - Real sample conversion exposed a unit-confidence risk. The parser now reports source-declared IFC units separately from render units: Revit sample declares `ft`, Tekla samples declare `mm`, while IfcOpenShell geometry settings report metre output (`length-unit=1.0`, `convert-back-units=False`). A known-dimension scale fixture is still required before trusting measurement/federation workflows.
 - JSON expansion is already visible on small samples; one 2.8 MB Tekla IFC produced a 10.5 MB JSON tile.
 - GLB reduces payload size materially on first samples: Revit JSON 1.51 MB -> GLB 0.56 MB plus 0.03 MB sidecar; Tekla JSON 10.49 MB -> GLB 5.38 MB plus 0.17 MB sidecar. Conversion time remains dominated by IFC parsing.
@@ -240,18 +248,19 @@ Deferred / TODO:
 - D3 is closed for the platform boundary: `plant3d` now imports from `plant3d.parsers.ifc`, not `idfviewer.ifc_parser`.
 - Production delivery remains deferred: package/tile payloads should move from Django JSON responses to signed object-storage URLs before real scale.
 - Production package format remains partially deferred: first GLB+sidecar path exists, but compression, tiling, feature IDs, and 3D Tiles-style manifests remain open.
-- GLB feature IDs are now the next format task. Retrofitting identity later would repeat the RTC mistake; add object/feature IDs before investing more in GLB viewer behavior.
+- GLB feature IDs are now present in the first binary package path via `_FEATURE_ID_0` plus sidecar object-feature mapping. The viewer can now click GLB render meshes and resolve feature ID -> stable ID -> `ModelObject` metadata without hidden per-object proxies. BVH acceleration and shader/feature-ID highlighting are still deferred.
 - Unit/scale proof remains partially deferred: IFC `IfcUnitAssignment` and IfcOpenShell geometry settings are visible now, but we still need a known-dimension or source-system validation to confirm rendered geometry scale end-to-end.
 - Parser cleanup remains a TODO: the extracted parser is a direct copy for boundary safety, not yet a deeply refactored production parser.
 
 ## Immediate Next Actions
 
-1. Add stable feature/object IDs to the single-tile GLB path before treating GLB as the main runtime package.
-2. Decide and document the first GLB axis convention. Current renderer uses `x,z,y`; either keep that consistently or emit glTF-standard Y-up via a root transform.
-3. Re-run GLB conversion and viewer checks on the Revit and Tekla samples after feature IDs.
+1. Queue fresh GLB conversions for the Tekla samples and record actual tile counts/package sizes under the new spatial child-tiling path.
+2. Re-run browser GLB viewer checks after spatial child tiling and record whether loading all child tiles still feels acceptable.
+3. Add viewer-side tile culling/streaming so child tiles are not all fetched/rendered at once.
 4. Add the known-dimension unit validation fixture to close F4 when practical.
-5. Gather the real 20 MB and/or plant-global IFC input when available.
-6. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+5. Evaluate `three-mesh-bvh` acceleration for GLB picking if direct render-mesh raycast is sluggish on the larger samples.
+6. Gather the real 20 MB and/or plant-global IFC input when available.
+7. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
 Current manual check path:
 
@@ -327,13 +336,22 @@ Current manual check path:
 - 2026-06-23: Real GLB conversion metrics: `Ifc2s3_Duplex_Electrical.ifc` produced 560,296 byte GLB plus 26,266 byte sidecar for 104 objects; `8-SSPAR-800203.ifc` produced 5,376,268 byte GLB plus 167,948 byte sidecar for 867 objects in 17,546 ms.
 - 2026-06-23: Claude render-format research reviewed. Accepted stack direction: GLB first, meshopt over Draco for default compression, feature IDs before serious picking, no custom binary, no xeokit/AGPL, 3D-Tiles-style manifest for streaming/LOD. Recorded that format, RTC, and precision must be proven together on plant-global coordinates.
 - 2026-06-23: Admin cleanup note: deleting local spike `ModelObject` / `ConversionJob` rows from Django admin is DB-safe, but it does not remove stored source/render files. Deleting only jobs leaves packages; deleting only objects leaves package counts stale. For a clean local reset, delete `SourceModel` records or add a dedicated cleanup command that also removes storage keys.
+- 2026-06-23: Added GLB `_FEATURE_ID_0` vertex attribute plus sidecar `object_features` / `object_spans` mapping. `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 28 tests; `node --check /tmp/package_viewer.mjs` passed.
+- 2026-06-23: Tested user-supplied `ifc/8-SSPAR-800206A.ifc` through DB-backed GLB conversion: 9,402,996 byte IFC, 3,770 objects/features, 5,960,624 byte GLB, 1,269,630 byte sidecar, 7,230,254 total bytes, 20,717 ms conversion, source unit `mm`.
+- 2026-06-23: Fixed source-detail job polling so queued/running jobs continue polling until terminal state; added explicit worker command hint and removed stale "No conversion jobs yet" row when jobs are inserted. `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/source_detail.js` passed.
+- 2026-06-23: Documented GLB axis convention in package metadata/sidecar: buffers use `render_xyz_m`, source axis order maps `x,z,y`, glTF up axis is `Y`, and no root transform is required.
+- 2026-06-23: Added first GLB feature-ID click-to-metadata viewer path. The viewer indexes package objects, reads sidecar `object_features`, raycasts against visible GLB meshes, resolves `_FEATURE_ID_0` to stable object metadata, and keeps GLB pick-proxy count at zero. `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
+- 2026-06-23: Added adaptive viewer quality for interaction performance: high-performance WebGL context, no MSAA for the spike viewer, capped idle pixel ratio, lower pixel ratio during orbit/pan/zoom, automatic FPS-based up/down shift, and sidebar reporting of pixel ratio/quality mode. `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
+- 2026-06-23: Added first single-root 3D-Tiles-style `tileset.json` manifest for new GLB conversions. New GLB packages store the tileset as `manifest_storage_key`, keep per-tile feature metadata in the sidecar endpoint, and expose a runtime `tileset` payload through package JSON with API blob/metadata URLs. Older GLB packages without a tileset remain compatible through the existing tile list. `venv/bin/python -m py_compile plant3d/services.py plant3d/views.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
+- 2026-06-23: Closed Claude G1/G2 before spatial tiling: GLB `_FEATURE_ID_0` now uses glTF-valid `FLOAT` accessors instead of `UNSIGNED_INT`, and GLB sidecar stable IDs use the same resolver as indexed `ModelObject` rows so GUID-less meshes pick correctly. Added a GUID-less mesh regression test. `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
+- 2026-06-23: Added first spatial GLB child-tiling pass. Large GLB conversions are grouped by source-bounds grid at roughly 500 objects per tile, each child tile gets its own GLB, sidecar, feature-ID range, RTC origin, `RenderTile` row, and `tileset.json` child entry. The viewer applies `tile.rtc_origin - package.rtc_origin` so tile-local GLBs preserve model placement while still loading all tiles for now. Added a 501-object regression test. `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/views.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
 
 ## Platform Rules Discovered During Implementation
 
 - Browser viewers should load render packages through stable platform API URLs, not direct storage keys. This preserves freedom to move from local/self-hosted storage to MinIO, Oracle Object Storage, S3, signed URLs, or CDN delivery later.
 - The current JSON geometry viewer is useful for proving flow and debugging, but it is not the final large-model runtime format.
-- GLB+sidecar is the first serious runtime package candidate. The sidecar keeps metadata available while the GLB focuses on renderable geometry; feature/object picking inside GLB is deliberately deferred until feature IDs are designed.
-- Do not treat a renderable GLB as a final engineering package until it carries stable object identity. Engineering selection, filtering, highlighting, and linking all depend on feature/object IDs.
+- GLB+sidecar is the first serious runtime package candidate. The sidecar keeps metadata available while the GLB focuses on renderable geometry; feature/object IDs are now present, while BVH picking/highlighting remains deferred.
+- Do not treat a renderable GLB as a complete engineering package until feature IDs are connected to selection, filtering, highlighting, and backend metadata lookup.
 - Browser verification should include a real converted package, not only mocked API tests.
 - Access checks must be applied at source, package, and tile levels because package/tile IDs are enough to expose cross-project data if left unscoped.
 - Conversion writes must be transactional so a failed package/index rebuild does not destroy the previous object index.
@@ -344,8 +362,15 @@ Current manual check path:
 - Measurement should be built into the spike UI and job records from the start; otherwise real-file testing will produce subjective impressions instead of architecture evidence.
 - Merged visible geometry and per-object pick proxies are a useful bridge for the JSON debug viewer, but the production format should move picking IDs/feature metadata into the render package rather than duplicating geometry in browser memory.
 - GLB packages should not reintroduce hidden per-object pick-proxy geometry. The next picking strategy should use feature IDs, object spans, BVH picking, or metadata-backed selection designed for binary packages.
+- Direct GLB render-mesh raycast is acceptable as the first feature-ID proof, but it is not the final acceleration strategy. If pick latency rises on larger samples, adopt `three-mesh-bvh` before adding more UI features.
+- Adaptive pixel ratio is a practical interaction bridge, not the final EPC-scale solution. If FPS remains poor while the viewer is already in `adaptive-interaction` or `adaptive-fps-downshift`, the next fix must be geometry-side: tiling, LOD, instancing, meshopt, or BVH/picking acceleration.
+- A single-root `tileset.json` is an architecture contract, not yet a performance feature. Real performance benefit begins when the root is split into spatial child GLB tiles and the viewer can stream/cull them.
+- Feature IDs in GLB must stay glTF-conformant before meshopt/gltfpack work begins. Use `FLOAT` or the future standard feature metadata extension, not `UNSIGNED_INT` vertex attributes.
+- GLB sidecar stable IDs and `ModelObject.stable_id` must be generated by the same resolver. Otherwise GUID-less IFC objects and future IDF/PCF objects will render but fail pick-to-metadata.
+- Spatial child tiles now exist in the package, but the current viewer still fetches and renders all child tiles. This proves the package shape and tile-local RTC, not final streaming performance.
 - Local spike DB cleanup through Django admin is acceptable, but storage cleanup needs an explicit tool/command. Otherwise media blobs under `MEDIA_ROOT/plant3d` will become orphaned.
 - Spike UX should expose the exact worker command and poll job status from the source page so manual IFC testing does not depend on raw JSON pages or repeated full-page refreshes.
+- A queued job is not a failed conversion. In the current spike, no package/view link appears until `process_plant3d_job` runs and the source page sees the completed job.
 - Browser verification should distinguish nonblank render success from performance success. The current real-sample probe renders correctly, but Tekla FPS is below target.
 - Source-declared IFC units and render geometry units are different facts. Store both: source unit from `IfcUnitAssignment`, render unit from parser/IfcOpenShell geometry settings, and only mark measurement scale trusted after a known-dimension validation.
 
@@ -365,8 +390,8 @@ When an IFC sample is available, test manually:
 10. Refresh the source detail page and open both JSON and GLB package viewer links.
 11. Confirm each model appears, can orbit/pan/zoom, and shows load status.
 12. Record conversion duration from the source detail job metrics.
-13. Record viewer load time, rough FPS, draw calls, render batches, pick proxies, triangles, mesh count, tile origin, pick latency, metadata latency, and visible jitter from the viewer sidebar.
-14. For GLB packages, record that object picking is currently deferred rather than broken.
+13. Record viewer load time, rough FPS, draw calls, render batches, pick proxies, triangles, mesh count, pixel ratio, quality mode, tile origin, pick latency, metadata latency, and visible jitter from the viewer sidebar.
+14. For GLB packages, click a visible object and confirm the selected-object panel resolves a feature ID to indexed metadata; record pick latency and any sluggishness.
 15. Log in as a user not assigned to that project and confirm source/package/tile URLs return 404.
 
 ## Claude Research / Review Asks

@@ -20,6 +20,7 @@ Purpose: first real-file check of the `plant3d` source-to-render-package pipelin
 | `ifc/Ifc2s3_Duplex_Electrical.ifc` | Revit 2013 sample | 1,602,758 bytes | 104 | 1,510,791 bytes | 1,733 ms | 1 |
 | `ifc/8-SSPAR-800203.ifc` | Tekla Structures 2024 SP2 | 2,815,485 bytes | 867 | 10,487,263 bytes | 17,375 ms | 2 |
 | `ifc/8-SSPAR-800205B.ifc` | Tekla Structures 2024 SP2 | 4,767,500 bytes | 1,637 | 7,459,364 bytes | 10,031 ms | 3 |
+| `ifc/8-SSPAR-800206A.ifc` | Tekla Structures 2024 SP2 | 9,402,996 bytes | 3,770 | not run as JSON in this pass | not run as JSON in this pass | - |
 
 ## Coordinate And Unit Notes
 
@@ -63,12 +64,13 @@ Purpose: compare the new `plant3d.ifc-glb` package path against the JSON debug p
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | `ifc/Ifc2s3_Duplex_Electrical.ifc` | 104 | 1,510,791 bytes | 560,296 bytes | 26,266 bytes | 586,562 bytes | not separately recorded in first shell print | 4 |
 | `ifc/8-SSPAR-800203.ifc` | 867 | 10,487,263 bytes | 5,376,268 bytes | 167,948 bytes | 5,544,216 bytes | 17,546 ms | 5 |
+| `ifc/8-SSPAR-800206A.ifc` | 3,770 | not run as JSON in this pass | 5,960,624 bytes | 1,269,630 bytes | 7,230,254 bytes | 20,717 ms | 6 |
 
 Interpretation:
 
 - GLB materially reduces runtime payload size versus the debug JSON package.
 - IFC parsing/conversion time is still the dominant cost; GLB does not remove the need for proper async workers.
-- The GLB sidecar carries object spans and metadata, but browser object picking for GLB is deliberately deferred until feature IDs / binary picking strategy are designed.
+- The GLB package now carries `_FEATURE_ID_0` vertex attributes plus sidecar `object_features` / `object_spans`, but browser object picking for GLB is deliberately deferred until BVH/feature-ID selection is designed.
 - Browser GLB rendering still needs a Playwright/manual GPU probe before performance is accepted.
 
 ## Manual Viewer Check
