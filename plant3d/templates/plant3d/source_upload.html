@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Upload source model</title>
+</head>
+<body>
+  <main>
+    <h1>Upload source model</h1>
+    <form method="post" enctype="multipart/form-data">
+      {% csrf_token %}
+      {{ form.as_p }}
+      <button type="submit">Upload</button>
+    </form>
+    <p><a href="{% url 'plant3d_home' %}">Back to plant3d</a></p>
+  </main>
+</body>
+</html>
+

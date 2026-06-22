@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ source.display_name }}</title>
+</head>
+<body>
+  <main>
+    <h1>{{ source.display_name }}</h1>
+    <dl>
+      <dt>Project</dt>
+      <dd>{{ source.project_id }}</dd>
+      <dt>Format</dt>
+      <dd>{{ source.source_format }}</dd>
+      <dt>Original file</dt>
+      <dd>{{ source.original_filename }}</dd>
+      <dt>Storage key</dt>
+      <dd>{{ source.storage_key }}</dd>
+      <dt>Size</dt>
+      <dd>{{ source.file_size_bytes }} bytes</dd>
+    </dl>
+    <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}">
+      {% csrf_token %}
+      <button type="submit">Run Metadata Conversion</button>
+    </form>
+    {% if source.source_format == "IFC" %}
+      <form method="post" action="{% url 'plant3d_source_ifc_geometry_convert' source.pk %}">
+        {% csrf_token %}
+        <button type="submit">Run IFC Geometry Conversion</button>
+      </form>
+    {% endif %}
+    <h2>Conversion Jobs</h2>
+    <ul>
+      {% for job in jobs %}
+        <li>{{ job.created_at }} - {{ job.job_type }} - {{ job.status }} - {{ job.progress_percent }}%</li>
+      {% empty %}
+        <li>No conversion jobs yet.</li>
+      {% endfor %}
+    </ul>
+    <h2>Render Packages</h2>
+    <ul>
+      {% for package in packages %}
+        <li>{{ package.package_format }} - {{ package.manifest_storage_key }} - {{ package.byte_size }} bytes</li>
+      {% empty %}
+        <li>No render packages yet.</li>
+      {% endfor %}
+    </ul>
+    <p><a href="{% url 'plant3d_source_upload' %}">Upload another source model</a></p>
+  </main>
+</body>
+</html>

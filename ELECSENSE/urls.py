@@ -6,4 +6,5 @@ urlpatterns = [
     path(settings.ADMIN_SITE_PATH, admin.site.urls),
     path('', include("eht.urls")),
     path("idfviewer/", include("idfviewer.urls")),  # TEST: Temporarily added comment
+    path("plant3d/", include("plant3d.urls")),
 ]

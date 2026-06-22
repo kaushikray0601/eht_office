@@ -30,8 +30,11 @@ The spike should answer:
 - [x] Create `plant3d/records/` as the new platform record area.
 - [x] Record agreed architecture.
 - [x] Record execution tracker.
-- [ ] Decide whether to create a minimal Django app skeleton now or after Claude final review.
-- [ ] Decide provisional app label/name for code: `plant3d` unless changed.
+- [x] Decide whether to create a minimal Django app skeleton now or after Claude final review.
+- [x] Decide provisional app label/name for code: `plant3d` unless changed.
+- [x] Create minimal Django app boundary: `plant3d`.
+- [x] Register `plant3d` in `INSTALLED_APPS`.
+- [x] Add `/plant3d/` URL boundary.
 
 ## Phase 1 - Spike Inputs
 
@@ -43,23 +46,33 @@ The spike should answer:
 
 ## Phase 2 - Minimal Platform Skeleton
 
-- [ ] Create neutral Django app/bounded context.
-- [ ] Add minimal records/models only if needed for the spike:
+- [x] Create neutral Django app/bounded context.
+- [x] Add minimal records/models only if needed for the spike:
   - `SourceModel`
   - `ConversionJob`
   - `RenderPackage`
   - `RenderTile`
   - optional early `ModelObject`
-- [ ] Keep schema narrow and reversible.
-- [ ] Add tests for model creation, job status, and package/tile metadata if models are created.
+- [x] Keep schema narrow and reversible.
+- [x] Add tests for model creation, job status, and package/tile metadata if models are created.
+- [x] Add local/self-hosted storage-key helpers for source and render package paths.
+- [x] Add minimal source upload form and endpoints.
+- [x] Add JSON source listing endpoint.
+- [x] Add metadata conversion trigger endpoint.
 
 ## Phase 3 - Conversion Experiment
 
-- [ ] Test current Python/IfcOpenShell conversion path.
-- [ ] Produce first browser-friendly runtime package.
+- [x] Add metadata-only conversion scaffold.
+- [x] Write first render-package manifest blob.
+- [x] Record conversion job, package, and tile metadata for the scaffold.
+- [x] Add first IFC geometry conversion service using the existing Python/IfcOpenShell parser path.
+- [x] Produce first JSON geometry runtime package from stored IFC source blobs.
+- [x] Record IFC geometry conversion job, package, tile, mesh count, byte size, and object index metadata.
+- [ ] Run the IFC geometry conversion against real project/sample IFC files and record actual metrics.
 - [ ] Evaluate GLB/glTF output path.
 - [ ] Evaluate mesh compression feasibility if setup cost is reasonable.
-- [ ] Record conversion time and output size.
+- [x] Record metadata-manifest output size.
+- [ ] Record real-file geometry conversion time and output size.
 - [ ] Record extracted units, bounds, object count, and coordinate frame assumptions.
 
 ## Phase 4 - Tiling And Precision Experiment
@@ -73,7 +86,7 @@ The spike should answer:
 ## Phase 5 - Browser Viewer Spike
 
 - [ ] Build a minimal Three.js viewer for the spike package.
-- [ ] Load package/tile manifest.
+- [ ] Load JSON geometry package/tile manifest.
 - [ ] Render batched/merged geometry rather than per-object meshes.
 - [ ] Show basic model bounds.
 - [ ] Add basic object picking or object-id lookup if feasible.
@@ -116,9 +129,17 @@ Record at minimum:
 
 ## Immediate Next Actions
 
-1. Ask Claude for final review of the frozen architecture candidate.
-2. Confirm app name `plant3d` or choose a different neutral name.
-3. Gather the real IFC and sample IFC inputs.
-4. Decide whether the first spike is script-first or minimal-Django-app-backed.
-5. Start implementation only after the final architecture review is accepted.
+1. Gather the real IFC and sample IFC inputs.
+2. Upload one IFC through `/plant3d/sources/upload/`.
+3. Run metadata conversion through the source detail page or POST endpoint.
+4. Run IFC geometry conversion through the source detail page or POST endpoint.
+5. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
+## Verification Log
+
+- 2026-06-22: `venv/bin/python manage.py check` passed with no issues.
+- 2026-06-22: `venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 5 tests.
+- 2026-06-22: `venv/bin/python manage.py check` passed after source intake/conversion scaffold.
+- 2026-06-22: `venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 8 tests.
+- 2026-06-22: `venv/bin/python manage.py check` passed after IFC geometry conversion scaffold.
+- 2026-06-22: `venv/bin/python manage.py test plant3d -v 2 --noinput` passed: 10 tests.
