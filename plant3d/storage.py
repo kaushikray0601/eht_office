@@ -2,6 +2,7 @@ import posixpath
 from pathlib import Path
 
 from django.conf import settings
+from django.core.exceptions import SuspiciousFileOperation
 
 
 def plant3d_storage_root():
@@ -23,7 +24,34 @@ def render_manifest_storage_key(source_id):
 
 def path_for_storage_key(storage_key):
     parts = [part for part in str(storage_key).split("/") if part]
-    return Path(settings.MEDIA_ROOT).joinpath(*parts)
+    if any(part in {".", ".."} for part in parts):
+        raise SuspiciousFileOperation("Invalid plant3d storage key.")
+
+    root = Path(settings.MEDIA_ROOT).resolve()
+    path = root.joinpath(*parts).resolve()
+    try:
+        path.relative_to(root)
+    except ValueError as exc:
+        raise SuspiciousFileOperation("Plant3d storage key escapes MEDIA_ROOT.") from exc
+    return path
+
+
+def exists(storage_key):
+    return path_for_storage_key(storage_key).exists()
+
+
+def read_bytes(storage_key, limit_bytes=None):
+    path = path_for_storage_key(storage_key)
+    with path.open("rb") as handle:
+        return handle.read(limit_bytes) if limit_bytes is not None else handle.read()
+
+
+def read_text(storage_key):
+    return path_for_storage_key(storage_key).read_text(encoding="utf-8")
+
+
+def stat_size(storage_key):
+    return path_for_storage_key(storage_key).stat().st_size
 
 
 def write_bytes(storage_key, data):
@@ -38,4 +66,3 @@ def write_text(storage_key, text):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
-

@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{{ source.display_name }} - plant3d viewer</title>
+  {% load static %}
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f8; color: #1f2933; }
+    body { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 100%; }
+    aside { border-right: 1px solid #d8dee8; background: #ffffff; padding: 16px; overflow: auto; }
+    main { position: relative; min-width: 0; }
+    #viewer { position: absolute; inset: 0; }
+    .meta { font-size: 12px; line-height: 1.45; color: #52606d; }
+    .meta strong { color: #243b53; }
+    .status { margin-top: 12px; padding: 8px; background: #f0f4f8; border: 1px solid #d9e2ec; font-size: 12px; }
+    .panel { margin-top: 12px; border-top: 1px solid #d8dee8; padding-top: 12px; }
+    .kv { margin: 0 0 8px; word-break: break-word; }
+    .kv span { display: block; color: #829ab1; font-size: 11px; text-transform: uppercase; }
+    .kv strong { display: block; color: #243b53; font-size: 12px; font-weight: 600; }
+    button { border: 1px solid #bcccdc; background: #fff; border-radius: 4px; padding: 6px 8px; cursor: pointer; }
+    button:hover { background: #f0f4f8; }
+  </style>
+</head>
+<body>
+  <aside>
+    <h1>plant3d viewer</h1>
+    <div class="meta">
+      <p><strong>Source:</strong> {{ source.display_name }}</p>
+      <p><strong>Project:</strong> {{ source.project_id }}</p>
+      <p><strong>Package:</strong> {{ package.package_format }}</p>
+      <p><strong>Objects:</strong> {{ package.object_count }}</p>
+      <p><strong>Tiles:</strong> {{ package.tile_count }}</p>
+      <p><strong>Bytes:</strong> {{ package.byte_size }}</p>
+    </div>
+    <button id="resetViewBtn" type="button">Reset View</button>
+    <div id="viewerStatus" class="status">Loading package...</div>
+    <section class="panel">
+      <h2>Runtime Metrics</h2>
+      <div id="runtimeMetrics" class="meta">Waiting for package...</div>
+    </section>
+    <section class="panel">
+      <h2>Selected Object</h2>
+      <div id="selectionPanel" class="meta">Click an object in the viewer.</div>
+    </section>
+    <p class="meta"><a href="{% url 'plant3d_source_detail' source.pk %}">Back to source</a></p>
+  </aside>
+  <main>
+    <div id="viewer" data-package-url="{{ package_api_url }}"></div>
+  </main>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260622_4"></script>
+</body>
+</html>

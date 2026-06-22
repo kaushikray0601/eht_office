@@ -3,21 +3,32 @@ import tempfile
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.core.exceptions import ValidationError
+from django.core.management import call_command
+from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
 from django.test import TestCase
 from django.urls import reverse
 
-from eht.models import ProjectData
+from eht.models import ManagedProject, ProjectData
 
 from .models import ConversionJob, ModelObject, RenderPackage, RenderTile, SourceModel
-from .services import create_source_model_from_upload, run_metadata_conversion
+from .services import (
+    create_source_model_from_upload,
+    extract_ifc_unit_hints,
+    queue_ifc_geometry_conversion,
+    queue_metadata_conversion,
+    run_metadata_conversion,
+)
 from .storage import path_for_storage_key
 
 
 def create_project(proj_id="P3D-TEST"):
+    ManagedProject.objects.get_or_create(
+        proj_id=proj_id,
+        defaults={"description": f"Project {proj_id}", "is_active": True},
+    )
     return ProjectData.objects.create(
         proj_id=proj_id,
         min_amb_t=Decimal("0.00"),
@@ -43,6 +54,10 @@ def create_project(proj_id="P3D-TEST"):
         alpha_for_res=Decimal("1.0000"),
         allowablevdrop=Decimal("5.00"),
     )
+
+
+def assign_project(user, project):
+    ManagedProject.objects.get(proj_id=project.proj_id).assigned_users.add(user)
 
 
 class Plant3DModelTests(TestCase):
@@ -182,10 +197,40 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(source.file_size_bytes, upload.size)
         self.assertTrue(path_for_storage_key(source.storage_key).exists())
 
+    def test_upload_service_reuses_duplicate_source_signature(self):
+        upload_1 = SimpleUploadedFile("sample.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;")
+        upload_2 = SimpleUploadedFile("renamed.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;")
+
+        first = create_source_model_from_upload(self.project, upload_1)
+        second = create_source_model_from_upload(self.project, upload_2, display_name="Duplicate")
+
+        self.assertEqual(first.pk, second.pk)
+        self.assertEqual(SourceModel.objects.count(), 1)
+
+    def test_storage_key_rejects_parent_directory_segments(self):
+        with self.assertRaises(SuspiciousFileOperation):
+            path_for_storage_key("plant3d/../secret.txt")
+
+    def test_ifc_unit_hints_extract_si_and_conversion_based_units(self):
+        hints = extract_ifc_unit_hints(
+            "\n".join(
+                [
+                    "#15= IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);",
+                    "#16= IFCMEASUREWITHUNIT(IFCRATIOMEASURE(304.8),#15);",
+                    "#18= IFCCONVERSIONBASEDUNIT(#17,.LENGTHUNIT.,'FOOT',#16);",
+                ]
+            )
+        )
+
+        self.assertEqual(hints["primary_length_display_unit"], "mm")
+        self.assertEqual(hints["primary_length_scale_to_m"], 0.001)
+        self.assertEqual(hints["length_si_units"][0]["entity_id"], "#15")
+        self.assertEqual(hints["conversion_based_length_units"][0]["name"], "FOOT")
+
     def test_metadata_conversion_writes_manifest_package_and_tile(self):
         upload = SimpleUploadedFile(
             "pipe-rack.ifc",
-            b"ISO-10303-21;\nHEADER;\nFILE_NAME('pipe-rack.ifc');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCPROJECT();\n#2=IFCBEAM();\nENDSEC;",
+            b"ISO-10303-21;\nHEADER;\nFILE_NAME('pipe-rack.ifc');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCPROJECT();\n#2=IFCBEAM();\n#15= IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);\nENDSEC;",
         )
         source = create_source_model_from_upload(self.project, upload)
 
@@ -193,6 +238,7 @@ class Plant3DIntakeTests(TestCase):
 
         self.assertEqual(job.status, "completed")
         self.assertEqual(job.progress_percent, 100)
+        self.assertIn("conversion_duration_ms", job.metrics)
         self.assertEqual(package.package_format, "TILED_JSON")
         self.assertEqual(package.tile_count, 1)
         self.assertEqual(package.tiles.count(), 1)
@@ -202,10 +248,12 @@ class Plant3DIntakeTests(TestCase):
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["source_model_id"], source.pk)
         self.assertEqual(manifest["source_format"], "IFC")
-        self.assertEqual(manifest["ifc_entity_count_sample"], 2)
+        self.assertEqual(manifest["ifc_entity_count_sample"], 3)
+        self.assertEqual(manifest["ifc_unit_hints"]["primary_length_display_unit"], "mm")
 
     def test_upload_view_creates_source_model(self):
         user = get_user_model().objects.create_user(username="plant3d-user", password="pw")
+        assign_project(user, self.project)
         self.client.force_login(user)
 
         response = self.client.post(
@@ -240,7 +288,7 @@ class Plant3DIntakeTests(TestCase):
                     "record_id": 9100,
                     "kind": "IfcBeam",
                     "mesh": {
-                        "positions": [0, 0, 0, 1, 0, 0, 0, 1, 0],
+                        "positions": [-0.5, -0.5, -0.5, 0.5, -0.5, -0.5, -0.5, 0.5, -0.5],
                         "indices": [0, 1, 2],
                         "color": [0.5, 0.5, 0.5],
                     },
@@ -284,7 +332,10 @@ class Plant3DIntakeTests(TestCase):
         mock_parse.return_value = self._sample_ifc_scene()
         source = create_source_model_from_upload(
             self.project,
-            SimpleUploadedFile("geometry.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            SimpleUploadedFile(
+                "geometry.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#15= IFCSIUNIT(*,.LENGTHUNIT.,.MILLI.,.METRE.);\nENDSEC;",
+            ),
         )
 
         from .services import run_ifc_geometry_conversion
@@ -293,6 +344,7 @@ class Plant3DIntakeTests(TestCase):
 
         self.assertEqual(job.status, "completed")
         self.assertEqual(job.metrics["mesh_count"], 1)
+        self.assertIn("conversion_duration_ms", job.metrics)
         self.assertEqual(package.object_count, 1)
         self.assertEqual(package.tile_count, 1)
         self.assertEqual(package.tiles.count(), 1)
@@ -306,12 +358,33 @@ class Plant3DIntakeTests(TestCase):
         tile_path = path_for_storage_key(package.manifest_storage_key)
         payload = json.loads(tile_path.read_text(encoding="utf-8"))
         self.assertEqual(payload["tile_id"], "geometry-0001")
+        self.assertEqual(payload["rtc_origin"], [500000.5, 100.5, 2800000.5])
+        self.assertEqual(payload["coordinate_transform"]["origin_source_xyz"], [500000.5, 2800000.5, 100.5])
+        self.assertEqual(payload["coordinate_transform"]["rtc_origin_render_xyz"], [500000.5, 100.5, 2800000.5])
+        self.assertEqual(package.tiles.get().rtc_origin, [500000.5, 100.5, 2800000.5])
+        self.assertEqual(payload["source_unit_hints"]["primary_length_display_unit"], "mm")
+        self.assertTrue(payload["unit_warnings"])
+        self.assertTrue(package.metadata["unit_warnings"])
+        self.assertTrue(job.metrics["unit_warnings"])
         self.assertEqual(payload["meshes"][0]["properties"]["global_id"], "beam-guid-1")
+        self.assertLess(max(abs(value) for value in payload["meshes"][0]["mesh"]["positions"]), 2.0)
+
+        first_local_vertex = payload["meshes"][0]["mesh"]["positions"][:3]
+        origin = payload["coordinate_transform"]["rtc_origin_render_xyz"]
+        scale = payload["coordinate_transform"]["scale_to_m"]
+        render_world = [origin[index] + first_local_vertex[index] for index in range(3)]
+        reconstructed_source = [
+            render_world[0] / scale,
+            render_world[2] / scale,
+            render_world[1] / scale,
+        ]
+        self.assertEqual(reconstructed_source, [500000.0, 2800000.0, 100.0])
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
-    def test_ifc_geometry_conversion_endpoint_returns_package_payload(self, mock_parse):
+    def test_ifc_geometry_conversion_endpoint_queues_job(self, mock_parse):
         mock_parse.return_value = self._sample_ifc_scene()
         user = get_user_model().objects.create_user(username="plant3d-geometry-user", password="pw")
+        assign_project(user, self.project)
         self.client.force_login(user)
         source = create_source_model_from_upload(
             self.project,
@@ -320,8 +393,200 @@ class Plant3DIntakeTests(TestCase):
 
         response = self.client.post(reverse("plant3d_source_ifc_geometry_convert", args=[source.pk]))
 
+        self.assertEqual(response.status_code, 202)
+        payload = response.json()
+        self.assertEqual(payload["job"]["job_type"], "render_package")
+        self.assertEqual(payload["job"]["status"], "queued")
+        self.assertIn("/plant3d/jobs/", payload["job"]["url"])
+        self.assertIn("process_plant3d_job", payload["process_hint"])
+        self.assertEqual(SourceModel.objects.get(pk=source.pk).model_objects.count(), 0)
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_management_command_processes_queued_ifc_geometry_job(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("queued.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_geometry_conversion(source)
+
+        call_command("process_plant3d_job", str(job.pk), verbosity=0)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(job.render_packages.count(), 1)
+        self.assertEqual(source.model_objects.count(), 1)
+
+    def test_management_command_processes_all_queued_jobs(self):
+        source_1 = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("metadata-1.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        source_2 = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("metadata-2.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCPROJECT();"),
+        )
+        queue_metadata_conversion(source_1)
+        queue_metadata_conversion(source_2)
+
+        call_command("process_plant3d_job", all=True, verbosity=0)
+
+        self.assertEqual(ConversionJob.objects.filter(status="queued").count(), 0)
+        self.assertEqual(ConversionJob.objects.filter(status="completed").count(), 2)
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_job_json_reports_completed_package_after_command_processing(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        user = get_user_model().objects.create_user(username="plant3d-job-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("job-api.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_geometry_conversion(source)
+        call_command("process_plant3d_job", str(job.pk), verbosity=0)
+
+        response = self.client.get(reverse("plant3d_job_json", args=[job.pk]))
+
         self.assertEqual(response.status_code, 200)
         payload = response.json()
-        self.assertEqual(payload["job"]["status"], "completed")
+        self.assertEqual(payload["status"], "completed")
+        self.assertIn("/plant3d/jobs/", payload["url"])
         self.assertEqual(payload["package"]["object_count"], 1)
-        self.assertEqual(SourceModel.objects.get(pk=source.pk).model_objects.count(), 1)
+        self.assertIn("/plant3d/packages/", payload["package"]["viewer_url"])
+        self.assertIn("/plant3d/packages/", payload["package"]["json_url"])
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_package_and_tile_json_endpoints_return_render_payload(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        user = get_user_model().objects.create_user(username="plant3d-api-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("api.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_geometry_conversion
+
+        _, package = run_ifc_geometry_conversion(source)
+        package_response = self.client.get(reverse("plant3d_package_json", args=[package.pk]))
+
+        self.assertEqual(package_response.status_code, 200)
+        package_payload = package_response.json()
+        self.assertEqual(package_payload["object_count"], 1)
+        self.assertEqual(package_payload["tile_count"], 1)
+        self.assertEqual(len(package_payload["tiles"]), 1)
+        self.assertEqual(package_payload["tiles"][0]["rtc_origin"], [500000.5, 100.5, 2800000.5])
+        self.assertEqual(len(package_payload["objects"]), 1)
+        self.assertEqual(package_payload["objects"][0]["stable_id"], "ifc:beam-guid-1")
+        self.assertIn("/plant3d/objects/", package_payload["objects"][0]["url"])
+        self.assertIn("/plant3d/tiles/", package_payload["tiles"][0]["url"])
+
+        object_id = source.model_objects.get().pk
+        object_response = self.client.get(reverse("plant3d_model_object_json", args=[object_id]))
+        self.assertEqual(object_response.status_code, 200)
+        object_payload = object_response.json()
+        self.assertEqual(object_payload["stable_id"], "ifc:beam-guid-1")
+        self.assertEqual(object_payload["metadata"]["name"], "Beam 001")
+
+        tile_id = package.tiles.get().pk
+        tile_response = self.client.get(reverse("plant3d_tile_json", args=[tile_id]))
+        self.assertEqual(tile_response.status_code, 200)
+        tile_payload = tile_response.json()
+        self.assertEqual(tile_payload["tile_id"], "geometry-0001")
+        self.assertEqual(tile_payload["rtc_origin"], [500000.5, 100.5, 2800000.5])
+        self.assertEqual(tile_payload["coordinate_transform"]["origin_source_xyz"], [500000.5, 2800000.5, 100.5])
+        self.assertEqual(tile_payload["coordinate_transform"]["rtc_origin_render_xyz"], [500000.5, 100.5, 2800000.5])
+        self.assertEqual(tile_payload["meshes"][0]["properties"]["global_id"], "beam-guid-1")
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_package_viewer_page_exposes_package_api_url(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        user = get_user_model().objects.create_user(username="plant3d-viewer-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("viewer.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_geometry_conversion
+
+        _, package = run_ifc_geometry_conversion(source)
+        response = self.client.get(reverse("plant3d_package_viewer", args=[package.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, reverse("plant3d_package_json", args=[package.pk]))
+        self.assertContains(response, "plant3d viewer")
+
+    def test_source_detail_page_wires_conversion_polling_script(self):
+        user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("detail.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        queue_metadata_conversion(source)
+
+        response = self.client.get(reverse("plant3d_source_detail", args=[source.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'data-conversion-form')
+        self.assertContains(response, 'data-watch-job')
+        self.assertContains(response, 'plant3d/js/source_detail.js')
+
+    def test_source_json_filters_to_user_accessible_projects(self):
+        user = get_user_model().objects.create_user(username="plant3d-filter-user", password="pw")
+        assign_project(user, self.project)
+        other_project = create_project("P3D-OTHER")
+        create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("visible.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            display_name="Visible",
+        )
+        create_source_model_from_upload(
+            other_project,
+            SimpleUploadedFile("hidden.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            display_name="Hidden",
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("plant3d_source_models_json"))
+
+        self.assertEqual(response.status_code, 200)
+        names = [row["display_name"] for row in response.json()["sources"]]
+        self.assertEqual(names, ["Visible"])
+
+    def test_source_detail_blocks_unassigned_project(self):
+        user = get_user_model().objects.create_user(username="plant3d-denied-user", password="pw")
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("denied.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("plant3d_source_detail", args=[source.pk]))
+
+        self.assertEqual(response.status_code, 404)
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_model_object_json_blocks_unassigned_project(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("object-denied.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_geometry_conversion
+
+        run_ifc_geometry_conversion(source)
+        obj = source.model_objects.get()
+        user = get_user_model().objects.create_user(username="plant3d-object-denied", password="pw")
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("plant3d_model_object_json", args=[obj.pk]))
+
+        self.assertEqual(response.status_code, 404)

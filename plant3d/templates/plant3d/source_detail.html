@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <title>{{ source.display_name }}</title>
+  {% load static %}
 </head>
 <body>
   <main>
@@ -19,20 +20,25 @@
       <dt>Size</dt>
       <dd>{{ source.file_size_bytes }} bytes</dd>
     </dl>
-    <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}">
+    <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}" data-conversion-form>
       {% csrf_token %}
-      <button type="submit">Run Metadata Conversion</button>
+      <button type="submit">Queue Metadata Conversion</button>
     </form>
     {% if source.source_format == "IFC" %}
-      <form method="post" action="{% url 'plant3d_source_ifc_geometry_convert' source.pk %}">
+      <form method="post" action="{% url 'plant3d_source_ifc_geometry_convert' source.pk %}" data-conversion-form>
         {% csrf_token %}
-        <button type="submit">Run IFC Geometry Conversion</button>
+        <button type="submit">Queue IFC Geometry Conversion</button>
       </form>
     {% endif %}
+    <div id="conversionQueueStatus"></div>
     <h2>Conversion Jobs</h2>
-    <ul>
+    <ul id="conversionJobList">
       {% for job in jobs %}
-        <li>{{ job.created_at }} - {{ job.job_type }} - {{ job.status }} - {{ job.progress_percent }}%</li>
+        <li id="plant3d-job-{{ job.pk }}" data-job-url="{% url 'plant3d_job_json' job.pk %}" {% if job.status == "queued" or job.status == "running" %}data-watch-job{% endif %}>
+          {{ job.created_at }} - {{ job.job_type }} - {{ job.status }} - {{ job.progress_percent }}%
+          {% if job.metrics %}<br>Metrics: {{ job.metrics }}{% endif %}
+          <a href="{% url 'plant3d_job_json' job.pk %}">JSON</a>
+        </li>
       {% empty %}
         <li>No conversion jobs yet.</li>
       {% endfor %}
@@ -40,12 +46,17 @@
     <h2>Render Packages</h2>
     <ul>
       {% for package in packages %}
-        <li>{{ package.package_format }} - {{ package.manifest_storage_key }} - {{ package.byte_size }} bytes</li>
+        <li>
+          {{ package.package_format }} - {{ package.manifest_storage_key }} - {{ package.byte_size }} bytes
+          <a href="{% url 'plant3d_package_viewer' package.pk %}">View</a>
+          <a href="{% url 'plant3d_package_json' package.pk %}">JSON</a>
+        </li>
       {% empty %}
         <li>No render packages yet.</li>
       {% endfor %}
     </ul>
     <p><a href="{% url 'plant3d_source_upload' %}">Upload another source model</a></p>
   </main>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260623_1" defer></script>
 </body>
 </html>

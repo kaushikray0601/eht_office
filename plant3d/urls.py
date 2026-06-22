@@ -9,4 +9,9 @@ urlpatterns = [
     path("sources/<int:source_id>/", views.source_detail_view, name="plant3d_source_detail"),
     path("sources/<int:source_id>/convert-metadata/", views.source_metadata_convert_view, name="plant3d_source_metadata_convert"),
     path("sources/<int:source_id>/convert-ifc-geometry/", views.source_ifc_geometry_convert_view, name="plant3d_source_ifc_geometry_convert"),
+    path("jobs/<int:job_id>/json/", views.job_json_view, name="plant3d_job_json"),
+    path("packages/<int:package_id>/", views.package_viewer_view, name="plant3d_package_viewer"),
+    path("packages/<int:package_id>/json/", views.package_json_view, name="plant3d_package_json"),
+    path("objects/<int:object_id>/json/", views.model_object_json_view, name="plant3d_model_object_json"),
+    path("tiles/<int:tile_id>/json/", views.tile_json_view, name="plant3d_tile_json"),
 ]
