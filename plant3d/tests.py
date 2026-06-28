@@ -817,9 +817,58 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(package.metadata["meshopt_compression"]["status"], "completed")
         tile = package.tiles.get()
         self.assertEqual(tile.metadata["compression"]["status"], "completed")
+        self.assertEqual(tile.metadata["compression"]["feature_id_validation"]["status"], "passed")
         sidecar = json.loads(path_for_storage_key(tile.metadata["sidecar_storage_key"]).read_text(encoding="utf-8"))
         self.assertEqual(sidecar["compression"]["status"], "completed")
+        self.assertEqual(sidecar["compression"]["feature_id_validation"]["status"], "passed")
         self.assertEqual(path_for_storage_key(tile.storage_key).read_bytes()[:4], b"glTF")
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_ifc_glb_conversion_rejects_meshopt_when_feature_ids_cannot_be_validated(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile(
+                "meshopt-invalid-feature-glb.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;",
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            fake_gltfpack = os.path.join(tempdir, "fake_invalid_gltfpack")
+            with open(fake_gltfpack, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "#!/usr/bin/env python3\n"
+                    "import sys\n"
+                    "output_path = sys.argv[sys.argv.index('-o') + 1]\n"
+                    "open(output_path, 'wb').write(b'not a valid glb')\n"
+                )
+            os.chmod(fake_gltfpack, 0o755)
+
+            from .services import run_ifc_glb_conversion
+
+            with override_settings(PLANT3D_GLTFPACK_BIN=fake_gltfpack, PLANT3D_GLTFPACK_ARGS=[]):
+                job, package = run_ifc_glb_conversion(source)
+
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(package.metadata["meshopt_compression"]["status"], "rejected_feature_id_validation")
+        tile = package.tiles.get()
+        compression = tile.metadata["compression"]
+        self.assertEqual(compression["status"], "rejected_feature_id_validation")
+        self.assertFalse(compression["feature_id_validation"]["valid"])
+        self.assertEqual(compression["output_bytes"], compression["input_bytes"])
+        self.assertNotEqual(compression["compressed_output_bytes"], compression["output_bytes"])
+        self.assertEqual(path_for_storage_key(tile.storage_key).read_bytes()[:4], b"glTF")
+
+        sidecar = json.loads(path_for_storage_key(tile.metadata["sidecar_storage_key"]).read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["compression"]["status"], "rejected_feature_id_validation")
+        self.assertFalse(sidecar["compression"]["feature_id_validation"]["valid"])
+
+        stdout = io.StringIO()
+        call_command("measure_plant3d_package", str(package.pk), stdout=stdout)
+        output = stdout.getvalue()
+        self.assertIn("status=rejected_feature_id_validation", output)
+        self.assertIn("rejected_tiles=1", output)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_measure_package_command_reports_meshopt_status(self, mock_parse):
@@ -856,14 +905,21 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn(f"Package {package.pk}", output)
         self.assertIn("meshopt: status=completed", output)
         self.assertIn("completed_tiles=1", output)
-        self.assertIn("ratio=1.0000", output)
+        self.assertIn("rejected_tiles=0", output)
+        self.assertIn("ratio_output_over_input=1.0000", output)
+        self.assertIn("saved_pct=0.0%", output)
+        self.assertIn("Summary meshopt:", output)
 
         json_stdout = io.StringIO()
         call_command("measure_plant3d_package", str(package.pk), json=True, stdout=json_stdout)
         payload = json.loads(json_stdout.getvalue())
-        self.assertEqual(payload[0]["package_id"], package.pk)
-        self.assertEqual(payload[0]["compression"]["status"], "completed")
-        self.assertEqual(payload[0]["compression"]["completed_tiles"], 1)
+        self.assertEqual(payload["packages"][0]["package_id"], package.pk)
+        self.assertEqual(payload["packages"][0]["compression"]["status"], "completed")
+        self.assertEqual(payload["packages"][0]["compression"]["completed_tiles"], 1)
+        self.assertEqual(payload["summary"]["packages"], 1)
+        self.assertEqual(payload["summary"]["compression"]["completed_tiles"], 1)
+        self.assertEqual(payload["summary"]["compression"]["rejected_tiles"], 0)
+        self.assertEqual(payload["summary"]["compression"]["saved_percent"], 0.0)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_glb_conversion_endpoint_queues_glb_job(self, mock_parse):

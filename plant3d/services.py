@@ -8,7 +8,7 @@ from django.db import transaction
 from django.utils import timezone
 
 from .compression import compress_glb_meshopt
-from .glb import build_glb_from_meshes
+from .glb import build_glb_from_meshes, validate_glb_feature_ids
 from .parsers.ifc import parse_multiple_ifc_uploads
 
 from .models import ConversionJob, RenderPackage, RenderTile, SourceModel
@@ -739,6 +739,19 @@ def _mesh_stable_id(source_model, mesh):
     return f"{source_model.source_format.lower()}:{source_model.pk}:mesh:{mesh.get('uid')}"
 
 
+def _compression_package_status(tile_descriptors):
+    statuses = [descriptor["compression"].get("status", "skipped") for descriptor in tile_descriptors]
+    if not statuses:
+        return "skipped"
+    if any(status == "rejected_feature_id_validation" for status in statuses):
+        return "partial_feature_id_rejection" if any(status == "completed" for status in statuses) else "rejected_feature_id_validation"
+    if any(status == "completed" for status in statuses):
+        return "completed" if all(status == "completed" for status in statuses) else "partial"
+    if any(status == "failed" for status in statuses):
+        return "failed"
+    return statuses[0]
+
+
 def _model_object_for_mesh(source_model, package, tile, mesh):
     properties = mesh.get("properties") or {}
     return source_model.model_objects.model(
@@ -1044,7 +1057,27 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 feature_id_offset=feature_id_offset,
             )
             uncompressed_glb_size = len(glb_bytes)
+            original_glb_bytes = glb_bytes
             glb_bytes, compression = compress_glb_meshopt(glb_bytes)
+            if compression.get("status") == "completed":
+                feature_validation = validate_glb_feature_ids(glb_bytes, sidecar.get("object_spans") or [])
+                compression["feature_id_validation"] = feature_validation
+                if not feature_validation.get("valid"):
+                    compression = {
+                        **compression,
+                        "status": "rejected_feature_id_validation",
+                        "reason": feature_validation.get("reason") or "feature_id_validation_failed",
+                        "compressed_output_bytes": len(glb_bytes),
+                        "output_bytes": len(original_glb_bytes),
+                        "ratio": 1.0,
+                    }
+                    glb_bytes = original_glb_bytes
+            elif compression.get("status") in {"failed", "skipped"}:
+                compression["feature_id_validation"] = {
+                    "status": "not_applicable",
+                    "valid": True,
+                    "reason": f"compression_{compression.get('status')}",
+                }
             sidecar.update(
                 {
                     "tile_id": tile_id,
@@ -1119,6 +1152,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
         total_uncompressed_glb_size = sum(descriptor["uncompressed_glb_size"] for descriptor in tile_descriptors)
         total_sidecar_size = sum(descriptor["sidecar_size"] for descriptor in tile_descriptors)
         total_render_batch_count = sum(descriptor["render_batch_count"] for descriptor in tile_descriptors)
+        compression_status = _compression_package_status(tile_descriptors)
         _update_job_progress(job, 85, "Writing render package rows")
 
         with transaction.atomic():
@@ -1149,9 +1183,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                     "uncompressed_glb_bytes": total_uncompressed_glb_size,
                     "sidecar_bytes": total_sidecar_size,
                     "meshopt_compression": {
-                        "status": "completed" if any(
-                            descriptor["compression"].get("status") == "completed" for descriptor in tile_descriptors
-                        ) else tile_descriptors[0]["compression"].get("status", "skipped") if tile_descriptors else "skipped",
+                        "status": compression_status,
                         "enabled": any(descriptor["compression"].get("enabled") for descriptor in tile_descriptors),
                         "input_bytes": total_uncompressed_glb_size,
                         "output_bytes": total_glb_size,
@@ -1239,9 +1271,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 "tiling_strategy": "source-bounds-grid" if len(tile_descriptors) > 1 else "single-root-tile-spike",
                 "target_objects_per_tile": GLB_TARGET_OBJECTS_PER_TILE,
                 "meshopt_compression": {
-                    "status": "completed" if any(
-                        descriptor["compression"].get("status") == "completed" for descriptor in tile_descriptors
-                    ) else tile_descriptors[0]["compression"].get("status", "skipped") if tile_descriptors else "skipped",
+                    "status": compression_status,
                     "enabled": any(descriptor["compression"].get("enabled") for descriptor in tile_descriptors),
                     "input_bytes": total_uncompressed_glb_size,
                     "output_bytes": total_glb_size,

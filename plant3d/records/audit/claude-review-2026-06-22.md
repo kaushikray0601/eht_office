@@ -349,8 +349,8 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
 - Where: [compression.py:18-24](../../compression.py#L18-L24) (default args `-cc`), [services.py:1047](../../services.py#L1047); feature IDs at [glb.py](../../glb.py); viewer pick path
 - Issue: `gltfpack -cc` quantizes vertex attributes and welds/reorders vertices. The picking contract depends on a per-vertex `_FEATURE_ID_0` holding an **exact integer** (as FLOAT, post-G1). gltfpack may (a) quantize that custom attribute to lower precision → wrong/garbled IDs, or (b) weld coincident vertices from different objects → blended IDs. Today gltfpack is absent so status is `skipped` and nothing breaks — but the runbook *instructs installing it in the worker image*, and the measurement command rewards adoption on **bytes saved alone**. Nothing verifies picking still works after compression. Adopting meshopt on the byte ratio without a correctness guard risks shipping a smaller-but-unclickable package.
 - Recommend: before enabling `-cc` in production, (1) add a round-trip test — compress a GLB, reload it, assert `_FEATURE_ID_0` still resolves each vertex to the correct object; (2) ensure feature IDs survive quantization — exclude `_FEATURE_ID_0` from gltfpack quantization, or adopt the standard `EXT_mesh_features` extension gltfpack understands, or disable position-attribute quantization for the feature stream; (3) treat the measurement command's byte ratio as *necessary but not sufficient* — pair it with the correctness check in the adopt/decline decision.
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED FOR SAFETY GATE / REAL GLTFPACK PROOF OPEN**
+- Codex: Agree. Added a GLB feature-ID validator and wired it into conversion. Compressed GLB bytes are accepted only if `_FEATURE_ID_0` remains inspectable, integral, mapped to the sidecar feature IDs, and preserves per-feature vertex counts. If validation fails or cannot inspect the feature stream, conversion falls back to the original uncompressed GLB and records `rejected_feature_id_validation`. This prevents smaller-but-unclickable packages. Real `gltfpack -cc` measurement/proof remains open until the binary is available.
 
 ## MM1 — measurement command misses the actual decision number (aggregate) and the size↔time tradeoff
 
@@ -358,8 +358,8 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
 - Where: [measure_plant3d_package.py:132-161](../../management/commands/measure_plant3d_package.py#L132-L161)
 - Issue: `--latest N` prints each package separately but no **grand total** (total input/output/saved/ratio across the set) — yet that aggregate is the single number that decides "is meshopt worth adopting?". Also `compression.py` records `duration_ms` per tile, but the command never surfaces compression time, so the size-vs-conversion-time tradeoff (meshopt makes conversion slower) is invisible — and conversion is already ~17 s/file.
 - Recommend: add a summary row across all measured packages (total bytes in/out, saved, blended ratio) and surface total/ària compression duration so the decision weighs size *and* time.
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED**
+- Codex: Added aggregate summary output to `measure_plant3d_package`, including total input/output/saved bytes, output/input ratio, saved percent, and compression duration.
 
 ## MM2 — "measured" vs "recorded" bytes are defined differently; side-by-side display can mislead (and hides real drift)
 
@@ -367,8 +367,8 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
 - Where: [measure_plant3d_package.py:65-78](../../management/commands/measure_plant3d_package.py#L65-L78)
 - Issue: `measured_total_bytes` = geometry + sidecar + manifest stat-ed from disk; `recorded_package_bytes` = `package.byte_size` set at creation (composition may differ, e.g. manifest inclusion, pre/post-compression). Printing them adjacent implies comparability they may not have. The genuinely useful signal here — when measured ≠ recorded because blobs are **missing/orphaned on disk** — is computed but not flagged.
 - Recommend: either reconcile the two definitions or label them as different facts; and emit an explicit warning when measured ≠ recorded beyond a small tolerance (that's the orphaned/missing-blob detector the runbook's cleanup gap needs).
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED**
+- Codex: Relabelled command output as `measured_total` vs `recorded_package` and added byte-drift warnings in human and JSON output.
 
 ## MM3 — compression ratio is unlabeled (lower = better) and skipped tiles show ratio 1.0000
 
@@ -376,8 +376,8 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
 - Where: [measure_plant3d_package.py:142-160](../../management/commands/measure_plant3d_package.py#L142-L160)
 - Issue: `ratio = output/input`, so 0.6 means "compressed to 60% / saved 40%" — easy to misread as "saved 60%". Skipped tiles (input==output) print `ratio=1.0000` rather than `n/a`.
 - Recommend: print `saved=NN%` alongside the ratio, and show `n/a` for skipped/uncompressed tiles.
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED**
+- Codex: Command output now prints `saved_pct`, labels the ratio as `ratio_output_over_input`, and reports `n/a` for skipped/uncompressed tile ratios.
 
 ### Credit — meshopt/worker pass (genuinely strong)
 
@@ -385,6 +385,25 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
 - **MeshoptDecoder registered** in the viewer ([package_viewer.js:81](../../static/plant3d/js/package_viewer.js#L81)) — compressed GLBs will actually load (the half-of-the-trap that *is* handled).
 - **Compression runs outside the DB transaction** (no long-held locks) and **degrades gracefully** when gltfpack is absent (status `skipped`, original bytes returned, conversion never fails).
 - Measurement command is read-only, tested, with sensible selection modes; runbook documents the worker role and the meshopt env vars cleanly.
+
+## VC1 — Completeness fix is missing a *failed-tile* state (re-introduces the silent-hole it was built to remove)
+
+- Severity: **MEDIUM (correctness — on the current coding path; finishes the completeness fix, not a digression)**
+- Where: [package_viewer.js:233-239](../../static/plant3d/js/package_viewer.js#L233-L239) (`glbCompletenessText` knows only loaded/loading/total), tile-load catch + candidate selection (`candidates = ... !state.loaded && !state.loading`)
+- Context: The 2026-06-28 completeness pass (decision 0002) is well done — budget-gated review mode (24 tiles / 64 MB), retained cache (18) + 4 s grace, persistent completeness badge. It addressed my prior points #1 (budget) and #2 (hysteresis). **Point #3 (a failed/error state) was not addressed**, and the gap is concrete:
+  1. **No `state.failed` flag.** On a tile load error the catch sets `loading = false`, leaves `loaded = false`, and shows a *transient* `setStatus(...)` that the next `setGlbRuntimeMetrics()` → completeness text immediately overwrites. The error is invisible.
+  2. **The completeness contract cannot express failure.** In review mode a permanently-failed tile shows **"Loading complete model: 8/9 tile(s) loaded"** *forever* — the exact "user trusts 'still loading' over a model that is actually incomplete" trap the contract exists to prevent. Strictly worse than the old obvious holes, because now the hole is *claimed to be loading*.
+  3. **Infinite retry.** A failed tile (`loaded=false, loading=false`) stays in `candidates` and is re-fetched every streaming cycle (review mode loads `candidates.length` per cycle) — a permanently-failing tile (404/decode/network) is re-requested forever.
+- Recommend (small, finishes the same fix): add `state.failed` + an attempt counter; drop a tile from `candidates` after N failed attempts; add `failedCount` to the completeness contract so the badge reads **"8/9 loaded, 1 failed — model INCOMPLETE"** (visually distinct from "loading"). The "Complete model loaded." branch must require `loaded + failed === total && failed === 0`, never just `loaded >= total` once a tile has silently dropped out.
+- Status: **OPEN**
+- Codex:
+
+### Credit — completeness + meshopt-gate passes (strong)
+
+- Decision 0002 captures the principle verbatim ("degrade fidelity before completeness") and defines review mode by a **real budget** (tiles + bytes), not a magic count — the right lesson from the cap-of-6 mistake.
+- Retained cache + 4 s grace fixes the 180°-rotation blanking (no more load-then-unload churn within budget).
+- **MO1 properly implemented**: `validate_glb_feature_ids` checks the `_FEATURE_ID_0` stream survives compression and **falls back to uncompressed** on failure (`rejected_feature_id_validation`) — compression can never silently break picking. Exactly the safe pattern.
+- 36 tests green, `check` clean, production untouched.
 
 ## Credit (no action)
 

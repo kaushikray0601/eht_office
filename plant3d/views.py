@@ -13,7 +13,6 @@ from .access import (
     source_models_for_user,
 )
 from .forms import SourceModelUploadForm
-from .models import SourceModel
 from .services import (
     create_source_model_from_upload,
     queue_ifc_geometry_conversion,

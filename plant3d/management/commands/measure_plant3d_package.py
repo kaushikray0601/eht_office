@@ -18,6 +18,12 @@ def _ratio(input_bytes, output_bytes):
     return round(output_bytes / input_bytes, 4)
 
 
+def _saved_percent(input_bytes, output_bytes):
+    if not input_bytes:
+        return None
+    return round((input_bytes - output_bytes) * 100 / input_bytes, 1)
+
+
 def collect_package_measurement(package):
     tiles = list(package.tiles.order_by("sequence", "id"))
     tile_rows = []
@@ -25,8 +31,10 @@ def collect_package_measurement(package):
     sidecar_bytes = 0
     compression_input_bytes = 0
     compression_output_bytes = 0
+    compression_duration_ms = 0
     compression_completed_tiles = 0
     compression_failed_tiles = 0
+    compression_rejected_tiles = 0
     compression_skipped_tiles = 0
 
     for tile in tiles:
@@ -38,15 +46,20 @@ def collect_package_measurement(package):
 
         if status == "completed":
             compression_completed_tiles += 1
+            input_bytes = int(compression.get("input_bytes") or 0)
+            output_bytes = int(compression.get("output_bytes") or 0)
+            compression_input_bytes += input_bytes
+            compression_output_bytes += output_bytes
         elif status == "failed":
             compression_failed_tiles += 1
+        elif status == "rejected_feature_id_validation":
+            compression_rejected_tiles += 1
         elif status == "skipped":
             compression_skipped_tiles += 1
 
         input_bytes = int(compression.get("input_bytes") or 0)
         output_bytes = int(compression.get("output_bytes") or 0)
-        compression_input_bytes += input_bytes
-        compression_output_bytes += output_bytes
+        compression_duration_ms += int(compression.get("duration_ms") or 0)
         glb_bytes += tile_bytes
         sidecar_bytes += tile_sidecar_bytes
 
@@ -58,12 +71,17 @@ def collect_package_measurement(package):
                 "geometry_bytes": tile_bytes,
                 "sidecar_bytes": tile_sidecar_bytes,
                 "compression_status": status,
-                "compression_ratio": compression.get("ratio") or _ratio(input_bytes, output_bytes),
+                "compression_duration_ms": compression.get("duration_ms"),
+                "compression_input_bytes": input_bytes,
+                "compression_output_bytes": output_bytes,
+                "compression_ratio": compression.get("ratio") if status == "completed" else None,
+                "compression_saved_percent": _saved_percent(input_bytes, output_bytes) if status == "completed" else None,
             }
         )
 
     manifest_bytes = _safe_stat_size(package.manifest_storage_key)
     measured_total_bytes = glb_bytes + sidecar_bytes + manifest_bytes
+    byte_drift = measured_total_bytes - package.byte_size
     package_compression = package.metadata.get("meshopt_compression", {}) or {}
 
     return {
@@ -76,6 +94,8 @@ def collect_package_measurement(package):
         "tiles": package.tile_count,
         "recorded_package_bytes": package.byte_size,
         "measured_total_bytes": measured_total_bytes,
+        "byte_drift": byte_drift,
+        "byte_drift_warning": bool(byte_drift),
         "geometry_bytes": glb_bytes,
         "sidecar_bytes": sidecar_bytes,
         "manifest_bytes": manifest_bytes,
@@ -84,13 +104,44 @@ def collect_package_measurement(package):
             "status": package_compression.get("status", "not_recorded"),
             "completed_tiles": compression_completed_tiles,
             "failed_tiles": compression_failed_tiles,
+            "rejected_tiles": compression_rejected_tiles,
             "skipped_tiles": compression_skipped_tiles,
             "input_bytes": compression_input_bytes,
             "output_bytes": compression_output_bytes,
             "saved_bytes": compression_input_bytes - compression_output_bytes if compression_input_bytes else 0,
+            "saved_percent": _saved_percent(compression_input_bytes, compression_output_bytes),
             "ratio": _ratio(compression_input_bytes, compression_output_bytes),
+            "duration_ms": compression_duration_ms,
         },
         "tile_measurements": tile_rows,
+    }
+
+
+def collect_measurement_summary(measurements):
+    compression_input_bytes = sum(item["compression"]["input_bytes"] for item in measurements)
+    compression_output_bytes = sum(item["compression"]["output_bytes"] for item in measurements)
+    return {
+        "packages": len(measurements),
+        "objects": sum(item["objects"] for item in measurements),
+        "tiles": sum(item["tiles"] for item in measurements),
+        "recorded_package_bytes": sum(item["recorded_package_bytes"] for item in measurements),
+        "measured_total_bytes": sum(item["measured_total_bytes"] for item in measurements),
+        "geometry_bytes": sum(item["geometry_bytes"] for item in measurements),
+        "sidecar_bytes": sum(item["sidecar_bytes"] for item in measurements),
+        "manifest_bytes": sum(item["manifest_bytes"] for item in measurements),
+        "byte_drift": sum(item["byte_drift"] for item in measurements),
+        "compression": {
+            "completed_tiles": sum(item["compression"]["completed_tiles"] for item in measurements),
+            "failed_tiles": sum(item["compression"]["failed_tiles"] for item in measurements),
+            "rejected_tiles": sum(item["compression"]["rejected_tiles"] for item in measurements),
+            "skipped_tiles": sum(item["compression"]["skipped_tiles"] for item in measurements),
+            "input_bytes": compression_input_bytes,
+            "output_bytes": compression_output_bytes,
+            "saved_bytes": compression_input_bytes - compression_output_bytes if compression_input_bytes else 0,
+            "saved_percent": _saved_percent(compression_input_bytes, compression_output_bytes),
+            "ratio": _ratio(compression_input_bytes, compression_output_bytes),
+            "duration_ms": sum(item["compression"]["duration_ms"] for item in measurements),
+        },
     }
 
 
@@ -124,9 +175,10 @@ class Command(BaseCommand):
             raise CommandError("No render packages matched the requested filter.")
 
         measurements = [collect_package_measurement(package) for package in packages]
+        summary = collect_measurement_summary(measurements)
 
         if use_json:
-            self.stdout.write(json.dumps(measurements, indent=2, sort_keys=True))
+            self.stdout.write(json.dumps({"packages": measurements, "summary": summary}, indent=2, sort_keys=True))
             return
 
         for measurement in measurements:
@@ -135,27 +187,66 @@ class Command(BaseCommand):
                 "{objects} objects | {tiles} tiles".format(**measurement)
             )
             self.stdout.write(
-                "  bytes: measured={measured_total_bytes} recorded={recorded_package_bytes} "
+                "  bytes: measured_total={measured_total_bytes} recorded_package={recorded_package_bytes} "
                 "geometry={geometry_bytes} sidecar={sidecar_bytes} manifest={manifest_bytes}".format(**measurement)
             )
+            if measurement["byte_drift_warning"]:
+                self.stdout.write(
+                    self.style.WARNING(
+                        "  warning: measured_total and recorded_package differ by "
+                        f"{measurement['byte_drift']} byte(s); check for missing or orphaned blobs."
+                    )
+                )
             compression = measurement["compression"]
             ratio = compression["ratio"]
             ratio_text = "n/a" if ratio is None else f"{ratio:.4f}"
+            saved_percent = compression["saved_percent"]
+            saved_percent_text = "n/a" if saved_percent is None else f"{saved_percent:.1f}%"
             self.stdout.write(
                 "  meshopt: status={status} enabled={enabled} completed_tiles={completed_tiles} "
-                "skipped_tiles={skipped_tiles} failed_tiles={failed_tiles} "
-                "input={input_bytes} output={output_bytes} saved={saved_bytes} ratio={ratio_text}".format(
+                "skipped_tiles={skipped_tiles} failed_tiles={failed_tiles} rejected_tiles={rejected_tiles} "
+                "input={input_bytes} output={output_bytes} saved={saved_bytes} saved_pct={saved_percent_text} "
+                "ratio_output_over_input={ratio_text} duration_ms={duration_ms}".format(
                     ratio_text=ratio_text,
+                    saved_percent_text=saved_percent_text,
                     **compression,
                 )
             )
             for tile in measurement["tile_measurements"]:
                 tile_ratio = tile["compression_ratio"]
                 tile_ratio_text = "n/a" if tile_ratio is None else f"{tile_ratio:.4f}"
+                tile_saved_percent = tile["compression_saved_percent"]
+                tile_saved_percent_text = "n/a" if tile_saved_percent is None else f"{tile_saved_percent:.1f}%"
                 self.stdout.write(
                     "    {tile_id}: objects={objects} geometry={geometry_bytes} sidecar={sidecar_bytes} "
-                    "compression={compression_status} ratio={ratio}".format(
+                    "compression={compression_status} saved_pct={saved_percent} ratio_output_over_input={ratio}".format(
                         **tile,
+                        saved_percent=tile_saved_percent_text,
                         ratio=tile_ratio_text,
                     )
                 )
+
+        summary_ratio = summary["compression"]["ratio"]
+        summary_ratio_text = "n/a" if summary_ratio is None else f"{summary_ratio:.4f}"
+        summary_saved_percent = summary["compression"]["saved_percent"]
+        summary_saved_percent_text = "n/a" if summary_saved_percent is None else f"{summary_saved_percent:.1f}%"
+        self.stdout.write(
+            "Summary: packages={packages} objects={objects} tiles={tiles} measured_total={measured_total_bytes} "
+            "recorded_package={recorded_package_bytes} geometry={geometry_bytes} sidecar={sidecar_bytes} "
+            "manifest={manifest_bytes}".format(**summary)
+        )
+        if summary["byte_drift"]:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"Summary warning: measured_total and recorded_package differ by {summary['byte_drift']} byte(s)."
+                )
+            )
+        self.stdout.write(
+            "Summary meshopt: completed_tiles={completed_tiles} skipped_tiles={skipped_tiles} failed_tiles={failed_tiles} "
+            "rejected_tiles={rejected_tiles} input={input_bytes} output={output_bytes} saved={saved_bytes} saved_pct={saved_percent_text} "
+            "ratio_output_over_input={ratio_text} duration_ms={duration_ms}".format(
+                ratio_text=summary_ratio_text,
+                saved_percent_text=summary_saved_percent_text,
+                **summary["compression"],
+            )
+        )

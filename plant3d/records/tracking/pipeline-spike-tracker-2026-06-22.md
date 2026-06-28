@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: execution spike in progress; next focus is measured meshopt compression once `gltfpack` is available, then picking acceleration if needed
+Status: execution spike in progress; current housekeeping pass complete; next focus is meshopt correctness + measurement once `gltfpack` is available, then picking acceleration only if real samples show sluggish picking
 
 ## Objective
 
@@ -145,7 +145,7 @@ Record at minimum:
 - [ ] Browser memory use where measurable.
 - [x] FPS during orbit/pan/zoom.
 - [x] Selection/picking latency.
-- [ ] Metadata lookup latency.
+- [x] Metadata lookup latency.
 - [ ] Visual stability at real coordinates.
 - [ ] Snapping/measurement stability where tested.
 
@@ -192,6 +192,7 @@ Decision rules:
 - Naive Three.js object-per-mesh rendering will not scale.
 - Coordinate precision problems may not show unless source files use large coordinates.
 - Browser memory and draw calls can become the limiting factor before triangle count.
+- Manual side-by-side review against `idfviewer` exposed a serious viewer completeness issue: active-cap tile streaming can show holes or incomplete steelwork, and camera rotation can unload previously visible geometry while new tiles load. This is expected from the first cap/unload algorithm but unacceptable for production engineering review. The immediate mitigation is now complete/review mode for manageable packages, persistent completeness status, and retained-cache partial streaming for larger packages. HLOD/coarse proxies remain the future production answer.
 - Conversion now runs off-request through a management-command worker for the spike. Full Celery/RQ/SSE infrastructure is still required before user-facing or long-running production workflows.
 - The spike worker now has a documented long-running container role in `plant3d/records/operations/worker-container-runbook-2026-06-28.md`; local/manual operation should use `process_plant3d_job --watch`, not repeated `--all` runs.
 - The IFC parser is now copied under `plant3d/parsers/`, closing the immediate platform-boundary dependency on `idfviewer`. Future parser refactor/shared ownership is still possible.
@@ -251,6 +252,7 @@ Deferred / TODO:
 - D3 is closed for the platform boundary: `plant3d` now imports from `plant3d.parsers.ifc`, not `idfviewer.ifc_parser`.
 - Production delivery remains deferred: package/tile payloads should move from Django JSON responses to signed object-storage URLs before real scale.
 - Production package format remains partially deferred: first GLB+sidecar, feature IDs, spatial child tiles, a 3D-Tiles-style manifest, first viewer-side tile streaming/culling, synthetic large-coordinate GLB child-tile regression, optional meshopt/gltfpack hook, and `MeshoptDecoder` viewer support exist. Measured compression, instancing, BVH acceleration, signed/object-storage delivery, and real plant-global precision proof remain open.
+- Compression strategy clarification after external/general review: current code path is GLB + optional `gltfpack`/meshopt (`EXT_meshopt_compression`), not Draco. Draco (`KHR_draco_mesh_compression`) remains a future comparison option, but it is not the current default because runtime decode speed, feature-ID preservation, and annotation/picking correctness matter more than headline byte reduction.
 - GLB feature IDs are now present in the first binary package path via `_FEATURE_ID_0` plus sidecar object-feature mapping. The viewer can now click GLB render meshes and resolve feature ID -> stable ID -> `ModelObject` metadata without hidden per-object proxies. BVH acceleration and shader/feature-ID highlighting are still deferred.
 - Unit/scale proof is improved but not fully closed: IFC `IfcUnitAssignment`, IfcOpenShell geometry settings, and a synthetic known-one-metre conversion fixture now validate the service contract. A real source-system/exporter benchmark is still needed before trusting measurement/federation workflows.
 - Parser cleanup remains a TODO: the extracted parser is a direct copy for boundary safety, not yet a deeply refactored production parser.
@@ -259,12 +261,13 @@ Deferred / TODO:
 
 > **Claude sequence review (2026-06-23) — see audit R1-R3 / C1-C5.** KR confirmed real-GPU rendering is smooth (15-17 FPS is a headless artifact) and a plant-global IFC is weeks away. Claude recommended promoting a synthetic large-coordinate offset fixture, known-dimension unit fixture, and meshopt compression. The 2026-06-28 pass landed the synthetic known-one-metre fixture, a synthetic large-coordinate GLB child-tile regression, and first viewer streaming because package 24 already gave us a useful 9-child-tile runtime proof. The list below is the post-2026-06-28 order.
 
-1. Manually confirm package 24 or a freshly uploaded equivalent in the logged-in Django viewer and record subjective orbit feel plus loaded-tile behavior.
-2. Install/provide `gltfpack` in the worker environment, regenerate a GLB package, and measure real meshopt compression ratio plus browser decode/load time with `measure_plant3d_package`.
-3. Evaluate `three-mesh-bvh` acceleration for GLB picking if direct render-mesh raycast is sluggish on the larger samples.
-4. Add source-system/exporter known-dimension proof to complement the synthetic one-metre fixture.
-5. Gather the real 20 MB and/or plant-global IFC input when available.
-6. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+1. Manually retest the same IFC in `plant3d` after complete/review mode and confirm the missing-steel regression is gone for the current sample.
+2. Install/provide `gltfpack` in the worker environment, regenerate a GLB package, and measure real meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness with `measure_plant3d_package`.
+3. If real `gltfpack -cc` output is rejected by the feature-ID gate, discuss before changing format strategy: options include safer gltfpack args, keeping meshopt disabled, or a future `EXT_mesh_features`/metadata-extension pass.
+4. Add source-system/exporter known-dimension proof to complement the synthetic one-metre fixture, especially the foot-declared Revit sample path.
+5. Evaluate `three-mesh-bvh` acceleration only if direct render-mesh raycast is sluggish on larger samples.
+6. Gather the real 20 MB and/or plant-global IFC input when available.
+7. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
 Current manual check path:
 
@@ -274,6 +277,7 @@ Current manual check path:
 4. Run IFC JSON debug conversion if needed; the worker should pick it up automatically.
 5. Queue the IFC GLB conversion; the worker should pick it up automatically.
 6. Open both package viewers and compare package size/load behavior.
+7. Measure the resulting package with `venv/bin/python manage.py measure_plant3d_package <package_id>`.
 
 ## Verification Log
 
@@ -367,6 +371,19 @@ Current manual check path:
 - 2026-06-28: KR manual browser check confirmed no visible graphics degradation, no noticed side effects, and `process_plant3d_job --watch` works as the local long-running worker. One checked package reported 2,221 objects, 6/6 loaded tiles, 3,322,076 bytes, 151 ms viewer load time, 60 FPS, 24 draw calls, 0 pick proxies, and 13 ms metadata latency. Because the package has 6 total tiles, streaming mode was `load-all`, not partial active-cap streaming.
 - 2026-06-28: Added `measure_plant3d_package` management command to summarize render-package bytes and meshopt/gltfpack status from package/tile records. It reports recorded bytes, measured geometry/sidecar/manifest bytes, per-tile compression status, input/output bytes, saved bytes, and ratio, with human and JSON output. Real ratio measurement still waits for an installed `gltfpack` binary.
 - 2026-06-28: `venv/bin/python manage.py check` and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after package-measurement command pass. Plant3d suite: 35 tests.
+- 2026-06-28: Housekeeping review removed generated `__pycache__` folders and one unused storage helper. JSON debug conversion/viewer remains intentionally retained for comparison and diagnostics, not treated as production runtime format. Older planning/explainer records are kept as historical snapshots where later code has superseded them.
+- 2026-06-28: Updated `measure_plant3d_package` after Claude MM1-MM3: human/JSON output now includes aggregate summary, compression duration, saved percent, clearer `ratio_output_over_input` wording, and measured-vs-recorded byte drift warnings.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/storage.py plant3d/views.py plant3d/management/commands/measure_plant3d_package.py plant3d/tests.py`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after housekeeping pass. Plant3d suite: 35 tests.
+- 2026-06-28: Added meshopt feature-ID correctness gate. Compressed GLB bytes are accepted only if `_FEATURE_ID_0` remains inspectable, integral, mapped to the sidecar feature IDs, and preserves per-feature vertex counts. If validation fails or cannot inspect the feature stream, conversion falls back to the original uncompressed GLB and records `rejected_feature_id_validation`. Focused meshopt tests passed.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/management/commands/measure_plant3d_package.py plant3d/tests.py`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after meshopt feature-ID safety pass. Plant3d suite: 36 tests.
+- 2026-06-28: KR manual screenshot comparison found the first serious viewer regression: the active tile cap can make plant3d show incomplete geometry versus the old idfviewer. Root cause is current viewer streaming behavior (`MAX_LOADED_GLB_TILES = 6`, active visible slice, immediate unload), not proven compression data loss. This must be addressed before treating streaming as production-acceptable.
+- 2026-06-28: Added decision record `plant3d/records/decisions/0002-viewer-completeness-and-lod.md`: degrade fidelity before completeness. Implemented complete/review mode in the GLB viewer for packages up to 24 tiles and 64 MB, persistent completeness reporting, and retained-cache partial streaming for larger packages (`active cap=6`, retained cache=18, unload grace=4 s). Bumped viewer script version to avoid browser cache using old cap behavior.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/tests.py plant3d/views.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after viewer completeness pass. Plant3d suite: 36 tests.
+- 2026-06-28: KR manual retest after complete/review mode found a second viewer regression: first load was slow, zoom could drive the camera into an unusable/stale state, and attempting to recover could leave a white canvas until reset. Added OrbitControls zoom/pan guardrails, min/max camera distance from model bounds, safer camera near/far planes, and a one-time reframe after all review-mode GLB tiles load. Bumped viewer script version again.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/tests.py plant3d/views.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after zoom/camera guardrail pass. Plant3d suite: 36 tests.
+- 2026-06-28: KR manual retest confirmed the zoom/stale/white-canvas regression is fixed on a 9-tile GLB package. Source 23/package 51 reported 4,313 objects, 715,028 triangles, 9/9 loaded tiles, 36 draw calls, 16,050,726 package bytes, 361 ms viewer load time, 60 FPS, 5 ms pick latency, 27 ms metadata latency, and `review-complete` streaming. Meshopt/gltfpack was skipped because `gltfpack` is not installed.
+- 2026-06-28: Added viewer-side graphics diagnostics so manual tests can distinguish server conversion cost from browser GPU rendering: frame time, renderer triangle count, browser JS heap where available, WebGL renderer, WebGL vendor, and WebGL version are now shown in the runtime metrics panel. Important clarification: `Queue IFC GLB Conversion` is CPU/IO-side Django/IfcOpenShell/GLB packaging work and is not expected to load the NVIDIA GPU; GPU usage begins when Chrome/Edge renders the package viewer through WebGL.
+- 2026-06-28: `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `venv/bin/python manage.py test plant3d -v 2 --noinput` passed after viewer GPU/WebGL diagnostics pass. Plant3d suite: 36 tests.
 
 ## Platform Rules Discovered During Implementation
 
@@ -390,11 +407,15 @@ Current manual check path:
 - Feature IDs in GLB must stay glTF-conformant before meshopt/gltfpack work begins. Use `FLOAT` or the future standard feature metadata extension, not `UNSIGNED_INT` vertex attributes.
 - GLB sidecar stable IDs and `ModelObject.stable_id` must be generated by the same resolver. Otherwise GUID-less IFC objects and future IDF/PCF objects will render but fail pick-to-metadata.
 - Spatial child tiles now exist in the package and the current viewer no longer has to fetch/render all child tiles at once for packages above the active-tile cap. This proves the first streaming behavior, not final EPC-scale performance.
+- Engineering review needs an explicit completeness contract. A fast partial view is not acceptable if users cannot tell whether geometry is missing, still loading, or intentionally out of the active cache.
 - Local spike DB cleanup through Django admin is acceptable, but storage cleanup needs an explicit tool/command. Otherwise media blobs under `MEDIA_ROOT/plant3d` will become orphaned.
 - Spike UX should expose the exact worker command and poll job status from the source page so manual IFC testing does not depend on raw JSON pages or repeated full-page refreshes.
 - A queued job is not a failed conversion. In the current spike, no package/view link appears until `process_plant3d_job` runs and the source page sees the completed job.
 - Browser verification should distinguish nonblank render success from performance success. The current real-sample probe renders correctly, but Tekla FPS is below target.
 - Source-declared IFC units and render geometry units are different facts. Store both: source unit from `IfcUnitAssignment`, render unit from parser/IfcOpenShell geometry settings, and only mark measurement scale trusted after a known-dimension validation.
+- Meshopt byte savings are not sufficient for adoption. Compressed GLB packages must also prove feature-ID picking correctness because compression/quantization can reorder or alter custom vertex attributes.
+- Do not use compression as a substitute for tiling/completeness strategy. Compression reduces payload bytes, but it does not solve model completeness, LOD/HLOD, metadata identity, annotation anchoring, or source-unit correctness.
+- Windows Task Manager GPU load is not a reliable indicator for server-side conversion. Watch the browser process and the viewer's WebGL renderer/frame-time metrics for display performance; watch worker logs, conversion duration, CPU, disk IO, and memory for conversion performance.
 
 ## Manual Testing Checklist
 
@@ -416,7 +437,24 @@ When an IFC sample is available, test manually:
 14. For GLB packages, click a visible object and confirm the selected-object panel resolves a feature ID to indexed metadata; record pick latency and any sluggishness.
 15. Log in as a user not assigned to that project and confirm source/package/tile URLs return 404.
 
-## Claude Research / Review Asks
+## Claude Research / Review Asks Status
+
+Completed or superseded:
+
+- Runtime format recommendation is recorded in `plant3d/records/planning/claude-render-format-research-2026-06-23.md`: GLB + meshopt + feature IDs + 3D-Tiles-style manifest, no custom binary and no xeokit/AGPL for now.
+- Three.js remains acceptable for the spike; Babylon.js comparison is deferred until real GPU/browser failure after batching/tiling/LOD.
+- JSON geometry loading is retained as a debug/comparison path only.
+- Parser extraction timing is resolved: `plant3d` now imports from `plant3d.parsers.ifc`, not from `idfviewer`.
+- IFC unit handling is partially resolved: source-declared units and render units are stored separately; real known-dimension proof remains open.
+
+Active asks:
+
+- Review the meshopt feature-ID correctness gate before we accept `gltfpack -cc` as production-safe.
+- Recommend or review a practical foot-declared Revit known-dimension fixture.
+- Review when to introduce LOD/coarse proxies for over-cap tile views.
+- Review object-storage/signed-URL delivery when the package format stabilizes.
+
+Historical asks retained below for context:
 
 - Research and recommend the next runtime package format after the JSON spike:
   - GLB/glTF with metadata sidecar

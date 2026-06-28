@@ -83,6 +83,15 @@ PLANT3D_GLTFPACK_ARGS="-cc"
 
 If `gltfpack` is unavailable, conversion still succeeds and records meshopt status `skipped`.
 
+Do not adopt `gltfpack -cc` on byte savings alone. Because the GLB picking contract currently depends on `_FEATURE_ID_0`, any compressed package must also prove that feature IDs still resolve to the correct `ModelObject` metadata after compression.
+
+Current safety behavior:
+
+- If compressed output preserves inspectable `_FEATURE_ID_0` values and sidecar feature counts, the compressed tile is accepted.
+- If compressed output removes, quantizes, compresses beyond local validation, or corrupts `_FEATURE_ID_0`, the tile falls back to the original uncompressed GLB.
+- Rejected compression is recorded as `rejected_feature_id_validation`; this is a safe outcome, not a failed conversion.
+- If real `gltfpack -cc` is rejected, discuss before changing strategy. Possible future paths are safer gltfpack arguments, leaving meshopt disabled, or a deliberate move toward standard glTF feature metadata.
+
 Measure package bytes and meshopt status after conversion with:
 
 ```bash
@@ -97,7 +106,7 @@ venv/bin/python manage.py measure_plant3d_package --source-id <source_id>
 venv/bin/python manage.py measure_plant3d_package <package_id> --json
 ```
 
-The measurement command reports recorded package bytes, measured geometry/sidecar/manifest bytes, tile counts, meshopt status, input/output bytes, saved bytes, and compression ratio. It is the standard before/after check once `gltfpack` is available in the worker image.
+The measurement command reports recorded package bytes, measured geometry/sidecar/manifest bytes, tile counts, meshopt status, input/output bytes, saved bytes, saved percent, output/input ratio, compression duration, aggregate summary, and measured-vs-recorded byte drift warnings. It is the standard before/after size/time check once `gltfpack` is available in the worker image.
 
 ## Production Gaps
 

@@ -26,6 +26,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 100000);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
+controls.zoomSpeed = 0.65;
+controls.panSpeed = 0.75;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c4d0, 1.8));
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -51,6 +53,8 @@ let runtimeStats = {
   triangleCount: 0,
   elapsedMs: 0,
   fps: 0,
+  frameMs: 0,
+  renderTriangles: 0,
   drawCalls: 0,
   geometryCount: 0,
   textureCount: 0,
@@ -62,10 +66,16 @@ let runtimeStats = {
   loadedTileCount: 0,
   loadingTileCount: 0,
   streamingMode: '',
+  completeness: '',
+  browserHeapMb: '',
+  webglVendor: '',
+  webglRenderer: '',
+  webglVersion: '',
   package: null,
 };
 let framesSinceFpsSample = 0;
 let lastFpsSampleAt = performance.now();
+let lastFrameAt = performance.now();
 let isInteracting = false;
 let lowFpsSamples = 0;
 let highFpsSamples = 0;
@@ -81,6 +91,10 @@ const gltfLoader = new GLTFLoader();
 gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 const pickProxyMaterial = new THREE.MeshBasicMaterial({ visible: false });
 const MAX_LOADED_GLB_TILES = 6;
+const MAX_RETAINED_GLB_TILES = 18;
+const REVIEW_MODE_MAX_TILES = 24;
+const REVIEW_MODE_MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
+const TILE_UNLOAD_GRACE_MS = 4000;
 const TILE_STREAM_INTERVAL_MS = 500;
 const TILE_LOAD_BATCH_SIZE = 2;
 const highlightMaterial = new THREE.MeshBasicMaterial({
@@ -118,6 +132,35 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function getWebglDiagnostics() {
+  try {
+    const gl = renderer.getContext();
+    const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
+    return {
+      vendor: debugInfo ? gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR),
+      renderer: debugInfo ? gl.getParameter(debugInfo.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER),
+      version: gl.getParameter(gl.VERSION),
+    };
+  } catch (error) {
+    return {
+      vendor: 'unavailable',
+      renderer: 'unavailable',
+      version: 'unavailable',
+    };
+  }
+}
+
+function getBrowserHeapMb() {
+  const memory = performance.memory;
+  if (!memory || !memory.usedJSHeapSize) return '';
+  return Math.round(memory.usedJSHeapSize / (1024 * 1024));
+}
+
+const webglDiagnostics = getWebglDiagnostics();
+runtimeStats.webglVendor = webglDiagnostics.vendor;
+runtimeStats.webglRenderer = webglDiagnostics.renderer;
+runtimeStats.webglVersion = webglDiagnostics.version;
+
 function renderMetrics() {
   if (!metricsEl) return;
   const pkg = runtimeStats.package || {};
@@ -135,12 +178,19 @@ function renderMetrics() {
     `<p class="kv"><span>Loading Tiles</span><strong>${runtimeStats.loadingTileCount}</strong></p>`,
     `<p class="kv"><span>Load Time</span><strong>${runtimeStats.elapsedMs} ms</strong></p>`,
     `<p class="kv"><span>Streaming</span><strong>${escapeHtml(runtimeStats.streamingMode)}</strong></p>`,
+    `<p class="kv"><span>Completeness</span><strong>${escapeHtml(runtimeStats.completeness)}</strong></p>`,
     `<p class="kv"><span>FPS</span><strong>${runtimeStats.fps}</strong></p>`,
+    `<p class="kv"><span>Frame Time</span><strong>${runtimeStats.frameMs} ms</strong></p>`,
     `<p class="kv"><span>Draw Calls</span><strong>${runtimeStats.drawCalls}</strong></p>`,
+    `<p class="kv"><span>Render Triangles</span><strong>${runtimeStats.renderTriangles}</strong></p>`,
     `<p class="kv"><span>GPU Geometries</span><strong>${runtimeStats.geometryCount}</strong></p>`,
     `<p class="kv"><span>GPU Textures</span><strong>${runtimeStats.textureCount}</strong></p>`,
     `<p class="kv"><span>Pixel Ratio</span><strong>${runtimeStats.pixelRatio}</strong></p>`,
     `<p class="kv"><span>Quality Mode</span><strong>${escapeHtml(runtimeStats.qualityMode)}</strong></p>`,
+    `<p class="kv"><span>Browser Heap</span><strong>${runtimeStats.browserHeapMb === '' ? 'n/a' : `${runtimeStats.browserHeapMb} MB`}</strong></p>`,
+    `<p class="kv"><span>WebGL Renderer</span><strong>${escapeHtml(runtimeStats.webglRenderer || 'unknown')}</strong></p>`,
+    `<p class="kv"><span>WebGL Vendor</span><strong>${escapeHtml(runtimeStats.webglVendor || 'unknown')}</strong></p>`,
+    `<p class="kv"><span>WebGL Version</span><strong>${escapeHtml(runtimeStats.webglVersion || 'unknown')}</strong></p>`,
     `<p class="kv"><span>Pick Latency</span><strong>${runtimeStats.pickLatencyMs} ms</strong></p>`,
     `<p class="kv"><span>Metadata Latency</span><strong>${runtimeStats.metadataLatencyMs} ms</strong></p>`,
     `<p class="kv"><span>Package Bytes</span><strong>${pkg.byte_size || 0}</strong></p>`,
@@ -162,15 +212,37 @@ function setMetrics(pkg, meshCount, renderBatchCount, pickProxyCount, tileCount,
     loadedTileCount: tileCount,
     loadingTileCount: 0,
     streamingMode: '',
+    completeness: 'Complete JSON debug package loaded.',
     triangleCount,
     elapsedMs,
   };
   renderMetrics();
 }
 
+function shouldUseReviewMode(pkg) {
+  const tileCount = glbTileStates.length || Number(pkg.tile_count || 0);
+  const packageBytes = Number(pkg.byte_size || 0);
+  return tileCount <= REVIEW_MODE_MAX_TILES && packageBytes <= REVIEW_MODE_MAX_PACKAGE_BYTES;
+}
+
+function glbStreamingMode(pkg) {
+  if (shouldUseReviewMode(pkg)) return 'review-complete';
+  return `partial-active-cap-${MAX_LOADED_GLB_TILES}-retain-${MAX_RETAINED_GLB_TILES}`;
+}
+
+function glbCompletenessText(pkg, loadedCount, loadingCount) {
+  const total = glbTileStates.length || Number(pkg.tile_count || 0);
+  if (!total) return 'No GLB tiles available.';
+  if (loadedCount >= total && loadingCount === 0) return 'Complete model loaded.';
+  if (shouldUseReviewMode(pkg)) return `Loading complete model: ${loadedCount}/${total} tile(s) loaded.`;
+  return `Partial model visible: ${loadedCount}/${total} tile(s) retained, ${loadingCount} loading. Some geometry may be hidden until its tile is loaded.`;
+}
+
 function setGlbRuntimeMetrics(pkg, elapsedMs = runtimeStats.elapsedMs) {
   const loadedStates = glbTileStates.filter(state => state.loaded);
   const loadingStates = glbTileStates.filter(state => state.loading);
+  const loadedCount = loadedStates.length;
+  const loadingCount = loadingStates.length;
   runtimeStats = {
     ...runtimeStats,
     package: pkg,
@@ -178,13 +250,14 @@ function setGlbRuntimeMetrics(pkg, elapsedMs = runtimeStats.elapsedMs) {
     renderBatchCount: loadedStates.reduce((total, state) => total + state.renderBatchCount, 0),
     pickProxyCount: 0,
     featureCount: loadedStates.reduce((total, state) => total + state.featureCount, 0),
-    tileCount: loadedStates.length,
-    loadedTileCount: loadedStates.length,
-    loadingTileCount: loadingStates.length,
+    tileCount: loadedCount,
+    loadedTileCount: loadedCount,
+    loadingTileCount: loadingCount,
     totalTileCount: glbTileStates.length,
     triangleCount: loadedStates.reduce((total, state) => total + state.triangleCount, 0),
     elapsedMs,
-    streamingMode: glbTileStates.length > MAX_LOADED_GLB_TILES ? `active-cap-${MAX_LOADED_GLB_TILES}` : 'load-all',
+    streamingMode: glbStreamingMode(pkg),
+    completeness: glbCompletenessText(pkg, loadedCount, loadingCount),
   };
   renderMetrics();
 }
@@ -313,6 +386,8 @@ function frameScene(boundsOverride = null) {
   if (packageBounds.isEmpty()) {
     camera.position.set(8, 8, 8);
     controls.target.set(0, 0, 0);
+    controls.minDistance = 0.2;
+    controls.maxDistance = 500;
     controls.update();
     return;
   }
@@ -323,8 +398,10 @@ function frameScene(boundsOverride = null) {
   packageBounds.getCenter(center);
   const radius = Math.max(size.x, size.y, size.z, 1);
   camera.position.set(center.x + radius * 1.4, center.y + radius * 1.0, center.z + radius * 1.4);
-  camera.near = Math.max(radius / 10000, 0.01);
-  camera.far = Math.max(radius * 100, 1000);
+  controls.minDistance = Math.max(radius * 0.02, 0.25);
+  controls.maxDistance = Math.max(radius * 25, 100);
+  camera.near = Math.max(controls.minDistance / 100, 0.01);
+  camera.far = Math.max(controls.maxDistance * 4, 1000);
   camera.updateProjectionMatrix();
   controls.target.copy(center);
   controls.update();
@@ -391,6 +468,7 @@ function prepareGlbTileStates(pkg) {
       triangleCount: 0,
       featureCount: 0,
       lastVisibleAt: 0,
+      lastActiveAt: 0,
     };
   });
 }
@@ -401,8 +479,8 @@ function glbFrustum() {
   return new THREE.Frustum().setFromProjectionMatrix(matrix);
 }
 
-function activeTileStates() {
-  if (glbTileStates.length <= MAX_LOADED_GLB_TILES) return glbTileStates;
+function activeTileStates(pkg) {
+  if (shouldUseReviewMode(pkg)) return glbTileStates;
 
   const frustum = glbFrustum();
   const target = controls.target || new THREE.Vector3();
@@ -421,10 +499,13 @@ function activeTileStates() {
     .filter(item => item.visible)
     .sort((a, b) => a.distance - b.distance)
     .map(item => item.state);
-  if (!visibleStates.length) {
-    return scored.sort((a, b) => a.distance - b.distance).slice(0, 1).map(item => item.state);
-  }
-  return visibleStates.slice(0, MAX_LOADED_GLB_TILES);
+  const active = visibleStates.length
+    ? visibleStates.slice(0, MAX_LOADED_GLB_TILES)
+    : scored.sort((a, b) => a.distance - b.distance).slice(0, 1).map(item => item.state);
+  active.forEach(state => {
+    state.lastActiveAt = now;
+  });
+  return active;
 }
 
 async function loadGlbTileState(state, pkg) {
@@ -515,6 +596,23 @@ function unloadGlbTileState(state, pkg) {
   setGlbRuntimeMetrics(pkg);
 }
 
+function unloadOverflowGlbTiles(active, pkg) {
+  if (shouldUseReviewMode(pkg)) return;
+  const loadedStates = glbTileStates.filter(state => state.loaded);
+  if (loadedStates.length <= MAX_RETAINED_GLB_TILES) return;
+
+  const activeKeys = new Set(active.map(state => state.key));
+  const now = performance.now();
+  const candidates = loadedStates
+    .filter(state => !activeKeys.has(state.key) && now - (state.lastActiveAt || 0) >= TILE_UNLOAD_GRACE_MS)
+    .sort((a, b) => (a.lastActiveAt || 0) - (b.lastActiveAt || 0));
+
+  for (const state of candidates) {
+    if (glbTileStates.filter(item => item.loaded).length <= MAX_RETAINED_GLB_TILES) break;
+    unloadGlbTileState(state, pkg);
+  }
+}
+
 async function updateGlbTileStreaming(pkg, force = false) {
   if (!glbTileStates.length || isStreamingUpdateRunning) return;
   const now = performance.now();
@@ -522,19 +620,21 @@ async function updateGlbTileStreaming(pkg, force = false) {
   lastStreamingUpdateAt = now;
   isStreamingUpdateRunning = true;
   try {
-    const active = new Set(activeTileStates().map(state => state.key));
-    for (const state of glbTileStates) {
-      if (!active.has(state.key) && glbTileStates.length > MAX_LOADED_GLB_TILES) {
-        unloadGlbTileState(state, pkg);
-      }
-    }
-    const candidates = glbTileStates.filter(state => active.has(state.key) && !state.loaded && !state.loading);
-    for (const state of candidates.slice(0, TILE_LOAD_BATCH_SIZE)) {
+    const active = activeTileStates(pkg);
+    const activeKeys = new Set(active.map(state => state.key));
+    unloadOverflowGlbTiles(active, pkg);
+    const candidates = glbTileStates.filter(state => activeKeys.has(state.key) && !state.loaded && !state.loading);
+    const loadBatchSize = shouldUseReviewMode(pkg) ? candidates.length : TILE_LOAD_BATCH_SIZE;
+    for (const state of candidates.slice(0, loadBatchSize)) {
       await loadGlbTileState(state, pkg);
     }
     const loadedCount = glbTileStates.filter(state => state.loaded).length;
     const loadingCount = glbTileStates.filter(state => state.loading).length;
-    setStatus(`Loaded GLB package tile stream: ${loadedCount}/${glbTileStates.length} tile(s) loaded, ${loadingCount} loading. Feature-ID picking enabled; BVH acceleration deferred.`);
+    if (shouldUseReviewMode(pkg) && loadedCount === glbTileStates.length && loadingCount === 0 && !pkg.__plant3dReviewFramed) {
+      pkg.__plant3dReviewFramed = true;
+      frameScene();
+    }
+    setStatus(`${glbCompletenessText(pkg, loadedCount, loadingCount)} Feature-ID picking enabled; BVH acceleration deferred.`);
   } finally {
     isStreamingUpdateRunning = false;
   }
@@ -752,16 +852,20 @@ function pick(event) {
 }
 
 function animate() {
+  const now = performance.now();
+  runtimeStats.frameMs = Number((now - lastFrameAt).toFixed(1));
+  lastFrameAt = now;
   controls.update();
   if (runtimeStats.package?.package_format === 'GLB') {
     updateGlbTileStreaming(runtimeStats.package);
   }
   renderer.render(scene, camera);
   runtimeStats.drawCalls = renderer.info.render.calls;
+  runtimeStats.renderTriangles = renderer.info.render.triangles;
   runtimeStats.geometryCount = renderer.info.memory.geometries;
   runtimeStats.textureCount = renderer.info.memory.textures;
+  runtimeStats.browserHeapMb = getBrowserHeapMb();
   framesSinceFpsSample += 1;
-  const now = performance.now();
   if (now - lastFpsSampleAt >= 1000) {
     runtimeStats.fps = Math.round((framesSinceFpsSample * 1000) / (now - lastFpsSampleAt));
     framesSinceFpsSample = 0;

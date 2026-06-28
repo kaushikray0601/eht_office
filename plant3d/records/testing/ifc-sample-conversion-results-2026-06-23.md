@@ -145,6 +145,9 @@ Manual follow-up from KR:
 - Manual browser check on a later GLB package for `8-SSPAR-800201.ifc` reported no visible graphics degradation and normal existing functionality. Viewer sidebar metrics showed: 2,221 objects, 6/6 loaded tiles, 3,322,076 package bytes, 151 ms load time, 60 FPS, 24 draw calls, 24 GPU geometries, 118,640 triangles, 0 pick proxies, 13 ms metadata latency, and streaming mode `load-all`.
 - Progress still jumps from an early staged value to completion for parse-heavy jobs. This is expected until the worker has deeper IfcOpenShell tessellation progress or a production progress channel; the current progress is stage-based, not true per-triangle/per-object streaming.
 - Cross-browser repeat viewing can be fast even when the second browser has no browser cache because the expensive IFC conversion is already complete, render packages already exist, and the server/operating-system filesystem cache may serve GLB/media bytes from memory.
+- Manual browser check after complete/review mode and zoom guardrails on source 23/package 51 (`8-SSPAU-800203.ifc`) confirmed the previous zoom/stale/white-canvas regression is fixed. The package reported 4,313 objects, 9/9 loaded tiles, 715,028 triangles, 36 draw calls, 16,050,726 package bytes, 361 ms viewer load time, 60 FPS, 5 ms pick latency, 27 ms metadata latency, and `review-complete` streaming.
+- The same package conversion took 66,017 ms and reported `gltfpack_not_available`, so the current performance result is uncompressed GLB tile loading, not meshopt-compressed loading.
+- GPU load is not expected during `Queue IFC GLB Conversion`; that path is server-side CPU/IO work through Django, IfcOpenShell, GLB packing, and optional external compression. GPU observations should be taken while the package viewer is open in Chrome/Edge, using WebGL renderer/frame-time metrics plus the browser process in system tools.
 
 ## Meshopt Hook And Numpy GLB Writer Update
 
@@ -162,6 +165,9 @@ Local measurement status:
 
 - This workspace currently has numpy available but does not have `gltfpack`, `meshoptimizer`, `pygltflib`, or `trimesh` installed.
 - Therefore this pass proves meshopt integration readiness and records skipped compression cleanly, but it does not yet provide a real meshopt compression ratio or browser decode-time measurement.
+- Meshopt adoption is gated on correctness as well as size: compressed GLB output must preserve feature-ID picking and metadata resolution.
+- Use `venv/bin/python manage.py measure_plant3d_package <package_id>` after conversion to record bytes, saved percent, output/input ratio, compression duration, and measured-vs-recorded byte drift.
+- The converter now rejects unsafe compressed output by falling back to the original uncompressed GLB and recording `rejected_feature_id_validation` when `_FEATURE_ID_0` cannot be validated against the sidecar feature counts.
 
 ## Manual Viewer Check
 
@@ -174,7 +180,7 @@ Use the source/package records created in the local development database:
 If project access blocks these package URLs for the current browser user, upload the same files through `/plant3d/sources/upload/` while logged in as a user assigned to the target managed project, then process queued jobs with:
 
 ```bash
-venv/bin/python manage.py process_plant3d_job --all
+venv/bin/python manage.py process_plant3d_job --watch
 ```
 
 Record from the viewer sidebar:

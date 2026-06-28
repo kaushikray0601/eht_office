@@ -4,6 +4,8 @@ Date: 2026-06-23
 Author: Claude
 Purpose: explain, from the ground up, the 3D rendering pipeline Codex has built and is planning, for a reader who knows Django/MVT well but has limited 3D-graphics background. Grounded in the actual `plant3d` code, with examples.
 
+Status note from Codex, 2026-06-28: keep this as a helpful educational snapshot, not the active tracker. Later passes added `process_plant3d_job --watch`, synthetic large-coordinate GLB/RTC regression coverage, numpy GLB writer hot paths, an optional meshopt/gltfpack hook, `MeshoptDecoder`, and `measure_plant3d_package`. The active sequence is now in `plant3d/records/tracking/pipeline-spike-tracker-2026-06-22.md`.
+
 ---
 
 ## 0. Start from your mental model (it was correct — just incomplete)
@@ -142,7 +144,7 @@ Now the worker has to turn the scene into something the browser downloads. Two f
 What `build_glb_from_meshes` does, in plain terms:
 1. **Color bucketing (batching).** Instead of 867 separate meshes (= 867 draw calls = slow), it groups all objects of the *same colour* into one combined mesh. The Tekla model collapsed to ~4 buckets → **~4 draw calls.** This is the single biggest performance trick, and it's exactly the "draw calls matter more than triangles" point from §1.
 2. **Feature IDs (how picking survives the merge).** If you merge 867 beams into 4 big blobs, how do you click one beam and get *its* tag? Codex tags every vertex with a number — a **feature ID** — saying "this vertex belongs to object #438." It's stored as a special vertex attribute `_FEATURE_ID_0`, plus a small "sidecar" JSON mapping `feature 438 → {global_id, tag, ...}`. So picking needs **no duplicate geometry** — you read the feature number under the cursor and look it up. (We caught and Codex fixed two bugs here: the ID was stored in a glTF-illegal number format, and the ID didn't match the database ID for objects lacking a GlobalId.)
-3. **Normals.** For each triangle it computes a "normal" (the direction the surface faces) so lighting/shading looks right. (We flagged this is done in slow pure-Python; numpy would speed it up — a pending cleanup.)
+3. **Normals.** For each triangle it computes a "normal" (the direction the surface faces) so lighting/shading looks right. Later code has vectorized this GLB writer hot path with numpy, so it is no longer the same pure-Python hotspot described in the original snapshot.
 4. **Writes the GLB container**: a 12-byte header + a JSON chunk (the structure: which buffer, what colors) + a BIN chunk (the raw binary vertex bytes).
 
 The `RenderPackage` / `RenderTile` database rows record *where* these blobs live and their metadata (object count, byte size, RTC origin). The actual geometry bytes live in storage, **not** in the database.
@@ -174,7 +176,7 @@ So your mind-map's last arrow ("JS feeds Three.js") is intact — it's just now 
 
 In rough order:
 
-1. **A large-coordinate test (precision proof).** The current files sit near the origin, so the jitter problem can't actually appear. Plan: take a sample and shift it by +500,000 to force the problem, and confirm the RTC fix really removes the shaking. *Why it matters:* it's the one big risk we haven't truly proven.
+1. **A large-coordinate test (precision proof).** The current files sit near the origin, so the jitter problem can't actually appear. A synthetic +500,000 / +2,800,000 GLB/RTC regression now exists, but the real browser/orbit proof still needs a plant-global/georeferenced IFC. *Why it matters:* it remains the biggest precision risk we cannot fully close with local-coordinate samples.
 2. **A known-dimension unit check.** Convert an object known to be exactly 1 m and confirm it renders as 1 m — and especially check the file that declares **feet**, since unit mistakes cause silent 0.3 m / 3 m / 1000× scale errors. (Half-done: the metre case passes; the feet case is pending.)
 3. **meshopt compression.** A standard glTF compression that shrinks the GLB further and loads faster — the direct lever on file size. (The biggest "make it lighter" win still on the table.)
 4. **Faster conversion (numpy).** Replace slow pure-Python loops in `glb.py` with vectorised maths to cut the 17 s.

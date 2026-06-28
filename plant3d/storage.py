@@ -5,10 +5,6 @@ from django.conf import settings
 from django.core.exceptions import SuspiciousFileOperation
 
 
-def plant3d_storage_root():
-    return Path(settings.MEDIA_ROOT) / "plant3d"
-
-
 def safe_name(name):
     clean = Path(str(name or "upload.bin")).name.strip()
     return clean or "upload.bin"
