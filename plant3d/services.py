@@ -7,6 +7,7 @@ import time
 from django.db import transaction
 from django.utils import timezone
 
+from .compression import compress_glb_meshopt
 from .glb import build_glb_from_meshes
 from .parsers.ifc import parse_multiple_ifc_uploads
 
@@ -286,17 +287,37 @@ def _mark_job_running(job, progress_percent):
     job.save(update_fields=["status", "progress_percent", "started_at", "completed_at", "error_message", "updated_at"])
 
 
+def _update_job_progress(job, progress_percent, stage):
+    if job is None:
+        return
+    next_progress = max(int(job.progress_percent or 0), int(progress_percent or 0))
+    job.progress_percent = min(next_progress, 99)
+    stage_text = str(stage or "").strip()
+    if stage_text:
+        job.metrics = {
+            **(job.metrics or {}),
+            "stage": stage_text,
+            "stage_updated_at": timezone.now().isoformat(),
+        }
+        log_line = f"{timezone.now().isoformat()} [{job.progress_percent}%] {stage_text}"
+        job.log = f"{job.log}\n{log_line}".strip() if job.log else log_line
+    job.save(update_fields=["progress_percent", "metrics", "log", "updated_at"])
+
+
 def run_metadata_conversion(source_model, job=None, tool_name="plant3d.metadata", tool_version="0.1"):
     job = job or queue_metadata_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
     _mark_job_running(job, 10)
     started = time.perf_counter()
 
     try:
+        _update_job_progress(job, 20, "Reading source metadata")
         manifest = build_metadata_manifest(source_model)
+        _update_job_progress(job, 60, "Writing metadata manifest")
         manifest_key = render_manifest_storage_key(source_model.pk)
         manifest_text = json.dumps(manifest, indent=2, sort_keys=True)
         write_text(manifest_key, manifest_text)
         manifest_size = stat_size(manifest_key)
+        _update_job_progress(job, 85, "Indexing metadata package")
 
         with transaction.atomic():
             package = RenderPackage.objects.create(
@@ -331,6 +352,7 @@ def run_metadata_conversion(source_model, job=None, tool_name="plant3d.metadata"
                 "manifest_storage_key": manifest_key,
                 "manifest_bytes": manifest_size,
                 "conversion_scope": "metadata-only",
+                "stage": "completed",
                 "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
             }
             job.save(update_fields=[
@@ -813,7 +835,9 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
     started = time.perf_counter()
 
     try:
+        _update_job_progress(job, 15, "Parsing IFC geometry from source")
         context = _ifc_scene_context(source_model)
+        _update_job_progress(job, 55, "Building JSON debug tile")
         meshes = context["meshes"]
         stats = context["stats"]
         unit_hints = context["unit_hints"]
@@ -844,6 +868,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
         tile_text = json.dumps(tile_payload, separators=(",", ":"))
         write_text(tile_key, tile_text)
         tile_size = stat_size(tile_key)
+        _update_job_progress(job, 75, "Writing render package rows")
 
         with transaction.atomic():
             package = RenderPackage.objects.create(
@@ -889,6 +914,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                 },
             )
             indexed_count = _index_scene_objects(source_model, package, tile, meshes)
+            _update_job_progress(job, 90, "Indexing model objects")
 
             source_model.declared_unit = source_model.declared_unit or (
                 str(stats.get("ifc_declared_length_unit") or stats.get("coordinate_unit") or "").upper()
@@ -917,6 +943,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                 "mesh_count": len(meshes),
                 "model_object_count": indexed_count,
                 "conversion_scope": "ifc-geometry-json",
+                "stage": "completed",
                 "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
                 "source_unit_hints": unit_hints,
                 "unit_metadata": unit_metadata,
@@ -948,7 +975,9 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
     started = time.perf_counter()
 
     try:
+        _update_job_progress(job, 15, "Parsing IFC geometry from source")
         context = _ifc_scene_context(source_model)
+        _update_job_progress(job, 45, "Grouping meshes into GLB child tiles")
         meshes = context["meshes"]
         stats = context["stats"]
         unit_hints = context["unit_hints"]
@@ -984,6 +1013,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
         tile_descriptors = []
         feature_id_offset = 0
         for sequence, group in enumerate(tile_groups, start=1):
+            _update_job_progress(job, 45 + min(30, int((sequence - 1) * 30 / max(len(tile_groups), 1))), f"Building GLB tile {sequence}/{len(tile_groups)}")
             tile_id = group["tile_id"]
             tile_bounds = group["bounds"]
             tile_origin_source_xyz, tile_rtc_origin_render_xyz = _rtc_origins_from_raw_bounds(
@@ -1013,6 +1043,8 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 stable_id_resolver=lambda mesh: _mesh_stable_id(source_model, mesh),
                 feature_id_offset=feature_id_offset,
             )
+            uncompressed_glb_size = len(glb_bytes)
+            glb_bytes, compression = compress_glb_meshopt(glb_bytes)
             sidecar.update(
                 {
                     "tile_id": tile_id,
@@ -1027,6 +1059,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                     "gltf_axis_convention": base_glb_metadata["gltf_axis_convention"],
                     "rtc_origin_render_xyz": tile_rtc_origin_render_xyz,
                     "package_rtc_origin_render_xyz": rtc_origin_render_xyz,
+                    "compression": compression,
                 }
             )
             write_bytes(glb_key, glb_bytes)
@@ -1041,8 +1074,10 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                     "glb_key": glb_key,
                     "sidecar_key": sidecar_key,
                     "glb_size": glb_size,
+                    "uncompressed_glb_size": uncompressed_glb_size,
                     "sidecar_size": sidecar_size,
                     "sidecar": sidecar,
+                    "compression": compression,
                     "tile_meshes": group["meshes"],
                     "rtc_origin_render_xyz": tile_rtc_origin_render_xyz,
                     "origin_source_xyz": tile_origin_source_xyz,
@@ -1053,6 +1088,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 }
             )
 
+        _update_job_progress(job, 78, "Writing tileset manifest")
         if len(tile_descriptors) == 1:
             only_tile = tile_descriptors[0]
             tileset = _build_single_tile_tileset(
@@ -1080,8 +1116,10 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
         write_text(tileset_key, json.dumps(tileset, separators=(",", ":")))
         tileset_size = stat_size(tileset_key)
         total_glb_size = sum(descriptor["glb_size"] for descriptor in tile_descriptors)
+        total_uncompressed_glb_size = sum(descriptor["uncompressed_glb_size"] for descriptor in tile_descriptors)
         total_sidecar_size = sum(descriptor["sidecar_size"] for descriptor in tile_descriptors)
         total_render_batch_count = sum(descriptor["render_batch_count"] for descriptor in tile_descriptors)
+        _update_job_progress(job, 85, "Writing render package rows")
 
         with transaction.atomic():
             package = RenderPackage.objects.create(
@@ -1108,7 +1146,18 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                     "tileset_storage_key": tileset_key,
                     "tileset_bytes": tileset_size,
                     "glb_bytes": total_glb_size,
+                    "uncompressed_glb_bytes": total_uncompressed_glb_size,
                     "sidecar_bytes": total_sidecar_size,
+                    "meshopt_compression": {
+                        "status": "completed" if any(
+                            descriptor["compression"].get("status") == "completed" for descriptor in tile_descriptors
+                        ) else tile_descriptors[0]["compression"].get("status", "skipped") if tile_descriptors else "skipped",
+                        "enabled": any(descriptor["compression"].get("enabled") for descriptor in tile_descriptors),
+                        "input_bytes": total_uncompressed_glb_size,
+                        "output_bytes": total_glb_size,
+                        "ratio": round(total_glb_size / total_uncompressed_glb_size, 4) if total_uncompressed_glb_size else 1.0,
+                        "tiles": [descriptor["compression"] for descriptor in tile_descriptors],
+                    },
                     "render_batch_count": total_render_batch_count,
                     "feature_id_attribute": tile_descriptors[0]["feature_id_attribute"] if tile_descriptors else "_FEATURE_ID_0",
                     "tiling_strategy": "source-bounds-grid" if len(tile_descriptors) > 1 else "single-root-tile-spike",
@@ -1133,6 +1182,8 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                         "tile_type": "ifc-glb",
                         "sidecar_storage_key": descriptor["sidecar_key"],
                         "sidecar_bytes": descriptor["sidecar_size"],
+                        "uncompressed_glb_bytes": descriptor["uncompressed_glb_size"],
+                        "compression": descriptor["compression"],
                         "tileset_storage_key": tileset_key,
                         "coordinate_transform": descriptor["coordinate_transform"],
                         "origin_source_xyz": descriptor["origin_source_xyz"],
@@ -1148,6 +1199,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 )
                 tile_mesh_pairs.append((tile, descriptor["tile_meshes"]))
             indexed_count = _index_scene_objects_by_tile(source_model, package, tile_mesh_pairs)
+            _update_job_progress(job, 92, "Indexing model objects")
 
             source_model.declared_unit = source_model.declared_unit or (
                 str(stats.get("ifc_declared_length_unit") or stats.get("coordinate_unit") or "").upper()
@@ -1174,6 +1226,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
             job.completed_at = timezone.now()
             job.metrics = {
                 "glb_bytes": total_glb_size,
+                "uncompressed_glb_bytes": total_uncompressed_glb_size,
                 "sidecar_bytes": total_sidecar_size,
                 "tileset_storage_key": tileset_key,
                 "tileset_bytes": tileset_size,
@@ -1185,7 +1238,18 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 "feature_count": sum(len(descriptor["sidecar"]["object_features"]) for descriptor in tile_descriptors),
                 "tiling_strategy": "source-bounds-grid" if len(tile_descriptors) > 1 else "single-root-tile-spike",
                 "target_objects_per_tile": GLB_TARGET_OBJECTS_PER_TILE,
+                "meshopt_compression": {
+                    "status": "completed" if any(
+                        descriptor["compression"].get("status") == "completed" for descriptor in tile_descriptors
+                    ) else tile_descriptors[0]["compression"].get("status", "skipped") if tile_descriptors else "skipped",
+                    "enabled": any(descriptor["compression"].get("enabled") for descriptor in tile_descriptors),
+                    "input_bytes": total_uncompressed_glb_size,
+                    "output_bytes": total_glb_size,
+                    "ratio": round(total_glb_size / total_uncompressed_glb_size, 4) if total_uncompressed_glb_size else 1.0,
+                    "tiles": [descriptor["compression"] for descriptor in tile_descriptors],
+                },
                 "conversion_scope": "ifc-glb",
+                "stage": "completed",
                 "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
                 "source_unit_hints": unit_hints,
                 "unit_metadata": unit_metadata,
@@ -1208,9 +1272,13 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
         raise
 
 
-def execute_conversion_job(job):
-    if job.status not in {"queued", "failed"}:
-        raise ValueError(f"Conversion job {job.pk} is not queued or failed.")
+def execute_conversion_job(job, accept_claimed=False):
+    allowed_statuses = {"queued", "failed"}
+    if accept_claimed:
+        allowed_statuses.add("running")
+    if job.status not in allowed_statuses:
+        expected = "queued, failed, or claimed/running" if accept_claimed else "queued or failed"
+        raise ValueError(f"Conversion job {job.pk} is not {expected}.")
 
     source_model = job.source_model
     if job.job_type == "metadata_index":

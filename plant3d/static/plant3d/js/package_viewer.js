@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 const viewer = document.getElementById('viewer');
@@ -57,6 +58,10 @@ let runtimeStats = {
   qualityMode: 'adaptive-idle',
   pickLatencyMs: 0,
   metadataLatencyMs: 0,
+  totalTileCount: 0,
+  loadedTileCount: 0,
+  loadingTileCount: 0,
+  streamingMode: '',
   package: null,
 };
 let framesSinceFpsSample = 0;
@@ -65,11 +70,19 @@ let isInteracting = false;
 let lowFpsSamples = 0;
 let highFpsSamples = 0;
 let restoreQualityTimer = null;
+let glbTileStates = [];
+let glbPackageOrigin = [0, 0, 0];
+let isStreamingUpdateRunning = false;
+let lastStreamingUpdateAt = 0;
 
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 const gltfLoader = new GLTFLoader();
+gltfLoader.setMeshoptDecoder(MeshoptDecoder);
 const pickProxyMaterial = new THREE.MeshBasicMaterial({ visible: false });
+const MAX_LOADED_GLB_TILES = 6;
+const TILE_STREAM_INTERVAL_MS = 500;
+const TILE_LOAD_BATCH_SIZE = 2;
 const highlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffb020,
   wireframe: true,
@@ -118,7 +131,10 @@ function renderMetrics() {
     `<p class="kv"><span>Feature IDs</span><strong>${runtimeStats.featureCount}</strong></p>`,
     `<p class="kv"><span>Triangles</span><strong>${runtimeStats.triangleCount}</strong></p>`,
     `<p class="kv"><span>Tiles</span><strong>${runtimeStats.tileCount}</strong></p>`,
+    `<p class="kv"><span>Loaded Tiles</span><strong>${runtimeStats.loadedTileCount}/${runtimeStats.totalTileCount || runtimeStats.tileCount}</strong></p>`,
+    `<p class="kv"><span>Loading Tiles</span><strong>${runtimeStats.loadingTileCount}</strong></p>`,
     `<p class="kv"><span>Load Time</span><strong>${runtimeStats.elapsedMs} ms</strong></p>`,
+    `<p class="kv"><span>Streaming</span><strong>${escapeHtml(runtimeStats.streamingMode)}</strong></p>`,
     `<p class="kv"><span>FPS</span><strong>${runtimeStats.fps}</strong></p>`,
     `<p class="kv"><span>Draw Calls</span><strong>${runtimeStats.drawCalls}</strong></p>`,
     `<p class="kv"><span>GPU Geometries</span><strong>${runtimeStats.geometryCount}</strong></p>`,
@@ -142,8 +158,33 @@ function setMetrics(pkg, meshCount, renderBatchCount, pickProxyCount, tileCount,
     pickProxyCount,
     featureCount,
     tileCount,
+    totalTileCount: pkg.tile_count || tileCount,
+    loadedTileCount: tileCount,
+    loadingTileCount: 0,
+    streamingMode: '',
     triangleCount,
     elapsedMs,
+  };
+  renderMetrics();
+}
+
+function setGlbRuntimeMetrics(pkg, elapsedMs = runtimeStats.elapsedMs) {
+  const loadedStates = glbTileStates.filter(state => state.loaded);
+  const loadingStates = glbTileStates.filter(state => state.loading);
+  runtimeStats = {
+    ...runtimeStats,
+    package: pkg,
+    meshCount: loadedStates.reduce((total, state) => total + state.meshCount, 0),
+    renderBatchCount: loadedStates.reduce((total, state) => total + state.renderBatchCount, 0),
+    pickProxyCount: 0,
+    featureCount: loadedStates.reduce((total, state) => total + state.featureCount, 0),
+    tileCount: loadedStates.length,
+    loadedTileCount: loadedStates.length,
+    loadingTileCount: loadingStates.length,
+    totalTileCount: glbTileStates.length,
+    triangleCount: loadedStates.reduce((total, state) => total + state.triangleCount, 0),
+    elapsedMs,
+    streamingMode: glbTileStates.length > MAX_LOADED_GLB_TILES ? `active-cap-${MAX_LOADED_GLB_TILES}` : 'load-all',
   };
   renderMetrics();
 }
@@ -267,8 +308,8 @@ function updateAdaptiveQuality(fps) {
   }
 }
 
-function frameScene() {
-  packageBounds = new THREE.Box3().setFromObject(root);
+function frameScene(boundsOverride = null) {
+  packageBounds = boundsOverride instanceof THREE.Box3 ? boundsOverride.clone() : new THREE.Box3().setFromObject(root);
   if (packageBounds.isEmpty()) {
     camera.position.set(8, 8, 8);
     controls.target.set(0, 0, 0);
@@ -287,6 +328,216 @@ function frameScene() {
   camera.updateProjectionMatrix();
   controls.target.copy(center);
   controls.update();
+}
+
+function sourceBoundsHalfExtents(rawBounds, scaleToM = 1.0) {
+  if (!rawBounds) return new THREE.Vector3(1, 1, 1);
+  const scale = Number(scaleToM || 1);
+  const halfX = Math.max(Math.abs(Number(rawBounds.max_x || 0) - Number(rawBounds.min_x || 0)) * scale / 2, 0.001);
+  const halfY = Math.max(Math.abs(Number(rawBounds.max_z || 0) - Number(rawBounds.min_z || 0)) * scale / 2, 0.001);
+  const halfZ = Math.max(Math.abs(Number(rawBounds.max_y || 0) - Number(rawBounds.min_y || 0)) * scale / 2, 0.001);
+  return new THREE.Vector3(halfX, halfY, halfZ);
+}
+
+function approximatePackageBounds(pkg) {
+  const scaleToM = pkg.metadata?.unit_metadata?.render_coordinate_scale_to_m || 1;
+  const half = sourceBoundsHalfExtents(pkg.bounds || {}, scaleToM);
+  return new THREE.Box3(half.clone().multiplyScalar(-1), half);
+}
+
+function tileCenterForState(tile) {
+  const origin = Array.isArray(tile.rtc_origin) ? tile.rtc_origin : glbPackageOrigin;
+  return new THREE.Vector3(
+    Number(origin[0] || 0) - Number(glbPackageOrigin[0] || 0),
+    Number(origin[1] || 0) - Number(glbPackageOrigin[1] || 0),
+    Number(origin[2] || 0) - Number(glbPackageOrigin[2] || 0),
+  );
+}
+
+function tileRadiusForState(pkg, tile) {
+  const scaleToM = pkg.metadata?.unit_metadata?.render_coordinate_scale_to_m || 1;
+  return sourceBoundsHalfExtents(tile.bounds || pkg.bounds || {}, scaleToM).length();
+}
+
+function disposeObject3D(object) {
+  object.traverse(node => {
+    if (node.geometry) node.geometry.dispose();
+    if (node.material) {
+      if (Array.isArray(node.material)) {
+        node.material.forEach(material => material.dispose?.());
+      } else {
+        node.material.dispose?.();
+      }
+    }
+  });
+}
+
+function prepareGlbTileStates(pkg) {
+  glbPackageOrigin = Array.isArray(pkg.metadata?.rtc_origin_render_xyz)
+    ? pkg.metadata.rtc_origin_render_xyz
+    : [0, 0, 0];
+  glbTileStates = (pkg.tiles || []).map(tile => {
+    const center = tileCenterForState(tile);
+    return {
+      tile,
+      key: tile.tile_id || String(tile.id),
+      center,
+      radius: tileRadiusForState(pkg, tile),
+      loaded: false,
+      loading: false,
+      group: null,
+      meshCount: 0,
+      renderBatchCount: 0,
+      triangleCount: 0,
+      featureCount: 0,
+      lastVisibleAt: 0,
+    };
+  });
+}
+
+function glbFrustum() {
+  camera.updateMatrixWorld();
+  const matrix = new THREE.Matrix4().multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+  return new THREE.Frustum().setFromProjectionMatrix(matrix);
+}
+
+function activeTileStates() {
+  if (glbTileStates.length <= MAX_LOADED_GLB_TILES) return glbTileStates;
+
+  const frustum = glbFrustum();
+  const target = controls.target || new THREE.Vector3();
+  const now = performance.now();
+  const scored = glbTileStates.map(state => {
+    const visible = frustum.intersectsSphere(new THREE.Sphere(state.center, state.radius));
+    if (visible) state.lastVisibleAt = now;
+    return {
+      state,
+      visible,
+      distance: state.center.distanceTo(target),
+    };
+  });
+
+  const visibleStates = scored
+    .filter(item => item.visible)
+    .sort((a, b) => a.distance - b.distance)
+    .map(item => item.state);
+  if (!visibleStates.length) {
+    return scored.sort((a, b) => a.distance - b.distance).slice(0, 1).map(item => item.state);
+  }
+  return visibleStates.slice(0, MAX_LOADED_GLB_TILES);
+}
+
+async function loadGlbTileState(state, pkg) {
+  if (state.loaded || state.loading) return;
+  state.loading = true;
+  setGlbRuntimeMetrics(pkg);
+  const tile = state.tile;
+  const blobUrl = tile.blob_url || tile.url;
+  if (!blobUrl) {
+    state.loading = false;
+    return;
+  }
+
+  try {
+    if (tile.metadata_url) {
+      try {
+        const sidecarResponse = await fetch(tile.metadata_url);
+        if (sidecarResponse.ok) {
+          const sidecar = await sidecarResponse.json();
+          const objectFeatures = Array.isArray(sidecar.object_features) ? sidecar.object_features : [];
+          state.featureCount = objectFeatures.length;
+          for (const feature of objectFeatures) {
+            const featureId = Number(feature.feature_id);
+            if (!Number.isFinite(featureId)) continue;
+            const objectSummary = objectIndex.get(feature.stable_id) || objectIndex.get(feature.source_object_id);
+            featureIndex.set(featureId, {
+              ...feature,
+              objectSummary: objectSummary || null,
+            });
+          }
+        }
+      } catch (error) {
+        // Sidecar metrics are useful, but GLB rendering should not depend on them.
+      }
+    }
+
+    const gltf = await gltfLoader.loadAsync(blobUrl);
+    const tileRoot = gltf.scene || new THREE.Group();
+    tileRoot.position.copy(state.center);
+    tileRoot.userData.tileKey = state.key;
+    let meshCount = 0;
+    let renderBatchCount = 0;
+    let triangleCount = 0;
+    tileRoot.traverse(node => {
+      if (!node.isMesh) return;
+      meshCount += 1;
+      renderBatchCount += 1;
+      node.userData = {
+        ...(node.userData || {}),
+        packageFormat: 'GLB',
+        tileKey: state.key,
+      };
+      selectableMeshes.push(node);
+      const geometry = node.geometry;
+      const index = geometry?.index;
+      const position = geometry?.getAttribute?.('position');
+      if (index) {
+        triangleCount += Math.floor(index.count / 3);
+      } else if (position) {
+        triangleCount += Math.floor(position.count / 3);
+      }
+    });
+    root.add(tileRoot);
+    state.group = tileRoot;
+    state.meshCount = meshCount;
+    state.renderBatchCount = renderBatchCount;
+    state.triangleCount = triangleCount;
+    state.loaded = true;
+    packageBounds.union(new THREE.Box3().setFromObject(tileRoot));
+  } catch (error) {
+    setStatus(`Unable to load GLB tile ${state.key}: ${error.message || 'unknown error'}`);
+  } finally {
+    state.loading = false;
+    setGlbRuntimeMetrics(pkg);
+  }
+}
+
+function unloadGlbTileState(state, pkg) {
+  if (!state.loaded || !state.group) return;
+  root.remove(state.group);
+  disposeObject3D(state.group);
+  selectableMeshes = selectableMeshes.filter(mesh => mesh.userData?.tileKey !== state.key);
+  state.group = null;
+  state.loaded = false;
+  state.meshCount = 0;
+  state.renderBatchCount = 0;
+  state.triangleCount = 0;
+  setGlbRuntimeMetrics(pkg);
+}
+
+async function updateGlbTileStreaming(pkg, force = false) {
+  if (!glbTileStates.length || isStreamingUpdateRunning) return;
+  const now = performance.now();
+  if (!force && now - lastStreamingUpdateAt < TILE_STREAM_INTERVAL_MS) return;
+  lastStreamingUpdateAt = now;
+  isStreamingUpdateRunning = true;
+  try {
+    const active = new Set(activeTileStates().map(state => state.key));
+    for (const state of glbTileStates) {
+      if (!active.has(state.key) && glbTileStates.length > MAX_LOADED_GLB_TILES) {
+        unloadGlbTileState(state, pkg);
+      }
+    }
+    const candidates = glbTileStates.filter(state => active.has(state.key) && !state.loaded && !state.loading);
+    for (const state of candidates.slice(0, TILE_LOAD_BATCH_SIZE)) {
+      await loadGlbTileState(state, pkg);
+    }
+    const loadedCount = glbTileStates.filter(state => state.loaded).length;
+    const loadingCount = glbTileStates.filter(state => state.loading).length;
+    setStatus(`Loaded GLB package tile stream: ${loadedCount}/${glbTileStates.length} tile(s) loaded, ${loadingCount} loading. Feature-ID picking enabled; BVH acceleration deferred.`);
+  } finally {
+    isStreamingUpdateRunning = false;
+  }
 }
 
 async function loadPackage() {
@@ -359,73 +610,13 @@ async function loadGlbPackage(pkg, started) {
   indexPackageObjects(pkg);
   featureIndex = new Map();
   selectableMeshes = [];
-  const packageOrigin = Array.isArray(pkg.metadata?.rtc_origin_render_xyz)
-    ? pkg.metadata.rtc_origin_render_xyz
-    : [0, 0, 0];
-  let meshCount = 0;
-  let renderBatchCount = 0;
-  let triangleCount = 0;
-  let tileCount = 0;
-  let featureCount = 0;
-
-  for (const tile of pkg.tiles || []) {
-    const blobUrl = tile.blob_url || tile.url;
-    if (!blobUrl) continue;
-    if (tile.metadata_url) {
-      try {
-        const sidecarResponse = await fetch(tile.metadata_url);
-        if (sidecarResponse.ok) {
-          const sidecar = await sidecarResponse.json();
-          const objectFeatures = Array.isArray(sidecar.object_features) ? sidecar.object_features : [];
-          featureCount += objectFeatures.length;
-          for (const feature of objectFeatures) {
-            const featureId = Number(feature.feature_id);
-            if (!Number.isFinite(featureId)) continue;
-            const objectSummary = objectIndex.get(feature.stable_id) || objectIndex.get(feature.source_object_id);
-            featureIndex.set(featureId, {
-              ...feature,
-              objectSummary: objectSummary || null,
-            });
-          }
-        }
-      } catch (error) {
-        // Sidecar metrics are useful, but GLB rendering should not depend on them.
-      }
-    }
-    const gltf = await gltfLoader.loadAsync(blobUrl);
-    const tileRoot = gltf.scene || new THREE.Group();
-    const tileOrigin = Array.isArray(tile.rtc_origin) ? tile.rtc_origin : packageOrigin;
-    tileRoot.position.set(
-      Number(tileOrigin[0] || 0) - Number(packageOrigin[0] || 0),
-      Number(tileOrigin[1] || 0) - Number(packageOrigin[1] || 0),
-      Number(tileOrigin[2] || 0) - Number(packageOrigin[2] || 0),
-    );
-    tileRoot.traverse(node => {
-      if (!node.isMesh) return;
-      meshCount += 1;
-      renderBatchCount += 1;
-      node.userData = {
-        ...(node.userData || {}),
-        packageFormat: 'GLB',
-      };
-      selectableMeshes.push(node);
-      const geometry = node.geometry;
-      const index = geometry?.index;
-      const position = geometry?.getAttribute?.('position');
-      if (index) {
-        triangleCount += Math.floor(index.count / 3);
-      } else if (position) {
-        triangleCount += Math.floor(position.count / 3);
-      }
-    });
-    root.add(tileRoot);
-    tileCount += 1;
-  }
-
-  frameScene();
+  prepareGlbTileStates(pkg);
+  const approximateBounds = approximatePackageBounds(pkg);
+  frameScene(approximateBounds);
   const elapsedMs = Math.round(performance.now() - started);
-  setStatus(`Loaded GLB package with ${meshCount} render mesh(es), ${featureCount} feature id(s), from ${tileCount} tile(s) in ${elapsedMs} ms. Picking uses feature IDs; BVH acceleration is deferred.`);
-  setMetrics(pkg, meshCount, renderBatchCount, 0, tileCount, triangleCount, elapsedMs, featureCount);
+  setGlbRuntimeMetrics(pkg, elapsedMs);
+  setStatus(`Prepared GLB tile stream with ${glbTileStates.length} tile(s) in ${elapsedMs} ms. Loading visible tiles...`);
+  await updateGlbTileStreaming(pkg, true);
 }
 
 function clearSelection() {
@@ -562,6 +753,9 @@ function pick(event) {
 
 function animate() {
   controls.update();
+  if (runtimeStats.package?.package_format === 'GLB') {
+    updateGlbTileStreaming(runtimeStats.package);
+  }
   renderer.render(scene, camera);
   runtimeStats.drawCalls = renderer.info.render.calls;
   runtimeStats.geometryCount = renderer.info.memory.geometries;
@@ -581,7 +775,7 @@ function animate() {
 window.addEventListener('resize', resize);
 controls.addEventListener('start', beginInteraction);
 controls.addEventListener('end', endInteraction);
-if (resetBtn) resetBtn.addEventListener('click', frameScene);
+if (resetBtn) resetBtn.addEventListener('click', () => frameScene());
 renderer.domElement.addEventListener('click', pick);
 resize();
 animate();

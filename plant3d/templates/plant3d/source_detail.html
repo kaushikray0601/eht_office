@@ -36,8 +36,8 @@
     {% endif %}
     <div id="conversionQueueStatus"></div>
     <p>
-      Queued conversions are processed by the local worker command:
-      <code>venv/bin/python manage.py process_plant3d_job --all</code>
+      Queued conversions are processed by the local worker. Keep this running in a separate terminal or worker container:
+      <code>venv/bin/python manage.py process_plant3d_job --watch</code>
     </p>
     <h2>Conversion Jobs</h2>
     <ul id="conversionJobList">
@@ -65,6 +65,6 @@
     </ul>
     <p><a href="{% url 'plant3d_source_upload' %}">Upload another source model</a></p>
   </main>
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260623_2" defer></script>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260628_worker1" defer></script>
 </body>
 </html>

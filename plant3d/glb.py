@@ -1,7 +1,8 @@
 import json
-import math
 import struct
 from collections import OrderedDict
+
+import numpy as np
 
 
 GL_ARRAY_BUFFER = 34962
@@ -31,64 +32,50 @@ def _default_mesh_stable_id(mesh):
     return str(mesh.get("uid") or "")
 
 
-def _add_normal(normals, index, nx, ny, nz):
-    offset = index * 3
-    normals[offset] += nx
-    normals[offset + 1] += ny
-    normals[offset + 2] += nz
-
-
 def _compute_normals(positions, indices):
-    normals = [0.0] * len(positions)
-    for cursor in range(0, len(indices), 3):
-        try:
-            ia, ib, ic = indices[cursor], indices[cursor + 1], indices[cursor + 2]
-            ax, ay, az = positions[ia * 3], positions[ia * 3 + 1], positions[ia * 3 + 2]
-            bx, by, bz = positions[ib * 3], positions[ib * 3 + 1], positions[ib * 3 + 2]
-            cx, cy, cz = positions[ic * 3], positions[ic * 3 + 1], positions[ic * 3 + 2]
-        except IndexError:
-            continue
+    positions_array = np.asarray(positions, dtype=np.float32).reshape((-1, 3))
+    normals = np.zeros_like(positions_array, dtype=np.float32)
+    if not len(positions_array) or len(indices) < 3:
+        return normals.reshape(-1)
 
-        ux, uy, uz = bx - ax, by - ay, bz - az
-        vx, vy, vz = cx - ax, cy - ay, cz - az
-        nx = uy * vz - uz * vy
-        ny = uz * vx - ux * vz
-        nz = ux * vy - uy * vx
-        _add_normal(normals, ia, nx, ny, nz)
-        _add_normal(normals, ib, nx, ny, nz)
-        _add_normal(normals, ic, nx, ny, nz)
+    triangle_count = len(indices) // 3
+    triangles = np.asarray(indices[: triangle_count * 3], dtype=np.int64).reshape((-1, 3))
+    valid = np.all((triangles >= 0) & (triangles < len(positions_array)), axis=1)
+    if not np.any(valid):
+        normals[:, 2] = 1.0
+        return normals.reshape(-1)
 
-    for cursor in range(0, len(normals), 3):
-        nx, ny, nz = normals[cursor], normals[cursor + 1], normals[cursor + 2]
-        length = math.sqrt(nx * nx + ny * ny + nz * nz)
-        if length:
-            normals[cursor] = nx / length
-            normals[cursor + 1] = ny / length
-            normals[cursor + 2] = nz / length
-        else:
-            normals[cursor] = 0.0
-            normals[cursor + 1] = 0.0
-            normals[cursor + 2] = 1.0
-    return normals
+    triangles = triangles[valid]
+    a = positions_array[triangles[:, 0]]
+    b = positions_array[triangles[:, 1]]
+    c = positions_array[triangles[:, 2]]
+    face_normals = np.cross(b - a, c - a).astype(np.float32, copy=False)
+    np.add.at(normals, triangles[:, 0], face_normals)
+    np.add.at(normals, triangles[:, 1], face_normals)
+    np.add.at(normals, triangles[:, 2], face_normals)
+
+    lengths = np.linalg.norm(normals, axis=1)
+    nonzero = lengths > 0
+    normals[nonzero] = normals[nonzero] / lengths[nonzero, None]
+    normals[~nonzero] = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+    return normals.reshape(-1)
 
 
 def _pack_f32(values):
-    return struct.pack("<" + "f" * len(values), *[float(value or 0.0) for value in values])
+    return np.asarray(values, dtype="<f4").tobytes()
 
 
 def _pack_indices(values, component_type):
     if component_type == GL_UNSIGNED_SHORT:
-        return struct.pack("<" + "H" * len(values), *values)
-    return struct.pack("<" + "I" * len(values), *values)
+        return np.asarray(values, dtype="<u2").tobytes()
+    return np.asarray(values, dtype="<u4").tobytes()
 
 
 def _bounds_for_positions(positions):
     if not positions:
         return [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]
-    xs = positions[0::3]
-    ys = positions[1::3]
-    zs = positions[2::3]
-    return [min(xs), min(ys), min(zs)], [max(xs), max(ys), max(zs)]
+    positions_array = np.asarray(positions, dtype=np.float32).reshape((-1, 3))
+    return positions_array.min(axis=0).astype(float).tolist(), positions_array.max(axis=0).astype(float).tolist()
 
 
 def build_glb_from_meshes(meshes, metadata=None, stable_id_resolver=None, feature_id_offset=0):

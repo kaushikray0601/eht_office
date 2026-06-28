@@ -22,6 +22,8 @@ from .services import (
 )
 from .storage import exists as storage_exists, read_bytes, read_text
 
+PLANT3D_WORKER_COMMAND = "venv/bin/python manage.py process_plant3d_job --watch"
+
 
 def platform_home_view(request):
     sources = source_models_for_user(request.user)
@@ -104,6 +106,7 @@ def source_metadata_convert_view(request, source_id):
                 "url": reverse("plant3d_job_json", args=[job.pk]),
             },
             "process_hint": f"venv/bin/python manage.py process_plant3d_job {job.pk}",
+            "worker_hint": PLANT3D_WORKER_COMMAND,
         },
         status=202,
     )
@@ -124,6 +127,7 @@ def source_ifc_geometry_convert_view(request, source_id):
                 "url": reverse("plant3d_job_json", args=[job.pk]),
             },
             "process_hint": f"venv/bin/python manage.py process_plant3d_job {job.pk}",
+            "worker_hint": PLANT3D_WORKER_COMMAND,
         },
         status=202,
     )
@@ -144,6 +148,7 @@ def source_ifc_glb_convert_view(request, source_id):
                 "url": reverse("plant3d_job_json", args=[job.pk]),
             },
             "process_hint": f"venv/bin/python manage.py process_plant3d_job {job.pk}",
+            "worker_hint": PLANT3D_WORKER_COMMAND,
         },
         status=202,
     )
@@ -164,6 +169,7 @@ def job_json_view(request, job_id):
             "error_message": job.error_message,
             "metrics": job.metrics,
             "process_hint": f"venv/bin/python manage.py process_plant3d_job {job.pk}",
+            "worker_hint": PLANT3D_WORKER_COMMAND,
             "package": {
                 "id": package.pk,
                 "package_format": package.package_format,

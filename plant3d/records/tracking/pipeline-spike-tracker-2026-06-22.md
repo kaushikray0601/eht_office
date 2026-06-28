@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: ready for execution planning
+Status: execution spike in progress; next focus is measured meshopt compression once `gltfpack` is available, then picking acceleration if needed
 
 ## Objective
 
@@ -89,7 +89,8 @@ The spike should answer:
 - [x] Run the IFC geometry conversion against real project/sample IFC files and record actual metrics.
 - [x] Evaluate first GLB/glTF output path with a binary GLB tile plus metadata sidecar.
 - [x] Add feature/object IDs to the first GLB path before treating GLB as more than a render smoke test.
-- [ ] Evaluate meshopt compression feasibility if setup cost is reasonable.
+- [x] Add optional meshopt/gltfpack compression hook and viewer decoder support.
+- [ ] Measure real meshopt compression ratio and decode/load time after `gltfpack` is available in the worker image.
 - [x] Record metadata-manifest output size.
 - [x] Record sample-file geometry conversion time and output size.
 - [x] Record extracted units, bounds, object count, and coordinate frame assumptions for available samples.
@@ -99,11 +100,11 @@ The spike should answer:
 
 ## Phase 4 - Tiling And Precision Experiment
 
-- [ ] Create a tiled or chunked package manifest.
+- [x] Create a tiled or chunked package manifest.
 - [x] Define glTF axis convention before expanding GLB output: GLB buffers use current `render_xyz_m` frame, source Z is emitted as glTF/Three.js Y-up, and no additional root transform is applied.
 - [x] Start a primitive 3D-Tiles-style `tileset.json` manifest after feature IDs are in the single-tile GLB.
 - [x] Split GLB output into first spatial child tiles under the `tileset.json` root.
-- [ ] Add viewer-side tile culling/streaming so child tiles are not all loaded at once.
+- [x] Add viewer-side tile culling/streaming so child tiles are not all loaded at once.
 - [x] Add tile-local origin/RTC metadata for the current single JSON geometry tile.
 - [x] Store the source-coordinate origin on the tile row and tile payload.
 - [x] Add transform metadata showing source axis/order, render axis/order, origin, and scale.
@@ -192,11 +193,12 @@ Decision rules:
 - Coordinate precision problems may not show unless source files use large coordinates.
 - Browser memory and draw calls can become the limiting factor before triangle count.
 - Conversion now runs off-request through a management-command worker for the spike. Full Celery/RQ/SSE infrastructure is still required before user-facing or long-running production workflows.
+- The spike worker now has a documented long-running container role in `plant3d/records/operations/worker-container-runbook-2026-06-28.md`; local/manual operation should use `process_plant3d_job --watch`, not repeated `--all` runs.
 - The IFC parser is now copied under `plant3d/parsers/`, closing the immediate platform-boundary dependency on `idfviewer`. Future parser refactor/shared ownership is still possible.
 - Package/tile JSON is still served through Django. This is acceptable for the spike but must move toward signed object-storage URLs before real-scale use.
 - First GLB package output is now available and is materially smaller than JSON on the tested samples, but still served through Django during the spike.
 - Claude's render-format research confirms the next serious stack direction: GLB + meshopt + GPU instancing + feature IDs, arranged by a 3D-Tiles-style manifest and rendered in Three.js with `3d-tiles-renderer` / `three-mesh-bvh` where needed. The current GLB pass is a smoke-test step, not the final runtime format.
-- RTC metadata is now frame-correct for the current single-tile JSON package, but real per-tile origins are still unproven until actual spatial tiling begins.
+- RTC metadata is now frame-correct for the current single-tile JSON package, and first spatial GLB child tiles now carry per-tile RTC origins. Real-file proof of tile-local precision/orbit stability remains pending.
 - The debug viewer now reduces visible draw calls by merging geometry by color, but object picking currently keeps per-object geometry proxies in memory. This is acceptable for the spike but not a final large-model strategy.
 - Source-detail job polling is a practical spike bridge, not the final progress architecture. Production still needs a real worker process plus SSE/WebSocket or push-style progress.
 - Source-detail polling must keep polling queued/running jobs until the worker completes them. A bug briefly made the page poll only once, which could hide completed package links until manual refresh.
@@ -210,6 +212,7 @@ Decision rules:
 - `ifc/Ifc2s3_Duplex_Electrical.ifc`: 1,602,758 bytes; IFC2X3; public/sample-looking Revit 2013 electrical file; header includes metre SI unit plus foot conversion unit.
 - `ifc/8-SSPAR-800205B.ifc`: 4,767,500 bytes; IFC2X3; Tekla Structures 2024 SP2 structural/surface geometry export; header declares millimetre SI length unit.
 - `ifc/8-SSPAR-800203.ifc`: 2,815,485 bytes; IFC2X3; Tekla Structures 2024 SP2 structural/surface geometry export; header declares millimetre SI length unit.
+- `ifc/8-SSPAR-800206A.ifc`: 9,402,996 bytes; IFC2X3; Tekla-style sample added by KR; header declares millimetre SI length unit; DB-backed GLB conversion previously produced 3,770 objects/features before the spatial child-tiling pass.
 
 These files are useful for first conversion and viewer testing, but they are smaller than the target 20 MB EPC-scale sample.
 The Tekla samples have plant-offset coordinates around X 540-590 and Y 2227-2282, but they do not prove very large national-grid/global-coordinate behavior.
@@ -247,28 +250,29 @@ Deferred / TODO:
 - F3 remains open: obtain one plant-global/georeferenced IFC with large coordinates before marking jitter, orbit stability, or RTC precision as proven.
 - D3 is closed for the platform boundary: `plant3d` now imports from `plant3d.parsers.ifc`, not `idfviewer.ifc_parser`.
 - Production delivery remains deferred: package/tile payloads should move from Django JSON responses to signed object-storage URLs before real scale.
-- Production package format remains partially deferred: first GLB+sidecar path exists, but compression, tiling, feature IDs, and 3D Tiles-style manifests remain open.
+- Production package format remains partially deferred: first GLB+sidecar, feature IDs, spatial child tiles, a 3D-Tiles-style manifest, first viewer-side tile streaming/culling, synthetic large-coordinate GLB child-tile regression, optional meshopt/gltfpack hook, and `MeshoptDecoder` viewer support exist. Measured compression, instancing, BVH acceleration, signed/object-storage delivery, and real plant-global precision proof remain open.
 - GLB feature IDs are now present in the first binary package path via `_FEATURE_ID_0` plus sidecar object-feature mapping. The viewer can now click GLB render meshes and resolve feature ID -> stable ID -> `ModelObject` metadata without hidden per-object proxies. BVH acceleration and shader/feature-ID highlighting are still deferred.
-- Unit/scale proof remains partially deferred: IFC `IfcUnitAssignment` and IfcOpenShell geometry settings are visible now, but we still need a known-dimension or source-system validation to confirm rendered geometry scale end-to-end.
+- Unit/scale proof is improved but not fully closed: IFC `IfcUnitAssignment`, IfcOpenShell geometry settings, and a synthetic known-one-metre conversion fixture now validate the service contract. A real source-system/exporter benchmark is still needed before trusting measurement/federation workflows.
 - Parser cleanup remains a TODO: the extracted parser is a direct copy for boundary safety, not yet a deeply refactored production parser.
 
 ## Immediate Next Actions
 
-1. Queue fresh GLB conversions for the Tekla samples and record actual tile counts/package sizes under the new spatial child-tiling path.
-2. Re-run browser GLB viewer checks after spatial child tiling and record whether loading all child tiles still feels acceptable.
-3. Add viewer-side tile culling/streaming so child tiles are not all fetched/rendered at once.
-4. Add the known-dimension unit validation fixture to close F4 when practical.
-5. Evaluate `three-mesh-bvh` acceleration for GLB picking if direct render-mesh raycast is sluggish on the larger samples.
-6. Gather the real 20 MB and/or plant-global IFC input when available.
-7. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+> **Claude sequence review (2026-06-23) — see audit R1-R3 / C1-C5.** KR confirmed real-GPU rendering is smooth (15-17 FPS is a headless artifact) and a plant-global IFC is weeks away. Claude recommended promoting a synthetic large-coordinate offset fixture, known-dimension unit fixture, and meshopt compression. The 2026-06-28 pass landed the synthetic known-one-metre fixture, a synthetic large-coordinate GLB child-tile regression, and first viewer streaming because package 24 already gave us a useful 9-child-tile runtime proof. The list below is the post-2026-06-28 order.
+
+1. Manually confirm package 24 or a freshly uploaded equivalent in the logged-in Django viewer and record subjective orbit feel plus loaded-tile behavior.
+2. Install/provide `gltfpack` in the worker environment, regenerate a GLB package, and measure real meshopt compression ratio plus browser decode/load time with `measure_plant3d_package`.
+3. Evaluate `three-mesh-bvh` acceleration for GLB picking if direct render-mesh raycast is sluggish on the larger samples.
+4. Add source-system/exporter known-dimension proof to complement the synthetic one-metre fixture.
+5. Gather the real 20 MB and/or plant-global IFC input when available.
+6. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
 Current manual check path:
 
 1. Upload one available local sample IFC from `ifc/` through `/plant3d/sources/upload/`.
-2. Run metadata conversion through the source detail page or POST endpoint.
-3. Process the queued job with `venv/bin/python manage.py process_plant3d_job <job_id>` or `venv/bin/python manage.py process_plant3d_job --next`.
-4. Run IFC JSON debug conversion and process the queued job.
-5. Queue the IFC GLB conversion and process that queued job.
+2. Start the local worker once in a separate terminal: `venv/bin/python manage.py process_plant3d_job --watch`.
+3. Run metadata conversion through the source detail page or POST endpoint.
+4. Run IFC JSON debug conversion if needed; the worker should pick it up automatically.
+5. Queue the IFC GLB conversion; the worker should pick it up automatically.
 6. Open both package viewers and compare package size/load behavior.
 
 ## Verification Log
@@ -345,6 +349,24 @@ Current manual check path:
 - 2026-06-23: Added first single-root 3D-Tiles-style `tileset.json` manifest for new GLB conversions. New GLB packages store the tileset as `manifest_storage_key`, keep per-tile feature metadata in the sidecar endpoint, and expose a runtime `tileset` payload through package JSON with API blob/metadata URLs. Older GLB packages without a tileset remain compatible through the existing tile list. `venv/bin/python -m py_compile plant3d/services.py plant3d/views.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
 - 2026-06-23: Closed Claude G1/G2 before spatial tiling: GLB `_FEATURE_ID_0` now uses glTF-valid `FLOAT` accessors instead of `UNSIGNED_INT`, and GLB sidecar stable IDs use the same resolver as indexed `ModelObject` rows so GUID-less meshes pick correctly. Added a GUID-less mesh regression test. `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
 - 2026-06-23: Added first spatial GLB child-tiling pass. Large GLB conversions are grouped by source-bounds grid at roughly 500 objects per tile, each child tile gets its own GLB, sidecar, feature-ID range, RTC origin, `RenderTile` row, and `tileset.json` child entry. The viewer applies `tile.rtc_origin - package.rtc_origin` so tile-local GLBs preserve model placement while still loading all tiles for now. Added a 501-object regression test. `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/views.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`, and `node --check /tmp/package_viewer.mjs` passed.
+- 2026-06-28: Recorded fresh spatial GLB child-tile conversion measurements for `Ifc2s3_Duplex_Electrical.ifc`, `8-SSPAR-800203.ifc`, `8-SSPAR-800205B.ifc`, and `8-SSPAR-800206A.ifc` in `plant3d/records/testing/ifc-sample-conversion-results-2026-06-23.md`. The 9.4 MB Tekla sample produced 9 child tiles, 3,770 objects, 5,107,980 GLB bytes, 1,315,122 sidecar bytes, 9,536 tileset bytes, 6,432,638 package bytes, and a 21,474 ms conversion.
+- 2026-06-28: Added first viewer-side GLB tile streaming/culling. The viewer now prepares tile state from package JSON, frames from package bounds before loading child GLBs, loads only active visible tiles up to a cap of 6 for larger packages, unloads inactive child tiles, and reports loaded/loading tile counts in runtime metrics. Browser/manual validation is still required on a logged-in local viewer session.
+- 2026-06-28: Added a synthetic known-one-metre IFC conversion fixture test. It proves the current service contract preserves a 1 m render extent across source bounds, RTC origin, local render coordinates, and reconstructed source coordinates. A real source-system/exporter scale benchmark remains open.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/views.py plant3d/tests.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after the viewer streaming and unit-fixture pass.
+- 2026-06-28: Static browser probe passed for real package 24 payloads using current `package_viewer.js`: 9 total child tiles, 6 loaded after probe, 2,468 feature IDs loaded, 123,620 triangles loaded, 60 FPS after orbit, 19 draw calls, 0 pick proxies, and nonblank canvas ratio 6.86%. Manual confirmation in the logged-in Django viewer remains useful before treating this as user-accepted performance.
+- 2026-06-28: Added `process_plant3d_job --watch` so local/dev and future worker containers can continuously process queued jobs instead of requiring repeated manual `--all` runs. `--next`, `--all`, and `--watch` now claim queued jobs before execution.
+- 2026-06-28: Added staged conversion progress (`stage` in job metrics plus log lines) for metadata, IFC JSON, and IFC GLB jobs. IfcOpenShell tessellation still has no internal progress callback, but the page now shows the long parsing stage instead of staying at an unexplained 5%.
+- 2026-06-28: Strengthened the synthetic large-coordinate GLB child-tiling regression: generated GLB child tiles now assert large render-frame RTC origins while GLB buffer positions remain local/small, keeping C1 covered until a real plant-global IFC arrives.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/glb.py plant3d/services.py plant3d/views.py plant3d/tests.py plant3d/management/commands/process_plant3d_job.py`, `node --check /tmp/source_detail.js`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after worker/progress/large-coordinate fixture pass. Plant3d suite: 33 tests.
+- 2026-06-28: Added optional meshopt/gltfpack compression hook for GLB tile bytes. If `PLANT3D_GLTFPACK_BIN` or `gltfpack` on PATH is available, conversion runs `gltfpack -cc` and records input/output byte metrics; otherwise conversion succeeds with compression status `skipped`.
+- 2026-06-28: Registered Three.js `MeshoptDecoder` in the GLB viewer so future `EXT_meshopt_compression` packages can load through the existing viewer path.
+- 2026-06-28: Vectorized GLB writer hot paths with numpy: normal calculation, float packing, index packing, and position bounds are now array-based instead of pure-Python loops.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/glb.py plant3d/compression.py plant3d/services.py plant3d/views.py plant3d/tests.py plant3d/management/commands/process_plant3d_job.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after meshopt-hook/numpy pass. Plant3d suite: 34 tests.
+- 2026-06-28: Added `plant3d/records/operations/worker-container-runbook-2026-06-28.md` documenting the `plant3d-worker` container role, current `--watch` command, job-claiming behavior, meshopt/gltfpack environment knobs, and production gaps before Celery/RQ/SSE.
+- 2026-06-28: `venv/bin/python manage.py check` and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after tracker/audit/runbook updates. Plant3d suite: 34 tests.
+- 2026-06-28: KR manual browser check confirmed no visible graphics degradation, no noticed side effects, and `process_plant3d_job --watch` works as the local long-running worker. One checked package reported 2,221 objects, 6/6 loaded tiles, 3,322,076 bytes, 151 ms viewer load time, 60 FPS, 24 draw calls, 0 pick proxies, and 13 ms metadata latency. Because the package has 6 total tiles, streaming mode was `load-all`, not partial active-cap streaming.
+- 2026-06-28: Added `measure_plant3d_package` management command to summarize render-package bytes and meshopt/gltfpack status from package/tile records. It reports recorded bytes, measured geometry/sidecar/manifest bytes, per-tile compression status, input/output bytes, saved bytes, and ratio, with human and JSON output. Real ratio measurement still waits for an installed `gltfpack` binary.
+- 2026-06-28: `venv/bin/python manage.py check` and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after package-measurement command pass. Plant3d suite: 35 tests.
 
 ## Platform Rules Discovered During Implementation
 
@@ -364,10 +386,10 @@ Current manual check path:
 - GLB packages should not reintroduce hidden per-object pick-proxy geometry. The next picking strategy should use feature IDs, object spans, BVH picking, or metadata-backed selection designed for binary packages.
 - Direct GLB render-mesh raycast is acceptable as the first feature-ID proof, but it is not the final acceleration strategy. If pick latency rises on larger samples, adopt `three-mesh-bvh` before adding more UI features.
 - Adaptive pixel ratio is a practical interaction bridge, not the final EPC-scale solution. If FPS remains poor while the viewer is already in `adaptive-interaction` or `adaptive-fps-downshift`, the next fix must be geometry-side: tiling, LOD, instancing, meshopt, or BVH/picking acceleration.
-- A single-root `tileset.json` is an architecture contract, not yet a performance feature. Real performance benefit begins when the root is split into spatial child GLB tiles and the viewer can stream/cull them.
+- A single-root `tileset.json` was only an architecture contract. The current path now has spatial child GLB tiles plus first viewer-side stream/cull behavior, but it still needs real browser measurements before performance claims.
 - Feature IDs in GLB must stay glTF-conformant before meshopt/gltfpack work begins. Use `FLOAT` or the future standard feature metadata extension, not `UNSIGNED_INT` vertex attributes.
 - GLB sidecar stable IDs and `ModelObject.stable_id` must be generated by the same resolver. Otherwise GUID-less IFC objects and future IDF/PCF objects will render but fail pick-to-metadata.
-- Spatial child tiles now exist in the package, but the current viewer still fetches and renders all child tiles. This proves the package shape and tile-local RTC, not final streaming performance.
+- Spatial child tiles now exist in the package and the current viewer no longer has to fetch/render all child tiles at once for packages above the active-tile cap. This proves the first streaming behavior, not final EPC-scale performance.
 - Local spike DB cleanup through Django admin is acceptable, but storage cleanup needs an explicit tool/command. Otherwise media blobs under `MEDIA_ROOT/plant3d` will become orphaned.
 - Spike UX should expose the exact worker command and poll job status from the source page so manual IFC testing does not depend on raw JSON pages or repeated full-page refreshes.
 - A queued job is not a failed conversion. In the current spike, no package/view link appears until `process_plant3d_job` runs and the source page sees the completed job.
@@ -382,10 +404,10 @@ When an IFC sample is available, test manually:
 2. Open `/plant3d/sources/upload/`.
 3. Upload an IFC file and confirm it redirects to the source detail page.
 4. Queue metadata conversion and confirm JSON response shows `status: queued`.
-5. Note the queued job ID and run `venv/bin/python manage.py process_plant3d_job <job_id>` or `venv/bin/python manage.py process_plant3d_job --all`.
+5. Start the local worker once in a separate terminal with `venv/bin/python manage.py process_plant3d_job --watch`; it should claim queued jobs automatically.
 6. Refresh the source detail page and confirm a metadata package appears.
 7. Run IFC geometry conversion and confirm JSON response shows `status: queued`.
-8. Process that queued job with `venv/bin/python manage.py process_plant3d_job <job_id>` or `venv/bin/python manage.py process_plant3d_job --all`.
+8. Confirm the already-running worker claims and processes the queued job.
 9. Queue and process IFC GLB conversion for the same source.
 10. Refresh the source detail page and open both JSON and GLB package viewer links.
 11. Confirm each model appears, can orbit/pan/zoom, and shows load status.

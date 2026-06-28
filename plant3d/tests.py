@@ -1,5 +1,7 @@
 import copy
+import io
 import json
+import os
 import struct
 import tempfile
 from decimal import Decimal
@@ -10,7 +12,7 @@ from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 
 from eht.models import ManagedProject, ProjectData
@@ -72,6 +74,29 @@ def glb_json_chunk(glb_bytes):
     if chunk_type != b"JSON":
         raise AssertionError("First GLB chunk is not JSON.")
     return json.loads(glb_bytes[20:20 + chunk_length].decode("utf-8"))
+
+
+def glb_json_and_bin_chunks(glb_bytes):
+    gltf = glb_json_chunk(glb_bytes)
+    first_chunk_length = struct.unpack_from("<I", glb_bytes, 12)[0]
+    second_chunk_offset = 20 + first_chunk_length
+    chunk_length, chunk_type = struct.unpack_from("<I4s", glb_bytes, second_chunk_offset)
+    if chunk_type != b"BIN\x00":
+        raise AssertionError("Second GLB chunk is not BIN.")
+    bin_offset = second_chunk_offset + 8
+    return gltf, glb_bytes[bin_offset:bin_offset + chunk_length]
+
+
+def glb_accessor_floats(glb_bytes, accessor_index):
+    gltf, bin_blob = glb_json_and_bin_chunks(glb_bytes)
+    accessor = gltf["accessors"][accessor_index]
+    if accessor["componentType"] != 5126:
+        raise AssertionError("Accessor is not FLOAT.")
+    buffer_view = gltf["bufferViews"][accessor["bufferView"]]
+    byte_offset = int(buffer_view.get("byteOffset", 0)) + int(accessor.get("byteOffset", 0))
+    component_count = {"SCALAR": 1, "VEC2": 2, "VEC3": 3, "VEC4": 4}[accessor["type"]]
+    value_count = accessor["count"] * component_count
+    return struct.unpack_from("<" + "f" * value_count, bin_blob, byte_offset)
 
 
 class FakeIfcEntity:
@@ -459,6 +484,95 @@ class Plant3DIntakeTests(TestCase):
         }
         return scene
 
+    def _known_one_meter_ifc_scene(self):
+        return {
+            "pipes": [],
+            "fittings": [],
+            "welds": [],
+            "supports": [],
+            "markers": [],
+            "meshes": [
+                {
+                    "uid": 1,
+                    "record_id": 9200,
+                    "kind": "IfcBuildingElementProxy",
+                    "mesh": {
+                        "positions": [
+                            -0.5, -0.5, -0.5,
+                            0.5, -0.5, -0.5,
+                            0.5, 0.5, -0.5,
+                            -0.5, 0.5, -0.5,
+                            -0.5, -0.5, 0.5,
+                            0.5, -0.5, 0.5,
+                            0.5, 0.5, 0.5,
+                            -0.5, 0.5, 0.5,
+                        ],
+                        "indices": [
+                            0, 1, 2, 0, 2, 3,
+                            4, 6, 5, 4, 7, 6,
+                            0, 4, 5, 0, 5, 1,
+                            1, 5, 6, 1, 6, 2,
+                            2, 6, 7, 2, 7, 3,
+                            3, 7, 4, 3, 4, 0,
+                        ],
+                        "color": [0.3, 0.6, 0.8],
+                    },
+                    "properties": {
+                        "ifc_class": "IfcBuildingElementProxy",
+                        "global_id": "known-box-guid-1",
+                        "component_ref": "KNOWN-1M",
+                        "name": "Known 1m Box",
+                        "hierarchy_group": "Fixture / IfcBuildingElementProxy",
+                        "spatial_path": ["IfcBuilding:Fixture", "IfcBuildingStorey:Validation"],
+                        "raw_bounds": {
+                            "min_x": 10.0,
+                            "max_x": 11.0,
+                            "min_y": 20.0,
+                            "max_y": 21.0,
+                            "min_z": 30.0,
+                            "max_z": 31.0,
+                        },
+                    },
+                }
+            ],
+            "stats": {
+                "source_format": "IFC",
+                "coordinate_unit": "M",
+                "coordinate_scale_to_m": 1.0,
+                "display_unit": "m",
+                "unit_confidence": "ifcopenshell_geometry_si",
+                "ifc_declared_length_units": [
+                    {
+                        "entity": "IfcSIUnit",
+                        "unit_type": "LENGTHUNIT",
+                        "name": "METRE",
+                        "prefix": "",
+                        "display_unit": "m",
+                        "scale_to_m": 1.0,
+                        "confidence": "ifc_unit_assignment",
+                    }
+                ],
+                "ifc_declared_length_unit": "m",
+                "ifc_declared_length_unit_name": "METRE",
+                "ifc_declared_length_unit_entity": "IfcSIUnit",
+                "ifc_declared_length_scale_to_m": 1.0,
+                "ifc_declared_length_confidence": "ifc_unit_assignment",
+                "geometry_unit": "M",
+                "geometry_scale_to_m": 1.0,
+                "geometry_unit_basis": "ifcopenshell_geom_iterator",
+                "ifcopenshell_length_unit_setting": 1.0,
+                "ifcopenshell_convert_back_units": False,
+                "raw_bounds": {
+                    "min_x": 10.0,
+                    "max_x": 11.0,
+                    "min_y": 20.0,
+                    "max_y": 21.0,
+                    "min_z": 30.0,
+                    "max_z": 31.0,
+                },
+            },
+        }
+
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_geometry_conversion_writes_tile_and_object_index(self, mock_parse):
         mock_parse.return_value = self._sample_ifc_scene()
@@ -517,6 +631,49 @@ class Plant3DIntakeTests(TestCase):
             render_world[1] / scale,
         ]
         self.assertEqual(reconstructed_source, [500000.0, 2800000.0, 100.0])
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_known_one_meter_fixture_preserves_render_scale(self, mock_parse):
+        mock_parse.return_value = self._known_one_meter_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile(
+                "known-1m.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#15= IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);\nENDSEC;",
+            ),
+        )
+
+        from .services import run_ifc_geometry_conversion
+
+        job, package = run_ifc_geometry_conversion(source)
+
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(package.metadata["unit_metadata"]["render_coordinate_unit"], "M")
+        self.assertEqual(package.metadata["unit_metadata"]["ifc_declared_length_unit"], "m")
+        self.assertFalse(package.metadata["unit_warnings"])
+        self.assertEqual(package.bounds["max_x"] - package.bounds["min_x"], 1.0)
+        self.assertEqual(package.bounds["max_y"] - package.bounds["min_y"], 1.0)
+        self.assertEqual(package.bounds["max_z"] - package.bounds["min_z"], 1.0)
+
+        payload = json.loads(path_for_storage_key(package.manifest_storage_key).read_text(encoding="utf-8"))
+        origin = payload["coordinate_transform"]["rtc_origin_render_xyz"]
+        scale = payload["coordinate_transform"]["scale_to_m"]
+        positions = payload["meshes"][0]["mesh"]["positions"]
+        world_vertices = [
+            [
+                origin[0] + positions[index],
+                origin[1] + positions[index + 1],
+                origin[2] + positions[index + 2],
+            ]
+            for index in range(0, len(positions), 3)
+        ]
+        reconstructed_source = [
+            [vertex[0] / scale, vertex[2] / scale, vertex[1] / scale]
+            for vertex in world_vertices
+        ]
+        for axis in range(3):
+            axis_values = [vertex[axis] for vertex in reconstructed_source]
+            self.assertEqual(max(axis_values) - min(axis_values), 1.0)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_geometry_conversion_endpoint_queues_job(self, mock_parse):
@@ -628,6 +785,87 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(sidecar["object_spans"][0]["stable_id"], indexed_object.stable_id)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_ifc_glb_conversion_records_meshopt_hook_when_configured(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile(
+                "meshopt-glb.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;",
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            fake_gltfpack = os.path.join(tempdir, "fake_gltfpack")
+            with open(fake_gltfpack, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "#!/usr/bin/env python3\n"
+                    "import shutil, sys\n"
+                    "input_path = sys.argv[sys.argv.index('-i') + 1]\n"
+                    "output_path = sys.argv[sys.argv.index('-o') + 1]\n"
+                    "shutil.copyfile(input_path, output_path)\n"
+                )
+            os.chmod(fake_gltfpack, 0o755)
+
+            from .services import run_ifc_glb_conversion
+
+            with override_settings(PLANT3D_GLTFPACK_BIN=fake_gltfpack, PLANT3D_GLTFPACK_ARGS=[]):
+                job, package = run_ifc_glb_conversion(source)
+
+        self.assertEqual(job.status, "completed")
+        self.assertTrue(package.metadata["meshopt_compression"]["enabled"])
+        self.assertEqual(package.metadata["meshopt_compression"]["status"], "completed")
+        tile = package.tiles.get()
+        self.assertEqual(tile.metadata["compression"]["status"], "completed")
+        sidecar = json.loads(path_for_storage_key(tile.metadata["sidecar_storage_key"]).read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["compression"]["status"], "completed")
+        self.assertEqual(path_for_storage_key(tile.storage_key).read_bytes()[:4], b"glTF")
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_measure_package_command_reports_meshopt_status(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile(
+                "measure-meshopt-glb.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;",
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tempdir:
+            fake_gltfpack = os.path.join(tempdir, "fake_gltfpack")
+            with open(fake_gltfpack, "w", encoding="utf-8") as handle:
+                handle.write(
+                    "#!/usr/bin/env python3\n"
+                    "import shutil, sys\n"
+                    "input_path = sys.argv[sys.argv.index('-i') + 1]\n"
+                    "output_path = sys.argv[sys.argv.index('-o') + 1]\n"
+                    "shutil.copyfile(input_path, output_path)\n"
+                )
+            os.chmod(fake_gltfpack, 0o755)
+
+            from .services import run_ifc_glb_conversion
+
+            with override_settings(PLANT3D_GLTFPACK_BIN=fake_gltfpack, PLANT3D_GLTFPACK_ARGS=[]):
+                _, package = run_ifc_glb_conversion(source)
+
+        stdout = io.StringIO()
+        call_command("measure_plant3d_package", str(package.pk), stdout=stdout)
+
+        output = stdout.getvalue()
+        self.assertIn(f"Package {package.pk}", output)
+        self.assertIn("meshopt: status=completed", output)
+        self.assertIn("completed_tiles=1", output)
+        self.assertIn("ratio=1.0000", output)
+
+        json_stdout = io.StringIO()
+        call_command("measure_plant3d_package", str(package.pk), json=True, stdout=json_stdout)
+        payload = json.loads(json_stdout.getvalue())
+        self.assertEqual(payload[0]["package_id"], package.pk)
+        self.assertEqual(payload[0]["compression"]["status"], "completed")
+        self.assertEqual(payload[0]["compression"]["completed_tiles"], 1)
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_glb_conversion_endpoint_queues_glb_job(self, mock_parse):
         mock_parse.return_value = self._sample_ifc_scene()
         user = get_user_model().objects.create_user(username="plant3d-glb-user", password="pw")
@@ -677,6 +915,52 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(job.status, "completed")
         self.assertEqual(job.render_packages.get().package_format, "GLB")
 
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_management_command_watch_claims_and_processes_queued_job(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("watch-glb.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_glb_conversion(source)
+
+        call_command(
+            "process_plant3d_job",
+            watch=True,
+            poll_interval=0,
+            max_jobs=1,
+            verbosity=0,
+        )
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(job.render_packages.get().package_format, "GLB")
+        self.assertIn("Parsing IFC geometry", job.log)
+        self.assertEqual(job.metrics["stage"], "completed")
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_ifc_glb_job_exposes_stage_while_parser_runs(self, mock_parse):
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("stage-glb.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_glb_conversion(source)
+
+        def parse_side_effect(*args, **kwargs):
+            running_job = ConversionJob.objects.get(pk=job.pk)
+            self.assertEqual(running_job.status, "running")
+            self.assertEqual(running_job.progress_percent, 15)
+            self.assertIn("Parsing IFC geometry", running_job.metrics["stage"])
+            return self._sample_ifc_scene()
+
+        mock_parse.side_effect = parse_side_effect
+
+        call_command("process_plant3d_job", str(job.pk), verbosity=0)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(job.metrics["stage"], "completed")
+
     def test_management_command_processes_all_queued_jobs(self):
         source_1 = create_source_model_from_upload(
             self.project,
@@ -713,6 +997,7 @@ class Plant3DIntakeTests(TestCase):
         payload = response.json()
         self.assertEqual(payload["status"], "completed")
         self.assertIn("/plant3d/jobs/", payload["url"])
+        self.assertIn("process_plant3d_job --watch", payload["worker_hint"])
         self.assertEqual(payload["package"]["object_count"], 1)
         self.assertIn("/plant3d/packages/", payload["package"]["viewer_url"])
         self.assertIn("/plant3d/packages/", payload["package"]["json_url"])
@@ -845,6 +1130,13 @@ class Plant3DIntakeTests(TestCase):
             feature_ids.extend(feature["feature_id"] for feature in sidecar["object_features"])
             self.assertEqual(tile.object_count, len(sidecar["object_features"]))
             self.assertEqual(tile.metadata["package_rtc_origin_render_xyz"], package.metadata["rtc_origin_render_xyz"])
+            self.assertGreater(tile.rtc_origin[0], 499000)
+            self.assertGreater(tile.rtc_origin[2], 2799000)
+            glb_bytes = path_for_storage_key(tile.storage_key).read_bytes()
+            gltf = glb_json_chunk(glb_bytes)
+            primitive = gltf["meshes"][0]["primitives"][0]
+            positions = glb_accessor_floats(glb_bytes, primitive["attributes"]["POSITION"])
+            self.assertLess(max(abs(value) for value in positions), 400)
         self.assertEqual(len(feature_ids), 501)
         self.assertEqual(len(feature_ids), len(set(feature_ids)))
 

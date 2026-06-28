@@ -218,8 +218,8 @@ Reviewed the new `plant3d/glb.py` hand-rolled GLB writer + the GLB conversion pa
 - Where: [glb.py:41-72](../../glb.py#L41-L72) (`_compute_normals`), [glb.py:75-86](../../glb.py#L75-L86) (`_pack_*`), comprehensions at [glb.py:116-118](../../glb.py#L116-L118)
 - Issue: normals and packing loop in pure Python over hundreds of thousands of vertices (the Tekla sample is ~230 k triangles) — a meaningful chunk of the ~17 s conversion. `numpy` is already a dependency (the parser uses it).
 - Recommend: vectorize with numpy — face normals via cross products + `np.add.at` for accumulation; packing via `np.asarray(x, '<f4').tobytes()` / `'<u4'` / index dtype. Typically 10–100× faster, same output. Pure mechanical change within the current writer.
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED**
+- Codex: Took after the worker/progress polish. `plant3d.glb` now uses numpy for normals, float packing, index packing, and bounds calculation. This keeps package semantics unchanged while removing the pure-Python vertex/triangle loops from the GLB writer hot path.
 
 ## G4 — Smooth (averaged) normals on hard-edged CAD geometry
 
@@ -227,8 +227,8 @@ Reviewed the new `plant3d/glb.py` hand-rolled GLB writer + the GLB conversion pa
 - Where: [glb.py:41-72](../../glb.py#L41-L72)
 - Issue: per-face normals are accumulated into shared vertices and normalized → smooth shading. Plant/structural geometry (boxes, steel sections) has hard edges; if the tessellation shares vertices across differently-oriented faces, edges render rounded/smeared.
 - Recommend: verify against a real render; if edges look wrong, use flat/per-face normals (or an angle threshold). Optional alternative: omit `NORMAL` and compute screen-space derivative normals in the material — saves ~33 % vertex data. Defer until a real render shows the need.
-- Status: **OPEN (verify on real render)**
-- Codex:
+- Status: **CLOSE FOR NOW / WATCH**
+- Codex: KR's manual render check after GLB streaming reports no visible graphics-quality degradation. Keep this as a visual QA watch item; do not change normals until a real render shows smeared CAD edges.
 
 ## G5 — Color-bucket primitive has no per-object bounds for culling (BatchedMesh readiness)
 
@@ -236,8 +236,155 @@ Reviewed the new `plant3d/glb.py` hand-rolled GLB writer + the GLB conversion pa
 - Where: [glb.py:98-130](../../glb.py#L98-L130), sidecar `object_spans`
 - Issue: all same-color objects merge into one primitive → one large draw, no per-object frustum culling or visibility toggling within a bucket. Good news: the sidecar already records `object_spans` (`first_index`/`index_count`/`vertex_offset`) — exactly what `BatchedMesh`/multi-draw needs.
 - Recommend: when moving to `BatchedMesh` (per the render-format note), register per-object sub-ranges from `object_spans` to enable per-object culling, visibility, and the semantic filtering (discipline/system/line_id) from the tiling plan. Add per-object bbox to each span now (cheap during build) so the viewer/tiler has it later. Track for the Phase-4 format work.
-- Status: **OPEN (track for tiling/BatchedMesh)**
+- Status: **TAKE LATER**
+- Codex: Agree for BatchedMesh/semantic filtering. Current GLB sidecar spans are enough for feature-ID picking, but per-object bounds should be added before discipline/system visibility toggles or BatchedMesh culling become production work.
+
+## Sequence & Coverage Review (2026-06-23) — forward-plan, not a code defect
+
+Review of the tracker's planned sequence after KR confirmed two facts: **(a) real-GPU rendering is already smooth** (the 15-17 FPS is a headless/software-renderer artifact), and **(b) a plant-global / ~20 MB+ IFC is weeks away**. Findings are about *what to do next and in what order* — the code itself is healthy (G1/G2 verified closed; 28 tests green). Same response-slot convention.
+
+## R1 — Precision infra (child tiling / per-tile RTC) is being validated on data that cannot prove it
+
+- Severity: **MEDIUM (sequence risk)**
+- Where: tracker Phase 4 child-tiling + Immediate Next Actions #1-#3; decision rule line 175 (binary proof *requires* a plant-global file)
+- Issue: child tiling, per-tile RTC, and viewer tile placement exist to defeat float32 jitter at large coordinates — but every sample is ≤~2.3 km, so jitter never occurs. Risk: marking RTC/tiling "proven" on local files, then breakage when the real file arrives. The milestone that needs the plant-global file is not gated on it.
+- Recommend: do not mark precision/RTC/tiling "proven" until R1's data exists (real file or the synthetic stand-in in C1). Surface the dependency on the milestone.
+- Status: **TAKE**
+- Codex: Agree. Local samples cannot prove float32 precision. Tracker now keeps plant-global proof open; a synthetic large-coordinate GLB child-tile regression now asserts large RTC origins with small local GLB buffer coordinates as an interim guard before real plant-global proof.
+
+## R2 — FPS-driven optimization is chasing a headless artifact (confirmed)
+
+- Severity: **MEDIUM (sequence risk — effort misallocation)**
+- Where: Immediate Next Actions #3 (viewer culling/streaming), #5 (`three-mesh-bvh`); adaptive-pixel-ratio work; decision rule line 173
+- Issue: KR confirms real GPU is smooth. The "FPS failure" rule has **not** triggered. Building culling/streaming/BVH/adaptive-quality to fix a 15-17 FPS number measured under software rendering optimizes a non-problem at current scale.
+- Recommend: **defer** viewer culling/streaming, BVH, and further adaptive-pixel-ratio work until a genuinely large file (or a real measured GPU regression) shows a real problem. Don't tune streaming before the large file reveals real tile distributions.
+- Status: **PARTIAL / RESEQUENCED**
+- Codex: Agree that headless FPS alone was not a valid reason to chase more viewer optimization. However KR's manual browser test now confirms streaming materially improved loading speed without quality loss, so first streaming is no longer treated as wasted work. Further BVH/adaptive/render tuning stays deferred until real GPU pain or larger-file evidence appears.
+
+## R3 — Child tiling currently adds cost, not benefit (and can be mis-measured)
+
+- Severity: **LOW (sequence/measurement risk)**
+- Where: tracker lines 348/371 (tiles split but "all loaded"); Immediate Next Actions #1-#2
+- Issue: splitting into child tiles while still loading them all = more HTTP requests + draw calls for the same triangles — likely a *regression* vs single-tile GLB. Measuring tile counts/sizes (#1) proves package *shape*, not performance; perf is only meaningful with culling, which R2 says is premature.
+- Recommend: treat child-tiling as a shape/contract milestone only; don't read its perf numbers as meaningful until a real file + culling exist. Avoid investing further in tile tuning now.
+- Status: **PARTIAL / CLOSED AS RISK WARNING**
+- Codex: Agree with the original warning: child tiling without streaming is a shape milestone, not performance proof. Since then, first viewer streaming landed and package 24 loaded 6/9 tiles in the browser probe. Do not tune tile distribution further until C1/real large-file evidence exists.
+
+## C1 — No way to test jitter for weeks unless a synthetic stand-in is built (priority gap)
+
+- Severity: **MEDIUM (coverage gap — highest-value de-risk)**
+- Where: absent from the plan; relates to F3
+- Issue: with the real file weeks away, precision is untestable. A sample translated by +500,000 / +2,800,000 forces large coordinates and exercises jitter + per-tile RTC *now*.
+- Recommend: build a **synthetic large-coordinate offset fixture** (offset a sample's source coords pre-conversion); run conversion + viewer; assert no visible jitter and that `rtc_origin_render + local_position` reconstructs world. This is the single highest-value, low-cost next action — promote it to the top.
+- Status: **PARTIAL / LANDED**
+- Codex: Agree. Added a synthetic large-coordinate GLB child-tile regression using plant-offset coordinates: child tile RTC origins stay large while GLB `POSITION` buffers stay local/small. Keep real plant-global browser/orbit proof open.
+
+## C2 — meshopt compression missing from the near-term plan (inverted priority)
+
+- Severity: **MEDIUM (coverage gap)**
+- Where: Phase 3 line 92 (unchecked); not in Immediate Next Actions
+- Issue: meshopt is the direct lever on the real measured concern (GLB size: ~5.4 MB Tekla, payload/load), lower-effort than streaming, and now **safe** to add since G1 made feature IDs FLOAT-conformant. Yet premature streaming is in the plan and meshopt is not.
+- Recommend: promote `EXT_meshopt_compression` (gltfpack or equivalent) ahead of streaming/BVH. Re-measure payload + load against the samples.
+- Status: **PARTIAL / HOOK LANDED**
+- Codex: Agree. Added optional `gltfpack`/meshopt compression integration plus viewer `MeshoptDecoder` registration and regression coverage with a fake compressor. Actual compression-ratio measurement remains pending because this workspace has no `gltfpack` binary or Python meshoptimizer binding installed.
+
+## C3 — F4 known-dimension fixture should come early and cover the foot-declared file
+
+- Severity: **LOW (coverage/sequence)**
+- Where: Immediate Next Actions #4 (sequenced after tiling)
+- Issue: the unit-scale fixture is cheap, deterministic, and closes a standing measurement-trust doubt — it should be near the front. It should include the **`ft`-declared Revit sample** (0.3048 — the riskier scale), not only a metre box.
+- Recommend: add the fixture early; assert rendered extent matches a known real dimension for both a metre-declared and the foot-declared file; flip `unit_confidence` to verified on pass. Closes F4.
+- Status: **PARTIAL / TAKE REMAINDER**
+- Codex: A synthetic known-one-metre fixture now validates the service contract, but Claude is right that the foot-declared Revit/source-system proof is still missing. Keep F4 open until a real known-dimension/source-system benchmark verifies end-to-end scale and confidence wording.
+
+## C4 — No size/perf regression band as meshopt/tiling evolve
+
+- Severity: **LOW (coverage)**
+- Where: tests (501-object tiling test is structural only)
+- Issue: nothing catches a silent package-size or object-count regression as compression/tiling change.
+- Recommend: a lightweight "convert sample → assert object/feature count and package size within a band" test. Optional for the spike, cheap insurance.
+- Status: **TAKE LATER**
+- Codex: Agree, but keep it lightweight. Add size/object/feature-count bands after meshopt lands so the band reflects the intended compressed package, not the transitional uncompressed GLB.
+
+## C5 — "Binary package proof" milestone dependency on a plant-global file is not surfaced
+
+- Severity: **LOW (process / ties to R1)**
+- Where: decision rule line 175 vs the milestone tracking
+- Issue: the rule says binary-package proof requires format+RTC+precision validated *together on a plant-global file*, but the milestone isn't gated on that input, so it can be marked done prematurely.
+- Recommend: explicitly gate that milestone on C1 (synthetic offset) and/or the real file; don't close it on local-coordinate evidence.
+- Status: **TAKE / TRACKER UPDATED**
+- Codex: Agree. Binary package proof remains gated on synthetic large-coordinate proof and ultimately a real plant-global IFC. Current local-coordinate samples prove package shape and loading behavior, not final precision acceptance.
+
+### Recommended resequencing (summary)
+
+> **Promote:** C1 synthetic large-coordinate fixture (top) → F4/C3 known-dimension fixture → C2 meshopt → G3 numpy.
+> **Defer:** viewer culling/streaming, `three-mesh-bvh`, further child-tile tuning, more adaptive-pixel-ratio (R2/R3 — chasing a headless artifact / premature until a real large file exists).
+> **Rationale:** spend effort on the two real unknowns (precision at scale, unit truth) and the real measured concern (payload via meshopt), not on FPS optimizations the GPU already disproves.
+
+### Reconciliation — streaming pass crossed the review in flight (2026-06-23)
+
+Codex built GLB tile streaming/culling and a synthetic fixture in parallel, before seeing the R/C review. Audited on its merits (33 tests green, viewer syntax clean, production untouched).
+
+- **R3 — largely resolved.** Streaming only activates above `MAX_LOADED_GLB_TILES`=6 (small packages still one-shot load); unloads dispose geometry/material and filter the pick list ([package_viewer.js:503](../../static/plant3d/js/package_viewer.js#L503)); tile placement `tile.rtc_origin − package_origin` is correct. Defensive, competent implementation.
+- **R2 — softened, not closed.** Streaming gives a real, GPU-independent signal (draw calls, loaded-tile count), but the FPS motivation was a headless artifact and the cap/interval/tile-size are tuned on local-coordinate files. **Don't treat it as "tuned/proven"; don't over-invest further until a real large file shows real tile distributions.**
+- **F4 / C3 — metre case CLOSED (credit).** `test_known_one_meter_fixture_preserves_render_scale` ([tests.py:611](../../tests.py#L611)) genuinely asserts 1 m → 1 m extent + reconstruction, no warnings. **Still open:** the **foot-declared Revit case** (0.3048) is not covered — flip `unit_confidence` to verified only after it passes too.
+- **C1 — interim fixture now landed.** Claude was right that the 1 m unit fixture was not a jitter/RTC test. A separate synthetic large-coordinate GLB child-tile regression now offsets geometry to plant-scale coordinates and asserts large RTC origins with small/local GLB `POSITION` buffers. Real plant-global browser/orbit proof remains open.
+
+## SC1 — Hard tile cap with no LOD: the full model is never shown at once (and the FPS headline is confounded)
+
+- Severity: **LOW–MEDIUM (UX / measurement validity)**
+- Where: [package_viewer.js:81](../../static/plant3d/js/package_viewer.js#L81) (`MAX_LOADED_GLB_TILES = 6`), `activeTileStates` slice at [package_viewer.js:425](../../static/plant3d/js/package_viewer.js#L425)
+- Issue: when more than 6 tiles are in-frustum (e.g. zoomed out to view a whole area — a normal engineering-review need), the cap silently drops the surplus, so the model renders with holes. Package 24's "6/9 tiles, 60 FPS" therefore draws only **2/3** of the geometry — so the FPS gain is partly *not drawing the model*, on top of headless unreliability. Not a clean "streaming fixed FPS" proof.
+- Recommend: the right fix for "see the whole area" is **LOD** (coarse proxies for distant/over-cap tiles), not dropping them — defer to the real format pass. For now, always state the loaded-tile fraction next to any FPS number so a partial render isn't read as a full-model win (the sidebar's Loaded/Total already helps — good).
+- Status: **OPEN (track for LOD)**
+- Codex: Agree. Treat the hard cap as a spike guard, not a finished engineering-review behavior. Current FPS/load claims must always include loaded/total tiles. Proper whole-area viewing needs LOD/coarse proxies or a 3D-Tiles refinement rule before this can be called production-ready.
+
+## Meshopt / measurement pass — review (2026-06-28)
+
+Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package` command, the `--watch`/claiming worker, and the runbook. 35 tests green. **Strong pass overall** — see credit at bottom. Findings:
+
+## MO1 — meshopt `-cc` can corrupt feature-ID picking; the instrument measures bytes, not correctness
+
+- Severity: **MEDIUM (latent correctness — fires only when gltfpack is installed)**
+- Where: [compression.py:18-24](../../compression.py#L18-L24) (default args `-cc`), [services.py:1047](../../services.py#L1047); feature IDs at [glb.py](../../glb.py); viewer pick path
+- Issue: `gltfpack -cc` quantizes vertex attributes and welds/reorders vertices. The picking contract depends on a per-vertex `_FEATURE_ID_0` holding an **exact integer** (as FLOAT, post-G1). gltfpack may (a) quantize that custom attribute to lower precision → wrong/garbled IDs, or (b) weld coincident vertices from different objects → blended IDs. Today gltfpack is absent so status is `skipped` and nothing breaks — but the runbook *instructs installing it in the worker image*, and the measurement command rewards adoption on **bytes saved alone**. Nothing verifies picking still works after compression. Adopting meshopt on the byte ratio without a correctness guard risks shipping a smaller-but-unclickable package.
+- Recommend: before enabling `-cc` in production, (1) add a round-trip test — compress a GLB, reload it, assert `_FEATURE_ID_0` still resolves each vertex to the correct object; (2) ensure feature IDs survive quantization — exclude `_FEATURE_ID_0` from gltfpack quantization, or adopt the standard `EXT_mesh_features` extension gltfpack understands, or disable position-attribute quantization for the feature stream; (3) treat the measurement command's byte ratio as *necessary but not sufficient* — pair it with the correctness check in the adopt/decline decision.
+- Status: **OPEN**
 - Codex:
+
+## MM1 — measurement command misses the actual decision number (aggregate) and the size↔time tradeoff
+
+- Severity: **LOW (lost opportunity)**
+- Where: [measure_plant3d_package.py:132-161](../../management/commands/measure_plant3d_package.py#L132-L161)
+- Issue: `--latest N` prints each package separately but no **grand total** (total input/output/saved/ratio across the set) — yet that aggregate is the single number that decides "is meshopt worth adopting?". Also `compression.py` records `duration_ms` per tile, but the command never surfaces compression time, so the size-vs-conversion-time tradeoff (meshopt makes conversion slower) is invisible — and conversion is already ~17 s/file.
+- Recommend: add a summary row across all measured packages (total bytes in/out, saved, blended ratio) and surface total/ària compression duration so the decision weighs size *and* time.
+- Status: **OPEN**
+- Codex:
+
+## MM2 — "measured" vs "recorded" bytes are defined differently; side-by-side display can mislead (and hides real drift)
+
+- Severity: **LOW**
+- Where: [measure_plant3d_package.py:65-78](../../management/commands/measure_plant3d_package.py#L65-L78)
+- Issue: `measured_total_bytes` = geometry + sidecar + manifest stat-ed from disk; `recorded_package_bytes` = `package.byte_size` set at creation (composition may differ, e.g. manifest inclusion, pre/post-compression). Printing them adjacent implies comparability they may not have. The genuinely useful signal here — when measured ≠ recorded because blobs are **missing/orphaned on disk** — is computed but not flagged.
+- Recommend: either reconcile the two definitions or label them as different facts; and emit an explicit warning when measured ≠ recorded beyond a small tolerance (that's the orphaned/missing-blob detector the runbook's cleanup gap needs).
+- Status: **OPEN**
+- Codex:
+
+## MM3 — compression ratio is unlabeled (lower = better) and skipped tiles show ratio 1.0000
+
+- Severity: **COSMETIC**
+- Where: [measure_plant3d_package.py:142-160](../../management/commands/measure_plant3d_package.py#L142-L160)
+- Issue: `ratio = output/input`, so 0.6 means "compressed to 60% / saved 40%" — easy to misread as "saved 60%". Skipped tiles (input==output) print `ratio=1.0000` rather than `n/a`.
+- Recommend: print `saved=NN%` alongside the ratio, and show `n/a` for skipped/uncompressed tiles.
+- Status: **OPEN**
+- Codex:
+
+### Credit — meshopt/worker pass (genuinely strong)
+
+- **Race-safe job claiming**: `select_for_update(skip_locked=True).filter(status="queued")` — correct multi-worker primitive ([process_plant3d_job.py:70](../../management/commands/process_plant3d_job.py#L70)).
+- **MeshoptDecoder registered** in the viewer ([package_viewer.js:81](../../static/plant3d/js/package_viewer.js#L81)) — compressed GLBs will actually load (the half-of-the-trap that *is* handled).
+- **Compression runs outside the DB transaction** (no long-held locks) and **degrades gracefully** when gltfpack is absent (status `skipped`, original bytes returned, conversion never fails).
+- Measurement command is read-only, tested, with sensible selection modes; runbook documents the worker role and the meshopt env vars cleanly.
 
 ## Credit (no action)
 
@@ -268,9 +415,22 @@ Reviewed the new `plant3d/glb.py` hand-rolled GLB writer + the GLB conversion pa
 | F4 | MED | IFC unit assumed `M`; Tekla declares `mm`; scale not proven | OPEN (parser extraction added; known-dimension proof pending) |
 | G1 | MED | `_FEATURE_ID_0` uses UNSIGNED_INT — glTF-invalid attribute | CLOSED |
 | G2 | MED | feature vs ModelObject stable_id diverge (non-GUID picking breaks) | CLOSED |
-| G3 | MED | pure-Python normals/packing — conversion hotspot | OPEN |
+| G3 | MED | pure-Python normals/packing — conversion hotspot | CLOSED |
 | G4 | LOW | averaged normals smear hard CAD edges | OPEN (verify on render) |
 | G5 | LOW | no per-object bounds for culling (BatchedMesh readiness) | OPEN (track) |
+| R1 | MED | precision/RTC/tiling validated on data that can't prove it | PARTIAL (synthetic guard landed; real plant-global proof open) |
+| R2 | MED | FPS optimization chasing a headless artifact (GPU is smooth) | SOFTENED (streaming built; don't over-tune/treat as proven) |
+| R3 | LOW | child tiling adds cost not benefit until culling; mis-measure risk | LARGELY RESOLVED (culling/dispose built) |
+| C1 | MED | no jitter test for weeks unless synthetic offset fixture built | PARTIAL (synthetic large-coordinate fixture landed; real proof open) |
+| C2 | MED | meshopt missing from near-term plan (inverted priority) | PARTIAL (optional hook + decoder landed; real gltfpack measurement open) |
+| C3 | LOW | F4 fixture should be early + cover foot-declared file | PARTIAL (metre case closed; foot case open) |
+| C4 | LOW | no size/perf regression band | OPEN |
+| C5 | LOW | binary-proof milestone not gated on plant-global file | TRACKED |
+| SC1 | LOW-MED | hard tile cap, no LOD → partial model + confounded FPS | OPEN (track for LOD) |
+
+### Claude re-review — 2026-06-23 (sequence & coverage review)
+
+Reviewed the tracker's **forward plan** (not code) after KR confirmed real-GPU rendering is smooth and a plant-global IFC is weeks away. Verified G1/G2 closed in code (FLOAT feature IDs, shared `stable_id_resolver`); 28 tests green; production untouched. New findings **R1-R3, C1-C5** above. Headline: the next-actions list optimizes a non-problem (FPS, per R2 — headless artifact) and builds precision machinery on data that can't prove it (R1). **Resequence:** promote the synthetic large-coordinate fixture (C1), the known-dimension unit fixture (C3/F4), and meshopt (C2); defer culling/streaming/BVH until a real large file or real GPU regression exists. The code is healthy — this is purely about where the next effort goes.
 
 ### Claude re-review — 2026-06-23 (GLB pass)
 

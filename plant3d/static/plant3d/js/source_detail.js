@@ -23,6 +23,10 @@ function jobLine(data) {
   const processHint = !data.package && data.process_hint
     ? `<br>Worker command: <code>${escapeHtml(data.process_hint)}</code>`
     : '';
+  const workerHint = !data.package && data.worker_hint
+    ? `<br>Long-running worker: <code>${escapeHtml(data.worker_hint)}</code>`
+    : '';
+  const stage = data.metrics?.stage ? `<br>Stage: ${escapeHtml(data.metrics.stage)}` : '';
   const metrics = data.metrics && Object.keys(data.metrics).length
     ? `<br>Metrics: ${escapeHtml(JSON.stringify(data.metrics))}`
     : '';
@@ -30,6 +34,8 @@ function jobLine(data) {
   return [
     `Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')} - ${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%`,
     processHint,
+    workerHint,
+    stage,
     metrics,
     error,
     ` <a href="${escapeHtml(data.url || `/plant3d/jobs/${data.id}/json/`)}">JSON</a>`,
@@ -66,7 +72,9 @@ async function pollJob(jobUrl) {
     setQueueStatus(data.status === 'completed' ? 'Conversion completed.' : `Conversion ${data.status}.`);
     return;
   }
-  setQueueStatus(data.process_hint ? `Waiting for worker. Run: ${data.process_hint}` : `Conversion ${data.status}.`);
+  const stage = data.metrics?.stage ? ` (${data.metrics.stage})` : '';
+  const workerHint = data.worker_hint || data.process_hint || '';
+  setQueueStatus(workerHint ? `Conversion ${data.status}${stage}. Worker: ${workerHint}` : `Conversion ${data.status}${stage}.`);
   window.setTimeout(() => {
     pollJob(jobUrl).catch(error => {
       watchedJobs.delete(jobUrl);
@@ -98,9 +106,10 @@ async function queueConversion(form) {
     job_type: data.job?.job_type || '',
     url: data.job?.url,
     process_hint: data.process_hint,
+    worker_hint: data.worker_hint,
   };
   upsertJobRow(job);
-  setQueueStatus(data.process_hint ? `Queued. Worker command: ${data.process_hint}` : 'Queued.');
+  setQueueStatus(data.worker_hint ? `Queued. Keep worker running: ${data.worker_hint}` : 'Queued.');
   watchJob(job.url);
 }
 

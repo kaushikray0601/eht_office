@@ -73,6 +73,96 @@ Interpretation:
 - The GLB package now carries `_FEATURE_ID_0` vertex attributes plus sidecar `object_features` / `object_spans`, but browser object picking for GLB is deliberately deferred until BVH/feature-ID selection is designed.
 - Browser GLB rendering still needs a Playwright/manual GPU probe before performance is accepted.
 
+## Spatial GLB Child-Tile Results
+
+Purpose: measure the first spatial child-tiling path. New GLB conversions now emit a `tileset.json` plus one or more GLB child tiles and sidecars. At original measurement time the viewer still loaded all child tiles; the 2026-06-28 viewer pass added first active-tile streaming/culling.
+
+| File | Objects | Child tiles | GLB bytes | Sidecar bytes | Tileset bytes | Package total | Conversion time | Package ID | Tile object counts |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| `ifc/Ifc2s3_Duplex_Electrical.ifc` | 104 | 1 | 623,712 | 43,073 | 2,207 | 668,992 | 1,639 ms | 21 | 104 |
+| `ifc/8-SSPAR-800203.ifc` | 867 | 2 | 4,650,584 | 301,194 | 3,651 | 4,955,429 | 17,442 ms | 22 | 289, 578 |
+| `ifc/8-SSPAR-800205B.ifc` | 1,637 | 4 | 2,608,284 | 570,185 | 5,422 | 3,183,891 | 10,410 ms | 23 | 440, 396, 521, 280 |
+| `ifc/8-SSPAR-800206A.ifc` | 3,770 | 9 | 5,107,980 | 1,315,122 | 9,536 | 6,432,638 | 21,474 ms | 24 | 443, 315, 524, 315, 346, 636, 304, 332, 555 |
+
+Interpretation:
+
+- Spatial child tiles are now real package artifacts, not only a manifest placeholder.
+- The current grouping target is about 500 objects per child tile; uneven object distribution is expected with the simple source-bounds grid.
+- Package total includes GLB, sidecar, and tileset bytes. Sidecar bytes increase because each child tile carries its own feature/object mapping.
+- Conversion time remains dominated by IfcOpenShell tessellation. Child tiling changes runtime package shape more than source parsing time.
+- The next performance proof must come from browser/manual measurement of viewer-side culling/streaming, because conversion size/timing alone does not prove interactive runtime performance.
+
+## Viewer Streaming Update
+
+Date: 2026-06-28
+
+The GLB viewer now prepares package-level tile state, frames the package from raw bounds before loading child GLBs, and streams active child tiles instead of eagerly fetching every child tile for larger packages. Current spike constants:
+
+- Active loaded child-tile cap: 6
+- Load batch size: 2 child tiles per streaming update
+- Streaming update interval: 500 ms
+- Small packages at or below the cap still load all child tiles for simplicity.
+
+Runtime sidebar additions:
+
+- loaded tiles / total tiles
+- loading tiles
+- streaming mode (`load-all` or `active-cap-6`)
+
+Validation still required:
+
+- Open package 24 or a fresh `8-SSPAR-800206A.ifc` GLB package in a logged-in browser session.
+- Record whether loaded tiles stay below the total tile count during orbit/pan/zoom.
+- Record FPS, draw calls, pick latency, metadata latency, and subjective orbit feel.
+- If direct render-mesh picking feels slow, evaluate `three-mesh-bvh` next.
+
+## Browser Probe After Viewer Streaming
+
+Date: 2026-06-28
+
+Method: temporary static probe page generated from real package 24 payloads, served on `127.0.0.1:9095`, checked with `plant3d/records/testing/browser_viewer_probe.py`. This bypassed Django login/session but used the real package JSON, GLB child tiles, sidecars, object metadata snapshots, and current `package_viewer.js`.
+
+| Package | File | Child tiles | Loaded tiles after probe | Feature IDs loaded | Triangles loaded | FPS after orbit | Draw calls | Pick proxies | Screenshot non-background |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 24 | `ifc/8-SSPAR-800206A.ifc` | 9 | 6 | 2,468 | 123,620 | 60 | 19 | 0 | 6.86% |
+
+Probe status:
+
+`Loaded GLB package tile stream: 6/9 tile(s) loaded, 0 loading. Feature-ID picking enabled; BVH acceleration deferred.`
+
+Interpretation:
+
+- The streaming viewer path rendered a nonblank canvas for the largest current sample.
+- The viewer loaded the active-tile cap of 6 child tiles, not all 9 child tiles.
+- Headless browser FPS looked good in this static probe, but the result should still be manually confirmed in the logged-in Django viewer because desktop GPU, browser cache, network behavior, and subjective orbit feel matter.
+
+Manual follow-up from KR:
+
+- Logged-in manual testing reported a large loading-speed improvement after GLB child-tile streaming.
+- Graphic quality did not visibly degrade.
+- The remaining operational friction was that `venv/bin/python manage.py process_plant3d_job --all` had to be run manually and job progress jumped from an early low percentage to completion. The 2026-06-28 worker/progress pass addresses this with `process_plant3d_job --watch` plus staged job metrics/logs.
+- Follow-up manual testing confirmed `process_plant3d_job --watch` works as intended: it waits for queued jobs, processes them as they arrive, then waits for the next job.
+- Manual browser check on a later GLB package for `8-SSPAR-800201.ifc` reported no visible graphics degradation and normal existing functionality. Viewer sidebar metrics showed: 2,221 objects, 6/6 loaded tiles, 3,322,076 package bytes, 151 ms load time, 60 FPS, 24 draw calls, 24 GPU geometries, 118,640 triangles, 0 pick proxies, 13 ms metadata latency, and streaming mode `load-all`.
+- Progress still jumps from an early staged value to completion for parse-heavy jobs. This is expected until the worker has deeper IfcOpenShell tessellation progress or a production progress channel; the current progress is stage-based, not true per-triangle/per-object streaming.
+- Cross-browser repeat viewing can be fast even when the second browser has no browser cache because the expensive IFC conversion is already complete, render packages already exist, and the server/operating-system filesystem cache may serve GLB/media bytes from memory.
+
+## Meshopt Hook And Numpy GLB Writer Update
+
+Date: 2026-06-28
+
+Implementation status:
+
+- GLB conversion now has an optional `gltfpack`/meshopt hook.
+- If `PLANT3D_GLTFPACK_BIN` is configured or `gltfpack` is on `PATH`, each GLB tile is passed through `gltfpack -cc` and compression input/output bytes are stored in tile sidecar, tile metadata, package metadata, and job metrics.
+- If no `gltfpack` binary is available, conversion still succeeds and records compression status `skipped`.
+- The Three.js viewer now registers `MeshoptDecoder`, so future `EXT_meshopt_compression` GLBs can load through the existing viewer path.
+- `plant3d.glb` now uses numpy for normal generation, float packing, index packing, and position bounds.
+
+Local measurement status:
+
+- This workspace currently has numpy available but does not have `gltfpack`, `meshoptimizer`, `pygltflib`, or `trimesh` installed.
+- Therefore this pass proves meshopt integration readiness and records skipped compression cleanly, but it does not yet provide a real meshopt compression ratio or browser decode-time measurement.
+
 ## Manual Viewer Check
 
 Use the source/package records created in the local development database:
