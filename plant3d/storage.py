@@ -50,6 +50,14 @@ def stat_size(storage_key):
     return path_for_storage_key(storage_key).stat().st_size
 
 
+def delete_key(storage_key):
+    path = path_for_storage_key(storage_key)
+    if not path.exists() or not path.is_file():
+        return False
+    path.unlink()
+    return True
+
+
 def write_bytes(storage_key, data):
     path = path_for_storage_key(storage_key)
     path.parent.mkdir(parents=True, exist_ok=True)

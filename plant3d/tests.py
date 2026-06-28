@@ -7,7 +7,7 @@ import tempfile
 from decimal import Decimal
 from unittest.mock import patch
 
-from django.core.management import call_command
+from django.core.management import call_command, CommandError
 from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth import get_user_model
@@ -355,6 +355,42 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(manifest["source_format"], "IFC")
         self.assertEqual(manifest["ifc_entity_count_sample"], 3)
         self.assertEqual(manifest["ifc_unit_hints"]["primary_length_display_unit"], "mm")
+
+    def test_purge_command_dry_runs_then_deletes_source_scope_and_storage(self):
+        upload = SimpleUploadedFile(
+            "purge-me.ifc",
+            b"ISO-10303-21;\nHEADER;\nFILE_NAME('purge-me.ifc');\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCPROJECT();\nENDSEC;",
+        )
+        source = create_source_model_from_upload(self.project, upload)
+        _job, package = run_metadata_conversion(source)
+        source_path = path_for_storage_key(source.storage_key)
+        manifest_path = path_for_storage_key(package.manifest_storage_key)
+        self.assertTrue(source_path.exists())
+        self.assertTrue(manifest_path.exists())
+
+        stdout = io.StringIO()
+        call_command("purge_plant3d_data", source_id=[source.pk], stdout=stdout)
+
+        self.assertIn("Dry run only", stdout.getvalue())
+        self.assertTrue(SourceModel.objects.filter(pk=source.pk).exists())
+        self.assertTrue(source_path.exists())
+        self.assertTrue(manifest_path.exists())
+
+        stdout = io.StringIO()
+        call_command("purge_plant3d_data", source_id=[source.pk], confirm=True, stdout=stdout)
+
+        self.assertIn("Deleted plant3d DB scope", stdout.getvalue())
+        self.assertFalse(SourceModel.objects.filter(pk=source.pk).exists())
+        self.assertEqual(ConversionJob.objects.count(), 0)
+        self.assertEqual(RenderPackage.objects.count(), 0)
+        self.assertEqual(RenderTile.objects.count(), 0)
+        self.assertEqual(ModelObject.objects.count(), 0)
+        self.assertFalse(source_path.exists())
+        self.assertFalse(manifest_path.exists())
+
+    def test_purge_command_requires_exactly_one_scope(self):
+        with self.assertRaisesMessage(CommandError, "Choose exactly one purge scope"):
+            call_command("purge_plant3d_data", verbosity=0)
 
     def test_upload_view_creates_source_model(self):
         user = get_user_model().objects.create_user(username="plant3d-user", password="pw")
@@ -719,6 +755,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(job.metrics["conversion_scope"], "ifc-glb")
         self.assertEqual(job.metrics["render_batch_count"], 1)
         self.assertEqual(job.metrics["feature_count"], 1)
+        self.assertIn("timings", job.metrics)
+        for timing_key in ["source_read_ms", "parse_ms", "glb_build_ms", "tile_write_ms", "db_write_ms"]:
+            self.assertIn(timing_key, job.metrics["timings"])
+            self.assertGreaterEqual(job.metrics["timings"][timing_key], 0)
 
         tile = package.tiles.get()
         self.assertEqual(tile.metadata["tile_type"], "ifc-glb")
@@ -741,6 +781,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(tileset["root"]["extras"]["feature_id_attribute"], "_FEATURE_ID_0")
         self.assertEqual(tileset["root"]["content"]["uri"], tile.storage_key)
         self.assertEqual(package.metadata["tileset_storage_key"], package.manifest_storage_key)
+        self.assertEqual(package.metadata["conversion_timings"], job.metrics["timings"])
         self.assertEqual(job.metrics["tileset_storage_key"], package.manifest_storage_key)
 
         sidecar_path = path_for_storage_key(tile.metadata["sidecar_storage_key"])
@@ -908,6 +949,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("rejected_tiles=0", output)
         self.assertIn("ratio_output_over_input=1.0000", output)
         self.assertIn("saved_pct=0.0%", output)
+        self.assertIn("timings:", output)
+        self.assertIn("parse_ms=", output)
         self.assertIn("Summary meshopt:", output)
 
         json_stdout = io.StringIO()
@@ -920,6 +963,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(payload["summary"]["compression"]["completed_tiles"], 1)
         self.assertEqual(payload["summary"]["compression"]["rejected_tiles"], 0)
         self.assertEqual(payload["summary"]["compression"]["saved_percent"], 0.0)
+        self.assertIn("parse_ms", payload["packages"][0]["conversion_timings"])
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_glb_conversion_endpoint_queues_glb_job(self, mock_parse):

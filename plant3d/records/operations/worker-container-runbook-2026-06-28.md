@@ -138,3 +138,25 @@ For the current largest sample, use:
 ```text
 ifc/8-SSPAR-800206A.ifc
 ```
+
+## Local Cleanup
+
+Repeated IFC testing creates source rows, conversion jobs, object indexes, render packages, render tiles, and media blobs. Admin deletion is acceptable for a quick DB-only cleanup, but it does not remove stored source/render files.
+
+Use `purge_plant3d_data` when the storage blobs should be cleaned with the database scope.
+
+Dry-run first:
+
+```bash
+venv/bin/python manage.py purge_plant3d_data --project-id <proj_id>
+venv/bin/python manage.py purge_plant3d_data --source-id <source_id>
+venv/bin/python manage.py purge_plant3d_data --all
+```
+
+Then confirm only after reviewing the summary:
+
+```bash
+venv/bin/python manage.py purge_plant3d_data --project-id <proj_id> --confirm
+```
+
+Use `--keep-storage` only when deliberately deleting database rows while retaining media blobs for inspection.

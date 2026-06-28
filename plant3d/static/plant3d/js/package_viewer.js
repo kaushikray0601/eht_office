@@ -65,6 +65,7 @@ let runtimeStats = {
   totalTileCount: 0,
   loadedTileCount: 0,
   loadingTileCount: 0,
+  failedTileCount: 0,
   streamingMode: '',
   completeness: '',
   browserHeapMb: '',
@@ -97,6 +98,7 @@ const REVIEW_MODE_MAX_PACKAGE_BYTES = 64 * 1024 * 1024;
 const TILE_UNLOAD_GRACE_MS = 4000;
 const TILE_STREAM_INTERVAL_MS = 500;
 const TILE_LOAD_BATCH_SIZE = 2;
+const MAX_GLB_TILE_LOAD_ATTEMPTS = 3;
 const highlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffb020,
   wireframe: true,
@@ -176,6 +178,7 @@ function renderMetrics() {
     `<p class="kv"><span>Tiles</span><strong>${runtimeStats.tileCount}</strong></p>`,
     `<p class="kv"><span>Loaded Tiles</span><strong>${runtimeStats.loadedTileCount}/${runtimeStats.totalTileCount || runtimeStats.tileCount}</strong></p>`,
     `<p class="kv"><span>Loading Tiles</span><strong>${runtimeStats.loadingTileCount}</strong></p>`,
+    `<p class="kv"><span>Failed Tiles</span><strong>${runtimeStats.failedTileCount}</strong></p>`,
     `<p class="kv"><span>Load Time</span><strong>${runtimeStats.elapsedMs} ms</strong></p>`,
     `<p class="kv"><span>Streaming</span><strong>${escapeHtml(runtimeStats.streamingMode)}</strong></p>`,
     `<p class="kv"><span>Completeness</span><strong>${escapeHtml(runtimeStats.completeness)}</strong></p>`,
@@ -211,6 +214,7 @@ function setMetrics(pkg, meshCount, renderBatchCount, pickProxyCount, tileCount,
     totalTileCount: pkg.tile_count || tileCount,
     loadedTileCount: tileCount,
     loadingTileCount: 0,
+    failedTileCount: 0,
     streamingMode: '',
     completeness: 'Complete JSON debug package loaded.',
     triangleCount,
@@ -230,19 +234,26 @@ function glbStreamingMode(pkg) {
   return `partial-active-cap-${MAX_LOADED_GLB_TILES}-retain-${MAX_RETAINED_GLB_TILES}`;
 }
 
-function glbCompletenessText(pkg, loadedCount, loadingCount) {
+function glbCompletenessText(pkg, loadedCount, loadingCount, failedCount) {
   const total = glbTileStates.length || Number(pkg.tile_count || 0);
   if (!total) return 'No GLB tiles available.';
+  if (failedCount > 0) {
+    const loadingText = loadingCount > 0 ? `, ${loadingCount} loading` : '';
+    if (shouldUseReviewMode(pkg)) return `Model INCOMPLETE: ${loadedCount}/${total} tile(s) loaded, ${failedCount} failed${loadingText}.`;
+    return `Partial model visible: ${loadedCount}/${total} tile(s) retained, ${failedCount} failed${loadingText}. Some geometry is unavailable.`;
+  }
   if (loadedCount >= total && loadingCount === 0) return 'Complete model loaded.';
-  if (shouldUseReviewMode(pkg)) return `Loading complete model: ${loadedCount}/${total} tile(s) loaded.`;
+  if (shouldUseReviewMode(pkg)) return `Loading complete model: ${loadedCount}/${total} tile(s) loaded, ${loadingCount} loading.`;
   return `Partial model visible: ${loadedCount}/${total} tile(s) retained, ${loadingCount} loading. Some geometry may be hidden until its tile is loaded.`;
 }
 
 function setGlbRuntimeMetrics(pkg, elapsedMs = runtimeStats.elapsedMs) {
   const loadedStates = glbTileStates.filter(state => state.loaded);
   const loadingStates = glbTileStates.filter(state => state.loading);
+  const failedStates = glbTileStates.filter(state => state.failed);
   const loadedCount = loadedStates.length;
   const loadingCount = loadingStates.length;
+  const failedCount = failedStates.length;
   runtimeStats = {
     ...runtimeStats,
     package: pkg,
@@ -253,11 +264,12 @@ function setGlbRuntimeMetrics(pkg, elapsedMs = runtimeStats.elapsedMs) {
     tileCount: loadedCount,
     loadedTileCount: loadedCount,
     loadingTileCount: loadingCount,
+    failedTileCount: failedCount,
     totalTileCount: glbTileStates.length,
     triangleCount: loadedStates.reduce((total, state) => total + state.triangleCount, 0),
     elapsedMs,
     streamingMode: glbStreamingMode(pkg),
-    completeness: glbCompletenessText(pkg, loadedCount, loadingCount),
+    completeness: glbCompletenessText(pkg, loadedCount, loadingCount, failedCount),
   };
   renderMetrics();
 }
@@ -462,6 +474,9 @@ function prepareGlbTileStates(pkg) {
       radius: tileRadiusForState(pkg, tile),
       loaded: false,
       loading: false,
+      failed: false,
+      loadAttempts: 0,
+      lastError: '',
       group: null,
       meshCount: 0,
       renderBatchCount: 0,
@@ -509,13 +524,18 @@ function activeTileStates(pkg) {
 }
 
 async function loadGlbTileState(state, pkg) {
-  if (state.loaded || state.loading) return;
+  if (state.loaded || state.loading || state.failed) return;
   state.loading = true;
+  state.loadAttempts += 1;
+  state.lastError = '';
   setGlbRuntimeMetrics(pkg);
   const tile = state.tile;
   const blobUrl = tile.blob_url || tile.url;
   if (!blobUrl) {
+    state.failed = true;
+    state.lastError = 'missing blob URL';
     state.loading = false;
+    setGlbRuntimeMetrics(pkg);
     return;
   }
 
@@ -574,9 +594,16 @@ async function loadGlbTileState(state, pkg) {
     state.renderBatchCount = renderBatchCount;
     state.triangleCount = triangleCount;
     state.loaded = true;
+    state.failed = false;
     packageBounds.union(new THREE.Box3().setFromObject(tileRoot));
   } catch (error) {
-    setStatus(`Unable to load GLB tile ${state.key}: ${error.message || 'unknown error'}`);
+    state.lastError = error.message || 'unknown error';
+    if (state.loadAttempts >= MAX_GLB_TILE_LOAD_ATTEMPTS) {
+      state.failed = true;
+      setStatus(`GLB tile ${state.key} failed after ${state.loadAttempts} attempt(s): ${state.lastError}`);
+    } else {
+      setStatus(`Unable to load GLB tile ${state.key}; retry ${state.loadAttempts}/${MAX_GLB_TILE_LOAD_ATTEMPTS}: ${state.lastError}`);
+    }
   } finally {
     state.loading = false;
     setGlbRuntimeMetrics(pkg);
@@ -623,18 +650,25 @@ async function updateGlbTileStreaming(pkg, force = false) {
     const active = activeTileStates(pkg);
     const activeKeys = new Set(active.map(state => state.key));
     unloadOverflowGlbTiles(active, pkg);
-    const candidates = glbTileStates.filter(state => activeKeys.has(state.key) && !state.loaded && !state.loading);
+    const candidates = glbTileStates.filter(state => (
+      activeKeys.has(state.key)
+      && !state.loaded
+      && !state.loading
+      && !state.failed
+      && state.loadAttempts < MAX_GLB_TILE_LOAD_ATTEMPTS
+    ));
     const loadBatchSize = shouldUseReviewMode(pkg) ? candidates.length : TILE_LOAD_BATCH_SIZE;
     for (const state of candidates.slice(0, loadBatchSize)) {
       await loadGlbTileState(state, pkg);
     }
     const loadedCount = glbTileStates.filter(state => state.loaded).length;
     const loadingCount = glbTileStates.filter(state => state.loading).length;
-    if (shouldUseReviewMode(pkg) && loadedCount === glbTileStates.length && loadingCount === 0 && !pkg.__plant3dReviewFramed) {
+    const failedCount = glbTileStates.filter(state => state.failed).length;
+    if (shouldUseReviewMode(pkg) && loadedCount === glbTileStates.length && loadingCount === 0 && failedCount === 0 && !pkg.__plant3dReviewFramed) {
       pkg.__plant3dReviewFramed = true;
       frameScene();
     }
-    setStatus(`${glbCompletenessText(pkg, loadedCount, loadingCount)} Feature-ID picking enabled; BVH acceleration deferred.`);
+    setStatus(`${glbCompletenessText(pkg, loadedCount, loadingCount, failedCount)} Feature-ID picking enabled; BVH acceleration deferred.`);
   } finally {
     isStreamingUpdateRunning = false;
   }

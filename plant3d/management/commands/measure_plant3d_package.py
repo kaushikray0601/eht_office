@@ -83,6 +83,9 @@ def collect_package_measurement(package):
     measured_total_bytes = glb_bytes + sidecar_bytes + manifest_bytes
     byte_drift = measured_total_bytes - package.byte_size
     package_compression = package.metadata.get("meshopt_compression", {}) or {}
+    conversion_timings = package.metadata.get("conversion_timings") or {}
+    if not conversion_timings and package.conversion_job_id:
+        conversion_timings = (package.conversion_job.metrics or {}).get("timings") or {}
 
     return {
         "package_id": package.pk,
@@ -113,6 +116,7 @@ def collect_package_measurement(package):
             "ratio": _ratio(compression_input_bytes, compression_output_bytes),
             "duration_ms": compression_duration_ms,
         },
+        "conversion_timings": conversion_timings,
         "tile_measurements": tile_rows,
     }
 
@@ -160,7 +164,11 @@ class Command(BaseCommand):
         latest = options["latest"]
         use_json = options["json"]
 
-        query = RenderPackage.objects.select_related("source_model", "source_model__project").prefetch_related("tiles")
+        query = RenderPackage.objects.select_related(
+            "source_model",
+            "source_model__project",
+            "conversion_job",
+        ).prefetch_related("tiles")
         if package_ids:
             query = query.filter(pk__in=package_ids)
         elif source_id:
@@ -212,6 +220,22 @@ class Command(BaseCommand):
                     **compression,
                 )
             )
+            timings = measurement.get("conversion_timings") or {}
+            if timings:
+                self.stdout.write(
+                    "  timings: source_read_ms={source_read_ms} parse_ms={parse_ms} tile_grouping_ms={tile_grouping_ms} "
+                    "glb_build_ms={glb_build_ms} meshopt_hook_ms={meshopt_hook_ms} tile_write_ms={tile_write_ms} "
+                    "tileset_write_ms={tileset_write_ms} db_write_ms={db_write_ms}".format(
+                        source_read_ms=timings.get("source_read_ms", "n/a"),
+                        parse_ms=timings.get("parse_ms", "n/a"),
+                        tile_grouping_ms=timings.get("tile_grouping_ms", "n/a"),
+                        glb_build_ms=timings.get("glb_build_ms", "n/a"),
+                        meshopt_hook_ms=timings.get("meshopt_hook_ms", "n/a"),
+                        tile_write_ms=timings.get("tile_write_ms", "n/a"),
+                        tileset_write_ms=timings.get("tileset_write_ms", "n/a"),
+                        db_write_ms=timings.get("db_write_ms", "n/a"),
+                    )
+                )
             for tile in measurement["tile_measurements"]:
                 tile_ratio = tile["compression_ratio"]
                 tile_ratio_text = "n/a" if tile_ratio is None else f"{tile_ratio:.4f}"

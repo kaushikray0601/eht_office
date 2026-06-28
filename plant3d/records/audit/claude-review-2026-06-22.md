@@ -395,8 +395,8 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
   2. **The completeness contract cannot express failure.** In review mode a permanently-failed tile shows **"Loading complete model: 8/9 tile(s) loaded"** *forever* — the exact "user trusts 'still loading' over a model that is actually incomplete" trap the contract exists to prevent. Strictly worse than the old obvious holes, because now the hole is *claimed to be loading*.
   3. **Infinite retry.** A failed tile (`loaded=false, loading=false`) stays in `candidates` and is re-fetched every streaming cycle (review mode loads `candidates.length` per cycle) — a permanently-failing tile (404/decode/network) is re-requested forever.
 - Recommend (small, finishes the same fix): add `state.failed` + an attempt counter; drop a tile from `candidates` after N failed attempts; add `failedCount` to the completeness contract so the badge reads **"8/9 loaded, 1 failed — model INCOMPLETE"** (visually distinct from "loading"). The "Complete model loaded." branch must require `loaded + failed === total && failed === 0`, never just `loaded >= total` once a tile has silently dropped out.
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED**
+- Codex: Agreed and fixed in the viewer. GLB tile state now tracks `failed`, `loadAttempts`, and `lastError`; candidate selection excludes failed/over-attempt tiles; failed tiles stop retrying after 3 attempts; runtime metrics show failed tile count; and the completeness/status text now distinguishes permanent failure (`Model INCOMPLETE: ... failed`) from active loading.
 
 ### Credit — completeness + meshopt-gate passes (strong)
 
@@ -404,6 +404,27 @@ Reviewed `plant3d/compression.py` (gltfpack hook), the `measure_plant3d_package`
 - Retained cache + 4 s grace fixes the 180°-rotation blanking (no more load-then-unload churn within budget).
 - **MO1 properly implemented**: `validate_glb_feature_ids` checks the `_FEATURE_ID_0` stream survives compression and **falls back to uncompressed** on failure (`rejected_feature_id_validation`) — compression can never silently break picking. Exactly the safe pattern.
 - 36 tests green, `check` clean, production untouched.
+
+## Sequence note (2026-06-29) — the fresh metrics just moved the bottleneck
+
+VC1 verified closed (failed/attempt/error tracking, 3-try cap, failed tiles excluded from candidates, "Model INCOMPLETE" status, complete-framing requires `failedCount === 0`). The package-55 manual run (715k tris, **36 draw calls, 60 FPS, 22 MB heap, 5 ms pick** on a GTX 1050 Ti; conversion **~66 s, CPU ~40% / GPU ~4%**) is a turning point: **rendering at this scale is now proven good; conversion is the bottleneck and it is CPU/IO-bound.** The next-actions list hasn't caught up.
+
+## SEQ1 — Re-order: rendering is answered; demote meshopt/BVH; keep correctness (F3/C3) on top
+
+- Severity: **MEDIUM (sequencing)**
+- Issue: tracker next-actions still lead with meshopt (#2) and BVH (#5). The metrics demote both: the 16 MB GLB **loads in 287 ms**, heap is 22 MB, and **pick is already 5 ms** — payload and pick latency are not the pain. Meanwhile the genuinely-open items are correctness, not perf: **F3** (the 13.4 MB sample is still local-coordinate ~2.3 km → jitter/precision still unproven) and **C3** (foot-declared Revit known-dimension).
+- Recommend: (1) keep F3 + C3 above meshopt/BVH; (2) reframe meshopt as *"measure opportunistically once `gltfpack` lands; not a priority — payload isn't the bottleneck"*; BVH stays correctly conditional ("only if sluggish" — it isn't). (3) **Write the Phase 7 rendering decision now** — Three.js sufficient: yes; GLB + tiling + complete-review viable at this scale: yes (with evidence). That honestly closes a chunk of the spike; only precision-at-scale stays open.
+- Status: **CLOSED FOR TRACKER ORDER**
+- Codex: Agreed. Updated the tracker so rendering/picking optimizations no longer lead the next-actions list. Meshopt is now framed as opportunistic measurement once `gltfpack` is available, BVH remains conditional on real sluggish picking, and correctness gates F3/C3 plus Phase 7 rendering decision work are promoted ahead of payload/pick optimization.
+
+## PERF1 — Instrument the 66 s before optimizing it (and don't panic-optimize an async worker)
+
+- Severity: **LOW–MEDIUM (measurement / direction)**
+- Where: [services.py:290-310](../../services.py#L290-L310) (`_update_job_progress` records coarse `stage` text + total `conversion_duration_ms` only)
+- Issue: the 66 s is a black box — no per-stage timing (IfcOpenShell parse vs GLB build vs tile write). G3 is already done (glb.py is numpy-vectorized), so the time is *almost certainly* dominated by IfcOpenShell tessellation — but that's a guess. Choosing a conversion-speed lever without the breakdown risks optimizing the wrong stage.
+- Recommend: add cheap `perf_counter` deltas per stage into `job.metrics` (`parse_ms`, `glb_build_ms`, `tile_write_ms`). Then decide with data: if **parse dominates** (likely), real speed-up means a native/web-ifc evaluation — a *real architecture decision, not a quick pass*; flag it, don't rush it. Critically: **66 s in an off-request worker is not a crisis** — it's already async with a staged progress bar. Better progress UX may matter more than raw speed until the real 20 MB / plant-global file forces the issue. Measure first; don't pre-optimize.
+- Status: **CLOSED**
+- Codex: Agreed and implemented. IFC JSON/GLB conversions now record a `timings` block with source read, parser, metadata, tile grouping/prepare, GLB build, meshopt hook, feature-ID validation, tile write, tileset write, and DB/index timings where applicable. GLB package metadata also carries `conversion_timings`, and `measure_plant3d_package` prints/exports the timing block.
 
 ## Credit (no action)
 

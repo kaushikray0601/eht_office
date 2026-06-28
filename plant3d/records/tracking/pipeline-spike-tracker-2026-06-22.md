@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: execution spike in progress; current housekeeping pass complete; next focus is meshopt correctness + measurement once `gltfpack` is available, then picking acceleration only if real samples show sluggish picking
+Status: execution spike in progress; GLB/Three.js viewer path is healthy on current samples; current focus is correctness gates plus conversion-stage timing, not render/pick optimization
 
 ## Objective
 
@@ -142,7 +142,7 @@ Record at minimum:
 - [x] Runtime package size.
 - [x] Browser load time.
 - [x] Draw call count.
-- [ ] Browser memory use where measurable.
+- [x] Browser memory use where measurable.
 - [x] FPS during orbit/pan/zoom.
 - [x] Selection/picking latency.
 - [x] Metadata lookup latency.
@@ -157,6 +157,7 @@ Measurement hooks now implemented:
 - [x] Viewer sidebar reports WebGL geometry and texture counts.
 - [x] Viewer sidebar reports effective pixel ratio and adaptive quality mode.
 - [x] Viewer sidebar reports render batch count, pick proxy count, pick latency, and metadata lookup latency.
+- [x] Viewer sidebar reports browser JS heap where Chromium exposes `performance.memory`.
 
 Acceptance thresholds for the first real IFC spike:
 
@@ -189,6 +190,7 @@ Decision rules:
 - 20 MB IFC is useful but may be too small to prove EPC-scale viability.
 - Public sample IFC files may not represent plant-global coordinates.
 - IfcOpenShell conversion may be slow or heavy for large files.
+- Package-55 metrics moved the current bottleneck: rendering/picking is healthy at 715k triangles, 36 draw calls, 60 FPS, 22 MB heap, and 5 ms pick latency; the open performance question is the CPU/IO-bound conversion path around 66 seconds for the 13.4 MB sample.
 - Naive Three.js object-per-mesh rendering will not scale.
 - Coordinate precision problems may not show unless source files use large coordinates.
 - Browser memory and draw calls can become the limiting factor before triangle count.
@@ -251,9 +253,10 @@ Deferred / TODO:
 - F3 remains open: obtain one plant-global/georeferenced IFC with large coordinates before marking jitter, orbit stability, or RTC precision as proven.
 - D3 is closed for the platform boundary: `plant3d` now imports from `plant3d.parsers.ifc`, not `idfviewer.ifc_parser`.
 - Production delivery remains deferred: package/tile payloads should move from Django JSON responses to signed object-storage URLs before real scale.
-- Production package format remains partially deferred: first GLB+sidecar, feature IDs, spatial child tiles, a 3D-Tiles-style manifest, first viewer-side tile streaming/culling, synthetic large-coordinate GLB child-tile regression, optional meshopt/gltfpack hook, and `MeshoptDecoder` viewer support exist. Measured compression, instancing, BVH acceleration, signed/object-storage delivery, and real plant-global precision proof remain open.
+- Production package format remains partially deferred: first GLB+sidecar, feature IDs, spatial child tiles, a 3D-Tiles-style manifest, first viewer-side tile streaming/culling, synthetic large-coordinate GLB child-tile regression, optional meshopt/gltfpack hook, and `MeshoptDecoder` viewer support exist. Rendering is acceptable on the current sample set; measured compression, instancing, signed/object-storage delivery, and real plant-global precision proof remain open. BVH is parked unless real picking latency regresses.
 - Compression strategy clarification after external/general review: current code path is GLB + optional `gltfpack`/meshopt (`EXT_meshopt_compression`), not Draco. Draco (`KHR_draco_mesh_compression`) remains a future comparison option, but it is not the current default because runtime decode speed, feature-ID preservation, and annotation/picking correctness matter more than headline byte reduction.
 - GLB feature IDs are now present in the first binary package path via `_FEATURE_ID_0` plus sidecar object-feature mapping. The viewer can now click GLB render meshes and resolve feature ID -> stable ID -> `ModelObject` metadata without hidden per-object proxies. BVH acceleration and shader/feature-ID highlighting are still deferred.
+- Local spike data cleanup is now supported by `purge_plant3d_data`: Django admin deletion is acceptable for DB-only cleanup during tests, but the command should be used when source/render storage blobs also need to be removed.
 - Unit/scale proof is improved but not fully closed: IFC `IfcUnitAssignment`, IfcOpenShell geometry settings, and a synthetic known-one-metre conversion fixture now validate the service contract. A real source-system/exporter benchmark is still needed before trusting measurement/federation workflows.
 - Parser cleanup remains a TODO: the extracted parser is a direct copy for boundary safety, not yet a deeply refactored production parser.
 
@@ -261,13 +264,15 @@ Deferred / TODO:
 
 > **Claude sequence review (2026-06-23) — see audit R1-R3 / C1-C5.** KR confirmed real-GPU rendering is smooth (15-17 FPS is a headless artifact) and a plant-global IFC is weeks away. Claude recommended promoting a synthetic large-coordinate offset fixture, known-dimension unit fixture, and meshopt compression. The 2026-06-28 pass landed the synthetic known-one-metre fixture, a synthetic large-coordinate GLB child-tile regression, and first viewer streaming because package 24 already gave us a useful 9-child-tile runtime proof. The list below is the post-2026-06-28 order.
 
-1. Manually retest the same IFC in `plant3d` after complete/review mode and confirm the missing-steel regression is gone for the current sample.
-2. Install/provide `gltfpack` in the worker environment, regenerate a GLB package, and measure real meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness with `measure_plant3d_package`.
-3. If real `gltfpack -cc` output is rejected by the feature-ID gate, discuss before changing format strategy: options include safer gltfpack args, keeping meshopt disabled, or a future `EXT_mesh_features`/metadata-extension pass.
-4. Add source-system/exporter known-dimension proof to complement the synthetic one-metre fixture, especially the foot-declared Revit sample path.
-5. Evaluate `three-mesh-bvh` acceleration only if direct render-mesh raycast is sluggish on larger samples.
-6. Gather the real 20 MB and/or plant-global IFC input when available.
-7. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+1. Correctness gate F3: obtain or create a real plant-global/georeferenced IFC test before marking float32 jitter, RTC precision, orbit stability, or measurement stability as proven.
+2. Correctness gate C3/F4: add source-system/exporter known-dimension proof to complement the synthetic one-metre fixture, especially the foot-declared Revit sample path.
+3. Conversion visibility: regenerate one GLB package after the timing instrumentation pass and record `parse_ms`, `glb_build_ms`, `tile_write_ms`, `db_write_ms`, and total duration. Do not choose native/web-ifc/parser work until this breakdown exists.
+4. Phase 7 partial decision: write the rendering decision with current evidence: Three.js-first and GLB + tiling + complete-review are acceptable at current sample scale; precision-at-scale and unit truth remain open gates.
+5. Opportunistic only: when `gltfpack` is available, measure real meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness with `measure_plant3d_package`. Payload is not the current bottleneck.
+6. If real `gltfpack -cc` output is rejected by the feature-ID gate, discuss before changing format strategy: options include safer gltfpack args, keeping meshopt disabled, or a future `EXT_mesh_features`/metadata-extension pass.
+7. Evaluate `three-mesh-bvh` acceleration only if direct render-mesh raycast becomes sluggish on larger samples.
+8. Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed.
+9. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
 Current manual check path:
 
@@ -278,6 +283,8 @@ Current manual check path:
 5. Queue the IFC GLB conversion; the worker should pick it up automatically.
 6. Open both package viewers and compare package size/load behavior.
 7. Measure the resulting package with `venv/bin/python manage.py measure_plant3d_package <package_id>`.
+8. Record the timing line from `measure_plant3d_package`, especially `parse_ms`, `glb_build_ms`, `tile_write_ms`, and `db_write_ms`.
+9. For a clean local reset, first dry-run `venv/bin/python manage.py purge_plant3d_data --project-id <proj_id>` or `--source-id <id>`, then add `--confirm` only after reviewing the summary.
 
 ## Verification Log
 
@@ -384,6 +391,14 @@ Current manual check path:
 - 2026-06-28: KR manual retest confirmed the zoom/stale/white-canvas regression is fixed on a 9-tile GLB package. Source 23/package 51 reported 4,313 objects, 715,028 triangles, 9/9 loaded tiles, 36 draw calls, 16,050,726 package bytes, 361 ms viewer load time, 60 FPS, 5 ms pick latency, 27 ms metadata latency, and `review-complete` streaming. Meshopt/gltfpack was skipped because `gltfpack` is not installed.
 - 2026-06-28: Added viewer-side graphics diagnostics so manual tests can distinguish server conversion cost from browser GPU rendering: frame time, renderer triangle count, browser JS heap where available, WebGL renderer, WebGL vendor, and WebGL version are now shown in the runtime metrics panel. Important clarification: `Queue IFC GLB Conversion` is CPU/IO-side Django/IfcOpenShell/GLB packaging work and is not expected to load the NVIDIA GPU; GPU usage begins when Chrome/Edge renders the package viewer through WebGL.
 - 2026-06-28: `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `venv/bin/python manage.py test plant3d -v 2 --noinput` passed after viewer GPU/WebGL diagnostics pass. Plant3d suite: 36 tests.
+- 2026-06-28: KR clean-DB fresh run after deleting plant3d admin data: `8-SSPAU-800203.ifc` 13.4 MB source, off-request worker/watch conversion about 1 minute 6 seconds, Windows Task Manager observed CPU about 40%, GPU 1 about 4%, GPU 2 0%. Package 55 reported 4,313 objects, 9 tiles, 16,050,726 package bytes, 287 ms viewer load time, 715,028 render triangles, 36 draw calls, 9/9 loaded tiles, 0 failed tiles before VC1, 60 FPS, 18.2 ms frame time, pixel ratio 0.9, 22 MB browser heap, 5 ms pick latency, and 55 ms metadata latency. WebGL renderer confirmed hardware acceleration through `ANGLE (NVIDIA, NVIDIA GeForce GTX 1050 Ti ... Direct3D11)`.
+- 2026-06-28: Closed Claude VC1 in the viewer: GLB tile state now has failed/attempt/error tracking, retries stop after 3 failed attempts, failed tiles are excluded from future candidates, runtime metrics show failed tile count, and completeness/status text reports `Model INCOMPLETE` instead of misleading perpetual loading when a tile permanently fails.
+- 2026-06-28: `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, and `venv/bin/python manage.py test plant3d -v 2 --noinput` passed after failed-tile completeness pass. Plant3d suite: 36 tests.
+- 2026-06-28: Added `purge_plant3d_data` management command for safe local spike cleanup. It requires exactly one scope (`--source-id`, `--project-id`, or `--all`), dry-runs by default, needs `--confirm` to delete, and removes explicit source/package/tile storage blobs unless `--keep-storage` is used.
+- 2026-06-28: `venv/bin/python -m py_compile plant3d/storage.py plant3d/management/commands/purge_plant3d_data.py plant3d/tests.py`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after purge-command pass. Plant3d suite: 38 tests. A first focused run against the default PostgreSQL test DB hit a local connection error before tests executed, so the verified suite used the existing SQLite fallback.
+- 2026-06-29: Accepted Claude SEQ1/PERF1 sequencing correction. Package-55 metrics prove rendering/picking is healthy at current scale, so next work is correctness gates (F3 plant-global precision and C3/F4 known-dimension units) plus conversion timing instrumentation. Meshopt is opportunistic once `gltfpack` exists; BVH remains parked unless pick latency regresses.
+- 2026-06-29: Added per-stage conversion timings to IFC JSON/GLB jobs and GLB package metadata. New GLB metrics include `source_read_ms`, `parse_ms`, `context_metadata_ms`, `tile_grouping_ms`, `tile_prepare_ms`, `glb_build_ms`, `meshopt_hook_ms`, `feature_id_validation_ms`, `tile_write_ms`, `tileset_write_ms`, and `db_write_ms` where applicable. `measure_plant3d_package` now prints/exports conversion timings.
+- 2026-06-29: `venv/bin/python -m py_compile plant3d/services.py plant3d/management/commands/measure_plant3d_package.py plant3d/tests.py`, `venv/bin/python manage.py check`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput` passed after conversion-timing instrumentation pass. Plant3d suite: 38 tests.
 
 ## Platform Rules Discovered During Implementation
 
@@ -416,6 +431,8 @@ Current manual check path:
 - Meshopt byte savings are not sufficient for adoption. Compressed GLB packages must also prove feature-ID picking correctness because compression/quantization can reorder or alter custom vertex attributes.
 - Do not use compression as a substitute for tiling/completeness strategy. Compression reduces payload bytes, but it does not solve model completeness, LOD/HLOD, metadata identity, annotation anchoring, or source-unit correctness.
 - Windows Task Manager GPU load is not a reliable indicator for server-side conversion. Watch the browser process and the viewer's WebGL renderer/frame-time metrics for display performance; watch worker logs, conversion duration, CPU, disk IO, and memory for conversion performance.
+- A tile-loading error is a completeness state, not a transient log message. Production viewers must distinguish complete, loading, partial, and failed/incomplete geometry so engineering users do not trust a permanently incomplete scene.
+- Do not optimize conversion speed from a total duration alone. Use per-stage timings first; if `parse_ms` dominates, the real speed lever is parser/native tooling and should be treated as an architecture decision, not a quick code tweak.
 
 ## Manual Testing Checklist
 
