@@ -16,6 +16,20 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function timingLine(data) {
+  const rows = Array.isArray(data.timing_summary) ? data.timing_summary : [];
+  if (!rows.length) return '';
+  const text = rows
+    .map(row => `${row.label || row.key}=${row.ms} ms`)
+    .join(', ');
+  return `<br>Timings: ${escapeHtml(text)}`;
+}
+
+function rawMetricsBlock(data) {
+  if (!data.metrics || !Object.keys(data.metrics).length) return '';
+  return `<details><summary>Raw metrics</summary><pre>${escapeHtml(JSON.stringify(data.metrics))}</pre></details>`;
+}
+
 function jobLine(data) {
   const packageLinks = data.package
     ? ` <a href="${escapeHtml(data.package.viewer_url)}">View</a> <a href="${escapeHtml(data.package.json_url)}">Package JSON</a>`
@@ -27,15 +41,17 @@ function jobLine(data) {
     ? `<br>Long-running worker: <code>${escapeHtml(data.worker_hint)}</code>`
     : '';
   const stage = data.metrics?.stage ? `<br>Stage: ${escapeHtml(data.metrics.stage)}` : '';
-  const metrics = data.metrics && Object.keys(data.metrics).length
-    ? `<br>Metrics: ${escapeHtml(JSON.stringify(data.metrics))}`
-    : '';
+  const totalDuration = data.metrics?.conversion_duration_ms ? `<br>Total conversion: ${escapeHtml(data.metrics.conversion_duration_ms)} ms` : '';
+  const timings = timingLine(data);
+  const metrics = rawMetricsBlock(data);
   const error = data.error_message ? `<br>Error: ${escapeHtml(data.error_message)}` : '';
   return [
     `Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')} - ${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%`,
     processHint,
     workerHint,
     stage,
+    totalDuration,
+    timings,
     metrics,
     error,
     ` <a href="${escapeHtml(data.url || `/plant3d/jobs/${data.id}/json/`)}">JSON</a>`,

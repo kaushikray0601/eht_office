@@ -19,6 +19,8 @@
     .kv strong { display: block; color: #243b53; font-size: 12px; font-weight: 600; }
     button { border: 1px solid #bcccdc; background: #fff; border-radius: 4px; padding: 6px 8px; cursor: pointer; }
     button:hover { background: #f0f4f8; }
+    button:disabled { color: #9aa5b1; cursor: not-allowed; background: #f5f7fa; }
+    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -32,7 +34,11 @@
       <p><strong>Tiles:</strong> {{ package.tile_count }}</p>
       <p><strong>Bytes:</strong> {{ package.byte_size }}</p>
     </div>
-    <button id="resetViewBtn" type="button">Reset View</button>
+    <div class="toolbar">
+      <button id="resetViewBtn" type="button">Reset View</button>
+      <button id="fitSelectionBtn" type="button" disabled>Fit Selected</button>
+      <button id="clearSelectionBtn" type="button" disabled>Clear</button>
+    </div>
     <div id="viewerStatus" class="status">Loading package...</div>
     <section class="panel">
       <h2>Runtime Metrics</h2>
@@ -55,6 +61,6 @@
     }
   }
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260628_tilefail1"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260629_selectionsummary1"></script>
 </body>
 </html>

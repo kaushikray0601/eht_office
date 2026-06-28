@@ -609,6 +609,42 @@ class Plant3DIntakeTests(TestCase):
             },
         }
 
+    def _known_one_meter_foot_declared_ifc_scene(self):
+        scene = copy.deepcopy(self._known_one_meter_ifc_scene())
+        scene["meshes"][0]["properties"]["global_id"] = "known-foot-box-guid-1"
+        scene["meshes"][0]["properties"]["component_ref"] = "KNOWN-1M-FT"
+        scene["meshes"][0]["properties"]["name"] = "Known 1m Box In Foot Declared IFC"
+        scene["stats"].update(
+            {
+                "ifc_declared_length_units": [
+                    {
+                        "entity": "IfcConversionBasedUnit",
+                        "unit_type": "LENGTHUNIT",
+                        "name": "FOOT",
+                        "display_unit": "ft",
+                        "scale_to_m": 0.3048,
+                        "conversion_factor": 0.3048,
+                        "conversion_base_unit": {
+                            "entity": "IfcSIUnit",
+                            "unit_type": "LENGTHUNIT",
+                            "name": "METRE",
+                            "prefix": "",
+                            "display_unit": "m",
+                            "scale_to_m": 1.0,
+                            "confidence": "ifc_unit_assignment",
+                        },
+                        "confidence": "ifc_unit_assignment",
+                    }
+                ],
+                "ifc_declared_length_unit": "ft",
+                "ifc_declared_length_unit_name": "FOOT",
+                "ifc_declared_length_unit_entity": "IfcConversionBasedUnit",
+                "ifc_declared_length_scale_to_m": 0.3048,
+                "ifc_declared_length_confidence": "ifc_unit_assignment",
+            }
+        )
+        return scene
+
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_geometry_conversion_writes_tile_and_object_index(self, mock_parse):
         mock_parse.return_value = self._sample_ifc_scene()
@@ -687,6 +723,56 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(package.metadata["unit_metadata"]["render_coordinate_unit"], "M")
         self.assertEqual(package.metadata["unit_metadata"]["ifc_declared_length_unit"], "m")
         self.assertFalse(package.metadata["unit_warnings"])
+        self.assertEqual(package.bounds["max_x"] - package.bounds["min_x"], 1.0)
+        self.assertEqual(package.bounds["max_y"] - package.bounds["min_y"], 1.0)
+        self.assertEqual(package.bounds["max_z"] - package.bounds["min_z"], 1.0)
+
+        payload = json.loads(path_for_storage_key(package.manifest_storage_key).read_text(encoding="utf-8"))
+        origin = payload["coordinate_transform"]["rtc_origin_render_xyz"]
+        scale = payload["coordinate_transform"]["scale_to_m"]
+        positions = payload["meshes"][0]["mesh"]["positions"]
+        world_vertices = [
+            [
+                origin[0] + positions[index],
+                origin[1] + positions[index + 1],
+                origin[2] + positions[index + 2],
+            ]
+            for index in range(0, len(positions), 3)
+        ]
+        reconstructed_source = [
+            [vertex[0] / scale, vertex[2] / scale, vertex[1] / scale]
+            for vertex in world_vertices
+        ]
+        for axis in range(3):
+            axis_values = [vertex[axis] for vertex in reconstructed_source]
+            self.assertEqual(max(axis_values) - min(axis_values), 1.0)
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_foot_declared_known_one_meter_fixture_preserves_render_scale(self, mock_parse):
+        mock_parse.return_value = self._known_one_meter_foot_declared_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile(
+                "known-1m-foot-declared.ifc",
+                b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n"
+                b"#15= IFCSIUNIT(*,.LENGTHUNIT.,$,.METRE.);\n"
+                b"#16= IFCREAL(0.3048);\n"
+                b"#17= IFCMEASUREWITHUNIT(#16,#15);\n"
+                b"#18= IFCCONVERSIONBASEDUNIT(#17,.LENGTHUNIT.,'FOOT',#17);\n"
+                b"ENDSEC;",
+            ),
+        )
+
+        from .services import run_ifc_geometry_conversion
+
+        job, package = run_ifc_geometry_conversion(source)
+
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(package.metadata["unit_metadata"]["render_coordinate_unit"], "M")
+        self.assertEqual(package.metadata["unit_metadata"]["render_unit_confidence"], "ifcopenshell_geometry_si")
+        self.assertEqual(package.metadata["unit_metadata"]["ifc_declared_length_unit"], "ft")
+        self.assertEqual(package.metadata["unit_metadata"]["ifc_declared_length_scale_to_m"], 0.3048)
+        self.assertTrue(package.metadata["unit_warnings"])
         self.assertEqual(package.bounds["max_x"] - package.bounds["min_x"], 1.0)
         self.assertEqual(package.bounds["max_y"] - package.bounds["min_y"], 1.0)
         self.assertEqual(package.bounds["max_z"] - package.bounds["min_z"], 1.0)
@@ -1101,6 +1187,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(payload["package"]["object_count"], 1)
         self.assertIn("/plant3d/packages/", payload["package"]["viewer_url"])
         self.assertIn("/plant3d/packages/", payload["package"]["json_url"])
+        self.assertTrue(payload["timing_summary"])
+        timing_keys = [row["key"] for row in payload["timing_summary"]]
+        self.assertIn("parse_ms", timing_keys)
+        self.assertIn("tile_write_ms", timing_keys)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_package_and_tile_json_endpoints_return_render_payload(self, mock_parse):
@@ -1135,6 +1225,14 @@ class Plant3DIntakeTests(TestCase):
         object_payload = object_response.json()
         self.assertEqual(object_payload["stable_id"], "ifc:beam-guid-1")
         self.assertEqual(object_payload["metadata"]["name"], "Beam 001")
+        self.assertEqual(object_payload["selection_summary"]["display_label"], "B-001")
+        self.assertEqual(object_payload["selection_summary"]["name"], "Beam 001")
+        self.assertEqual(object_payload["selection_summary"]["dimensions"], {"x": 1.0, "y": 1.0, "z": 1.0})
+        self.assertEqual(object_payload["selection_summary"]["dimension_unit"], "m")
+        self.assertEqual(
+            object_payload["selection_summary"]["spatial_path"],
+            ["IfcBuilding:Main", "IfcBuildingStorey:Level 1"],
+        )
 
         tile_id = package.tiles.get().pk
         tile_response = self.client.get(reverse("plant3d_tile_json", args=[tile_id]))
@@ -1259,6 +1357,9 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, reverse("plant3d_package_json", args=[package.pk]))
         self.assertContains(response, "plant3d viewer")
+        self.assertContains(response, "fitSelectionBtn")
+        self.assertContains(response, "clearSelectionBtn")
+        self.assertContains(response, "20260629_selectionsummary1")
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")
@@ -1276,6 +1377,28 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, 'data-conversion-form')
         self.assertContains(response, 'data-watch-job')
         self.assertContains(response, 'plant3d/js/source_detail.js')
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_source_detail_page_shows_conversion_timing_summary(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        user = get_user_model().objects.create_user(username="plant3d-source-timing-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("detail-timing.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_geometry_conversion
+
+        run_ifc_geometry_conversion(source)
+        response = self.client.get(reverse("plant3d_source_detail", args=[source.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Total conversion:")
+        self.assertContains(response, "Timings:")
+        self.assertContains(response, "IFC parse=")
+        self.assertContains(response, "tile write=")
 
     def test_source_json_filters_to_user_accessible_projects(self):
         user = get_user_model().objects.create_user(username="plant3d-filter-user", password="pw")

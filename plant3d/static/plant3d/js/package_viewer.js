@@ -7,6 +7,8 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 const viewer = document.getElementById('viewer');
 const statusEl = document.getElementById('viewerStatus');
 const resetBtn = document.getElementById('resetViewBtn');
+const fitSelectionBtn = document.getElementById('fitSelectionBtn');
+const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 const metricsEl = document.getElementById('runtimeMetrics');
 const selectionEl = document.getElementById('selectionPanel');
 
@@ -16,7 +18,7 @@ const interactionPixelRatio = Math.max(0.75, Math.min(maxIdlePixelRatio, 1.0));
 const minPixelRatio = Math.min(interactionPixelRatio, 0.75);
 
 const renderer = new THREE.WebGLRenderer({
-  antialias: false,
+  antialias: true,
   powerPreference: 'high-performance',
 });
 renderer.setClearColor(0xf4f6f8, 1);
@@ -72,6 +74,7 @@ let runtimeStats = {
   webglVendor: '',
   webglRenderer: '',
   webglVersion: '',
+  antialiasing: 'MSAA',
   package: null,
 };
 let framesSinceFpsSample = 0;
@@ -134,6 +137,63 @@ function escapeHtml(value) {
   })[char]);
 }
 
+function kvRow(label, value) {
+  if (value === null || value === undefined || value === '') return '';
+  return `<p class="kv"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></p>`;
+}
+
+function formatDimension(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  if (Math.abs(number) >= 100) return number.toFixed(1);
+  if (Math.abs(number) >= 10) return number.toFixed(2);
+  return number.toFixed(3);
+}
+
+function dimensionsText(summary) {
+  const dimensions = summary?.dimensions || {};
+  const unit = summary?.dimension_unit || 'm';
+  const x = formatDimension(dimensions.x);
+  const y = formatDimension(dimensions.y);
+  const z = formatDimension(dimensions.z);
+  if (!x && !y && !z) return '';
+  return `X ${x || '-'} ${unit}, Y ${y || '-'} ${unit}, Z ${z || '-'} ${unit}`;
+}
+
+function metadataDetails(data) {
+  const metadata = data?.metadata || {};
+  const bounds = data?.bounds || {};
+  const hasMetadata = Object.keys(metadata).length > 0;
+  const hasBounds = Object.keys(bounds).length > 0;
+  if (!hasMetadata && !hasBounds) return '';
+  return [
+    '<details>',
+    '<summary>Raw metadata</summary>',
+    hasBounds ? `<p class="kv"><span>Bounds</span><strong>${escapeHtml(JSON.stringify(bounds))}</strong></p>` : '',
+    hasMetadata ? `<p class="kv"><span>Metadata</span><strong>${escapeHtml(JSON.stringify(metadata))}</strong></p>` : '',
+    '</details>',
+  ].join('');
+}
+
+function selectionDetailsHtml(data, featureId = null) {
+  const summary = data?.selection_summary || {};
+  const spatialPath = Array.isArray(summary.spatial_path) ? summary.spatial_path.join(' / ') : '';
+  return [
+    kvRow('Feature ID', featureId),
+    kvRow('Label', summary.display_label || data?.tag || data?.source_object_id || data?.stable_id),
+    kvRow('Type', summary.object_type || data?.object_type),
+    kvRow('Tag', summary.tag || data?.tag),
+    kvRow('Name', summary.name),
+    kvRow('Line ID', summary.line_id || data?.line_id),
+    kvRow('Dimensions', dimensionsText(summary)),
+    kvRow('Spatial Path', spatialPath),
+    kvRow('Group', summary.hierarchy_group),
+    kvRow('Stable ID', summary.stable_id || data?.stable_id),
+    kvRow('Source Object', summary.source_object_id || data?.source_object_id),
+    metadataDetails(data),
+  ].join('');
+}
+
 function getWebglDiagnostics() {
   try {
     const gl = renderer.getContext();
@@ -194,6 +254,7 @@ function renderMetrics() {
     `<p class="kv"><span>WebGL Renderer</span><strong>${escapeHtml(runtimeStats.webglRenderer || 'unknown')}</strong></p>`,
     `<p class="kv"><span>WebGL Vendor</span><strong>${escapeHtml(runtimeStats.webglVendor || 'unknown')}</strong></p>`,
     `<p class="kv"><span>WebGL Version</span><strong>${escapeHtml(runtimeStats.webglVersion || 'unknown')}</strong></p>`,
+    `<p class="kv"><span>Antialiasing</span><strong>${escapeHtml(runtimeStats.antialiasing || 'unknown')}</strong></p>`,
     `<p class="kv"><span>Pick Latency</span><strong>${runtimeStats.pickLatencyMs} ms</strong></p>`,
     `<p class="kv"><span>Metadata Latency</span><strong>${runtimeStats.metadataLatencyMs} ms</strong></p>`,
     `<p class="kv"><span>Package Bytes</span><strong>${pkg.byte_size || 0}</strong></p>`,
@@ -356,7 +417,11 @@ function beginInteraction() {
     window.clearTimeout(restoreQualityTimer);
     restoreQualityTimer = null;
   }
-  applyPixelRatio(interactionPixelRatio, 'adaptive-interaction');
+  if (runtimeStats.package && shouldUseReviewMode(runtimeStats.package)) {
+    applyPixelRatio(maxIdlePixelRatio, 'review-fidelity');
+  } else {
+    applyPixelRatio(interactionPixelRatio, 'adaptive-interaction');
+  }
   renderMetrics();
 }
 
@@ -364,8 +429,12 @@ function endInteraction() {
   isInteracting = false;
   if (restoreQualityTimer) window.clearTimeout(restoreQualityTimer);
   restoreQualityTimer = window.setTimeout(() => {
-    const restoredRatio = lowFpsSamples >= 2 ? Math.max(minPixelRatio, interactionPixelRatio) : maxIdlePixelRatio;
-    applyPixelRatio(restoredRatio, lowFpsSamples >= 2 ? 'adaptive-fps-limited' : 'adaptive-idle');
+    if (runtimeStats.package && shouldUseReviewMode(runtimeStats.package) && lowFpsSamples < 2) {
+      applyPixelRatio(maxIdlePixelRatio, 'review-fidelity');
+    } else {
+      const restoredRatio = lowFpsSamples >= 2 ? Math.max(minPixelRatio, interactionPixelRatio) : maxIdlePixelRatio;
+      applyPixelRatio(restoredRatio, lowFpsSamples >= 2 ? 'adaptive-fps-limited' : 'adaptive-idle');
+    }
     renderMetrics();
   }, 450);
 }
@@ -419,6 +488,39 @@ function frameScene(boundsOverride = null) {
   controls.update();
 }
 
+function frameBounds(bounds) {
+  if (!(bounds instanceof THREE.Box3) || bounds.isEmpty()) return;
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  bounds.getSize(size);
+  bounds.getCenter(center);
+  const radius = Math.max(size.length() * 0.5, 0.5);
+  const fovRadians = THREE.MathUtils.degToRad(camera.fov);
+  const distance = Math.max(radius / Math.tan(fovRadians / 2), radius * 2.0);
+  const direction = new THREE.Vector3().subVectors(camera.position, controls.target);
+  if (direction.lengthSq() < 0.0001) direction.set(1, 0.8, 1);
+  direction.normalize();
+  camera.position.copy(center).add(direction.multiplyScalar(distance * 1.25));
+  controls.target.copy(center);
+  controls.minDistance = Math.max(radius * 0.02, 0.05);
+  controls.maxDistance = Math.max(radius * 80, controls.minDistance * 10, 100);
+  camera.near = Math.max(controls.minDistance / 100, 0.005);
+  camera.far = Math.max(controls.maxDistance * 4, 1000);
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function setSelectionActionsEnabled(enabled) {
+  if (fitSelectionBtn) fitSelectionBtn.disabled = !enabled;
+  if (clearSelectionBtn) clearSelectionBtn.disabled = !enabled;
+}
+
+function fitSelectedObject() {
+  if (!selectedHighlight) return;
+  const bounds = new THREE.Box3().setFromObject(selectedHighlight);
+  frameBounds(bounds);
+}
+
 function sourceBoundsHalfExtents(rawBounds, scaleToM = 1.0) {
   if (!rawBounds) return new THREE.Vector3(1, 1, 1);
   const scale = Number(scaleToM || 1);
@@ -448,10 +550,22 @@ function tileRadiusForState(pkg, tile) {
   return sourceBoundsHalfExtents(tile.bounds || pkg.bounds || {}, scaleToM).length();
 }
 
+function tuneLoadedGlbMaterial(material) {
+  if (!material) return;
+  if (Array.isArray(material)) {
+    material.forEach(item => tuneLoadedGlbMaterial(item));
+    return;
+  }
+  if (typeof material.metalness === 'number') material.metalness = 0.0;
+  if (typeof material.roughness === 'number') material.roughness = Math.max(material.roughness, 0.9);
+  if (typeof material.envMapIntensity === 'number') material.envMapIntensity = 0.0;
+  material.needsUpdate = true;
+}
+
 function disposeObject3D(object) {
   object.traverse(node => {
     if (node.geometry) node.geometry.dispose();
-    if (node.material) {
+    if (node.material && !node.userData?.isSelectionHighlight) {
       if (Array.isArray(node.material)) {
         node.material.forEach(material => material.dispose?.());
       } else {
@@ -578,6 +692,7 @@ async function loadGlbTileState(state, pkg) {
         packageFormat: 'GLB',
         tileKey: state.key,
       };
+      tuneLoadedGlbMaterial(node.material);
       selectableMeshes.push(node);
       const geometry = node.geometry;
       const index = geometry?.index;
@@ -612,6 +727,10 @@ async function loadGlbTileState(state, pkg) {
 
 function unloadGlbTileState(state, pkg) {
   if (!state.loaded || !state.group) return;
+  if (selectedMesh?.userData?.tileKey === state.key) {
+    clearSelection();
+    if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+  }
   root.remove(state.group);
   disposeObject3D(state.group);
   selectableMeshes = selectableMeshes.filter(mesh => mesh.userData?.tileKey !== state.key);
@@ -755,18 +874,23 @@ async function loadGlbPackage(pkg, started) {
 
 function clearSelection() {
   if (selectedHighlight) {
-    root.remove(selectedHighlight);
+    selectedHighlight.parent?.remove(selectedHighlight);
+    selectedHighlight.geometry?.dispose?.();
     selectedHighlight = null;
   }
   selectedMesh = null;
+  setSelectionActionsEnabled(false);
 }
 
 async function showSelection(mesh) {
   clearSelection();
   selectedMesh = mesh;
-  selectedHighlight = new THREE.Mesh(mesh.geometry, highlightMaterial);
+  selectedHighlight = new THREE.Mesh(mesh.geometry.clone(), highlightMaterial);
+  selectedHighlight.userData.isSelectionHighlight = true;
   selectedHighlight.renderOrder = 10;
+  selectedHighlight.frustumCulled = false;
   root.add(selectedHighlight);
+  setSelectionActionsEnabled(true);
 
   const baseRows = [
     `<p class="kv"><span>Stable ID</span><strong>${escapeHtml(mesh.userData.stableId)}</strong></p>`,
@@ -788,14 +912,7 @@ async function showSelection(mesh) {
     const data = await response.json();
     runtimeStats.metadataLatencyMs = Math.round(performance.now() - metadataStarted);
     renderMetrics();
-    selectionEl.innerHTML = [
-      `<p class="kv"><span>Stable ID</span><strong>${escapeHtml(data.stable_id)}</strong></p>`,
-      `<p class="kv"><span>Type</span><strong>${escapeHtml(data.object_type)}</strong></p>`,
-      `<p class="kv"><span>Tag</span><strong>${escapeHtml(data.tag)}</strong></p>`,
-      `<p class="kv"><span>Source Object</span><strong>${escapeHtml(data.source_object_id)}</strong></p>`,
-      `<p class="kv"><span>Bounds</span><strong>${escapeHtml(JSON.stringify(data.bounds || {}))}</strong></p>`,
-      `<p class="kv"><span>Metadata</span><strong>${escapeHtml(JSON.stringify(data.metadata || {}))}</strong></p>`,
-    ].join('');
+    selectionEl.innerHTML = selectionDetailsHtml(data);
   } catch (error) {
     selectionEl.innerHTML = baseRows.join('') + `<p class="meta">${escapeHtml(error.message || 'Unable to load metadata.')}</p>`;
   }
@@ -813,6 +930,46 @@ function featureIdFromHit(hit) {
   return Number.isFinite(featureId) ? Math.round(featureId) : null;
 }
 
+function highlightGeometryForFeature(hit, featureId) {
+  const sourceGeometry = hit.object?.geometry;
+  const positions = sourceGeometry?.getAttribute?.('position');
+  const featureAttribute = sourceGeometry?.getAttribute?.('_FEATURE_ID_0') || sourceGeometry?.getAttribute?.('_feature_id_0');
+  if (!sourceGeometry || !positions || !featureAttribute) return null;
+
+  const indices = sourceGeometry.index;
+  const triangleCount = indices ? Math.floor(indices.count / 3) : Math.floor(positions.count / 3);
+  const highlightPositions = [];
+  for (let triangle = 0; triangle < triangleCount; triangle += 1) {
+    const triangleIndices = [0, 1, 2].map(offset => {
+      const rawIndex = triangle * 3 + offset;
+      return indices ? indices.getX(rawIndex) : rawIndex;
+    });
+    const includesFeature = triangleIndices.some(index => Math.round(featureAttribute.getX(index)) === featureId);
+    if (!includesFeature) continue;
+    for (const index of triangleIndices) {
+      highlightPositions.push(positions.getX(index), positions.getY(index), positions.getZ(index));
+    }
+  }
+
+  if (!highlightPositions.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(highlightPositions, 3));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function showGlbFeatureHighlight(hit, featureId) {
+  const geometry = highlightGeometryForFeature(hit, featureId);
+  if (!geometry) return;
+  selectedMesh = hit.object;
+  selectedHighlight = new THREE.Mesh(geometry, highlightMaterial);
+  selectedHighlight.userData.isSelectionHighlight = true;
+  selectedHighlight.renderOrder = 10;
+  selectedHighlight.frustumCulled = false;
+  hit.object.add(selectedHighlight);
+  setSelectionActionsEnabled(true);
+}
+
 async function showGlbFeatureSelection(hit) {
   clearSelection();
   const featureId = featureIdFromHit(hit);
@@ -821,6 +978,7 @@ async function showGlbFeatureSelection(hit) {
     return;
   }
 
+  showGlbFeatureHighlight(hit, featureId);
   const feature = featureIndex.get(featureId);
   const objectSummary = feature.objectSummary;
   const baseRows = [
@@ -844,15 +1002,7 @@ async function showGlbFeatureSelection(hit) {
     const data = await response.json();
     runtimeStats.metadataLatencyMs = Math.round(performance.now() - metadataStarted);
     renderMetrics();
-    selectionEl.innerHTML = [
-      `<p class="kv"><span>Feature ID</span><strong>${featureId}</strong></p>`,
-      `<p class="kv"><span>Stable ID</span><strong>${escapeHtml(data.stable_id)}</strong></p>`,
-      `<p class="kv"><span>Type</span><strong>${escapeHtml(data.object_type)}</strong></p>`,
-      `<p class="kv"><span>Tag</span><strong>${escapeHtml(data.tag)}</strong></p>`,
-      `<p class="kv"><span>Source Object</span><strong>${escapeHtml(data.source_object_id)}</strong></p>`,
-      `<p class="kv"><span>Bounds</span><strong>${escapeHtml(JSON.stringify(data.bounds || {}))}</strong></p>`,
-      `<p class="kv"><span>Metadata</span><strong>${escapeHtml(JSON.stringify(data.metadata || {}))}</strong></p>`,
-    ].join('');
+    selectionEl.innerHTML = selectionDetailsHtml(data, featureId);
   } catch (error) {
     selectionEl.innerHTML = baseRows.join('') + `<p class="meta">${escapeHtml(error.message || 'Unable to load metadata.')}</p>`;
   }
@@ -914,7 +1064,20 @@ window.addEventListener('resize', resize);
 controls.addEventListener('start', beginInteraction);
 controls.addEventListener('end', endInteraction);
 if (resetBtn) resetBtn.addEventListener('click', () => frameScene());
+if (fitSelectionBtn) fitSelectionBtn.addEventListener('click', fitSelectedObject);
+if (clearSelectionBtn) {
+  clearSelectionBtn.addEventListener('click', () => {
+    clearSelection();
+    if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+  });
+}
 renderer.domElement.addEventListener('click', pick);
+window.addEventListener('keydown', event => {
+  if (event.key === 'Escape') {
+    clearSelection();
+    if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+  }
+});
 resize();
 animate();
 

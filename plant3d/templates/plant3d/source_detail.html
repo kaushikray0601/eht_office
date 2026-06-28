@@ -44,7 +44,20 @@
       {% for job in jobs %}
         <li id="plant3d-job-{{ job.pk }}" data-job-url="{% url 'plant3d_job_json' job.pk %}" {% if job.status == "queued" or job.status == "running" %}data-watch-job{% endif %}>
           {{ job.created_at }} - {{ job.job_type }} - {{ job.status }} - {{ job.progress_percent }}%
-          {% if job.metrics %}<br>Metrics: {{ job.metrics }}{% endif %}
+          {% if job.metrics.stage %}<br>Stage: {{ job.metrics.stage }}{% endif %}
+          {% if job.metrics.conversion_duration_ms %}<br>Total conversion: {{ job.metrics.conversion_duration_ms }} ms{% endif %}
+          {% if job.timing_summary %}
+            <br>Timings:
+            {% for row in job.timing_summary %}
+              {{ row.label }}={{ row.ms }} ms{% if not forloop.last %}, {% endif %}
+            {% endfor %}
+          {% endif %}
+          {% if job.metrics %}
+            <details>
+              <summary>Raw metrics</summary>
+              <pre>{{ job.metrics }}</pre>
+            </details>
+          {% endif %}
           <a href="{% url 'plant3d_job_json' job.pk %}">JSON</a>
         </li>
       {% empty %}
@@ -65,6 +78,6 @@
     </ul>
     <p><a href="{% url 'plant3d_source_upload' %}">Upload another source model</a></p>
   </main>
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260628_worker1" defer></script>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260629_timings1" defer></script>
 </body>
 </html>

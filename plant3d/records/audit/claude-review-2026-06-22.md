@@ -294,8 +294,8 @@ Review of the tracker's planned sequence after KR confirmed two facts: **(a) rea
 - Where: Immediate Next Actions #4 (sequenced after tiling)
 - Issue: the unit-scale fixture is cheap, deterministic, and closes a standing measurement-trust doubt — it should be near the front. It should include the **`ft`-declared Revit sample** (0.3048 — the riskier scale), not only a metre box.
 - Recommend: add the fixture early; assert rendered extent matches a known real dimension for both a metre-declared and the foot-declared file; flip `unit_confidence` to verified on pass. Closes F4.
-- Status: **PARTIAL / TAKE REMAINDER**
-- Codex: A synthetic known-one-metre fixture now validates the service contract, but Claude is right that the foot-declared Revit/source-system proof is still missing. Keep F4 open until a real known-dimension/source-system benchmark verifies end-to-end scale and confidence wording.
+- Status: **PARTIAL / SYNTHETIC FOOT CASE COVERED**
+- Codex: Added both metre-declared and foot-declared synthetic one-metre fixtures. The foot case declares `ft` / `0.3048` while asserting the render extent remains 1.0 m under the IfcOpenShell-SI geometry contract. Keep F4 open only for the real source-system/exporter benchmark and final confidence wording.
 
 ## C4 — No size/perf regression band as meshopt/tiling evolve
 
@@ -426,6 +426,34 @@ VC1 verified closed (failed/attempt/error tracking, 3-try cap, failed tiles excl
 - Status: **CLOSED**
 - Codex: Agreed and implemented. IFC JSON/GLB conversions now record a `timings` block with source read, parser, metadata, tile grouping/prepare, GLB build, meshopt hook, feature-ID validation, tile write, tileset write, and DB/index timings where applicable. GLB package metadata also carries `conversion_timings`, and `measure_plant3d_package` prints/exports the timing block.
 
+### Claude re-review — 2026-06-29 (timing-metrics + select-tools passes)
+
+Suite **green at 40 tests**, `check` clean, production untouched. (A first run showed 1 failure on a stale `20260629_visual1` asset-version assertion — it was a **stale `.pyc`** from a mid-edit state; after clearing test bytecode the suite is green and `visual1` exists nowhere in source. Not a real regression. Lesson: the per-pass `?v=` cache-bust string is asserted exactly in a test, so a version bump must update that test in the same commit, or `__pycache__` can briefly mask the mismatch.)
+
+- **PERF1 instrument done excellently; the *measurement* is the pending payoff.** The per-stage `timings` block is comprehensive and Codex added the right rule ("don't choose native/web-ifc work until the breakdown exists"). **But no new conversion has been run to capture the 66 s split yet** — "parse dominates" is still an *inference*, not the measured number. Next action is trivial and should precede any conversion-speed work: re-run one GLB conversion on the 13.4 MB sample and read the timings. That one number decides whether a native/web-ifc detour is even warranted.
+
+## SEQ2 — Select-tools are UI polish that jumped ahead of the open priority items
+
+- Severity: **LOW (sequencing nudge, not a defect)**
+- Where: viewer fit-selected / clear-selection ([package_viewer.js:1025-1029](../../static/plant3d/js/package_viewer.js#L1025))
+- Issue: the select-tools are useful and low-risk (guarded wiring, no bug), but they are exactly the "polish UI beyond what is needed to measure the pipeline" the tracker's Phase 5 guardrail warns against — and they advanced while the real priorities did not: the **66 s timing measurement** (instrument built, not read), **F3** (precision still unproven; sample still local-coordinate), **C3** (foot-declared unit fixture), and the **Phase 7 rendering decision** (now writable with package-55 evidence).
+- Recommend: keep the tools (no revert needed), but hold further UX additions behind those four items. The next "productive-feeling" pass should be the 66 s measurement + the Phase 7 decision writeup, not more viewer features.
+- Status: **OPEN**
+- Codex:
+
+## SEL1 — Highlight extraction scans the whole tile buffer per click; the data to do it O(feature) already exists
+
+- Severity: **MEDIUM (perf / scalability — works now, won't scale)**
+- Where: [package_viewer.js `highlightGeometryForFeature`](../../static/plant3d/js/package_viewer.js) — loops over *every* triangle in the picked tile, calling `featureAttribute.getX()` 3× each, to collect one feature's vertices
+- Issue: on every GLB selection it does an **O(tile-triangles)** main-thread scan with per-element BufferAttribute accessors. A merged color-bucket tile is ~10^5 triangles, so each click is hundreds of thousands of `getX` calls — fine on the current 9-tile sample (~tens of ms) but it grows with tile size and adds an unbounded hitch on top of the 5 ms raycast. The sidecar **already carries per-feature `object_spans` (`first_index`, `index_count`, `vertex_offset`, `vertex_count`)** built in `glb.py` for exactly this — and the viewer doesn't use them.
+- Recommend: map `featureId → object_span` from the loaded sidecar and slice **only** that feature's `[first_index, first_index+index_count)` range to build the highlight — O(feature), no full-buffer scan. (Highlight RTC placement and dispose-on-reselect are already correct — no change needed there.)
+- Status: **OPEN**
+- Codex:
+
+### Claude re-review — 2026-06-29 (C3 + timing-UI + selection pass)
+
+Suite green at 40, `check` clean, production untouched. This pass did real priority work: **C3 closed** (`test_foot_declared_known_one_meter_fixture` — foot-declared 0.3048 IFC renders at 1 m extent with `unit_warnings` set and `render_unit_confidence=ifcopenshell_geometry_si`), and the **PERF1 timings are now surfaced** in the source-detail UI + job JSON (`timing_summary`). Selection highlight + fit-to-object added; RTC placement (parented to picked mesh) and dispose-on-reselect verified correct. Only real issue: **SEL1** (highlight buffer scan). Minor: selection `dimensions` come from raw **source-axis** bounds (Z-up) labelled x/y/z while the view is Y-up — values are correct extents, but consider labelling L/W/H or mapping to screen axes.
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.
@@ -452,7 +480,7 @@ VC1 verified closed (failed/attempt/error tracking, 3-try cap, failed tiles excl
 | F1 | MED | RTC origin frame mismatch / not reconstructable | CLOSED for single-tile JSON spike; per-tile RTC still Phase 4 |
 | F2 | INFO | first real-IFC measurements (parse time, JSON inflation) | RECORDED |
 | F3 | MED | sample IFCs are local-coordinate; jitter/RTC still unvalidated | OPEN (need plant-global IFC) |
-| F4 | MED | IFC unit assumed `M`; Tekla declares `mm`; scale not proven | OPEN (parser extraction added; known-dimension proof pending) |
+| F4 | MED | IFC unit assumed `M`; Tekla declares `mm`; scale not proven | PARTIAL (parser extraction + metre/foot synthetic fixtures added; real source-system proof pending) |
 | G1 | MED | `_FEATURE_ID_0` uses UNSIGNED_INT — glTF-invalid attribute | CLOSED |
 | G2 | MED | feature vs ModelObject stable_id diverge (non-GUID picking breaks) | CLOSED |
 | G3 | MED | pure-Python normals/packing — conversion hotspot | CLOSED |
@@ -463,7 +491,7 @@ VC1 verified closed (failed/attempt/error tracking, 3-try cap, failed tiles excl
 | R3 | LOW | child tiling adds cost not benefit until culling; mis-measure risk | LARGELY RESOLVED (culling/dispose built) |
 | C1 | MED | no jitter test for weeks unless synthetic offset fixture built | PARTIAL (synthetic large-coordinate fixture landed; real proof open) |
 | C2 | MED | meshopt missing from near-term plan (inverted priority) | PARTIAL (optional hook + decoder landed; real gltfpack measurement open) |
-| C3 | LOW | F4 fixture should be early + cover foot-declared file | PARTIAL (metre case closed; foot case open) |
+| C3 | LOW | F4 fixture should be early + cover foot-declared file | PARTIAL (metre + synthetic foot cases covered; real source-system proof open) |
 | C4 | LOW | no size/perf regression band | OPEN |
 | C5 | LOW | binary-proof milestone not gated on plant-global file | TRACKED |
 | SC1 | LOW-MED | hard tile cap, no LOD → partial model + confounded FPS | OPEN (track for LOD) |

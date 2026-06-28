@@ -22,6 +22,64 @@ from .services import (
 from .storage import exists as storage_exists, read_bytes, read_text
 
 PLANT3D_WORKER_COMMAND = "venv/bin/python manage.py process_plant3d_job --watch"
+TIMING_LABELS = [
+    ("source_read_ms", "source read"),
+    ("parse_ms", "IFC parse"),
+    ("context_metadata_ms", "metadata"),
+    ("tile_grouping_ms", "tile grouping"),
+    ("tile_prepare_ms", "tile prep"),
+    ("json_build_ms", "JSON build"),
+    ("glb_build_ms", "GLB build"),
+    ("meshopt_hook_ms", "meshopt hook"),
+    ("feature_id_validation_ms", "feature ID validation"),
+    ("tile_write_ms", "tile write"),
+    ("tileset_write_ms", "tileset write"),
+    ("db_write_ms", "DB/index write"),
+]
+
+
+def timing_summary_from_metrics(metrics):
+    timings = (metrics or {}).get("timings") or {}
+    if not isinstance(timings, dict):
+        return []
+    summary = []
+    for key, label in TIMING_LABELS:
+        if key in timings:
+            summary.append({"key": key, "label": label, "ms": timings[key]})
+    return summary
+
+
+def _axis_extent(bounds, min_key, max_key):
+    try:
+        return round(float(bounds.get(max_key, 0)) - float(bounds.get(min_key, 0)), 6)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def object_selection_summary(model_object):
+    metadata = model_object.metadata if isinstance(model_object.metadata, dict) else {}
+    bounds = model_object.bounds if isinstance(model_object.bounds, dict) else {}
+    dimensions = {
+        "x": _axis_extent(bounds, "min_x", "max_x"),
+        "y": _axis_extent(bounds, "min_y", "max_y"),
+        "z": _axis_extent(bounds, "min_z", "max_z"),
+    }
+    name = metadata.get("name") or metadata.get("description") or ""
+    spatial_path = metadata.get("spatial_path") if isinstance(metadata.get("spatial_path"), list) else []
+    display_label = model_object.tag or name or model_object.source_object_id or model_object.stable_id
+    return {
+        "display_label": display_label,
+        "name": name,
+        "object_type": model_object.object_type,
+        "tag": model_object.tag,
+        "line_id": model_object.line_id,
+        "stable_id": model_object.stable_id,
+        "source_object_id": model_object.source_object_id,
+        "dimensions": dimensions,
+        "dimension_unit": "m",
+        "spatial_path": spatial_path,
+        "hierarchy_group": metadata.get("hierarchy_group") or "",
+    }
 
 
 def platform_home_view(request):
@@ -56,7 +114,9 @@ def source_upload_view(request):
 def source_detail_view(request, source_id):
     source = get_object_or_404(source_models_for_user(request.user).select_related("project"), pk=source_id)
     packages = source.render_packages.order_by("-created_at")
-    jobs = source.conversion_jobs.order_by("-created_at")
+    jobs = list(source.conversion_jobs.order_by("-created_at"))
+    for job in jobs:
+        job.timing_summary = timing_summary_from_metrics(job.metrics)
     return render(
         request,
         "plant3d/source_detail.html",
@@ -156,6 +216,7 @@ def source_ifc_glb_convert_view(request, source_id):
 def job_json_view(request, job_id):
     job = get_object_or_404(conversion_jobs_for_user(request.user).select_related("source_model"), pk=job_id)
     package = job.render_packages.order_by("-created_at").first()
+    timing_summary = timing_summary_from_metrics(job.metrics)
     return JsonResponse(
         {
             "id": job.pk,
@@ -167,6 +228,7 @@ def job_json_view(request, job_id):
             "tool_name": job.tool_name,
             "error_message": job.error_message,
             "metrics": job.metrics,
+            "timing_summary": timing_summary,
             "process_hint": f"venv/bin/python manage.py process_plant3d_job {job.pk}",
             "worker_hint": PLANT3D_WORKER_COMMAND,
             "package": {
@@ -284,6 +346,7 @@ def model_object_json_view(request, object_id):
         model_objects_for_user(request.user).select_related("source_model", "render_tile"),
         pk=object_id,
     )
+    selection_summary = object_selection_summary(model_object)
     return JsonResponse(
         {
             "id": model_object.pk,
@@ -295,6 +358,7 @@ def model_object_json_view(request, object_id):
             "line_id": model_object.line_id,
             "bounds": model_object.bounds,
             "metadata": model_object.metadata,
+            "selection_summary": selection_summary,
         }
     )
 
