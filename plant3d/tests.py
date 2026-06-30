@@ -1037,7 +1037,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("saved_pct=0.0%", output)
         self.assertIn("timings:", output)
         self.assertIn("parse_ms=", output)
+        self.assertIn("timing decision:", output)
+        self.assertIn("dominant=", output)
         self.assertIn("Summary meshopt:", output)
+        self.assertIn("Summary timings:", output)
 
         json_stdout = io.StringIO()
         call_command("measure_plant3d_package", str(package.pk), json=True, stdout=json_stdout)
@@ -1050,6 +1053,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(payload["summary"]["compression"]["rejected_tiles"], 0)
         self.assertEqual(payload["summary"]["compression"]["saved_percent"], 0.0)
         self.assertIn("parse_ms", payload["packages"][0]["conversion_timings"])
+        self.assertIn("conversion_timing_breakdown", payload["packages"][0])
+        self.assertGreaterEqual(payload["packages"][0]["conversion_timing_breakdown"]["total_ms"], 0)
+        self.assertIn("dominant_label", payload["packages"][0]["conversion_timing_breakdown"])
+        self.assertIn("conversion_timing_breakdown", payload["summary"])
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_glb_conversion_endpoint_queues_glb_job(self, mock_parse):
@@ -1229,6 +1236,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(object_payload["selection_summary"]["name"], "Beam 001")
         self.assertEqual(object_payload["selection_summary"]["dimensions"], {"x": 1.0, "y": 1.0, "z": 1.0})
         self.assertEqual(object_payload["selection_summary"]["dimension_unit"], "m")
+        self.assertEqual(object_payload["selection_summary"]["dimension_frame"], "source_xyz")
         self.assertEqual(
             object_payload["selection_summary"]["spatial_path"],
             ["IfcBuilding:Main", "IfcBuildingStorey:Level 1"],
@@ -1359,7 +1367,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "plant3d viewer")
         self.assertContains(response, "fitSelectionBtn")
         self.assertContains(response, "clearSelectionBtn")
-        self.assertContains(response, "20260629_selectionsummary1")
+        self.assertContains(response, "20260630_spanhighlight1")
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")

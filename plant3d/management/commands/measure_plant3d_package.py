@@ -5,6 +5,21 @@ from django.core.management.base import BaseCommand, CommandError
 from plant3d.models import RenderPackage
 from plant3d.storage import exists, stat_size
 
+TIMING_LABELS = [
+    ("source_read_ms", "source read"),
+    ("parse_ms", "IFC parse"),
+    ("context_metadata_ms", "metadata"),
+    ("tile_grouping_ms", "tile grouping"),
+    ("tile_prepare_ms", "tile prep"),
+    ("json_build_ms", "JSON build"),
+    ("glb_build_ms", "GLB build"),
+    ("meshopt_hook_ms", "meshopt hook"),
+    ("feature_id_validation_ms", "feature ID validation"),
+    ("tile_write_ms", "tile write"),
+    ("tileset_write_ms", "tileset write"),
+    ("db_write_ms", "DB/index write"),
+]
+
 
 def _safe_stat_size(storage_key):
     if not storage_key or not exists(storage_key):
@@ -22,6 +37,41 @@ def _saved_percent(input_bytes, output_bytes):
     if not input_bytes:
         return None
     return round((input_bytes - output_bytes) * 100 / input_bytes, 1)
+
+
+def _safe_timing_ms(value):
+    try:
+        return max(int(value), 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def collect_timing_breakdown(timings):
+    timing_rows = []
+    for key, label in TIMING_LABELS:
+        if key not in (timings or {}):
+            continue
+        timing_rows.append({"key": key, "label": label, "ms": _safe_timing_ms(timings.get(key))})
+    total_ms = sum(row["ms"] for row in timing_rows)
+    for row in timing_rows:
+        row["percent"] = round(row["ms"] * 100 / total_ms, 1) if total_ms else None
+    dominant = max(timing_rows, key=lambda row: row["ms"], default=None)
+    return {
+        "total_ms": total_ms,
+        "dominant_key": dominant["key"] if dominant else "",
+        "dominant_label": dominant["label"] if dominant else "",
+        "dominant_ms": dominant["ms"] if dominant else 0,
+        "dominant_percent": dominant["percent"] if dominant else None,
+        "stages": timing_rows,
+    }
+
+
+def collect_aggregate_timing_breakdown(measurements):
+    aggregate = {}
+    for measurement in measurements:
+        for key, value in (measurement.get("conversion_timings") or {}).items():
+            aggregate[key] = aggregate.get(key, 0) + _safe_timing_ms(value)
+    return collect_timing_breakdown(aggregate)
 
 
 def collect_package_measurement(package):
@@ -117,6 +167,7 @@ def collect_package_measurement(package):
             "duration_ms": compression_duration_ms,
         },
         "conversion_timings": conversion_timings,
+        "conversion_timing_breakdown": collect_timing_breakdown(conversion_timings),
         "tile_measurements": tile_rows,
     }
 
@@ -146,6 +197,7 @@ def collect_measurement_summary(measurements):
             "ratio": _ratio(compression_input_bytes, compression_output_bytes),
             "duration_ms": sum(item["compression"]["duration_ms"] for item in measurements),
         },
+        "conversion_timing_breakdown": collect_aggregate_timing_breakdown(measurements),
     }
 
 
@@ -236,6 +288,18 @@ class Command(BaseCommand):
                         db_write_ms=timings.get("db_write_ms", "n/a"),
                     )
                 )
+                breakdown = measurement.get("conversion_timing_breakdown") or {}
+                dominant_percent = breakdown.get("dominant_percent")
+                dominant_percent_text = "n/a" if dominant_percent is None else f"{dominant_percent:.1f}%"
+                self.stdout.write(
+                    "  timing decision: total_timed_ms={total_ms} dominant={dominant_label} "
+                    "dominant_ms={dominant_ms} dominant_pct={dominant_percent}".format(
+                        total_ms=breakdown.get("total_ms", 0),
+                        dominant_label=breakdown.get("dominant_label") or "n/a",
+                        dominant_ms=breakdown.get("dominant_ms", 0),
+                        dominant_percent=dominant_percent_text,
+                    )
+                )
             for tile in measurement["tile_measurements"]:
                 tile_ratio = tile["compression_ratio"]
                 tile_ratio_text = "n/a" if tile_ratio is None else f"{tile_ratio:.4f}"
@@ -274,3 +338,16 @@ class Command(BaseCommand):
                 **summary["compression"],
             )
         )
+        timing_summary = summary.get("conversion_timing_breakdown") or {}
+        if timing_summary.get("total_ms"):
+            dominant_percent = timing_summary.get("dominant_percent")
+            dominant_percent_text = "n/a" if dominant_percent is None else f"{dominant_percent:.1f}%"
+            self.stdout.write(
+                "Summary timings: total_timed_ms={total_ms} dominant={dominant_label} "
+                "dominant_ms={dominant_ms} dominant_pct={dominant_percent}".format(
+                    total_ms=timing_summary.get("total_ms", 0),
+                    dominant_label=timing_summary.get("dominant_label") or "n/a",
+                    dominant_ms=timing_summary.get("dominant_ms", 0),
+                    dominant_percent=dominant_percent_text,
+                )
+            )

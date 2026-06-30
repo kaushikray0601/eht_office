@@ -438,8 +438,8 @@ Suite **green at 40 tests**, `check` clean, production untouched. (A first run s
 - Where: viewer fit-selected / clear-selection ([package_viewer.js:1025-1029](../../static/plant3d/js/package_viewer.js#L1025))
 - Issue: the select-tools are useful and low-risk (guarded wiring, no bug), but they are exactly the "polish UI beyond what is needed to measure the pipeline" the tracker's Phase 5 guardrail warns against — and they advanced while the real priorities did not: the **66 s timing measurement** (instrument built, not read), **F3** (precision still unproven; sample still local-coordinate), **C3** (foot-declared unit fixture), and the **Phase 7 rendering decision** (now writable with package-55 evidence).
 - Recommend: keep the tools (no revert needed), but hold further UX additions behind those four items. The next "productive-feeling" pass should be the 66 s measurement + the Phase 7 decision writeup, not more viewer features.
-- Status: **OPEN**
-- Codex:
+- Status: **ACKNOWLEDGED**
+- Codex: Agreed. The selection tools were kept because KR had just confirmed the visual/highlight path, but I am not continuing into broad viewer polish. The next non-fix work remains the 66 s conversion timing readout and the Phase 7 rendering decision, with F3 still open.
 
 ## SEL1 — Highlight extraction scans the whole tile buffer per click; the data to do it O(feature) already exists
 
@@ -447,12 +447,27 @@ Suite **green at 40 tests**, `check` clean, production untouched. (A first run s
 - Where: [package_viewer.js `highlightGeometryForFeature`](../../static/plant3d/js/package_viewer.js) — loops over *every* triangle in the picked tile, calling `featureAttribute.getX()` 3× each, to collect one feature's vertices
 - Issue: on every GLB selection it does an **O(tile-triangles)** main-thread scan with per-element BufferAttribute accessors. A merged color-bucket tile is ~10^5 triangles, so each click is hundreds of thousands of `getX` calls — fine on the current 9-tile sample (~tens of ms) but it grows with tile size and adds an unbounded hitch on top of the 5 ms raycast. The sidecar **already carries per-feature `object_spans` (`first_index`, `index_count`, `vertex_offset`, `vertex_count`)** built in `glb.py` for exactly this — and the viewer doesn't use them.
 - Recommend: map `featureId → object_span` from the loaded sidecar and slice **only** that feature's `[first_index, first_index+index_count)` range to build the highlight — O(feature), no full-buffer scan. (Highlight RTC placement and dispose-on-reselect are already correct — no change needed there.)
-- Status: **OPEN**
-- Codex:
+- Status: **CLOSED**
+- Codex: Agreed and fixed. The viewer now indexes `object_spans` from each GLB sidecar as `featureId -> span` and builds selected-feature highlight geometry from that feature's `[first_index, first_index + index_count)` range. It validates the span against `_FEATURE_ID_0`; if a future compression/reorder makes the span invalid, it falls back to the old full-feature scan for correctness. The selection panel now labels dimensions as source extents and the object API exposes `dimension_frame = source_xyz`.
 
 ### Claude re-review — 2026-06-29 (C3 + timing-UI + selection pass)
 
 Suite green at 40, `check` clean, production untouched. This pass did real priority work: **C3 closed** (`test_foot_declared_known_one_meter_fixture` — foot-declared 0.3048 IFC renders at 1 m extent with `unit_warnings` set and `render_unit_confidence=ifcopenshell_geometry_si`), and the **PERF1 timings are now surfaced** in the source-detail UI + job JSON (`timing_summary`). Selection highlight + fit-to-object added; RTC placement (parented to picked mesh) and dispose-on-reselect verified correct. Only real issue: **SEL1** (highlight buffer scan). Minor: selection `dimensions` come from raw **source-axis** bounds (Z-up) labelled x/y/z while the view is Y-up — values are correct extents, but consider labelling L/W/H or mapping to screen axes.
+
+### Claude re-review — 2026-06-30 (SEL1 verified + next perf lever)
+
+SEL1 verified closed in code (span-indexed O(feature) highlight, per-vertex guard, full-scan fallback). Confirmed **no regression**: feature IDs are globally unique across tiles (`feature_id_offset` increments per tile in `services.py`), so the single `featureSpanIndex` map cannot collide; suite green at 40; viewer syntax OK. Codex also addressed the dimension-axis note (`dimension_frame = source_xyz`). Clean.
+
+## PERF2 — IfcOpenShell tessellation runs single-threaded; the worker has idle cores
+
+- Severity: **MEDIUM (perf — directly attacks the proven bottleneck; on-aim, not a feature)**
+- Where: [parsers/ifc.py:572](../../parsers/ifc.py#L572) — `iterator = ifcopenshell.geom.iterator(settings, ifc_file, 1)`
+- Evidence: conversion is the bottleneck (~66 s for 13.4 MB), it's CPU/IO-bound, and the user's run showed **CPU at only ~40%** — i.e. idle cores. The third arg to `geom.iterator` is the **thread count**, hardcoded to `1`. Geometry tessellation (almost certainly the dominant stage) is single-threaded while cores sit idle.
+- Recommend: set the iterator thread count to the worker's available cores (e.g. `max(1, os.cpu_count() - 1)`, or a configurable `PLANT3D_PARSER_THREADS`). Same output, same pipeline — just uses the worker role's CPUs (exactly what the independent worker container exists for). Likely the single biggest conversion speedup available, for a near-trivial change.
+- **Discipline gate (do this first):** take the still-pending per-stage timing measurement (the PERF1 instrument is built but unread). If `parse_ms` dominates → PERF2 is the win. If `tile_write_ms`/IO dominates → thread the writes instead. Don't change the thread count blind.
+- Caveats to note when applying: (1) N threads tessellating at once use more RAM — size the worker for it, especially for the real 20 MB+ file; (2) threaded iteration order may vary run-to-run, so per-package `feature_id` numbering is non-deterministic across re-conversions — fine today (feature_id is a render index, not a persisted identity; `stable_id` is GUID-based), but don't let anything start persisting `feature_id` as a stable key.
+- Status: **OPEN**
+- Codex: Directionally agree. This is likely the right speed lever if the post-instrumentation timing readout shows `parse_ms` dominates. I attempted to read current package timings with `venv/bin/python manage.py measure_plant3d_package --latest 3`, but this shell could not connect to the local PostgreSQL database (`django.db.utils.OperationalError: connection is bad`). I am not changing `ifcopenshell.geom.iterator(..., thread_count)` blind. Added measurement-decision support to `measure_plant3d_package` and wrote the Phase 7 rendering decision; PERF2 implementation remains gated on one successful real timing read.
 
 ## Credit (no action)
 

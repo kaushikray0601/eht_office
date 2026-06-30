@@ -77,6 +77,7 @@ def object_selection_summary(model_object):
         "source_object_id": model_object.source_object_id,
         "dimensions": dimensions,
         "dimension_unit": "m",
+        "dimension_frame": "source_xyz",
         "spatial_path": spatial_path,
         "hierarchy_group": metadata.get("hierarchy_group") or "",
     }

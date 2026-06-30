@@ -42,6 +42,7 @@ scene.add(root);
 let packageBounds = new THREE.Box3();
 let objectIndex = new Map();
 let featureIndex = new Map();
+let featureSpanIndex = new Map();
 let selectableMeshes = [];
 let selectedMesh = null;
 let selectedHighlight = null;
@@ -185,7 +186,7 @@ function selectionDetailsHtml(data, featureId = null) {
     kvRow('Tag', summary.tag || data?.tag),
     kvRow('Name', summary.name),
     kvRow('Line ID', summary.line_id || data?.line_id),
-    kvRow('Dimensions', dimensionsText(summary)),
+    kvRow('Source Extents', dimensionsText(summary)),
     kvRow('Spatial Path', spatialPath),
     kvRow('Group', summary.hierarchy_group),
     kvRow('Stable ID', summary.stable_id || data?.stable_id),
@@ -670,6 +671,17 @@ async function loadGlbTileState(state, pkg) {
               objectSummary: objectSummary || null,
             });
           }
+          const objectSpans = Array.isArray(sidecar.object_spans) ? sidecar.object_spans : [];
+          for (const span of objectSpans) {
+            const featureId = Number(span.feature_id);
+            if (!Number.isFinite(featureId)) continue;
+            featureSpanIndex.set(featureId, {
+              firstIndex: Number(span.first_index),
+              indexCount: Number(span.index_count),
+              vertexOffset: Number(span.vertex_offset),
+              vertexCount: Number(span.vertex_count),
+            });
+          }
         }
       } catch (error) {
         // Sidecar metrics are useful, but GLB rendering should not depend on them.
@@ -862,6 +874,7 @@ async function loadGlbPackage(pkg, started) {
   runtimeStats.renderMode = 'glb-sidecar';
   indexPackageObjects(pkg);
   featureIndex = new Map();
+  featureSpanIndex = new Map();
   selectableMeshes = [];
   prepareGlbTileStates(pkg);
   const approximateBounds = approximatePackageBounds(pkg);
@@ -930,11 +943,55 @@ function featureIdFromHit(hit) {
   return Number.isFinite(featureId) ? Math.round(featureId) : null;
 }
 
+function vertexIndexForGeometryIndex(geometry, geometryIndex) {
+  return geometry.index ? geometry.index.getX(geometryIndex) : geometryIndex;
+}
+
+function appendTriangleVertex(highlightPositions, positions, vertexIndex) {
+  highlightPositions.push(
+    positions.getX(vertexIndex),
+    positions.getY(vertexIndex),
+    positions.getZ(vertexIndex),
+  );
+}
+
+function highlightGeometryFromSpan(sourceGeometry, positions, featureAttribute, featureId) {
+  const span = featureSpanIndex.get(featureId);
+  if (!span) return null;
+
+  const firstIndex = Math.trunc(span.firstIndex);
+  const indexCount = Math.trunc(span.indexCount);
+  const sourceCount = sourceGeometry.index ? sourceGeometry.index.count : positions.count;
+  if (!Number.isInteger(firstIndex) || !Number.isInteger(indexCount) || firstIndex < 0 || indexCount < 3) return null;
+  if (firstIndex + indexCount > sourceCount) return null;
+
+  const triangleIndexCount = indexCount - (indexCount % 3);
+  if (triangleIndexCount < 3) return null;
+
+  const highlightPositions = [];
+  for (let cursor = firstIndex; cursor < firstIndex + triangleIndexCount; cursor += 1) {
+    const vertexIndex = vertexIndexForGeometryIndex(sourceGeometry, cursor);
+    if (Math.round(featureAttribute.getX(vertexIndex)) !== featureId) {
+      return null;
+    }
+    appendTriangleVertex(highlightPositions, positions, vertexIndex);
+  }
+
+  if (!highlightPositions.length) return null;
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(highlightPositions, 3));
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
 function highlightGeometryForFeature(hit, featureId) {
   const sourceGeometry = hit.object?.geometry;
   const positions = sourceGeometry?.getAttribute?.('position');
   const featureAttribute = sourceGeometry?.getAttribute?.('_FEATURE_ID_0') || sourceGeometry?.getAttribute?.('_feature_id_0');
   if (!sourceGeometry || !positions || !featureAttribute) return null;
+
+  const spanGeometry = highlightGeometryFromSpan(sourceGeometry, positions, featureAttribute, featureId);
+  if (spanGeometry) return spanGeometry;
 
   const indices = sourceGeometry.index;
   const triangleCount = indices ? Math.floor(indices.count / 3) : Math.floor(positions.count / 3);
@@ -942,12 +999,12 @@ function highlightGeometryForFeature(hit, featureId) {
   for (let triangle = 0; triangle < triangleCount; triangle += 1) {
     const triangleIndices = [0, 1, 2].map(offset => {
       const rawIndex = triangle * 3 + offset;
-      return indices ? indices.getX(rawIndex) : rawIndex;
+      return vertexIndexForGeometryIndex(sourceGeometry, rawIndex);
     });
     const includesFeature = triangleIndices.some(index => Math.round(featureAttribute.getX(index)) === featureId);
     if (!includesFeature) continue;
     for (const index of triangleIndices) {
-      highlightPositions.push(positions.getX(index), positions.getY(index), positions.getZ(index));
+      appendTriangleVertex(highlightPositions, positions, index);
     }
   }
 
