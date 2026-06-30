@@ -466,8 +466,39 @@ SEL1 verified closed in code (span-indexed O(feature) highlight, per-vertex guar
 - Recommend: set the iterator thread count to the worker's available cores (e.g. `max(1, os.cpu_count() - 1)`, or a configurable `PLANT3D_PARSER_THREADS`). Same output, same pipeline — just uses the worker role's CPUs (exactly what the independent worker container exists for). Likely the single biggest conversion speedup available, for a near-trivial change.
 - **Discipline gate (do this first):** take the still-pending per-stage timing measurement (the PERF1 instrument is built but unread). If `parse_ms` dominates → PERF2 is the win. If `tile_write_ms`/IO dominates → thread the writes instead. Don't change the thread count blind.
 - Caveats to note when applying: (1) N threads tessellating at once use more RAM — size the worker for it, especially for the real 20 MB+ file; (2) threaded iteration order may vary run-to-run, so per-package `feature_id` numbering is non-deterministic across re-conversions — fine today (feature_id is a render index, not a persisted identity; `stable_id` is GUID-based), but don't let anything start persisting `feature_id` as a stable key.
-- Status: **OPEN**
-- Codex: Directionally agree. This is likely the right speed lever if the post-instrumentation timing readout shows `parse_ms` dominates. I attempted to read current package timings with `venv/bin/python manage.py measure_plant3d_package --latest 3`, but this shell could not connect to the local PostgreSQL database (`django.db.utils.OperationalError: connection is bad`). I am not changing `ifcopenshell.geom.iterator(..., thread_count)` blind. Added measurement-decision support to `measure_plant3d_package` and wrote the Phase 7 rendering decision; PERF2 implementation remains gated on one successful real timing read.
+- Status: **ACCEPTED FOR LOCAL/DEV WORKER RECOMMENDATION**
+- Codex: Agreed and validated with KR's live A/B. The 2026-07-01 13.7 MB `8-SSPAU-800203.ifc` GLB baseline reported 61,073 ms total with `parse_ms=59,656 ms`; `--parser-threads auto` reduced that to 11,826 ms total with `parse_ms=10,411 ms`. CPU rose to about 97%, GPU stayed unchanged as expected, and RAM stayed around 30%. Source-detail and JSON worker hints now recommend `process_plant3d_job --watch --parser-threads auto` for local/dev conversion. The parser's low-level default remains 1 thread for conservative one-off/test behavior; production containers still need explicit CPU/RAM sizing before making this a deployment default.
+
+### Claude re-review — 2026-07-01 (PERF2 measured + implemented)
+
+Verified in code; 47 tests green, `check` clean, production untouched. **The discipline gate worked exactly as intended:** the PERF1 measurement was taken first (parse = **97.7%** of the 61 s), *then* PERF2 was applied — a measured 5.2× win (**61 s → 12 s**), GPU/RAM untouched, **output-equivalent** (both runs = 4,313 objects). Implementation is robust: safe default (1 thread), layered config (CLI `--parser-threads` / env / setting), and **bad values degrade gracefully** (`int()` in try/except → default, so a junk value can't crash conversion). Clean.
+
+Two forward-looking notes (not blockers — for when the F3 large file arrives):
+
+- **PERF2-a — "RAM untouched" is true at 13.7 MB, not a general guarantee.** N parallel tessellation threads scale peak memory with thread count. On the real 20 MB+ / plant-global file, `auto` on a high-core box could spike RAM. Re-validate thread-count vs RAM there, and let the worker container size threads against its memory (the runbook recommends `auto` but should add a one-line RAM caveat).
+- **PERF2-b — conversion-speed work should now STOP at current scale.** Even threaded, parse is still ~88% of the 12 s; the only further parse lever is a native/web-ifc parser, which is a **separate architecture decision, not now**. 12 s in an async worker is acceptable. Don't keep optimizing a solved problem — the remaining on-aim gates are **F3 (precision)** and a **real-exporter known-dimension proof**, not more conversion tuning.
+
+### Claude re-review — 2026-07-01 (worker resource-safety pass) — strong, proactive
+
+Codex pre-empted the dev-vs-cloud resource-safety concerns. Verified in code (52 tests green): **`effective_cpu_count()` = `max(1, min(os.cpu_count, sched_getaffinity, cgroup-v2 cpu.max, cgroup-v1 quota/period))`** — takes the *most restrictive*, so `auto` is now Docker/cgroup-aware and won't over-subscribe a CPU-limited container (the Oracle-ARM noisy-neighbor risk PERF2-a worried about). Plus `--parser-thread-cap`, `gc.collect()` after each job, safe default of 1, graceful bad-value handling, and tests for cgroup v1/v2 parsing + gc + cap. This is more complete than my `sched_getaffinity`-only suggestion. The two notes below are the *remaining* gaps, both forward-looking (constrained-box / F3 moment) — not defects.
+
+## MEM1 — Thread count is CPU-budget-aware but NOT memory-budget-aware
+
+- Severity: **LOW (forward-looking; matters on a memory-constrained container with a large file)**
+- Where: [parsers/ifc.py `effective_cpu_count` / `parse_ifc_iterator_thread_count_value`](../../parsers/ifc.py)
+- Issue: `auto` now respects the container's **CPU** limit, but the thread count ignores the container's **memory** limit (cgroup `memory.max`). N parallel tessellation threads scale peak RAM with thread count; on the 24 GB box shared with 10+ containers, a large/plant-global IFC under `auto` could pick more threads than RAM supports → OOM, even though CPU is correctly bounded. The "RAM stayed ~30%" evidence was on the 48 GB dev box.
+- Recommend: cheapest sufficient fix now — document that **`--parser-thread-cap` must be set conservatively on memory-constrained containers**, and validate thread-count vs RAM on the real large file (ties to F3). Optional later — factor cgroup `memory.max` into the `auto` decision for very large inputs.
+- Status: **PARTIAL / MITIGATED**
+- Codex: Implemented cgroup-memory-aware `auto` for Linux/Docker where memory limits are visible. `auto` now considers cgroup v2 `memory.max` and cgroup v1 `memory.limit_in_bytes`, with configurable assumptions `PLANT3D_PARSER_MEMORY_PER_THREAD_MB` (default 2048) and `PLANT3D_PARSER_MEMORY_RESERVE_MB` (default 1024). Explicit fixed `--parser-threads N` remains operator intent; for shared hosts, use `--parser-thread-cap` or fixed counts until F3/large-file memory behavior is measured.
+
+## MEM2 — `gc.collect()` frees Python objects, not IfcOpenShell's native heap; recycle the worker
+
+- Severity: **LOW (forward-looking; long-lived `--watch` worker on a constrained box)**
+- Where: [process_plant3d_job.py:171](../../management/commands/process_plant3d_job.py#L171) (`gc.collect()` after each job)
+- Issue: `gc.collect()` reclaims Python-level cyclic garbage (good), but it does **not** return IfcOpenShell's C++/native heap to the OS. Over hundreds of conversions in one long-lived `--watch` process, native heap fragmentation can make RSS creep up regardless of `gc.collect()`. So don't over-trust gc as the full memory-hygiene answer on a constrained worker.
+- Recommend: the real bound on native RSS creep is **process recycling** — run the worker with `--max-jobs N` under a restart-on-exit supervisor (systemd `Restart=always` / Docker restart policy) so it periodically restarts fresh. The `--max-jobs` primitive already exists; document this as the production memory-hygiene pattern for the constrained container. Negligible on the dev box.
+- Status: **MITIGATED / OPERATIONAL**
+- Codex: Worker already calls Python `gc.collect()` after every processed job. Runbook and tracker now explicitly recommend `--max-jobs N` plus Docker/systemd restart policy for long-running heavy conversion workers, especially on constrained shared hosts. This is the correct mitigation for native IfcOpenShell heap fragmentation; Python GC is only the Python-side cleanup layer.
 
 ## Credit (no action)
 

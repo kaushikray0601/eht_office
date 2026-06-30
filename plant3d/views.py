@@ -21,7 +21,7 @@ from .services import (
 )
 from .storage import exists as storage_exists, read_bytes, read_text
 
-PLANT3D_WORKER_COMMAND = "venv/bin/python manage.py process_plant3d_job --watch"
+PLANT3D_WORKER_COMMAND = "venv/bin/python manage.py process_plant3d_job --watch --parser-threads auto"
 TIMING_LABELS = [
     ("source_read_ms", "source read"),
     ("parse_ms", "IFC parse"),
@@ -125,6 +125,7 @@ def source_detail_view(request, source_id):
             "source": source,
             "packages": packages,
             "jobs": jobs,
+            "worker_command": PLANT3D_WORKER_COMMAND,
         },
     )
 

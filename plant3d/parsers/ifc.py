@@ -1,6 +1,7 @@
 import os
 import tempfile
 from copy import deepcopy
+from math import floor
 
 import numpy as np
 
@@ -38,6 +39,14 @@ IFC_CONVERSION_LENGTH_DISPLAY = {
     "FOOT": "ft",
     "INCH": "in",
 }
+IFC_DEFAULT_ITERATOR_THREADS = 1
+IFC_PARSER_THREADS_SETTING = "PLANT3D_PARSER_THREADS"
+IFC_PARSER_THREAD_CAP_SETTING = "PLANT3D_PARSER_THREAD_CAP"
+IFC_PARSER_MEMORY_PER_THREAD_MB_SETTING = "PLANT3D_PARSER_MEMORY_PER_THREAD_MB"
+IFC_PARSER_MEMORY_RESERVE_MB_SETTING = "PLANT3D_PARSER_MEMORY_RESERVE_MB"
+IFC_DEFAULT_PARSER_MEMORY_PER_THREAD_MB = 2048
+IFC_DEFAULT_PARSER_MEMORY_RESERVE_MB = 1024
+BYTES_PER_MIB = 1024 * 1024
 
 
 class IFCDependencyError(RuntimeError):
@@ -170,6 +179,189 @@ def _settings_get(settings, name):
         return settings.get(name)
     except Exception:
         return None
+
+
+def _django_setting(name, default=None):
+    try:
+        from django.conf import settings as django_settings
+
+        return getattr(django_settings, name, default)
+    except Exception:
+        return default
+
+
+def _positive_int(value):
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
+def _cpu_count_from_cgroup_v2(cpu_max_text):
+    parts = str(cpu_max_text or "").strip().split()
+    if len(parts) < 2 or parts[0] == "max":
+        return None
+    quota = _positive_int(parts[0])
+    period = _positive_int(parts[1])
+    if quota is None or period is None:
+        return None
+    return max(1, floor(quota / period))
+
+
+def _cpu_count_from_cgroup_v1(quota_text, period_text):
+    quota = _positive_int(str(quota_text or "").strip())
+    period = _positive_int(str(period_text or "").strip())
+    if quota is None or period is None:
+        return None
+    return max(1, floor(quota / period))
+
+
+def _memory_bytes_from_cgroup_v2(memory_max_text):
+    text = str(memory_max_text or "").strip()
+    if not text or text == "max":
+        return None
+    return _positive_int(text)
+
+
+def _memory_bytes_from_cgroup_v1(memory_limit_text):
+    memory_limit = _positive_int(str(memory_limit_text or "").strip())
+    if memory_limit is None:
+        return None
+    # Docker/cgroup v1 often reports a huge sentinel when memory is unlimited.
+    if memory_limit >= 1 << 60:
+        return None
+    return memory_limit
+
+
+def _read_text_file(path):
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            return handle.read().strip()
+    except OSError:
+        return ""
+
+
+def effective_cpu_count():
+    candidates = [os.cpu_count() or 1]
+    try:
+        candidates.append(len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        pass
+
+    cgroup_v2_count = _cpu_count_from_cgroup_v2(_read_text_file("/sys/fs/cgroup/cpu.max"))
+    if cgroup_v2_count is not None:
+        candidates.append(cgroup_v2_count)
+
+    cgroup_v1_count = _cpu_count_from_cgroup_v1(
+        _read_text_file("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"),
+        _read_text_file("/sys/fs/cgroup/cpu/cpu.cfs_period_us"),
+    )
+    if cgroup_v1_count is not None:
+        candidates.append(cgroup_v1_count)
+
+    return max(1, min(int(candidate) for candidate in candidates if candidate))
+
+
+def effective_memory_limit_bytes():
+    candidates = []
+
+    cgroup_v2_limit = _memory_bytes_from_cgroup_v2(_read_text_file("/sys/fs/cgroup/memory.max"))
+    if cgroup_v2_limit is not None:
+        candidates.append(cgroup_v2_limit)
+
+    cgroup_v1_limit = _memory_bytes_from_cgroup_v1(_read_text_file("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+    if cgroup_v1_limit is not None:
+        candidates.append(cgroup_v1_limit)
+
+    if not candidates:
+        return None
+    return max(1, min(candidates))
+
+
+def parse_ifc_iterator_thread_cap_value(value):
+    if value in (None, ""):
+        return None
+    return _positive_int(value)
+
+
+def _configured_positive_int(name, default=None):
+    env_value = _positive_int(os.environ.get(name))
+    if env_value is not None:
+        return env_value
+    setting_value = _positive_int(_django_setting(name))
+    if setting_value is not None:
+        return setting_value
+    return default
+
+
+def _configured_ifc_iterator_thread_cap():
+    env_cap = parse_ifc_iterator_thread_cap_value(os.environ.get(IFC_PARSER_THREAD_CAP_SETTING))
+    if env_cap is not None:
+        return env_cap
+    return parse_ifc_iterator_thread_cap_value(_django_setting(IFC_PARSER_THREAD_CAP_SETTING))
+
+
+def _thread_cap_from_memory_limit(memory_limit_bytes, per_thread_mb=None, reserve_mb=None):
+    if memory_limit_bytes is None:
+        return None
+    per_thread_mb = _positive_int(per_thread_mb) or IFC_DEFAULT_PARSER_MEMORY_PER_THREAD_MB
+    reserve_mb = _positive_int(reserve_mb)
+    if reserve_mb is None:
+        reserve_mb = IFC_DEFAULT_PARSER_MEMORY_RESERVE_MB
+    usable_bytes = max(0, int(memory_limit_bytes) - (reserve_mb * BYTES_PER_MIB))
+    return max(1, floor(usable_bytes / (per_thread_mb * BYTES_PER_MIB)))
+
+
+def _configured_memory_thread_cap():
+    memory_limit = effective_memory_limit_bytes()
+    if memory_limit is None:
+        return None
+    return _thread_cap_from_memory_limit(
+        memory_limit,
+        per_thread_mb=_configured_positive_int(
+            IFC_PARSER_MEMORY_PER_THREAD_MB_SETTING,
+            IFC_DEFAULT_PARSER_MEMORY_PER_THREAD_MB,
+        ),
+        reserve_mb=_configured_positive_int(
+            IFC_PARSER_MEMORY_RESERVE_MB_SETTING,
+            IFC_DEFAULT_PARSER_MEMORY_RESERVE_MB,
+        ),
+    )
+
+
+def parse_ifc_iterator_thread_count_value(value, thread_cap=None):
+    if value in (None, ""):
+        return None
+    text = str(value).strip().lower()
+    if text in {"auto", "cpu", "cores"}:
+        parsed = max(1, effective_cpu_count() - 1)
+        memory_cap = _configured_memory_thread_cap()
+        if memory_cap is not None:
+            parsed = min(parsed, memory_cap)
+    else:
+        parsed = _positive_int(value)
+    if parsed is None:
+        return None
+    cap = parse_ifc_iterator_thread_cap_value(thread_cap)
+    if cap is not None:
+        parsed = min(parsed, cap)
+    return max(1, parsed)
+
+
+def configured_ifc_iterator_thread_count():
+    thread_cap = _configured_ifc_iterator_thread_cap()
+    env_value = os.environ.get(IFC_PARSER_THREADS_SETTING)
+    env_count = parse_ifc_iterator_thread_count_value(env_value, thread_cap=thread_cap)
+    if env_count is not None:
+        return env_count, "env"
+
+    setting_value = _django_setting(IFC_PARSER_THREADS_SETTING)
+    setting_count = parse_ifc_iterator_thread_count_value(setting_value, thread_cap=thread_cap)
+    if setting_count is not None:
+        return setting_count, "django_settings"
+
+    return IFC_DEFAULT_ITERATOR_THREADS, "default"
 
 
 def _ifcopenshell_geometry_unit_stats(settings):
@@ -569,7 +761,10 @@ def _parse_ifc_file(path, filename):
 
     settings = ifcopenshell.geom.settings()
     scene["stats"].update(_ifcopenshell_geometry_unit_stats(settings))
-    iterator = ifcopenshell.geom.iterator(settings, ifc_file, 1)
+    iterator_threads, iterator_thread_source = configured_ifc_iterator_thread_count()
+    scene["stats"]["ifcopenshell_iterator_threads"] = iterator_threads
+    scene["stats"]["ifcopenshell_iterator_thread_source"] = iterator_thread_source
+    iterator = ifcopenshell.geom.iterator(settings, ifc_file, iterator_threads)
     if not iterator.initialize():
         raise IFCParseError(f"Unable to initialize IFC geometry iterator for {filename}.")
 
@@ -631,6 +826,8 @@ def parse_multiple_ifc_uploads(file_payloads, project):
                     "geometry_unit": file_stats.get("geometry_unit", ""),
                     "ifcopenshell_length_unit_setting": file_stats.get("ifcopenshell_length_unit_setting"),
                     "ifcopenshell_convert_back_units": file_stats.get("ifcopenshell_convert_back_units"),
+                    "ifcopenshell_iterator_threads": file_stats.get("ifcopenshell_iterator_threads"),
+                    "ifcopenshell_iterator_thread_source": file_stats.get("ifcopenshell_iterator_thread_source", ""),
                 }
             )
             for key in (
@@ -645,6 +842,8 @@ def parse_multiple_ifc_uploads(file_payloads, project):
                 "geometry_unit_basis",
                 "ifcopenshell_length_unit_setting",
                 "ifcopenshell_convert_back_units",
+                "ifcopenshell_iterator_threads",
+                "ifcopenshell_iterator_thread_source",
                 "ifcopenshell_geometry_note",
             ):
                 if key not in combined_scene["stats"] and key in file_stats:

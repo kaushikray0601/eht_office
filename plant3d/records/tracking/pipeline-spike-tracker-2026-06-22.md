@@ -178,19 +178,24 @@ Decision rules:
 
 ## Phase 7 - Decision Report
 
-- [ ] Summarize whether Three.js-first remains acceptable.
-- [ ] Summarize whether Babylon.js comparison is needed.
-- [ ] Summarize whether GLB/glTF is enough or tiled/custom packages are mandatory.
-- [ ] Summarize whether first available IFC samples are sufficient or larger EPC files are required.
-- [ ] Recommend production model shape after spike.
-- [ ] Recommend next implementation pass.
+- [x] Summarize whether Three.js-first remains acceptable.
+- [x] Summarize whether Babylon.js comparison is needed.
+- [x] Summarize whether GLB/glTF is enough or tiled/custom packages are mandatory.
+- [x] Summarize whether first available IFC samples are sufficient or larger EPC files are required.
+- [x] Recommend production model shape after spike.
+- [x] Recommend next implementation pass.
+
+Decision record: `plant3d/records/decisions/0003-phase-7-rendering-spike-decision.md`.
+
+Phase 7 status: accepted for current sample scale only. F3 plant-global precision, real source-system known-dimension proof, conversion timing/PERF2, production object-storage delivery, and LOD/HLOD remain open gates.
 
 ## Current Risks
 
 - 20 MB IFC is useful but may be too small to prove EPC-scale viability.
 - Public sample IFC files may not represent plant-global coordinates.
 - IfcOpenShell conversion may be slow or heavy for large files.
-- Package-55 metrics moved the current bottleneck: rendering/picking is healthy at 715k triangles, 36 draw calls, 60 FPS, 22 MB heap, and 5 ms pick latency; the open performance question is the CPU/IO-bound conversion path around 66 seconds for the 13.4 MB sample.
+- Package-55 metrics moved the current bottleneck: rendering/picking is healthy at 715k triangles, 36 draw calls, 60 FPS, 22 MB heap, and 5 ms pick latency. The 2026-07-01 timing run then proved the conversion bottleneck is IfcOpenShell parse/tessellation: 59,656 ms parse out of 61,073 ms total, with parser threads at the default 1. The follow-up `--parser-threads auto` run reduced total conversion to 11,826 ms and parse time to 10,411 ms, with CPU rising to about 97% and RAM stable around 30%.
+- Worker parser-thread selection now needs deployment sizing: `auto` is appropriate for a roomy local/dev worker, but shared cloud Docker hosts should use cgroup-aware `auto` plus `--parser-thread-cap` or a fixed thread count to avoid starving database and sibling containers.
 - KR manual comparison against `idfviewer` found that 10-15 MB IFC conversion/render time is roughly comparable between the old prototype and `plant3d`, so the immediate user-visible gap is not speed at this scale. `idfviewer` still feels visually cleaner on beam edges, while `plant3d` feels slightly lighter during movement. The next viewer passes should preserve completeness and responsiveness while improving visual fidelity and selected-object feedback.
 - Naive Three.js object-per-mesh rendering will not scale.
 - Coordinate precision problems may not show unless source files use large coordinates.
@@ -267,7 +272,7 @@ Deferred / TODO:
 
 1. Correctness gate F3: obtain or create a real plant-global/georeferenced IFC test before marking float32 jitter, RTC precision, orbit stability, or measurement stability as proven.
 2. Correctness gate C3/F4: synthetic metre-declared and foot-declared one-metre fixtures are covered; add a real source-system/exporter known-dimension proof before marking measurement/federation scale fully trusted.
-3. Conversion visibility: regenerate one GLB package after the timing instrumentation pass and record `parse_ms`, `glb_build_ms`, `tile_write_ms`, `db_write_ms`, and total duration. Do not choose native/web-ifc/parser work until this breakdown exists.
+3. Conversion performance A/B: **done for current 13.7 MB sample.** Worker parser threading is a confirmed local win: 61,073 ms -> 11,826 ms total conversion, with stable RAM. The recommended local/dev worker hint now uses `--parser-threads auto`. Before making this a hard production default, repeat on the largest available IFC and size worker CPU/RAM intentionally.
 4. Phase 7 partial decision: write the rendering decision with current evidence: Three.js-first and GLB + tiling + complete-review are acceptable at current sample scale; precision-at-scale and unit truth remain open gates. **Done 2026-06-30: see `plant3d/records/decisions/0003-phase-7-rendering-spike-decision.md`.**
 5. Opportunistic only: when `gltfpack` is available, measure real meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness with `measure_plant3d_package`. Payload is not the current bottleneck.
 6. If real `gltfpack -cc` output is rejected by the feature-ID gate, discuss before changing format strategy: options include safer gltfpack args, keeping meshopt disabled, or a future `EXT_mesh_features`/metadata-extension pass.
@@ -275,10 +280,19 @@ Deferred / TODO:
 8. Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed.
 9. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
+2026-07-01 coding note: Phase 7 tracker checkboxes are now closed against decision record 0003, but the acceptance remains deliberately scoped to current sample scale. Added a stronger synthetic F3 guard proving child-tile GLB payloads keep plant-global coordinates in tile RTC metadata while GLB vertex positions stay tile-local and reconstruct back into source-coordinate tile bounds. This does not replace the real plant-global IFC gate.
+
+2026-07-01 timing note: KR's fresh 13.7 MB `8-SSPAU-800203.ifc` GLB run recorded 61,073 ms total, with `parse_ms=59,656 ms`, GLB build 479 ms, tile write 29 ms, tileset write 1 ms, and DB/index write 329 ms. The next pass added an explicit `process_plant3d_job --parser-threads` option so the A/B test is repeatable without hidden environment variables.
+
+2026-07-01 A/B result: the same sample converted with `process_plant3d_job --watch --parser-threads auto` completed in 11,826 ms, with `parse_ms=10,411 ms`. CPU rose to about 97%, GPU stayed unchanged as expected, and RAM stayed around 30%. The source-detail and JSON worker hints now recommend the threaded worker command for local/dev conversion.
+
+2026-07-01 worker sizing note: `auto` now uses a Docker/cgroup-aware effective CPU count where Linux exposes CPU quota files, and supports a thread cap (`--parser-thread-cap N` or `PLANT3D_PARSER_THREAD_CAP=N`). The worker also calls Python garbage collection after each job. Native IfcOpenShell allocations can still benefit from operational recycling, so production/shared Docker workers should use explicit CPU/RAM limits and consider `--max-jobs` plus container restart policy for long-running conversion loads.
+
 Current manual check path:
 
 1. Upload one available local sample IFC from `ifc/` through `/plant3d/sources/upload/`.
-2. Start the local worker once in a separate terminal: `venv/bin/python manage.py process_plant3d_job --watch`.
+2. Start the local worker once in a separate terminal: `venv/bin/python manage.py process_plant3d_job --watch --parser-threads auto`.
+   For a crowded/shared Docker host, use a cap or fixed count, for example `--parser-threads auto --parser-thread-cap 2` or `--parser-threads 2`.
 3. Run metadata conversion through the source detail page or POST endpoint.
 4. Run IFC JSON debug conversion if needed; the worker should pick it up automatically.
 5. Queue the IFC GLB conversion; the worker should pick it up automatically.
@@ -413,8 +427,18 @@ Current manual check path:
 - 2026-06-30: `node --check /tmp/package_viewer.mjs`, `venv/bin/python -m py_compile plant3d/views.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d.tests.Plant3DIntakeTests.test_package_and_tile_json_endpoints_return_render_payload plant3d.tests.Plant3DIntakeTests.test_package_viewer_page_exposes_package_api_url --noinput -v 2`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the span-based highlight pass. Plant3d suite: 40 tests.
 - 2026-06-30: Improved `measure_plant3d_package` for the pending 66 s conversion readout. The command now computes `conversion_timing_breakdown` in JSON and prints a `timing decision` line with total timed milliseconds, dominant stage, dominant milliseconds, and dominant percentage. This should make the next real conversion measurement actionable without manual arithmetic.
 - 2026-06-30: `venv/bin/python -m py_compile plant3d/management/commands/measure_plant3d_package.py plant3d/tests.py`, `venv/bin/python manage.py check`, `USE_POSTGRES=false venv/bin/python manage.py test plant3d.tests.Plant3DIntakeTests.test_measure_package_command_reports_meshopt_status --noinput -v 2`, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the measurement-command timing-breakdown pass. Plant3d suite: 40 tests.
-- 2026-06-30: Accepted Claude PERF2 direction conditionally. Configurable IfcOpenShell geometry iterator thread count is likely the next high-value conversion-speed lever if `parse_ms` dominates, but it should not be changed blind. Attempted `venv/bin/python manage.py measure_plant3d_package --latest 3` from this shell; it was blocked by a local PostgreSQL connection error (`django.db.utils.OperationalError: connection is bad`). Manual/live environment measurement remains required before parser-thread implementation.
+- 2026-06-30: Accepted Claude PERF2 direction conditionally. Configurable IfcOpenShell geometry iterator thread count is likely the next high-value conversion-speed lever if `parse_ms` dominates, but it should not be activated blind. Attempted `venv/bin/python manage.py measure_plant3d_package --latest 3` from this shell; it was blocked by a local PostgreSQL connection error (`django.db.utils.OperationalError: connection is bad`). Manual/live environment measurement remains required before enabling multi-threaded parser conversion.
 - 2026-06-30: Added decision record `plant3d/records/decisions/0003-phase-7-rendering-spike-decision.md`. Decision: continue Three.js-first and GLB+sidecar+3D-Tiles-style manifests at current sample scale; keep JSON as debug only; keep BVH, compression adoption, signed object storage, and HLOD as gated future work. Open gates remain F3 plant-global precision, real known-dimension source-system proof, conversion timing/PERF2, and production LOD/HLOD.
+- 2026-06-30: Added gated PERF2 plumbing without changing default behavior. `plant3d.parsers.ifc` now reads `PLANT3D_PARSER_THREADS` from environment or Django settings, defaults to 1, accepts fixed positive integers, and supports `auto = max(1, os.cpu_count() - 1)`. Parser stats now record `ifcopenshell_iterator_threads` and `ifcopenshell_iterator_thread_source`; the worker runbook documents how to run a controlled parser-thread test after `parse_ms` is proven dominant.
+- 2026-06-30: `venv/bin/python -m py_compile plant3d/parsers/ifc.py plant3d/tests.py`, `venv/bin/python manage.py check`, focused parser-thread tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after gated parser-thread plumbing. Plant3d suite: 44 tests.
+- 2026-07-01: Closed the mechanical Phase 7 tracker items against decision record 0003 and strengthened the synthetic F3 precision guard. The new regression uses internally consistent large source coordinates around X 5,000,000 / Y 2,800,000, asserts child tile RTC origins carry the large values, asserts GLB POSITION accessors remain tile-local, and reconstructs sampled GLB vertices back inside the tile source bounds.
+- 2026-07-01: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, focused synthetic F3 child-tile test, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the precision-guard pass. Plant3d suite: 45 tests.
+- 2026-07-01: Recorded KR's live conversion timing: 13.7 MB `8-SSPAU-800203.ifc`, 61,073 ms total, `parse_ms=59,656 ms`, default parser threads `1`. Added `process_plant3d_job --parser-threads <auto|N>` for controlled parser-thread A/B testing without hidden environment variables. Default remains 1 until the A/B result is reviewed.
+- 2026-07-01: `venv/bin/python -m py_compile plant3d/parsers/ifc.py plant3d/management/commands/process_plant3d_job.py plant3d/tests.py`, `venv/bin/python manage.py check`, focused parser-thread command tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after worker parser-thread option pass. Plant3d suite: 47 tests.
+- 2026-07-01: KR A/B-tested `--parser-threads auto` on the same 13.7 MB sample. Conversion improved from 61,073 ms to 11,826 ms; `parse_ms` improved from 59,656 ms to 10,411 ms; CPU rose to about 97%; GPU remained unchanged; RAM stayed around 30%. Updated local/dev worker hints to recommend `process_plant3d_job --watch --parser-threads auto` while keeping the parser's low-level default conservative.
+- 2026-07-01: `venv/bin/python -m py_compile plant3d/views.py plant3d/tests.py plant3d/management/commands/process_plant3d_job.py plant3d/parsers/ifc.py`, `venv/bin/python manage.py check`, focused worker-hint/parser-thread command tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after accepting parser-threaded local/dev worker mode. Plant3d suite: 47 tests.
+- 2026-07-01: Added Docker/cgroup-aware effective CPU detection for parser-thread `auto`, added `PLANT3D_PARSER_THREAD_CAP` / `--parser-thread-cap`, and added worker-side Python `gc.collect()` after every processed job. Updated runbook guidance for shared Docker hosts: use capped auto or fixed thread counts plus `--max-jobs`/container restart policy for long-running conversion loads.
+- 2026-07-01: `venv/bin/python -m py_compile plant3d/parsers/ifc.py plant3d/management/commands/process_plant3d_job.py plant3d/tests.py`, `venv/bin/python manage.py check`, focused cgroup/cap/GC worker tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after worker sizing and cleanup hardening. Plant3d suite: 52 tests.
 
 ## Platform Rules Discovered During Implementation
 

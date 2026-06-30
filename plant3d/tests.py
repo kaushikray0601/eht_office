@@ -18,7 +18,15 @@ from django.urls import reverse
 from eht.models import ManagedProject, ProjectData
 
 from .models import ConversionJob, ModelObject, RenderPackage, RenderTile, SourceModel
-from .parsers.ifc import extract_ifc_length_unit_stats
+from .parsers.ifc import (
+    _cpu_count_from_cgroup_v1,
+    _cpu_count_from_cgroup_v2,
+    _memory_bytes_from_cgroup_v1,
+    _memory_bytes_from_cgroup_v2,
+    _thread_cap_from_memory_limit,
+    configured_ifc_iterator_thread_count,
+    extract_ifc_length_unit_stats,
+)
 from .services import (
     create_source_model_from_upload,
     extract_ifc_unit_hints,
@@ -332,6 +340,93 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(stats["ifc_declared_length_unit_entity"], "IfcConversionBasedUnit")
         self.assertEqual(stats["ifc_declared_length_scale_to_m"], 0.3048)
 
+    @override_settings(PLANT3D_PARSER_THREADS=None)
+    def test_ifc_iterator_thread_count_defaults_to_one(self):
+        with patch.dict(os.environ, {"PLANT3D_PARSER_THREADS": ""}, clear=False):
+            thread_count, source = configured_ifc_iterator_thread_count()
+
+        self.assertEqual(thread_count, 1)
+        self.assertEqual(source, "default")
+
+    @override_settings(PLANT3D_PARSER_THREADS=3)
+    def test_ifc_iterator_thread_count_reads_django_setting(self):
+        with patch.dict(os.environ, {"PLANT3D_PARSER_THREADS": ""}, clear=False):
+            thread_count, source = configured_ifc_iterator_thread_count()
+
+        self.assertEqual(thread_count, 3)
+        self.assertEqual(source, "django_settings")
+
+    @override_settings(PLANT3D_PARSER_THREADS=3)
+    def test_ifc_iterator_thread_count_env_overrides_setting(self):
+        with patch.dict(os.environ, {"PLANT3D_PARSER_THREADS": "2"}, clear=False):
+            thread_count, source = configured_ifc_iterator_thread_count()
+
+        self.assertEqual(thread_count, 2)
+        self.assertEqual(source, "env")
+
+    def test_ifc_iterator_thread_count_auto_uses_available_cpu_budget(self):
+        with patch.dict(os.environ, {"PLANT3D_PARSER_THREADS": "auto"}, clear=False):
+            with patch("plant3d.parsers.ifc.effective_cpu_count", return_value=8):
+                with patch("plant3d.parsers.ifc.effective_memory_limit_bytes", return_value=None):
+                    thread_count, source = configured_ifc_iterator_thread_count()
+
+        self.assertEqual(thread_count, 7)
+        self.assertEqual(source, "env")
+
+    def test_ifc_iterator_thread_count_auto_respects_thread_cap(self):
+        with patch.dict(
+            os.environ,
+            {"PLANT3D_PARSER_THREADS": "auto", "PLANT3D_PARSER_THREAD_CAP": "2"},
+            clear=False,
+        ):
+            with patch("plant3d.parsers.ifc.effective_cpu_count", return_value=8):
+                with patch("plant3d.parsers.ifc.effective_memory_limit_bytes", return_value=None):
+                    thread_count, source = configured_ifc_iterator_thread_count()
+
+        self.assertEqual(thread_count, 2)
+        self.assertEqual(source, "env")
+
+    def test_ifc_iterator_thread_count_auto_respects_cgroup_memory_limit(self):
+        with patch.dict(
+            os.environ,
+            {
+                "PLANT3D_PARSER_THREADS": "auto",
+                "PLANT3D_PARSER_THREAD_CAP": "",
+                "PLANT3D_PARSER_MEMORY_PER_THREAD_MB": "2048",
+                "PLANT3D_PARSER_MEMORY_RESERVE_MB": "1024",
+            },
+            clear=False,
+        ):
+            with patch("plant3d.parsers.ifc.effective_cpu_count", return_value=16):
+                with patch("plant3d.parsers.ifc.effective_memory_limit_bytes", return_value=5 * 1024 * 1024 * 1024):
+                    thread_count, source = configured_ifc_iterator_thread_count()
+
+        self.assertEqual(thread_count, 2)
+        self.assertEqual(source, "env")
+
+    def test_cgroup_v2_cpu_quota_count_parser(self):
+        self.assertEqual(_cpu_count_from_cgroup_v2("400000 100000"), 4)
+        self.assertEqual(_cpu_count_from_cgroup_v2("250000 100000"), 2)
+        self.assertIsNone(_cpu_count_from_cgroup_v2("max 100000"))
+
+    def test_cgroup_v1_cpu_quota_count_parser(self):
+        self.assertEqual(_cpu_count_from_cgroup_v1("300000", "100000"), 3)
+        self.assertEqual(_cpu_count_from_cgroup_v1("150000", "100000"), 1)
+        self.assertIsNone(_cpu_count_from_cgroup_v1("-1", "100000"))
+
+    def test_cgroup_memory_limit_parsers(self):
+        self.assertEqual(_memory_bytes_from_cgroup_v2("5368709120"), 5 * 1024 * 1024 * 1024)
+        self.assertIsNone(_memory_bytes_from_cgroup_v2("max"))
+        self.assertEqual(_memory_bytes_from_cgroup_v1("3221225472"), 3 * 1024 * 1024 * 1024)
+        self.assertIsNone(_memory_bytes_from_cgroup_v1(str(1 << 62)))
+
+    def test_thread_cap_from_memory_limit_reserves_worker_memory(self):
+        memory_limit = 5 * 1024 * 1024 * 1024
+
+        cap = _thread_cap_from_memory_limit(memory_limit, per_thread_mb=2048, reserve_mb=1024)
+
+        self.assertEqual(cap, 2)
+
     def test_metadata_conversion_writes_manifest_package_and_tile(self):
         upload = SimpleUploadedFile(
             "pipe-rack.ifc",
@@ -517,6 +612,63 @@ class Plant3DIntakeTests(TestCase):
             "max_y": 2800012.0,
             "min_z": 100.0,
             "max_z": 101.0,
+        }
+        return scene
+
+    def _sample_ifc_scene_large_coordinate_consistent_many_meshes(self, count=501):
+        scene = self._sample_ifc_scene_many_meshes(count=count)
+        min_x = 5_000_000.0
+        min_y = 2_800_000.0
+        min_z = 125.0
+        max_x = min_x + count
+        max_y = min_y + 12.0
+        max_z = min_z + 1.0
+        package_origin_render = [
+            (min_x + max_x) / 2.0,
+            (min_z + max_z) / 2.0,
+            (min_y + max_y) / 2.0,
+        ]
+
+        def render_local(source_xyz):
+            render_world = [source_xyz[0], source_xyz[2], source_xyz[1]]
+            return [
+                render_world[0] - package_origin_render[0],
+                render_world[1] - package_origin_render[1],
+                render_world[2] - package_origin_render[2],
+            ]
+
+        meshes = []
+        for index in range(count):
+            base_x = min_x + index
+            base_y = min_y + (index % 11)
+            bounds = {
+                "min_x": base_x,
+                "max_x": base_x + 1.0,
+                "min_y": base_y,
+                "max_y": base_y + 1.0,
+                "min_z": min_z,
+                "max_z": max_z,
+            }
+            positions = []
+            for source_vertex in [
+                [bounds["min_x"], bounds["min_y"], bounds["min_z"]],
+                [bounds["max_x"], bounds["min_y"], bounds["min_z"]],
+                [bounds["min_x"], bounds["max_y"], bounds["max_z"]],
+            ]:
+                positions.extend(render_local(source_vertex))
+            mesh = copy.deepcopy(scene["meshes"][index])
+            mesh["mesh"]["positions"] = positions
+            mesh["properties"]["raw_bounds"] = bounds
+            meshes.append(mesh)
+
+        scene["meshes"] = meshes
+        scene["stats"]["raw_bounds"] = {
+            "min_x": min_x,
+            "max_x": max_x,
+            "min_y": min_y,
+            "max_y": max_y,
+            "min_z": min_z,
+            "max_z": max_z,
         }
         return scene
 
@@ -1108,6 +1260,84 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(job.status, "completed")
         self.assertEqual(job.render_packages.get().package_format, "GLB")
 
+    @patch("plant3d.management.commands.process_plant3d_job.gc.collect")
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_management_command_collects_garbage_after_job(self, mock_parse, mock_collect):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("queued-glb-gc.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_glb_conversion(source)
+
+        call_command("process_plant3d_job", str(job.pk), verbosity=0)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "completed")
+        mock_collect.assert_called()
+
+    @patch("plant3d.parsers.ifc.effective_cpu_count", return_value=5)
+    @patch("plant3d.parsers.ifc.effective_memory_limit_bytes", return_value=None)
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_management_command_parser_threads_option_overrides_worker_run(
+        self,
+        mock_parse,
+        _mock_memory_limit,
+        _mock_cpu_count,
+    ):
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("queued-glb-auto.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_glb_conversion(source)
+
+        def parse_side_effect(*args, **kwargs):
+            thread_count, source_label = configured_ifc_iterator_thread_count()
+            self.assertEqual(thread_count, 4)
+            self.assertEqual(source_label, "env")
+            return self._sample_ifc_scene()
+
+        mock_parse.side_effect = parse_side_effect
+
+        call_command("process_plant3d_job", str(job.pk), parser_threads="auto", verbosity=0)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(job.render_packages.get().package_format, "GLB")
+
+    @patch("plant3d.parsers.ifc.effective_cpu_count", return_value=8)
+    @patch("plant3d.parsers.ifc.effective_memory_limit_bytes", return_value=None)
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_management_command_parser_thread_cap_limits_auto_threads(
+        self,
+        mock_parse,
+        _mock_memory_limit,
+        _mock_cpu_count,
+    ):
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("queued-glb-capped.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        job = queue_ifc_glb_conversion(source)
+
+        def parse_side_effect(*args, **kwargs):
+            thread_count, source_label = configured_ifc_iterator_thread_count()
+            self.assertEqual(thread_count, 2)
+            self.assertEqual(source_label, "env")
+            return self._sample_ifc_scene()
+
+        mock_parse.side_effect = parse_side_effect
+
+        call_command("process_plant3d_job", str(job.pk), parser_threads="auto", parser_thread_cap="2", verbosity=0)
+
+        job.refresh_from_db()
+        self.assertEqual(job.status, "completed")
+        self.assertEqual(job.render_packages.get().package_format, "GLB")
+
+    def test_management_command_rejects_invalid_parser_threads_option(self):
+        with self.assertRaises(CommandError):
+            call_command("process_plant3d_job", next=True, parser_threads="not-a-thread-count", verbosity=0)
+
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_management_command_watch_claims_and_processes_queued_job(self, mock_parse):
         mock_parse.return_value = self._sample_ifc_scene()
@@ -1191,6 +1421,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(payload["status"], "completed")
         self.assertIn("/plant3d/jobs/", payload["url"])
         self.assertIn("process_plant3d_job --watch", payload["worker_hint"])
+        self.assertIn("--parser-threads auto", payload["worker_hint"])
         self.assertEqual(payload["package"]["object_count"], 1)
         self.assertIn("/plant3d/packages/", payload["package"]["viewer_url"])
         self.assertIn("/plant3d/packages/", payload["package"]["json_url"])
@@ -1345,6 +1576,62 @@ class Plant3DIntakeTests(TestCase):
             self.assertLess(max(abs(value) for value in positions), 400)
         self.assertEqual(len(feature_ids), 501)
         self.assertEqual(len(feature_ids), len(set(feature_ids)))
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_ifc_glb_child_tiles_keep_plant_global_coordinates_out_of_glb_positions(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene_large_coordinate_consistent_many_meshes()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("plant-global-glb.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_glb_conversion
+
+        job, package = run_ifc_glb_conversion(source)
+
+        self.assertEqual(job.status, "completed")
+        self.assertGreater(package.tile_count, 1)
+        self.assertGreater(package.metadata["rtc_origin_render_xyz"][0], 4_999_000)
+        self.assertLess(package.metadata["rtc_origin_render_xyz"][1], 200)
+        self.assertGreater(package.metadata["rtc_origin_render_xyz"][2], 2_799_000)
+
+        for tile in package.tiles.order_by("sequence"):
+            sidecar = json.loads(path_for_storage_key(tile.metadata["sidecar_storage_key"]).read_text(encoding="utf-8"))
+            raw_bounds = sidecar["raw_bounds"]
+            rtc_origin = sidecar["rtc_origin_render_xyz"]
+            self.assertGreater(rtc_origin[0], 4_999_000)
+            self.assertLess(rtc_origin[1], 200)
+            self.assertGreater(rtc_origin[2], 2_799_000)
+
+            glb_bytes = path_for_storage_key(tile.storage_key).read_bytes()
+            gltf = glb_json_chunk(glb_bytes)
+            primitive = gltf["meshes"][0]["primitives"][0]
+            positions = glb_accessor_floats(glb_bytes, primitive["attributes"]["POSITION"])
+            local_axis_max = [
+                max(abs(positions[index]) for index in range(axis, len(positions), 3))
+                for axis in range(3)
+            ]
+            self.assertLessEqual(local_axis_max[0], (raw_bounds["max_x"] - raw_bounds["min_x"]) / 2.0 + 0.01)
+            self.assertLessEqual(local_axis_max[1], (raw_bounds["max_z"] - raw_bounds["min_z"]) / 2.0 + 0.01)
+            self.assertLessEqual(local_axis_max[2], (raw_bounds["max_y"] - raw_bounds["min_y"]) / 2.0 + 0.01)
+
+            for cursor in range(0, min(len(positions), 30), 3):
+                render_world = [
+                    rtc_origin[0] + positions[cursor],
+                    rtc_origin[1] + positions[cursor + 1],
+                    rtc_origin[2] + positions[cursor + 2],
+                ]
+                reconstructed_source = [
+                    render_world[0],
+                    render_world[2],
+                    render_world[1],
+                ]
+                self.assertGreaterEqual(reconstructed_source[0], raw_bounds["min_x"] - 0.01)
+                self.assertLessEqual(reconstructed_source[0], raw_bounds["max_x"] + 0.01)
+                self.assertGreaterEqual(reconstructed_source[1], raw_bounds["min_y"] - 0.01)
+                self.assertLessEqual(reconstructed_source[1], raw_bounds["max_y"] + 0.01)
+                self.assertGreaterEqual(reconstructed_source[2], raw_bounds["min_z"] - 0.01)
+                self.assertLessEqual(reconstructed_source[2], raw_bounds["max_z"] + 0.01)
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_package_viewer_page_exposes_package_api_url(self, mock_parse):
