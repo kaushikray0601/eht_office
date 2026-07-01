@@ -9,6 +9,11 @@ const statusEl = document.getElementById('viewerStatus');
 const resetBtn = document.getElementById('resetViewBtn');
 const fitSelectionBtn = document.getElementById('fitSelectionBtn');
 const clearSelectionBtn = document.getElementById('clearSelectionBtn');
+const measureToggleBtn = document.getElementById('measureToggleBtn');
+const scaleToggleBtn = document.getElementById('scaleToggleBtn');
+const scaleHud = document.getElementById('scaleHud');
+const measurementHud = document.getElementById('measurementHud');
+const measurementStatus = document.getElementById('measurementStatus');
 const metricsEl = document.getElementById('runtimeMetrics');
 const selectionEl = document.getElementById('selectionPanel');
 const hierarchyContent = document.getElementById('hierarchy-content');
@@ -28,6 +33,11 @@ const ehtCancelRouteBtn = document.getElementById('ehtCancelRouteBtn');
 const ehtSaveLayerBtn = document.getElementById('ehtSaveLayerBtn');
 const ehtUndoBtn = document.querySelector('.eht-undo-btn');
 const ehtDraftList = document.getElementById('ehtDraftList');
+const plotPlanInput = document.getElementById('plotPlanInput');
+const plotPlanVisibleToggle = document.getElementById('plotPlanVisibleToggle');
+const plotPlanOpacity = document.getElementById('plotPlanOpacity');
+const plotPlanClearBtn = document.getElementById('plotPlanClearBtn');
+const plotPlanStatus = document.getElementById('plotPlanStatus');
 const DRAFT_PARAMETER_FIELDS = [
   { key: 'label', label: 'Label', type: 'text' },
   { key: 'width_m', label: 'Width m', type: 'number', step: '0.05' },
@@ -68,6 +78,17 @@ const root = new THREE.Group();
 scene.add(root);
 const ehtDraftGroup = new THREE.Group();
 scene.add(ehtDraftGroup);
+const pendingRouteGroup = new THREE.Group();
+scene.add(pendingRouteGroup);
+const measurementGroup = new THREE.Group();
+scene.add(measurementGroup);
+
+let gridHelper = new THREE.GridHelper(20, 20, 0x7f8ea3, 0xcbd5e1);
+gridHelper.material.opacity = 0.45;
+gridHelper.material.transparent = true;
+scene.add(gridHelper);
+let axesHelper = new THREE.AxesHelper(5);
+scene.add(axesHelper);
 
 let packageBounds = new THREE.Box3();
 let objectIndex = new Map();
@@ -85,6 +106,13 @@ let pendingRoutePoints = [];
 let ehtDraftElements = [];
 let selectedDraftId = '';
 let movingDraftId = '';
+let showGridScale = true;
+let measureModeActive = false;
+let measurementPoints = [];
+let measurementLine = null;
+let currentGridLayout = { size: 20, step: 1, divisions: 20 };
+let plotPlanMesh = null;
+let plotPlanObjectUrl = '';
 let hiddenEhtDraftIds = new Set();
 let hiddenEhtTypes = new Set();
 let collapsedEhtTypes = new Set();
@@ -202,6 +230,42 @@ function formatDimension(value) {
   if (Math.abs(number) >= 100) return number.toFixed(1);
   if (Math.abs(number) >= 10) return number.toFixed(2);
   return number.toFixed(3);
+}
+
+function formatSceneLength(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  const abs = Math.abs(number);
+  if (abs < 1) return `${number.toFixed(3)} m`;
+  if (abs < 10) return `${number.toFixed(2)} m`;
+  if (abs < 100) return `${number.toFixed(1)} m`;
+  return `${number.toFixed(0)} m`;
+}
+
+function formatMm(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return '';
+  return `${Math.round(number * 1000)} mm`;
+}
+
+function niceGridStepForExtent(extent, targetTicks = 16) {
+  const rawStep = Math.max(Number(extent || 0) / targetTicks, 0.001);
+  const magnitude = Math.pow(10, Math.floor(Math.log10(rawStep)));
+  const normalized = rawStep / magnitude;
+  const multiplier = normalized <= 1 ? 1 : normalized <= 2 ? 2 : normalized <= 5 ? 5 : 10;
+  return multiplier * magnitude;
+}
+
+function gridLayoutForExtent(extent) {
+  const paddedExtent = Math.max(Number(extent || 0) * 1.35, 10);
+  const step = niceGridStepForExtent(paddedExtent);
+  const divisions = Math.max(2, Math.min(100, Math.ceil(paddedExtent / step)));
+  const evenDivisions = divisions % 2 === 0 ? divisions : divisions + 1;
+  return {
+    size: step * evenDivisions,
+    step,
+    divisions: evenDivisions,
+  };
 }
 
 function dimensionsText(summary) {
@@ -442,6 +506,7 @@ function setEhtStatus(message) {
 
 function setActiveEhtTool(tool) {
   activeEhtTool = tool || '';
+  if (activeEhtTool && measureModeActive) setMeasureMode(false);
   if (activeEhtTool) movingDraftId = '';
   document.querySelectorAll('.eht-tool-btn').forEach(button => {
     button.classList.toggle('p3d-tool-active', button.dataset.ehtTool === activeEhtTool);
@@ -454,6 +519,7 @@ function setActiveEhtTool(tool) {
     ehtRouteControls.classList.toggle('p3d-hidden', !def || def.kind !== 'route');
   }
   pendingRoutePoints = [];
+  clearPendingRoutePreview();
   setEhtStatus(def ? `${def.label}: click the model to place ${def.kind === 'route' ? 'route points' : 'an element'}.` : 'Select a tool, then click the model.');
 }
 
@@ -532,11 +598,7 @@ function applyPointDimensions(element) {
 
 function rebuildRouteGeometry(element) {
   if (!element || element.kind !== 'route' || !element.object3d) return;
-  const points = (element.points || []).map(point => new THREE.Vector3(...point));
-  const geometry = new THREE.BufferGeometry().setFromPoints(points);
-  element.object3d.geometry?.dispose?.();
-  element.object3d.geometry = geometry;
-  element.object3d.computeLineDistances?.();
+  replaceRouteVisualChildren(element.object3d, (element.points || []).map(point => new THREE.Vector3(...point)), ehtDef(element.type), false, element.type);
 }
 
 function selectDraftElement(element, { frame = false } = {}) {
@@ -593,6 +655,7 @@ function updateDraftParametersFromForm(form) {
 
 function deleteDraftElement(element) {
   if (!element) return;
+  const label = draftLabel(element);
   ehtDraftElements = ehtDraftElements.filter(item => item.id !== element.id);
   hiddenEhtDraftIds.delete(element.id);
   element.object3d.parent?.remove(element.object3d);
@@ -602,7 +665,7 @@ function deleteDraftElement(element) {
   clearSelection();
   if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
   renderDraftList();
-  setEhtStatus(`${draftLabel(element)} deleted.`);
+  setEhtStatus(`${label} deleted.`);
 }
 
 function moveDraftElementTo(element, point) {
@@ -647,6 +710,252 @@ function pickDraftElement() {
   return draftElementFromObject(hits[0].object);
 }
 
+function setScaleHud(text) {
+  if (scaleHud) scaleHud.textContent = text;
+}
+
+function setGridScaleVisible(visible) {
+  showGridScale = Boolean(visible);
+  if (gridHelper) gridHelper.visible = showGridScale;
+  if (axesHelper) axesHelper.visible = showGridScale;
+  if (scaleHud) scaleHud.classList.toggle('p3d-hidden', !showGridScale);
+  if (scaleToggleBtn) {
+    scaleToggleBtn.textContent = showGridScale ? 'Grid On' : 'Grid Off';
+    scaleToggleBtn.setAttribute('aria-pressed', showGridScale ? 'true' : 'false');
+    scaleToggleBtn.classList.toggle('p3d-button-primary', showGridScale);
+  }
+}
+
+function disposeSceneHelper(helper) {
+  if (!helper) return;
+  scene.remove(helper);
+  helper.geometry?.dispose?.();
+  if (Array.isArray(helper.material)) {
+    helper.material.forEach(material => material.dispose?.());
+  } else {
+    helper.material?.dispose?.();
+  }
+}
+
+function updateReferenceGrid(bounds) {
+  if (!(bounds instanceof THREE.Box3) || bounds.isEmpty()) return;
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  bounds.getSize(size);
+  bounds.getCenter(center);
+  const maxDim = Math.max(size.x, size.z, size.y, 1);
+  const layout = gridLayoutForExtent(maxDim);
+  currentGridLayout = layout;
+  disposeSceneHelper(gridHelper);
+  disposeSceneHelper(axesHelper);
+  gridHelper = new THREE.GridHelper(layout.size, layout.divisions, 0x7f8ea3, 0xcbd5e1);
+  gridHelper.material.opacity = 0.45;
+  gridHelper.material.transparent = true;
+  gridHelper.position.set(center.x, bounds.min.y, center.z);
+  gridHelper.visible = showGridScale;
+  scene.add(gridHelper);
+  axesHelper = new THREE.AxesHelper(Math.max(layout.size * 0.18, 1));
+  axesHelper.position.copy(gridHelper.position);
+  axesHelper.visible = showGridScale;
+  scene.add(axesHelper);
+  setScaleHud(`Grid ${formatSceneLength(layout.step)} | X red, Y green, Z blue`);
+  setGridScaleVisible(showGridScale);
+  updatePlotPlanPlacement();
+}
+
+function setPlotPlanStatus(message) {
+  if (plotPlanStatus) plotPlanStatus.textContent = message;
+}
+
+function plotPlanOpacityValue() {
+  const opacity = Number(plotPlanOpacity?.value || 0.45);
+  return Number.isFinite(opacity) ? THREE.MathUtils.clamp(opacity, 0.1, 1) : 0.45;
+}
+
+function updatePlotPlanVisibility() {
+  if (!plotPlanMesh) return;
+  plotPlanMesh.visible = Boolean(plotPlanVisibleToggle?.checked ?? true);
+  if (plotPlanMesh.material) {
+    plotPlanMesh.material.opacity = plotPlanOpacityValue();
+    plotPlanMesh.material.needsUpdate = true;
+  }
+}
+
+function updatePlotPlanPlacement() {
+  if (!plotPlanMesh || !gridHelper) return;
+  const image = plotPlanMesh.material?.map?.image;
+  const aspect = image?.width && image?.height ? image.width / image.height : 1;
+  const maxSize = Math.max(currentGridLayout.size || 20, 1);
+  const width = aspect >= 1 ? maxSize : maxSize * aspect;
+  const height = aspect >= 1 ? maxSize / aspect : maxSize;
+  plotPlanMesh.geometry?.dispose?.();
+  plotPlanMesh.geometry = new THREE.PlaneGeometry(width, height);
+  plotPlanMesh.rotation.set(-Math.PI / 2, 0, 0);
+  plotPlanMesh.position.set(gridHelper.position.x, gridHelper.position.y + 0.01, gridHelper.position.z);
+  plotPlanMesh.renderOrder = -1;
+  updatePlotPlanVisibility();
+}
+
+function clearPlotPlan() {
+  if (plotPlanMesh) {
+    scene.remove(plotPlanMesh);
+    plotPlanMesh.geometry?.dispose?.();
+    plotPlanMesh.material?.map?.dispose?.();
+    plotPlanMesh.material?.dispose?.();
+    plotPlanMesh = null;
+  }
+  if (plotPlanObjectUrl) {
+    URL.revokeObjectURL(plotPlanObjectUrl);
+    plotPlanObjectUrl = '';
+  }
+  if (plotPlanInput) plotPlanInput.value = '';
+  setPlotPlanStatus('Local image only; not saved yet.');
+}
+
+function loadPlotPlanFile(file) {
+  if (!file) return;
+  clearPlotPlan();
+  plotPlanObjectUrl = URL.createObjectURL(file);
+  setPlotPlanStatus(`Loading ${file.name}...`);
+  new THREE.TextureLoader().load(
+    plotPlanObjectUrl,
+    texture => {
+      texture.colorSpace = THREE.SRGBColorSpace;
+      texture.needsUpdate = true;
+      const material = new THREE.MeshBasicMaterial({
+        map: texture,
+        transparent: true,
+        opacity: plotPlanOpacityValue(),
+        depthWrite: false,
+        side: THREE.DoubleSide,
+      });
+      plotPlanMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), material);
+      plotPlanMesh.name = 'Local 2D plot plan overlay';
+      scene.add(plotPlanMesh);
+      updatePlotPlanPlacement();
+      setPlotPlanStatus(`${file.name} fitted to helper grid. Local only; not saved yet.`);
+    },
+    undefined,
+    () => {
+      clearPlotPlan();
+      setPlotPlanStatus('Unable to load plot plan image.');
+    },
+  );
+}
+
+function clearMeasurementGraphics() {
+  while (measurementGroup.children.length) {
+    const child = measurementGroup.children.pop();
+    child.parent = null;
+    disposeObject3D(child);
+  }
+  measurementLine = null;
+}
+
+function setMeasurementHudVisible(visible) {
+  if (measurementHud) measurementHud.classList.toggle('p3d-hidden', !visible);
+}
+
+function setMeasurementStatus(text) {
+  if (measurementStatus) measurementStatus.textContent = text;
+}
+
+function createMeasurementMarker(point) {
+  const radius = Math.max(camera.position.distanceTo(controls.target) * 0.006, 0.05);
+  const geometry = new THREE.SphereGeometry(radius, 16, 16);
+  const material = new THREE.MeshBasicMaterial({ color: 0xf97316, depthTest: false });
+  const marker = new THREE.Mesh(geometry, material);
+  marker.position.copy(point);
+  marker.renderOrder = 30;
+  measurementGroup.add(marker);
+}
+
+function createMeasurementLine(start, end) {
+  const geometry = new THREE.BufferGeometry().setFromPoints([start, end]);
+  const material = new THREE.LineBasicMaterial({ color: 0xf97316, linewidth: 2, depthTest: false });
+  const line = new THREE.Line(geometry, material);
+  line.renderOrder = 29;
+  measurementGroup.add(line);
+  measurementLine = line;
+}
+
+function createMeasurementLabel(text, position) {
+  const canvas = document.createElement('canvas');
+  const context = canvas.getContext('2d');
+  if (!context) return;
+  const fontSize = 22;
+  const paddingX = 12;
+  const paddingY = 6;
+  context.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
+  canvas.width = Math.max(Math.ceil(context.measureText(text).width + paddingX * 2), 90);
+  canvas.height = fontSize + paddingY * 2;
+  context.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
+  context.textBaseline = 'middle';
+  context.fillStyle = 'rgba(255, 247, 237, 0.92)';
+  context.strokeStyle = 'rgba(249, 115, 22, 0.45)';
+  context.lineWidth = 2;
+  context.fillRect(1, 1, canvas.width - 2, canvas.height - 2);
+  context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
+  context.fillStyle = '#9a3412';
+  context.fillText(text, paddingX, canvas.height / 2);
+  const texture = new THREE.CanvasTexture(canvas);
+  const material = new THREE.SpriteMaterial({
+    map: texture,
+    transparent: true,
+    depthTest: false,
+    depthWrite: false,
+  });
+  const sprite = new THREE.Sprite(material);
+  const aspect = canvas.width / canvas.height;
+  const height = Math.max(camera.position.distanceTo(controls.target) * 0.035, 0.18);
+  sprite.scale.set(height * aspect, height, 1);
+  sprite.position.copy(position);
+  sprite.renderOrder = 31;
+  measurementGroup.add(sprite);
+}
+
+function renderMeasurement() {
+  clearMeasurementGraphics();
+  measurementPoints.forEach(point => createMeasurementMarker(point));
+  if (measurementPoints.length === 0) {
+    setMeasurementStatus('Pick the first point.');
+    return;
+  }
+  if (measurementPoints.length === 1) {
+    setMeasurementStatus('First point picked. Pick the second point.');
+    return;
+  }
+  const [start, end] = measurementPoints;
+  const distance = start.distanceTo(end);
+  createMeasurementLine(start, end);
+  const midpoint = start.clone().add(end).multiplyScalar(0.5);
+  midpoint.y += Math.max(distance * 0.04, 0.15);
+  createMeasurementLabel(formatSceneLength(distance), midpoint);
+  setMeasurementStatus(`${formatSceneLength(distance)} (${formatMm(distance)}). Pick again to start a new measurement.`);
+}
+
+function addMeasurementPoint(point) {
+  if (measurementPoints.length >= 2) measurementPoints = [];
+  measurementPoints.push(point.clone());
+  renderMeasurement();
+}
+
+function setMeasureMode(active) {
+  measureModeActive = Boolean(active);
+  if (measureModeActive) {
+    setActiveEhtTool('');
+    movingDraftId = '';
+  }
+  if (measureToggleBtn) {
+    measureToggleBtn.textContent = measureModeActive ? 'Measuring' : 'Measure';
+    measureToggleBtn.setAttribute('aria-pressed', measureModeActive ? 'true' : 'false');
+    measureToggleBtn.classList.toggle('p3d-button-primary', measureModeActive);
+  }
+  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : '';
+  setMeasurementHudVisible(measureModeActive || measurementPoints.length > 0);
+  if (measureModeActive && measurementPoints.length === 0) setMeasurementStatus('Pick the first point.');
+}
+
 function pointFromViewerEvent(event) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -674,10 +983,72 @@ function createDraftPointMesh(position, def) {
 }
 
 function createDraftRouteObject(points, def) {
-  const geometry = new THREE.BufferGeometry().setFromPoints(points);
-  const material = new THREE.LineBasicMaterial({ color: def.color, linewidth: 2 });
-  const line = new THREE.Line(geometry, material);
-  return line;
+  const group = new THREE.Group();
+  replaceRouteVisualChildren(group, points, def, false, activeEhtTool);
+  return group;
+}
+
+function cableRadiusForTool(typeOrDef, preview = false) {
+  const type = typeof typeOrDef === 'string' ? typeOrDef : '';
+  const base = type === 'cold_cable' ? 0.045 : type === 'tracer_mi' ? 0.035 : 0.03;
+  return preview ? base * 0.75 : base;
+}
+
+function routeMaterial(def, preview = false) {
+  return new THREE.MeshStandardMaterial({
+    color: def.color,
+    roughness: 0.55,
+    metalness: 0.0,
+    transparent: preview,
+    opacity: preview ? 0.65 : 1,
+  });
+}
+
+function routePointMarker(point, def, preview = false) {
+  const geometry = new THREE.SphereGeometry(preview ? 0.08 : 0.1, 12, 12);
+  const material = new THREE.MeshBasicMaterial({
+    color: def.color,
+    transparent: preview,
+    opacity: preview ? 0.8 : 1,
+    depthTest: false,
+  });
+  const marker = new THREE.Mesh(geometry, material);
+  marker.position.copy(point);
+  marker.renderOrder = preview ? 26 : 10;
+  return marker;
+}
+
+function replaceRouteVisualChildren(group, points, def, preview = false, type = '') {
+  while (group.children.length) {
+    const child = group.children.pop();
+    child.parent = null;
+    disposeObject3D(child);
+  }
+  const routePoints = (points || []).filter(point => point instanceof THREE.Vector3);
+  routePoints.forEach(point => group.add(routePointMarker(point, def, preview)));
+  if (routePoints.length < 2) return;
+  const curve = new THREE.CatmullRomCurve3(routePoints, false, 'catmullrom', 0.05);
+  const radius = cableRadiusForTool(type, preview);
+  const segments = Math.max(routePoints.length * 12, 16);
+  const geometry = new THREE.TubeGeometry(curve, segments, radius, 8, false);
+  const mesh = new THREE.Mesh(geometry, routeMaterial(def, preview));
+  mesh.renderOrder = preview ? 25 : 8;
+  group.add(mesh);
+}
+
+function clearPendingRoutePreview() {
+  while (pendingRouteGroup.children.length) {
+    const child = pendingRouteGroup.children.pop();
+    child.parent = null;
+    disposeObject3D(child);
+  }
+}
+
+function updatePendingRoutePreview() {
+  clearPendingRoutePreview();
+  if (!activeEhtTool || pendingRoutePoints.length === 0) return;
+  const def = ehtDef(activeEhtTool);
+  replaceRouteVisualChildren(pendingRouteGroup, pendingRoutePoints, def, true, activeEhtTool);
 }
 
 function draftLabel(element) {
@@ -748,6 +1119,7 @@ function renderDraftList() {
               <input type="checkbox" class="eht-element-toggle" data-draft-id="${escapeHtml(element.id)}" ${isDraftElementVisible(element) ? 'checked' : ''}>
               <button type="button" class="eht-select-row" data-draft-id="${escapeHtml(element.id)}" title="${escapeHtml(draftLabel(element))}">${escapeHtml(draftLabel(element))}</button>
               <span class="p3d-tree-count">${escapeHtml(element.kind)}</span>
+              <button type="button" class="eht-delete-row" data-draft-id="${escapeHtml(element.id)}" aria-label="Delete ${escapeHtml(draftLabel(element))}">Delete</button>
             </div>
           `).join('')}
         </div>
@@ -803,6 +1175,13 @@ function renderDraftList() {
       selectDraftElement(element, { frame: true });
     });
   });
+  ehtDraftList.querySelectorAll('.eht-delete-row').forEach(button => {
+    button.addEventListener('click', event => {
+      event.stopPropagation();
+      const element = ehtDraftElements.find(item => item.id === button.dataset.draftId);
+      if (element) deleteDraftElement(element);
+    });
+  });
   applyDraftVisibility();
   if (currentHierarchyQuery()) applyHierarchySearch();
   updateUndoState();
@@ -848,10 +1227,12 @@ function finishEhtRoute() {
   const line = createDraftRouteObject(pendingRoutePoints, def);
   addDraftElement(activeEhtTool, 'route', pendingRoutePoints, line);
   pendingRoutePoints = [];
+  clearPendingRoutePreview();
 }
 
 function cancelEhtRoute() {
   pendingRoutePoints = [];
+  clearPendingRoutePreview();
   setEhtStatus(activeEhtTool ? `${ehtDef(activeEhtTool).label}: route cancelled.` : 'Route cancelled.');
 }
 
@@ -869,6 +1250,7 @@ function handleEhtToolClick(event) {
   const point = pointFromViewerEvent(event);
   if (def.kind === 'route') {
     pendingRoutePoints.push(point);
+    updatePendingRoutePreview();
     setEhtStatus(`${def.label}: ${pendingRoutePoints.length} point(s) picked. Use Finish Route when complete.`);
     return true;
   }
@@ -1239,6 +1621,7 @@ function frameScene(boundsOverride = null) {
     controls.update();
     return;
   }
+  updateReferenceGrid(packageBounds);
 
   const size = new THREE.Vector3();
   const center = new THREE.Vector3();
@@ -1340,8 +1723,12 @@ function disposeObject3D(object) {
     if (node.geometry) node.geometry.dispose();
     if (node.material && !node.userData?.isSelectionHighlight) {
       if (Array.isArray(node.material)) {
-        node.material.forEach(material => material.dispose?.());
+        node.material.forEach(material => {
+          material.map?.dispose?.();
+          material.dispose?.();
+        });
       } else {
+        node.material.map?.dispose?.();
         node.material.dispose?.();
       }
     }
@@ -1843,6 +2230,10 @@ async function showGlbFeatureSelection(hit) {
 }
 
 function pick(event) {
+  if (measureModeActive) {
+    addMeasurementPoint(pointFromViewerEvent(event));
+    return;
+  }
   if (handleEhtToolClick(event)) {
     return;
   }
@@ -1934,12 +2325,41 @@ if (clearSelectionBtn) {
     if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
   });
 }
+if (measureToggleBtn) {
+  measureToggleBtn.addEventListener('click', () => setMeasureMode(!measureModeActive));
+}
+if (scaleToggleBtn) {
+  scaleToggleBtn.addEventListener('click', () => setGridScaleVisible(!showGridScale));
+}
+if (plotPlanInput) {
+  plotPlanInput.addEventListener('change', () => {
+    const file = plotPlanInput.files?.[0];
+    if (file) loadPlotPlanFile(file);
+  });
+}
+if (plotPlanVisibleToggle) {
+  plotPlanVisibleToggle.addEventListener('change', updatePlotPlanVisibility);
+}
+if (plotPlanOpacity) {
+  plotPlanOpacity.addEventListener('input', updatePlotPlanVisibility);
+}
+if (plotPlanClearBtn) {
+  plotPlanClearBtn.addEventListener('click', clearPlotPlan);
+}
 renderer.domElement.addEventListener('click', pick);
 bindEhtTools();
+setGridScaleVisible(showGridScale);
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
-    clearSelection();
-    if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+    if (measureModeActive) {
+      measurementPoints = [];
+      clearMeasurementGraphics();
+      setMeasureMode(false);
+      setMeasurementStatus('Pick the first point.');
+    } else {
+      clearSelection();
+      if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+    }
   }
 });
 resize();

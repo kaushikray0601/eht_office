@@ -1819,6 +1819,13 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "plant3d viewer")
         self.assertContains(response, "fitSelectionBtn")
         self.assertContains(response, "clearSelectionBtn")
+        self.assertContains(response, "measureToggleBtn")
+        self.assertContains(response, "scaleToggleBtn")
+        self.assertContains(response, "measurementHud")
+        self.assertContains(response, "scaleHud")
+        self.assertContains(response, "plotPlanInput")
+        self.assertContains(response, "plotPlanOpacity")
+        self.assertContains(response, "plotPlanClearBtn")
         self.assertContains(response, "navpanel-toggle")
         self.assertContains(response, "navpanel-reopen")
         self.assertContains(response, "hierarchy-content")
@@ -1832,7 +1839,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "ehtSaveLayerBtn")
         self.assertContains(response, "sidepanel-toggle")
         self.assertContains(response, "sidepanel-reopen")
-        self.assertContains(response, "20260702_ehtedit1")
+        self.assertContains(response, "20260702_plotroute1")
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")

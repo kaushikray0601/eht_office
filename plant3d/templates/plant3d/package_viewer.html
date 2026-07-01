@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_ehtedit1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_plotroute1">
 </head>
 <body class="p3d-viewer-body">
   <header class="p3d-topbar p3d-viewer-topbar">
@@ -16,6 +16,8 @@
       <button id="resetViewBtn" type="button">Reset View</button>
       <button id="fitSelectionBtn" type="button" disabled>Fit Selected</button>
       <button id="clearSelectionBtn" type="button" disabled>Clear</button>
+      <button id="measureToggleBtn" type="button" aria-pressed="false">Measure</button>
+      <button id="scaleToggleBtn" type="button" aria-pressed="true">Grid On</button>
       <a class="p3d-button" href="{% url 'plant3d_source_detail' source.pk %}">Back to Source</a>
     </div>
   </header>
@@ -25,6 +27,11 @@
 
   <main class="p3d-viewer-main">
     <div id="viewer" class="p3d-viewer-canvas" data-package-url="{{ package_api_url }}"></div>
+    <div id="scaleHud" class="p3d-scale-hud">Grid pending</div>
+    <div id="measurementHud" class="p3d-measure-hud p3d-hidden">
+      <strong>Measure</strong>
+      <div id="measurementStatus">Pick the first point.</div>
+    </div>
   </main>
 
   <aside id="navpanel" class="p3d-viewer-navpanel">
@@ -112,6 +119,22 @@
           <p><strong>Metadata</strong><br>Feature-ID sidecars</p>
           <p><strong>Selection</strong><br>Backend object index</p>
         </div>
+        <div class="p3d-layer-tools">
+          <label class="p3d-form-row">
+            <span>2D plot plan overlay</span>
+            <input id="plotPlanInput" type="file" accept="image/png,image/jpeg,image/webp,image/gif">
+          </label>
+          <label class="p3d-checkline">
+            <input id="plotPlanVisibleToggle" type="checkbox" checked>
+            Show plot plan
+          </label>
+          <label class="p3d-form-row">
+            <span>Overlay opacity</span>
+            <input id="plotPlanOpacity" type="range" min="0.1" max="1" value="0.45" step="0.05">
+          </label>
+          <button id="plotPlanClearBtn" type="button">Clear Plot Plan</button>
+          <p id="plotPlanStatus" class="p3d-help">Local image only; not saved yet.</p>
+        </div>
       </section>
     </div>
   </aside>
@@ -196,6 +219,6 @@
       });
     })();
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260702_ehtedit1"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260702_plotroute1"></script>
 </body>
 </html>

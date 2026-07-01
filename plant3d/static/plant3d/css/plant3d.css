@@ -428,6 +428,14 @@ button:disabled {
   white-space: nowrap;
 }
 
+.p3d-tree-leaf button.eht-delete-row {
+  min-height: 22px;
+  border-color: #fed7aa;
+  padding: 2px 6px;
+  color: #9a3412;
+  font-size: 10px;
+}
+
 .p3d-draft-selected {
   background: #fff7ed;
   color: #9a3412;
@@ -478,6 +486,16 @@ button:disabled {
   display: none;
 }
 
+.p3d-layer-tools {
+  display: grid;
+  gap: 9px;
+  margin-top: 12px;
+}
+
+.p3d-layer-tools input[type="range"] {
+  width: 100%;
+}
+
 .p3d-viewer-body {
   height: 100vh;
   overflow: hidden;
@@ -494,6 +512,44 @@ button:disabled {
   position: absolute;
   inset: 60px 340px 0 300px;
   transition: left 0.2s ease, right 0.2s ease;
+}
+
+.p3d-scale-hud,
+.p3d-measure-hud {
+  position: absolute;
+  z-index: 12;
+  border: 1px solid rgba(216, 224, 234, 0.92);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 8px 20px rgba(31, 42, 55, 0.08);
+  color: var(--p3d-text);
+  font-size: 11px;
+  line-height: 1.4;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+
+.p3d-scale-hud {
+  left: 12px;
+  bottom: 12px;
+  padding: 7px 10px;
+  font-weight: 700;
+}
+
+.p3d-measure-hud {
+  left: 12px;
+  bottom: 48px;
+  max-width: min(360px, calc(100% - 24px));
+  padding: 10px 12px;
+}
+
+.p3d-measure-hud strong {
+  display: block;
+  margin-bottom: 4px;
+  color: #9a3412;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .p3d-viewer-canvas {
