@@ -11,6 +11,34 @@ const fitSelectionBtn = document.getElementById('fitSelectionBtn');
 const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 const metricsEl = document.getElementById('runtimeMetrics');
 const selectionEl = document.getElementById('selectionPanel');
+const hierarchyContent = document.getElementById('hierarchy-content');
+const hierarchySelectionCount = document.getElementById('hierarchySelectionCount');
+const hierarchySearchInput = document.getElementById('hierarchySearchInput');
+const hierarchySearchStatus = document.getElementById('hierarchySearchStatus');
+const searchFocusBtn = document.getElementById('searchFocusBtn');
+const searchIsolateBtn = document.getElementById('searchIsolateBtn');
+const searchClearBtn = document.getElementById('searchClearBtn');
+const ehtToolPalette = document.getElementById('ehtToolPalette');
+const ehtToolStatus = document.getElementById('ehtToolStatus');
+const ehtPaletteToggleBtn = document.getElementById('ehtPaletteToggleBtn');
+const ehtSelectToolBtn = document.getElementById('ehtSelectToolBtn');
+const ehtRouteControls = document.getElementById('ehtRouteControls');
+const ehtFinishRouteBtn = document.getElementById('ehtFinishRouteBtn');
+const ehtCancelRouteBtn = document.getElementById('ehtCancelRouteBtn');
+const ehtSaveLayerBtn = document.getElementById('ehtSaveLayerBtn');
+const ehtUndoBtn = document.querySelector('.eht-undo-btn');
+const ehtDraftList = document.getElementById('ehtDraftList');
+const DRAFT_PARAMETER_FIELDS = [
+  { key: 'label', label: 'Label', type: 'text' },
+  { key: 'width_m', label: 'Width m', type: 'number', step: '0.05' },
+  { key: 'height_m', label: 'Height m', type: 'number', step: '0.05' },
+  { key: 'depth_m', label: 'Depth m', type: 'number', step: '0.05' },
+  { key: 'weight_kg', label: 'Weight kg', type: 'number', step: '0.1' },
+  { key: 'voltage_v', label: 'Voltage V', type: 'number', step: '1' },
+  { key: 'power_w', label: 'Power W', type: 'number', step: '1' },
+  { key: 'circuit_ref', label: 'Circuit ref', type: 'text' },
+  { key: 'cable_type', label: 'Cable type', type: 'text' },
+];
 
 const devicePixelRatio = window.devicePixelRatio || 1;
 const maxIdlePixelRatio = Math.max(0.75, Math.min(devicePixelRatio, 1.5));
@@ -38,14 +66,28 @@ scene.add(keyLight);
 
 const root = new THREE.Group();
 scene.add(root);
+const ehtDraftGroup = new THREE.Group();
+scene.add(ehtDraftGroup);
 
 let packageBounds = new THREE.Box3();
 let objectIndex = new Map();
+let objectById = new Map();
 let featureIndex = new Map();
 let featureSpanIndex = new Map();
 let selectableMeshes = [];
+let packageObjectRows = [];
+let hierarchySearchMatches = new Set();
 let selectedMesh = null;
 let selectedHighlight = null;
+let hierarchySelectedObjectId = null;
+let activeEhtTool = '';
+let pendingRoutePoints = [];
+let ehtDraftElements = [];
+let selectedDraftId = '';
+let movingDraftId = '';
+let hiddenEhtDraftIds = new Set();
+let hiddenEhtTypes = new Set();
+let collapsedEhtTypes = new Set();
 let runtimeStats = {
   renderMode: 'merged-color-buckets',
   meshCount: 0,
@@ -103,6 +145,17 @@ const TILE_UNLOAD_GRACE_MS = 4000;
 const TILE_STREAM_INTERVAL_MS = 500;
 const TILE_LOAD_BATCH_SIZE = 2;
 const MAX_GLB_TILE_LOAD_ATTEMPTS = 3;
+const EHT_TOOL_DEFS = {
+  distribution_board: { label: 'Distribution Board', kind: 'point', color: 0x7c3aed, defaults: { width_m: 0.8, height_m: 1.8, depth_m: 0.35, weight_kg: 120, voltage_v: 415, power_w: 0, circuit_ref: '', cable_type: '' } },
+  junction_box: { label: 'Junction Box', kind: 'point', color: 0x2563eb, defaults: { width_m: 0.45, height_m: 0.45, depth_m: 0.25, weight_kg: 12, voltage_v: 230, power_w: 0, circuit_ref: '', cable_type: '' } },
+  isolator: { label: 'Isolator', kind: 'point', color: 0x0f766e, defaults: { width_m: 0.35, height_m: 0.45, depth_m: 0.22, weight_kg: 8, voltage_v: 415, power_w: 0, circuit_ref: '', cable_type: '' } },
+  rtd: { label: 'RTD', kind: 'point', color: 0xdc2626, defaults: { width_m: 0.18, height_m: 0.18, depth_m: 0.12, weight_kg: 1, voltage_v: 24, power_w: 0, circuit_ref: '', cable_type: '' } },
+  end_termination: { label: 'End Termination', kind: 'point', color: 0xbe123c, defaults: { width_m: 0.25, height_m: 0.25, depth_m: 0.15, weight_kg: 2, voltage_v: 230, power_w: 0, circuit_ref: '', cable_type: '' } },
+  pipe_strap: { label: 'Pipe Strap', kind: 'point', color: 0x65a30d, defaults: { width_m: 0.15, height_m: 0.08, depth_m: 0.08, weight_kg: 0.2, voltage_v: '', power_w: '', circuit_ref: '', cable_type: '' } },
+  tracer_sr: { label: 'SR Tracer', kind: 'route', color: 0xf59e0b, defaults: { width_m: '', height_m: '', depth_m: '', weight_kg: '', voltage_v: 230, power_w: 30, circuit_ref: '', cable_type: 'SR' } },
+  tracer_mi: { label: 'MI Tracer', kind: 'route', color: 0xea580c, defaults: { width_m: '', height_m: '', depth_m: '', weight_kg: '', voltage_v: 230, power_w: 60, circuit_ref: '', cable_type: 'MI' } },
+  cold_cable: { label: 'Cold Cable', kind: 'route', color: 0x0284c7, defaults: { width_m: '', height_m: '', depth_m: '', weight_kg: '', voltage_v: 230, power_w: 0, circuit_ref: '', cable_type: 'Cold cable' } },
+};
 const highlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffb020,
   wireframe: true,
@@ -174,6 +227,713 @@ function metadataDetails(data) {
     hasMetadata ? `<p class="kv"><span>Metadata</span><strong>${escapeHtml(JSON.stringify(metadata))}</strong></p>` : '',
     '</details>',
   ].join('');
+}
+
+function objectDisplayLabel(obj) {
+  const summary = obj?.selection_summary || {};
+  return summary.display_label || obj?.tag || obj?.line_id || obj?.source_object_id || obj?.stable_id || `Object ${obj?.id || ''}`.trim();
+}
+
+function objectGroupLabel(obj) {
+  const summary = obj?.selection_summary || {};
+  return summary.hierarchy_group || obj?.object_type || 'Ungrouped';
+}
+
+function objectSearchText(obj) {
+  const summary = obj?.selection_summary || {};
+  return [
+    objectDisplayLabel(obj),
+    obj?.object_type,
+    obj?.tag,
+    obj?.line_id,
+    obj?.stable_id,
+    obj?.source_object_id,
+    summary.name,
+    summary.hierarchy_group,
+    Array.isArray(summary.spatial_path) ? summary.spatial_path.join(' ') : '',
+  ].join(' ').toLowerCase();
+}
+
+function collapseButton(label, expanded = true) {
+  return `<button type="button" class="p3d-tree-collapse" aria-label="${escapeHtml(label)}">${expanded ? '▾' : '▸'}</button>`;
+}
+
+function renderHierarchy(pkg) {
+  packageObjectRows = Array.isArray(pkg.objects) ? pkg.objects : [];
+  if (!hierarchyContent) return;
+  if (!packageObjectRows.length) {
+    hierarchyContent.innerHTML = '<div class="meta">No indexed objects found.</div>';
+    renderDraftList();
+    return;
+  }
+
+  const byGroup = new Map();
+  for (const obj of packageObjectRows) {
+    const group = objectGroupLabel(obj);
+    if (!byGroup.has(group)) byGroup.set(group, []);
+    byGroup.get(group).push(obj);
+  }
+
+  const sourceLabel = pkg.source_display_name || `Source ${pkg.source_model_id || ''}`.trim() || 'Source Model';
+  const groups = Array.from(byGroup.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  hierarchyContent.innerHTML = `
+    <div class="p3d-tree-node hierarchy-file" data-file="${escapeHtml(sourceLabel)}">
+      <div class="p3d-tree-row">
+        ${collapseButton(`Collapse ${sourceLabel}`)}
+        <span class="p3d-tree-label" title="${escapeHtml(sourceLabel)}">${escapeHtml(sourceLabel)}</span>
+        <span class="p3d-tree-count">${packageObjectRows.length}</span>
+      </div>
+      <div class="p3d-tree-children">
+        ${groups.map(([group, objects]) => {
+          const sorted = objects.slice().sort((a, b) => objectDisplayLabel(a).localeCompare(objectDisplayLabel(b)));
+          return `
+            <div class="p3d-tree-node hierarchy-group" data-file="${escapeHtml(sourceLabel)}" data-group="${escapeHtml(group)}">
+              <div class="p3d-tree-row">
+                ${collapseButton(`Collapse ${group}`)}
+                <span class="p3d-tree-label" title="${escapeHtml(group)}">${escapeHtml(group)}</span>
+                <span class="p3d-tree-count">${sorted.length}</span>
+              </div>
+              <div class="p3d-tree-children">
+                ${sorted.map(obj => `
+                  <button type="button" class="p3d-tree-leaf hierarchy-leaf-row" data-object-id="${escapeHtml(obj.id)}" data-file="${escapeHtml(sourceLabel)}" data-group="${escapeHtml(group)}" data-search-text="${escapeHtml(objectSearchText(obj))}" title="${escapeHtml(objectDisplayLabel(obj))}">
+                    <span class="p3d-tree-label">${escapeHtml(objectDisplayLabel(obj))}</span>
+                  </button>
+                `).join('')}
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    </div>
+  `;
+  bindHierarchyEvents();
+  updateHierarchyCounters();
+  renderDraftList();
+}
+
+function updateHierarchyCounters() {
+  const leafRows = Array.from(document.querySelectorAll('.hierarchy-leaf-row'));
+  const visibleCount = leafRows.filter(row => !row.classList.contains('p3d-tree-hidden')).length;
+  if (hierarchySelectionCount) {
+    hierarchySelectionCount.textContent = leafRows.length ? `${visibleCount}/${leafRows.length} listed` : 'No assets';
+  }
+}
+
+function currentHierarchyQuery() {
+  return hierarchySearchInput ? hierarchySearchInput.value.trim().toLowerCase() : '';
+}
+
+function applyHierarchySearch() {
+  const query = currentHierarchyQuery();
+  let matchCount = 0;
+  hierarchySearchMatches = new Set();
+  document.querySelectorAll('.hierarchy-leaf-row').forEach(row => {
+    const visible = !query || String(row.dataset.searchText || '').includes(query);
+    row.classList.toggle('p3d-tree-hidden', !visible);
+    if (visible && query) {
+      matchCount += 1;
+      hierarchySearchMatches.add(row.dataset.objectId);
+    }
+  });
+  document.querySelectorAll('.hierarchy-group').forEach(group => {
+    const hasVisibleLeaves = Array.from(group.querySelectorAll('.hierarchy-leaf-row')).some(row => !row.classList.contains('p3d-tree-hidden'));
+    group.classList.toggle('p3d-tree-hidden', !hasVisibleLeaves);
+  });
+  document.querySelectorAll('.hierarchy-file').forEach(file => {
+    const hasVisibleLeaves = Array.from(file.querySelectorAll('.hierarchy-leaf-row')).some(row => !row.classList.contains('p3d-tree-hidden'));
+    file.classList.toggle('p3d-tree-hidden', !hasVisibleLeaves);
+  });
+  document.querySelectorAll('.eht-hierarchy-row').forEach(row => {
+    const visible = !query || String(row.dataset.searchText || '').includes(query);
+    row.classList.toggle('p3d-tree-hidden', !visible);
+    if (visible && query) matchCount += 1;
+  });
+  document.querySelectorAll('.eht-type-group').forEach(group => {
+    const hasVisibleLeaves = Array.from(group.querySelectorAll('.eht-hierarchy-row')).some(row => !row.classList.contains('p3d-tree-hidden'));
+    group.classList.toggle('p3d-tree-hidden', !hasVisibleLeaves);
+  });
+  if (hierarchySearchStatus) {
+    hierarchySearchStatus.textContent = query ? `${matchCount} match${matchCount === 1 ? '' : 'es'}` : 'Search the current hierarchy';
+  }
+  updateHierarchyCounters();
+}
+
+function sourceBoundsToRenderBox(bounds) {
+  if (!bounds || Object.keys(bounds).length === 0) return null;
+  const origin = Array.isArray(glbPackageOrigin) ? glbPackageOrigin : [0, 0, 0];
+  const minX = Number(bounds.min_x);
+  const maxX = Number(bounds.max_x);
+  const minY = Number(bounds.min_y);
+  const maxY = Number(bounds.max_y);
+  const minZ = Number(bounds.min_z);
+  const maxZ = Number(bounds.max_z);
+  if (![minX, maxX, minY, maxY, minZ, maxZ].every(Number.isFinite)) return null;
+  const min = new THREE.Vector3(minX - origin[0], minZ - origin[1], minY - origin[2]);
+  const max = new THREE.Vector3(maxX - origin[0], maxZ - origin[1], maxY - origin[2]);
+  return new THREE.Box3().setFromPoints([min, max]);
+}
+
+async function showObjectMetadataFromSummary(obj, featureId = null) {
+  if (!selectionEl || !obj) return;
+  hierarchySelectedObjectId = obj.id;
+  selectionEl.innerHTML = selectionDetailsHtml({ ...obj, selection_summary: obj.selection_summary || {} }, featureId);
+  if (!obj.url) return;
+  try {
+    const metadataStarted = performance.now();
+    const response = await fetch(obj.url);
+    if (!response.ok) throw new Error(`Metadata request failed: ${response.status}`);
+    const data = await response.json();
+    runtimeStats.metadataLatencyMs = Math.round(performance.now() - metadataStarted);
+    renderMetrics();
+    selectionEl.innerHTML = selectionDetailsHtml(data, featureId);
+  } catch (error) {
+    selectionEl.innerHTML += `<p class="meta">${escapeHtml(error.message || 'Unable to load metadata.')}</p>`;
+  }
+}
+
+function focusObjectFromHierarchy(objectId, { filterList = false } = {}) {
+  const obj = objectById.get(Number(objectId)) || objectById.get(String(objectId));
+  if (!obj) return;
+  if (filterList && hierarchySearchInput) {
+    hierarchySearchInput.value = objectDisplayLabel(obj);
+    applyHierarchySearch();
+  }
+  clearSelection();
+  const bounds = sourceBoundsToRenderBox(obj.bounds);
+  if (bounds && !bounds.isEmpty()) frameBounds(bounds);
+  showObjectMetadataFromSummary(obj);
+}
+
+function firstHierarchyMatch() {
+  const query = currentHierarchyQuery();
+  if (!query) return null;
+  return Array.from(document.querySelectorAll('.hierarchy-leaf-row'))
+    .find(row => !row.classList.contains('p3d-tree-hidden'));
+}
+
+function bindHierarchyEvents() {
+  document.querySelectorAll('.p3d-tree-collapse').forEach(button => {
+    button.addEventListener('click', event => {
+      event.preventDefault();
+      const node = button.closest('.p3d-tree-node');
+      const children = node?.querySelector('.p3d-tree-children');
+      if (!children) return;
+      const collapsed = children.classList.toggle('p3d-tree-hidden');
+      button.textContent = collapsed ? '▸' : '▾';
+    });
+  });
+  document.querySelectorAll('.hierarchy-leaf-row').forEach(row => {
+    row.addEventListener('click', event => {
+      event.preventDefault();
+      focusObjectFromHierarchy(row.dataset.objectId, { filterList: false });
+    });
+    row.addEventListener('dblclick', () => focusObjectFromHierarchy(row.dataset.objectId, { filterList: true }));
+  });
+  applyHierarchySearch();
+}
+
+function ehtDef(tool) {
+  return EHT_TOOL_DEFS[tool] || EHT_TOOL_DEFS.junction_box;
+}
+
+function setEhtStatus(message) {
+  if (ehtToolStatus) ehtToolStatus.textContent = message;
+}
+
+function setActiveEhtTool(tool) {
+  activeEhtTool = tool || '';
+  if (activeEhtTool) movingDraftId = '';
+  document.querySelectorAll('.eht-tool-btn').forEach(button => {
+    button.classList.toggle('p3d-tool-active', button.dataset.ehtTool === activeEhtTool);
+  });
+  if (ehtSelectToolBtn) {
+    ehtSelectToolBtn.classList.toggle('p3d-button-primary', !activeEhtTool);
+  }
+  const def = activeEhtTool ? ehtDef(activeEhtTool) : null;
+  if (ehtRouteControls) {
+    ehtRouteControls.classList.toggle('p3d-hidden', !def || def.kind !== 'route');
+  }
+  pendingRoutePoints = [];
+  setEhtStatus(def ? `${def.label}: click the model to place ${def.kind === 'route' ? 'route points' : 'an element'}.` : 'Select a tool, then click the model.');
+}
+
+function updateUndoState() {
+  if (ehtUndoBtn) ehtUndoBtn.disabled = ehtDraftElements.length === 0;
+}
+
+function selectedDraftElement() {
+  return selectedDraftId ? ehtDraftElements.find(element => element.id === selectedDraftId) || null : null;
+}
+
+function draftDefaults(type, sequence) {
+  const def = ehtDef(type);
+  return {
+    label: `${def.label} ${sequence}`,
+    ...(def.defaults || {}),
+  };
+}
+
+function numericOrBlank(value) {
+  if (value === '' || value === null || value === undefined) return '';
+  const number = Number(value);
+  return Number.isFinite(number) ? number : '';
+}
+
+function draftParamValue(params, key) {
+  return params && Object.prototype.hasOwnProperty.call(params, key) ? params[key] : '';
+}
+
+function draftParameterRows(element) {
+  const params = element.parameters || {};
+  return DRAFT_PARAMETER_FIELDS.map(field => {
+    const value = draftParamValue(params, field.key);
+    const attrs = [
+      `name="${escapeHtml(field.key)}"`,
+      `type="${escapeHtml(field.type)}"`,
+      `value="${escapeHtml(value)}"`,
+      field.step ? `step="${escapeHtml(field.step)}"` : '',
+    ].filter(Boolean).join(' ');
+    return `
+      <label class="p3d-form-row">
+        <span>${escapeHtml(field.label)}</span>
+        <input ${attrs}>
+      </label>
+    `;
+  }).join('');
+}
+
+function draftPositionText(element) {
+  const point = element.points?.[0] || [];
+  if (!point.length) return '';
+  return point.map(value => formatDimension(value)).join(', ');
+}
+
+function draftLength(element) {
+  if (!Array.isArray(element.points) || element.points.length < 2) return 0;
+  let total = 0;
+  for (let index = 1; index < element.points.length; index += 1) {
+    const previous = new THREE.Vector3(...element.points[index - 1]);
+    const current = new THREE.Vector3(...element.points[index]);
+    total += previous.distanceTo(current);
+  }
+  return total;
+}
+
+function applyPointDimensions(element) {
+  if (!element || element.kind !== 'point' || !element.object3d) return;
+  const params = element.parameters || {};
+  const base = 0.45;
+  const width = Math.max(Number(params.width_m) || base, 0.05);
+  const height = Math.max(Number(params.height_m) || base, 0.05);
+  const depth = Math.max(Number(params.depth_m) || base, 0.05);
+  element.object3d.scale.set(width / base, height / base, depth / base);
+  element.object3d.updateMatrixWorld(true);
+}
+
+function rebuildRouteGeometry(element) {
+  if (!element || element.kind !== 'route' || !element.object3d) return;
+  const points = (element.points || []).map(point => new THREE.Vector3(...point));
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  element.object3d.geometry?.dispose?.();
+  element.object3d.geometry = geometry;
+  element.object3d.computeLineDistances?.();
+}
+
+function selectDraftElement(element, { frame = false } = {}) {
+  if (!element) return;
+  clearSelection({ keepDraft: true });
+  selectedDraftId = element.id;
+  movingDraftId = movingDraftId === element.id ? movingDraftId : '';
+  setSelectionActionsEnabled(true);
+  renderDraftSelectionPanel(element);
+  if (frame) {
+    const bounds = new THREE.Box3().setFromObject(element.object3d);
+    frameBounds(bounds);
+  }
+  renderDraftList();
+}
+
+function renderDraftSelectionPanel(element = selectedDraftElement()) {
+  if (!selectionEl || !element) return;
+  const def = ehtDef(element.type);
+  const isMoving = movingDraftId === element.id;
+  selectionEl.innerHTML = [
+    kvRow('Draft EHT Element', draftLabel(element)),
+    kvRow('Type', def.label),
+    kvRow('Mode', element.kind),
+    kvRow('Points', element.points.length),
+    element.kind === 'route' ? kvRow('Route Length', `${formatDimension(draftLength(element))} m`) : kvRow('Position', draftPositionText(element)),
+    `<form id="ehtParameterForm" class="p3d-form" data-draft-id="${escapeHtml(element.id)}">`,
+    draftParameterRows(element),
+    '<div class="p3d-toolbar p3d-form-actions">',
+    '<button type="submit" class="p3d-button-primary">Apply Parameters</button>',
+    `<button type="button" id="ehtMoveSelectedBtn" class="${isMoving ? 'p3d-button-primary' : ''}">${isMoving ? 'Click New Position' : 'Move'}</button>`,
+    '<button type="button" id="ehtDeleteSelectedBtn">Delete</button>',
+    '</div>',
+    '</form>',
+    '<p class="meta">Draft overlay only; persistence is a later EHT layer pass.</p>',
+  ].join('');
+}
+
+function updateDraftParametersFromForm(form) {
+  const element = ehtDraftElements.find(item => item.id === form?.dataset?.draftId);
+  if (!element) return;
+  const next = { ...(element.parameters || {}) };
+  for (const field of DRAFT_PARAMETER_FIELDS) {
+    const input = form.elements[field.key];
+    if (!input) continue;
+    next[field.key] = field.type === 'number' ? numericOrBlank(input.value) : input.value.trim();
+  }
+  element.parameters = next;
+  applyPointDimensions(element);
+  renderDraftList();
+  renderDraftSelectionPanel(element);
+  setEhtStatus(`${draftLabel(element)} parameters updated. Draft is not persisted yet.`);
+}
+
+function deleteDraftElement(element) {
+  if (!element) return;
+  ehtDraftElements = ehtDraftElements.filter(item => item.id !== element.id);
+  hiddenEhtDraftIds.delete(element.id);
+  element.object3d.parent?.remove(element.object3d);
+  disposeObject3D(element.object3d);
+  if (selectedDraftId === element.id) selectedDraftId = '';
+  if (movingDraftId === element.id) movingDraftId = '';
+  clearSelection();
+  if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+  renderDraftList();
+  setEhtStatus(`${draftLabel(element)} deleted.`);
+}
+
+function moveDraftElementTo(element, point) {
+  if (!element || !point) return;
+  const nextPoint = point.clone();
+  if (element.kind === 'point') {
+    element.object3d.position.copy(nextPoint);
+    element.points = [nextPoint.toArray()];
+  } else if (element.kind === 'route' && element.points.length) {
+    const first = new THREE.Vector3(...element.points[0]);
+    const delta = nextPoint.sub(first);
+    element.points = element.points.map(existing => new THREE.Vector3(...existing).add(delta).toArray());
+    rebuildRouteGeometry(element);
+  }
+  movingDraftId = '';
+  selectDraftElement(element);
+  setEhtStatus(`${draftLabel(element)} moved. Draft is not persisted yet.`);
+}
+
+function draftElementFromObject(object) {
+  let cursor = object;
+  while (cursor) {
+    if (cursor.userData?.ehtDraftId) {
+      return ehtDraftElements.find(item => item.id === cursor.userData.ehtDraftId) || null;
+    }
+    cursor = cursor.parent;
+  }
+  return null;
+}
+
+function pickDraftElement() {
+  const draftObjects = ehtDraftElements
+    .filter(isDraftElementVisible)
+    .map(element => element.object3d)
+    .filter(Boolean);
+  if (!draftObjects.length) return null;
+  const previousThreshold = raycaster.params.Line?.threshold;
+  if (raycaster.params.Line) raycaster.params.Line.threshold = 0.25;
+  const hits = raycaster.intersectObjects(draftObjects, true);
+  if (raycaster.params.Line) raycaster.params.Line.threshold = previousThreshold ?? 1;
+  if (!hits.length) return null;
+  return draftElementFromObject(hits[0].object);
+}
+
+function pointFromViewerEvent(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : [];
+  if (hits.length) return hits[0].point.clone();
+
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -controls.target.y);
+  const point = new THREE.Vector3();
+  if (raycaster.ray.intersectPlane(plane, point)) return point;
+  return controls.target.clone();
+}
+
+function createDraftPointMesh(position, def) {
+  const geometry = new THREE.BoxGeometry(0.45, 0.45, 0.45);
+  const material = new THREE.MeshStandardMaterial({
+    color: def.color,
+    roughness: 0.6,
+    metalness: 0.0,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.copy(position);
+  return mesh;
+}
+
+function createDraftRouteObject(points, def) {
+  const geometry = new THREE.BufferGeometry().setFromPoints(points);
+  const material = new THREE.LineBasicMaterial({ color: def.color, linewidth: 2 });
+  const line = new THREE.Line(geometry, material);
+  return line;
+}
+
+function draftLabel(element) {
+  const def = ehtDef(element.type);
+  return element.parameters?.label || `${def.label} ${element.sequence}`;
+}
+
+function draftSearchText(element) {
+  return [
+    draftLabel(element),
+    ehtDef(element.type).label,
+    element.type,
+    element.kind,
+    element.parameters?.circuit_ref,
+    element.parameters?.cable_type,
+  ].join(' ').toLowerCase();
+}
+
+function isDraftElementVisible(element) {
+  return !hiddenEhtTypes.has(element.type) && !hiddenEhtDraftIds.has(element.id);
+}
+
+function applyDraftVisibility() {
+  for (const element of ehtDraftElements) {
+    element.object3d.visible = isDraftElementVisible(element);
+  }
+}
+
+function syncEhtTypeState(type) {
+  const elements = ehtDraftElements.filter(element => element.type === type);
+  const visibleCount = elements.filter(isDraftElementVisible).length;
+  const toggle = document.querySelector(`.eht-type-toggle[data-eht-type="${type}"]`);
+  if (!toggle) return;
+  toggle.checked = elements.length > 0 && visibleCount === elements.length;
+  toggle.indeterminate = visibleCount > 0 && visibleCount < elements.length;
+}
+
+function renderDraftList() {
+  if (!ehtDraftList) return;
+  if (!ehtDraftElements.length) {
+    ehtDraftList.innerHTML = '<div class="meta">No EHT draft elements yet.</div>';
+    updateUndoState();
+    return;
+  }
+  const byType = new Map();
+  for (const element of ehtDraftElements) {
+    if (!byType.has(element.type)) byType.set(element.type, []);
+    byType.get(element.type).push(element);
+  }
+  const types = Array.from(byType.keys()).sort((a, b) => ehtDef(a).label.localeCompare(ehtDef(b).label));
+  ehtDraftList.innerHTML = types.map(type => {
+    const def = ehtDef(type);
+    const elements = byType.get(type).slice().sort((a, b) => draftLabel(a).localeCompare(draftLabel(b)));
+    const collapsed = collapsedEhtTypes.has(type);
+    const allVisible = elements.every(isDraftElementVisible);
+    const someVisible = elements.some(isDraftElementVisible);
+    return `
+      <div class="p3d-tree-node eht-type-group" data-eht-type="${escapeHtml(type)}">
+        <div class="p3d-tree-row">
+          <button type="button" class="eht-type-collapse-toggle" data-eht-type="${escapeHtml(type)}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(def.label)}">${collapsed ? '▸' : '▾'}</button>
+          <input type="checkbox" class="eht-type-toggle" data-eht-type="${escapeHtml(type)}" ${allVisible ? 'checked' : ''} ${someVisible && !allVisible ? 'data-indeterminate="true"' : ''}>
+          <span class="p3d-tree-label" title="${escapeHtml(def.label)}">${escapeHtml(def.label)}</span>
+          <span class="p3d-tree-count">${elements.length}</span>
+        </div>
+        <div class="p3d-tree-children ${collapsed ? 'p3d-tree-hidden' : ''}">
+          ${elements.map(element => `
+            <div class="p3d-tree-leaf eht-hierarchy-row ${selectedDraftId === element.id ? 'p3d-draft-selected' : ''}" data-draft-id="${escapeHtml(element.id)}" data-eht-type="${escapeHtml(type)}" data-search-text="${escapeHtml(draftSearchText(element))}">
+              <input type="checkbox" class="eht-element-toggle" data-draft-id="${escapeHtml(element.id)}" ${isDraftElementVisible(element) ? 'checked' : ''}>
+              <button type="button" class="eht-select-row" data-draft-id="${escapeHtml(element.id)}" title="${escapeHtml(draftLabel(element))}">${escapeHtml(draftLabel(element))}</button>
+              <span class="p3d-tree-count">${escapeHtml(element.kind)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  }).join('');
+  ehtDraftList.querySelectorAll('.eht-type-toggle[data-indeterminate="true"]').forEach(toggle => {
+    toggle.indeterminate = true;
+  });
+  ehtDraftList.querySelectorAll('.eht-type-collapse-toggle').forEach(button => {
+    button.addEventListener('click', () => {
+      const type = button.dataset.ehtType;
+      if (collapsedEhtTypes.has(type)) {
+        collapsedEhtTypes.delete(type);
+      } else {
+        collapsedEhtTypes.add(type);
+      }
+      renderDraftList();
+    });
+  });
+  ehtDraftList.querySelectorAll('.eht-type-toggle').forEach(toggle => {
+    toggle.addEventListener('change', () => {
+      const type = toggle.dataset.ehtType;
+      if (toggle.checked) {
+        hiddenEhtTypes.delete(type);
+        ehtDraftElements.filter(element => element.type === type).forEach(element => hiddenEhtDraftIds.delete(element.id));
+      } else {
+        hiddenEhtTypes.add(type);
+      }
+      applyDraftVisibility();
+      renderDraftList();
+    });
+  });
+  ehtDraftList.querySelectorAll('.eht-element-toggle').forEach(toggle => {
+    toggle.addEventListener('change', () => {
+      const element = ehtDraftElements.find(item => item.id === toggle.dataset.draftId);
+      if (!element) return;
+      if (toggle.checked) {
+        hiddenEhtDraftIds.delete(element.id);
+        hiddenEhtTypes.delete(element.type);
+      } else {
+        hiddenEhtDraftIds.add(element.id);
+      }
+      applyDraftVisibility();
+      syncEhtTypeState(element.type);
+      renderDraftList();
+    });
+  });
+  ehtDraftList.querySelectorAll('.eht-select-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const element = ehtDraftElements.find(item => item.id === row.dataset.draftId);
+      if (!element) return;
+      selectDraftElement(element, { frame: true });
+    });
+  });
+  applyDraftVisibility();
+  if (currentHierarchyQuery()) applyHierarchySearch();
+  updateUndoState();
+}
+
+function addDraftElement(type, kind, points, object3d) {
+  const sequence = ehtDraftElements.length + 1;
+  const element = {
+    id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    type,
+    kind,
+    sequence,
+    points: points.map(point => point.toArray()),
+    parameters: draftDefaults(type, sequence),
+    object3d,
+  };
+  object3d.userData.ehtDraftId = element.id;
+  ehtDraftGroup.add(object3d);
+  hiddenEhtTypes.delete(type);
+  hiddenEhtDraftIds.delete(element.id);
+  ehtDraftElements.push(element);
+  selectedDraftId = element.id;
+  applyPointDimensions(element);
+  renderDraftList();
+  renderDraftSelectionPanel(element);
+  setSelectionActionsEnabled(true);
+  setEhtStatus(`${draftLabel(element)} added. Draft is not persisted yet.`);
+  return element;
+}
+
+function placeEhtPoint(type, point) {
+  const def = ehtDef(type);
+  const mesh = createDraftPointMesh(point, def);
+  addDraftElement(type, 'point', [point], mesh);
+}
+
+function finishEhtRoute() {
+  if (!activeEhtTool || pendingRoutePoints.length < 2) {
+    setEhtStatus('Pick at least two route points before finishing.');
+    return;
+  }
+  const def = ehtDef(activeEhtTool);
+  const line = createDraftRouteObject(pendingRoutePoints, def);
+  addDraftElement(activeEhtTool, 'route', pendingRoutePoints, line);
+  pendingRoutePoints = [];
+}
+
+function cancelEhtRoute() {
+  pendingRoutePoints = [];
+  setEhtStatus(activeEhtTool ? `${ehtDef(activeEhtTool).label}: route cancelled.` : 'Route cancelled.');
+}
+
+function handleEhtToolClick(event) {
+  if (movingDraftId) {
+    const element = ehtDraftElements.find(item => item.id === movingDraftId);
+    if (element) {
+      moveDraftElementTo(element, pointFromViewerEvent(event));
+      return true;
+    }
+    movingDraftId = '';
+  }
+  if (!activeEhtTool) return false;
+  const def = ehtDef(activeEhtTool);
+  const point = pointFromViewerEvent(event);
+  if (def.kind === 'route') {
+    pendingRoutePoints.push(point);
+    setEhtStatus(`${def.label}: ${pendingRoutePoints.length} point(s) picked. Use Finish Route when complete.`);
+    return true;
+  }
+  placeEhtPoint(activeEhtTool, point);
+  return true;
+}
+
+function undoLastDraftElement() {
+  const element = ehtDraftElements.pop();
+  if (!element) return;
+  element.object3d.parent?.remove(element.object3d);
+  disposeObject3D(element.object3d);
+  hiddenEhtDraftIds.delete(element.id);
+  if (movingDraftId === element.id) movingDraftId = '';
+  selectedDraftId = '';
+  renderDraftList();
+  setEhtStatus('Last draft element removed.');
+}
+
+function bindEhtTools() {
+  document.querySelectorAll('.eht-tool-btn').forEach(button => {
+    button.addEventListener('click', () => setActiveEhtTool(button.dataset.ehtTool || ''));
+  });
+  if (ehtSelectToolBtn) ehtSelectToolBtn.addEventListener('click', () => setActiveEhtTool(''));
+  if (ehtPaletteToggleBtn && ehtToolPalette) {
+    ehtPaletteToggleBtn.addEventListener('click', () => {
+      const collapsed = !ehtToolPalette.classList.contains('palette-collapsed');
+      ehtToolPalette.classList.toggle('palette-collapsed', collapsed);
+      ehtPaletteToggleBtn.textContent = collapsed ? 'Show' : 'Hide';
+    });
+  }
+  if (ehtFinishRouteBtn) ehtFinishRouteBtn.addEventListener('click', finishEhtRoute);
+  if (ehtCancelRouteBtn) ehtCancelRouteBtn.addEventListener('click', cancelEhtRoute);
+  if (ehtUndoBtn) ehtUndoBtn.addEventListener('click', undoLastDraftElement);
+  if (ehtSaveLayerBtn) {
+    ehtSaveLayerBtn.addEventListener('click', () => {
+      setEhtStatus('Draft save is not wired yet. Next pass will add backend EHT layer persistence.');
+    });
+  }
+  renderDraftList();
+}
+
+if (selectionEl) {
+  selectionEl.addEventListener('submit', event => {
+    if (event.target?.id !== 'ehtParameterForm') return;
+    event.preventDefault();
+    updateDraftParametersFromForm(event.target);
+  });
+  selectionEl.addEventListener('click', event => {
+    const moveButton = event.target.closest?.('#ehtMoveSelectedBtn');
+    if (moveButton) {
+      const element = selectedDraftElement();
+      if (!element) return;
+      movingDraftId = movingDraftId === element.id ? '' : element.id;
+      setActiveEhtTool('');
+      renderDraftSelectionPanel(element);
+      setEhtStatus(movingDraftId ? `${draftLabel(element)} move mode: click a new model position.` : `${draftLabel(element)} move cancelled.`);
+      return;
+    }
+    const deleteButton = event.target.closest?.('#ehtDeleteSelectedBtn');
+    if (deleteButton) {
+      const element = selectedDraftElement();
+      if (element) deleteDraftElement(element);
+    }
+  });
 }
 
 function selectionDetailsHtml(data, featureId = null) {
@@ -354,10 +1114,16 @@ function objectSummaryForItem(item) {
 
 function indexPackageObjects(pkg) {
   objectIndex = new Map();
+  objectById = new Map();
   for (const obj of pkg.objects || []) {
     if (obj.stable_id) objectIndex.set(obj.stable_id, obj);
     if (obj.source_object_id) objectIndex.set(obj.source_object_id, obj);
+    if (obj.id !== undefined && obj.id !== null) {
+      objectById.set(Number(obj.id), obj);
+      objectById.set(String(obj.id), obj);
+    }
   }
+  renderHierarchy(pkg);
 }
 
 function colorArrayForItem(item) {
@@ -517,6 +1283,12 @@ function setSelectionActionsEnabled(enabled) {
 }
 
 function fitSelectedObject() {
+  const draftElement = selectedDraftElement();
+  if (draftElement) {
+    const bounds = new THREE.Box3().setFromObject(draftElement.object3d);
+    frameBounds(bounds);
+    return;
+  }
   if (!selectedHighlight) return;
   const bounds = new THREE.Box3().setFromObject(selectedHighlight);
   frameBounds(bounds);
@@ -885,13 +1657,18 @@ async function loadGlbPackage(pkg, started) {
   await updateGlbTileStreaming(pkg, true);
 }
 
-function clearSelection() {
+function clearSelection({ keepDraft = false } = {}) {
   if (selectedHighlight) {
     selectedHighlight.parent?.remove(selectedHighlight);
     selectedHighlight.geometry?.dispose?.();
     selectedHighlight = null;
   }
   selectedMesh = null;
+  if (!keepDraft) {
+    selectedDraftId = '';
+    movingDraftId = '';
+    renderDraftList();
+  }
   setSelectionActionsEnabled(false);
 }
 
@@ -1066,10 +1843,7 @@ async function showGlbFeatureSelection(hit) {
 }
 
 function pick(event) {
-  if (!selectableMeshes.length) {
-    runtimeStats.pickLatencyMs = 0;
-    renderMetrics();
-    if (selectionEl) selectionEl.textContent = 'Object picking is not available for this package format yet.';
+  if (handleEhtToolClick(event)) {
     return;
   }
   const pickStarted = performance.now();
@@ -1077,6 +1851,19 @@ function pick(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
+  const draftElement = pickDraftElement();
+  if (draftElement) {
+    runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
+    renderMetrics();
+    selectDraftElement(draftElement);
+    return;
+  }
+  if (!selectableMeshes.length) {
+    runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
+    renderMetrics();
+    if (selectionEl) selectionEl.textContent = 'Object picking is not available for this package format yet.';
+    return;
+  }
   const hits = raycaster.intersectObjects(selectableMeshes, false);
   runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
   renderMetrics();
@@ -1120,6 +1907,25 @@ function animate() {
 window.addEventListener('resize', resize);
 controls.addEventListener('start', beginInteraction);
 controls.addEventListener('end', endInteraction);
+if (hierarchySearchInput) hierarchySearchInput.addEventListener('input', applyHierarchySearch);
+if (searchFocusBtn) {
+  searchFocusBtn.addEventListener('click', () => {
+    const match = firstHierarchyMatch();
+    if (match) focusObjectFromHierarchy(match.dataset.objectId, { filterList: false });
+  });
+}
+if (searchIsolateBtn) {
+  searchIsolateBtn.addEventListener('click', () => {
+    const match = firstHierarchyMatch();
+    if (match) focusObjectFromHierarchy(match.dataset.objectId, { filterList: true });
+  });
+}
+if (searchClearBtn) {
+  searchClearBtn.addEventListener('click', () => {
+    if (hierarchySearchInput) hierarchySearchInput.value = '';
+    applyHierarchySearch();
+  });
+}
 if (resetBtn) resetBtn.addEventListener('click', () => frameScene());
 if (fitSelectionBtn) fitSelectionBtn.addEventListener('click', fitSelectedObject);
 if (clearSelectionBtn) {
@@ -1129,6 +1935,7 @@ if (clearSelectionBtn) {
   });
 }
 renderer.domElement.addEventListener('click', pick);
+bindEhtTools();
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     clearSelection();

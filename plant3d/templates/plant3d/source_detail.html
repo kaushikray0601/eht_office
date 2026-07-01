@@ -4,80 +4,179 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }}</title>
   {% load static %}
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_shell1">
 </head>
-<body>
-  <main>
-    <h1>{{ source.display_name }}</h1>
-    <dl>
-      <dt>Project</dt>
-      <dd>{{ source.project_id }}</dd>
-      <dt>Format</dt>
-      <dd>{{ source.source_format }}</dd>
-      <dt>Original file</dt>
-      <dd>{{ source.original_filename }}</dd>
-      <dt>Storage key</dt>
-      <dd>{{ source.storage_key }}</dd>
-      <dt>Size</dt>
-      <dd>{{ source.file_size_bytes }} bytes</dd>
-    </dl>
-    <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}" data-conversion-form>
-      {% csrf_token %}
-      <button type="submit">Queue Metadata Conversion</button>
-    </form>
-    {% if source.source_format == "IFC" %}
-      <form method="post" action="{% url 'plant3d_source_ifc_geometry_convert' source.pk %}" data-conversion-form>
-        {% csrf_token %}
-        <button type="submit">Queue IFC JSON Debug Conversion</button>
-      </form>
-      <form method="post" action="{% url 'plant3d_source_ifc_glb_convert' source.pk %}" data-conversion-form>
-        {% csrf_token %}
-        <button type="submit">Queue IFC GLB Conversion</button>
-      </form>
-    {% endif %}
-    <div id="conversionQueueStatus"></div>
-    <p>
-      Queued conversions are processed by the local worker. Keep this running in a separate terminal or worker container:
-      <code>{{ worker_command }}</code>
-    </p>
-    <h2>Conversion Jobs</h2>
-    <ul id="conversionJobList">
-      {% for job in jobs %}
-        <li id="plant3d-job-{{ job.pk }}" data-job-url="{% url 'plant3d_job_json' job.pk %}" {% if job.status == "queued" or job.status == "running" %}data-watch-job{% endif %}>
-          {{ job.created_at }} - {{ job.job_type }} - {{ job.status }} - {{ job.progress_percent }}%
-          {% if job.metrics.stage %}<br>Stage: {{ job.metrics.stage }}{% endif %}
-          {% if job.metrics.conversion_duration_ms %}<br>Total conversion: {{ job.metrics.conversion_duration_ms }} ms{% endif %}
-          {% if job.timing_summary %}
-            <br>Timings:
-            {% for row in job.timing_summary %}
-              {{ row.label }}={{ row.ms }} ms{% if not forloop.last %}, {% endif %}
+<body class="p3d-page">
+  <header class="p3d-topbar">
+    <div class="p3d-brand">
+      <h1 class="p3d-brand-title">{{ source.display_name }}</h1>
+      <span class="p3d-brand-subtitle">Source model</span>
+    </div>
+    <div class="p3d-toolbar">
+      <a class="p3d-button" href="{% url 'plant3d_source_upload' %}">Upload Another</a>
+      <a class="p3d-button" href="{% url 'plant3d_home' %}">plant3d Home</a>
+    </div>
+  </header>
+
+  <main class="p3d-shell">
+    <div class="p3d-grid">
+      <section class="p3d-card">
+        <div class="p3d-card-header">
+          <h2>Model Processing</h2>
+          <p>Build the production viewer package from this source model.</p>
+        </div>
+        <div class="p3d-card-body p3d-action-stack">
+          <dl class="p3d-kv-grid">
+            <div class="p3d-kv">
+              <dt>Project</dt>
+              <dd>{{ source.project_id }}</dd>
+            </div>
+            <div class="p3d-kv">
+              <dt>Format</dt>
+              <dd>{{ source.source_format }}</dd>
+            </div>
+            <div class="p3d-kv">
+              <dt>Original file</dt>
+              <dd>{{ source.original_filename }}</dd>
+            </div>
+            <div class="p3d-kv">
+              <dt>Size</dt>
+              <dd>{{ source.file_size_bytes }} bytes</dd>
+            </div>
+            <div class="p3d-kv">
+              <dt>Retention</dt>
+              <dd>{% if source.is_saved_case %}Saved case{% else %}Working upload{% endif %}</dd>
+            </div>
+            <div class="p3d-kv">
+              <dt>Storage key</dt>
+              <dd>{{ source.storage_key }}</dd>
+            </div>
+          </dl>
+
+          {% if not source.is_saved_case %}
+            <form method="post" action="{% url 'plant3d_source_save_case' source.pk %}">
+              {% csrf_token %}
+              <button type="submit">Save Geometry Case</button>
+            </form>
+            <p class="p3d-help">Working uploads are replaced by the next upload for the same user and project. Save only cases that must be retained; up to five saved geometry cases are allowed per user/project.</p>
+          {% else %}
+            <p class="p3d-help">This source is protected as a saved geometry case and will not be replaced by normal working uploads.</p>
+          {% endif %}
+
+          {% if source.source_format == "IFC" %}
+            <div class="p3d-primary-action">
+              <form method="post" action="{% url 'plant3d_source_ifc_glb_convert' source.pk %}" data-conversion-form data-conversion-kind="viewer-package">
+                {% csrf_token %}
+                <button class="p3d-button-primary" type="submit">Process 3D Model</button>
+              </form>
+              <p class="p3d-help">Creates the GLB tiled viewer package with feature-ID picking and metadata sidecar files.</p>
+            </div>
+          {% else %}
+            <div class="p3d-primary-action">
+              <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}" data-conversion-form data-conversion-kind="metadata">
+                {% csrf_token %}
+                <button class="p3d-button-primary" type="submit">Process Source Metadata</button>
+              </form>
+              <p class="p3d-help">This source format does not yet have a production 3D package converter.</p>
+            </div>
+          {% endif %}
+
+          <details class="p3d-details">
+            <summary>Developer actions</summary>
+            <div class="p3d-details-body">
+              <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}" data-conversion-form data-conversion-kind="metadata">
+                {% csrf_token %}
+                <button type="submit">Queue Metadata Conversion</button>
+              </form>
+              {% if source.source_format == "IFC" %}
+                <form method="post" action="{% url 'plant3d_source_ifc_geometry_convert' source.pk %}" data-conversion-form data-conversion-kind="json-debug">
+                  {% csrf_token %}
+                  <button type="submit">Queue IFC JSON Debug Conversion</button>
+                </form>
+              {% endif %}
+              <p class="p3d-help">Debug conversions are retained for diagnostics and comparison; the GLB package is the normal viewer path.</p>
+            </div>
+          </details>
+
+          <div id="conversionQueueStatus" class="p3d-status"></div>
+          <p class="p3d-help">
+            Queued conversions are processed by the local worker:
+            <code class="p3d-code">{{ worker_command }}</code>
+          </p>
+        </div>
+      </section>
+
+      <aside class="p3d-card">
+        <div class="p3d-card-header">
+          <h2>Render Packages</h2>
+          <p>Open the latest GLB package for review.</p>
+        </div>
+        <div class="p3d-card-body">
+          <ul class="p3d-list">
+            {% for package in packages %}
+              <li class="p3d-list-item">
+                <div class="p3d-list-title">
+                  <span>{{ package.package_format }}</span>
+                  <span>{{ package.byte_size }} bytes</span>
+                </div>
+                <div class="meta">{{ package.manifest_storage_key }}</div>
+                <div class="p3d-list-actions">
+                  <a class="p3d-button p3d-button-primary" href="{% url 'plant3d_package_viewer' package.pk %}">View</a>
+                  <a class="p3d-button p3d-button-quiet" href="{% url 'plant3d_package_json' package.pk %}">Package JSON</a>
+                </div>
+              </li>
+            {% empty %}
+              <li class="p3d-list-item">No render packages yet.</li>
             {% endfor %}
-          {% endif %}
-          {% if job.metrics %}
-            <details>
-              <summary>Raw metrics</summary>
-              <pre>{{ job.metrics }}</pre>
-            </details>
-          {% endif %}
-          <a href="{% url 'plant3d_job_json' job.pk %}">JSON</a>
-        </li>
-      {% empty %}
-        <li id="conversionJobEmpty">No conversion jobs yet.</li>
-      {% endfor %}
-    </ul>
-    <h2>Render Packages</h2>
-    <ul>
-      {% for package in packages %}
-        <li>
-          {{ package.package_format }} - {{ package.manifest_storage_key }} - {{ package.byte_size }} bytes
-          <a href="{% url 'plant3d_package_viewer' package.pk %}">View</a>
-          <a href="{% url 'plant3d_package_json' package.pk %}">JSON</a>
-        </li>
-      {% empty %}
-        <li>No render packages yet.</li>
-      {% endfor %}
-    </ul>
-    <p><a href="{% url 'plant3d_source_upload' %}">Upload another source model</a></p>
+          </ul>
+        </div>
+      </aside>
+    </div>
+
+    <section class="p3d-card" style="margin-top: 18px;">
+      <div class="p3d-card-header">
+        <h2>Conversion Jobs</h2>
+        <p>Background worker progress and timing evidence.</p>
+      </div>
+      <div class="p3d-card-body">
+        <ul id="conversionJobList" class="p3d-list">
+          {% for job in jobs %}
+            <li class="p3d-list-item" id="plant3d-job-{{ job.pk }}" data-job-url="{% url 'plant3d_job_json' job.pk %}" {% if job.status == "queued" or job.status == "running" %}data-watch-job{% endif %}>
+              <div class="p3d-list-title">
+                <span>{{ job.created_at }} - {{ job.job_type }}</span>
+                <span>{{ job.status }} - {{ job.progress_percent }}%</span>
+              </div>
+              {% if job.metrics.stage %}<br>Stage: {{ job.metrics.stage }}{% endif %}
+              {% if job.metrics.conversion_duration_ms %}<br>Total conversion: {{ job.metrics.conversion_duration_ms }} ms{% endif %}
+              {% if job.timing_summary %}
+                <br>Timings:
+                {% for row in job.timing_summary %}
+                  {{ row.label }}={{ row.ms }} ms{% if not forloop.last %}, {% endif %}
+                {% endfor %}
+              {% endif %}
+              {% if job.metrics.process_cpu_time_ms or job.metrics.process_cpu_to_wall_ratio %}
+                <br>CPU time: {{ job.metrics.process_cpu_time_ms|default:"n/a" }} ms, CPU/wall ratio={{ job.metrics.process_cpu_to_wall_ratio|default:"n/a" }}
+              {% endif %}
+              {% if job.metrics %}
+                <details class="p3d-details" style="margin-top: 10px;">
+                  <summary>Raw metrics</summary>
+                  <div class="p3d-details-body">
+                    <pre>{{ job.metrics }}</pre>
+                  </div>
+                </details>
+              {% endif %}
+              <div class="p3d-list-actions">
+                <a class="p3d-button p3d-button-quiet" href="{% url 'plant3d_job_json' job.pk %}">Job JSON</a>
+              </div>
+            </li>
+          {% empty %}
+            <li id="conversionJobEmpty" class="p3d-list-item">No conversion jobs yet.</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
   </main>
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260629_timings1" defer></script>
+
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260702_actions1" defer></script>
 </body>
 </html>

@@ -500,6 +500,30 @@ Codex pre-empted the dev-vs-cloud resource-safety concerns. Verified in code (52
 - Status: **MITIGATED / OPERATIONAL**
 - Codex: Worker already calls Python `gc.collect()` after every processed job. Runbook and tracker now explicitly recommend `--max-jobs N` plus Docker/systemd restart policy for long-running heavy conversion workers, especially on constrained shared hosts. This is the correct mitigation for native IfcOpenShell heap fragmentation; Python GC is only the Python-side cleanup layer.
 
+### Claude re-review — 2026-07-02 (idfviewer-parity pass + MEM1/MEM2 verified)
+
+60 tests green, `check` clean. **MEM1 fully addressed** (better than my note): `_thread_cap_from_memory_limit` bounds `auto` threads by `(cgroup memory limit − reserve) / per-thread-MB` (configurable, defaults 2048/1024), *on top of* the CPU cap — so `auto` now respects CPU **and** memory budgets. **MEM2 mitigated** (gc + `--max-jobs` recycling documented).
+
+idfviewer-parity work is progressing well and safely: additive migration `0002` (nullable `is_saved_case`/`saved_at`/`uploaded_by`, plant3d-only — safe), a **saved-case workflow** (POST-only view, access-scoped via `source_models_for_user`, per-user/project quota of 5), upload attribution, CSS extracted to `plant3d.css`, and a viewer **hierarchy browse/search** panel. Two things to steer below.
+
+## UI1 — Hierarchy checkboxes look like show/hide but don't hide 3D geometry
+
+- Severity: **LOW–MEDIUM (misleading UX / parity gap)**
+- Where: [package_viewer.js `renderHierarchy` / `bindHierarchyEvents`](../../static/plant3d/js/package_viewer.js) — leaf `change` handlers only call `updateHierarchyCounters`; `p3d-tree-hidden` toggles DOM rows for *search filtering*, not 3D visibility. No `.visible=`, `drawRange`, or feature-id masking is tied to the checkboxes.
+- Issue: idfviewer's hierarchy could show/hide objects; here the checkboxes track selection/counts but leave the geometry visible. A user unchecking a box will expect the beam to disappear — it won't. Per-object hide is genuinely hard here because geometry is **merged by colour** (you can't just hide one mesh).
+- Recommend: decide the intent. Either (a) implement real per-object visibility on the merged buffers via a `_FEATURE_ID_0` visibility mask in the material (or `drawRange`/BatchedMesh) — the correct-but-harder path; or (b) if the panel is browse/search/select-only for now, change the affordance so it doesn't imply hide (no checkbox, or a clearly-labelled "isolate/focus" action). Don't ship a checkbox that does nothing to the view.
+- Status: **OPEN**
+- Codex:
+
+## ARCH1 — EHT authoring is entering the plant3d viewer with no backend; decide placement *before* the model lands
+
+- Severity: **MEDIUM (architecture — the platform-neutrality principle)**
+- Where: [package_viewer.js](../../static/plant3d/js/package_viewer.js) EHT tool palette (`ehtToolPalette`, `ehtSelectToolBtn`, `ehtRouteControls`, `ehtSaveLayerBtn`, `ehtDraftList`, …); **no** EHT model/view/url/service exists in `plant3d` (confirmed).
+- Issue: two coupled problems. (1) The EHT tools are **frontend-only scaffolding** — `ehtSaveLayerBtn` has nowhere to persist (no backend), so the feature is currently incomplete. (2) More importantly, this is the moment the platform's founding principle is at risk: `plant3d` was deliberately built **neutral**, with **EHT as a consumer module, not baked into the 3D core** (that neutrality is the whole reason we didn't just harden `idfviewer`). If the EHT persistence model lands in `plant3d/models.py`, the platform re-couples to EHT — undoing the reframe.
+- Recommend: before adding any EHT backend, make a deliberate placement decision (a short decision record). Preferred: EHT overlay persistence lives in a **separate `eht`-integration app/module** that references `plant3d` `ModelObject`/package IDs and draws into the shared viewer — *not* in `plant3d` core. The viewer may host the EHT *interaction* layer, but the core models/APIs/business rules must stay out of `plant3d`. KR asked for idfviewer-like functionality (correct to build), so this is about *where* it lives, not *whether*.
+- Status: **OPEN**
+- Codex:
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.

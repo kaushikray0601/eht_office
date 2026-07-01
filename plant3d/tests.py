@@ -281,6 +281,97 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(first.pk, second.pk)
         self.assertEqual(SourceModel.objects.count(), 1)
 
+    def test_upload_view_replaces_prior_working_source_for_same_user_project(self):
+        user = get_user_model().objects.create_user(username="plant3d-retention-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+
+        response_1 = self.client.post(
+            reverse("plant3d_source_upload"),
+            {
+                "project": self.project.pk,
+                "source_file": SimpleUploadedFile("first.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            },
+        )
+        first = SourceModel.objects.get()
+        first_path = path_for_storage_key(first.storage_key)
+        self.assertTrue(first_path.exists())
+
+        response_2 = self.client.post(
+            reverse("plant3d_source_upload"),
+            {
+                "project": self.project.pk,
+                "source_file": SimpleUploadedFile("second.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCPROJECT();"),
+            },
+        )
+
+        self.assertEqual(response_1.status_code, 302)
+        self.assertEqual(response_2.status_code, 302)
+        self.assertEqual(SourceModel.objects.count(), 1)
+        current = SourceModel.objects.get()
+        self.assertEqual(current.original_filename, "second.ifc")
+        self.assertEqual(current.uploaded_by, user)
+        self.assertFalse(current.is_saved_case)
+        self.assertFalse(first_path.exists())
+
+    def test_saved_source_is_not_replaced_by_next_working_upload(self):
+        user = get_user_model().objects.create_user(username="plant3d-save-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        saved = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("saved.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            user=user,
+        )
+
+        response = self.client.post(reverse("plant3d_source_save_case", args=[saved.pk]))
+        self.assertEqual(response.status_code, 302)
+        saved.refresh_from_db()
+        self.assertTrue(saved.is_saved_case)
+        self.assertIsNotNone(saved.saved_at)
+
+        self.client.post(
+            reverse("plant3d_source_upload"),
+            {
+                "project": self.project.pk,
+                "source_file": SimpleUploadedFile("working.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#2=IFCPROJECT();"),
+            },
+        )
+
+        self.assertEqual(SourceModel.objects.count(), 2)
+        self.assertTrue(SourceModel.objects.filter(pk=saved.pk, is_saved_case=True).exists())
+        self.assertTrue(SourceModel.objects.filter(original_filename="working.ifc", is_saved_case=False).exists())
+
+    def test_saved_case_limit_is_five_per_user_project(self):
+        user = get_user_model().objects.create_user(username="plant3d-save-cap-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        for index in range(5):
+            source = create_source_model_from_upload(
+                self.project,
+                SimpleUploadedFile(
+                    f"saved-{index}.ifc",
+                    f"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#{index + 1}=IFCPROJECT();".encode(),
+                ),
+                user=user,
+            )
+            response = self.client.post(reverse("plant3d_source_save_case", args=[source.pk]))
+            self.assertEqual(response.status_code, 302)
+
+        sixth = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("sixth.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#99=IFCPROJECT();"),
+            user=user,
+        )
+        response = self.client.post(
+            reverse("plant3d_source_save_case", args=[sixth.pk]),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Only 5 saved geometry cases", response.json()["error"])
+        self.assertEqual(SourceModel.objects.filter(uploaded_by=user, is_saved_case=True).count(), 5)
+
     def test_storage_key_rejects_parent_directory_segments(self):
         with self.assertRaises(SuspiciousFileOperation):
             path_for_storage_key("plant3d/../secret.txt")
@@ -815,6 +906,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(job.status, "completed")
         self.assertEqual(job.metrics["mesh_count"], 1)
         self.assertIn("conversion_duration_ms", job.metrics)
+        self.assertIn("process_cpu_time_ms", job.metrics)
+        self.assertIn("process_cpu_to_wall_ratio", job.metrics)
         self.assertEqual(package.object_count, 1)
         self.assertEqual(package.tile_count, 1)
         self.assertEqual(package.tiles.count(), 1)
@@ -993,6 +1086,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(job.metrics["conversion_scope"], "ifc-glb")
         self.assertEqual(job.metrics["render_batch_count"], 1)
         self.assertEqual(job.metrics["feature_count"], 1)
+        self.assertIn("process_cpu_time_ms", job.metrics)
+        self.assertIn("process_cpu_to_wall_ratio", job.metrics)
         self.assertIn("timings", job.metrics)
         for timing_key in ["source_read_ms", "parse_ms", "glb_build_ms", "tile_write_ms", "db_write_ms"]:
             self.assertIn(timing_key, job.metrics["timings"])
@@ -1020,6 +1115,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(tileset["root"]["content"]["uri"], tile.storage_key)
         self.assertEqual(package.metadata["tileset_storage_key"], package.manifest_storage_key)
         self.assertEqual(package.metadata["conversion_timings"], job.metrics["timings"])
+        self.assertEqual(
+            package.metadata["conversion_resource_metrics"]["process_cpu_time_ms"],
+            job.metrics["process_cpu_time_ms"],
+        )
         self.assertEqual(job.metrics["tileset_storage_key"], package.manifest_storage_key)
 
         sidecar_path = path_for_storage_key(tile.metadata["sidecar_storage_key"])
@@ -1188,11 +1287,14 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("ratio_output_over_input=1.0000", output)
         self.assertIn("saved_pct=0.0%", output)
         self.assertIn("timings:", output)
+        self.assertIn("resources:", output)
+        self.assertIn("cpu_wall_ratio=", output)
         self.assertIn("parse_ms=", output)
         self.assertIn("timing decision:", output)
         self.assertIn("dominant=", output)
         self.assertIn("Summary meshopt:", output)
         self.assertIn("Summary timings:", output)
+        self.assertIn("Summary resources:", output)
 
         json_stdout = io.StringIO()
         call_command("measure_plant3d_package", str(package.pk), json=True, stdout=json_stdout)
@@ -1206,9 +1308,12 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(payload["summary"]["compression"]["saved_percent"], 0.0)
         self.assertIn("parse_ms", payload["packages"][0]["conversion_timings"])
         self.assertIn("conversion_timing_breakdown", payload["packages"][0])
+        self.assertIn("conversion_resource_metrics", payload["packages"][0])
+        self.assertIn("process_cpu_time_ms", payload["packages"][0]["conversion_resource_metrics"])
         self.assertGreaterEqual(payload["packages"][0]["conversion_timing_breakdown"]["total_ms"], 0)
         self.assertIn("dominant_label", payload["packages"][0]["conversion_timing_breakdown"])
         self.assertIn("conversion_timing_breakdown", payload["summary"])
+        self.assertIn("conversion_resource_metrics", payload["summary"])
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_ifc_glb_conversion_endpoint_queues_glb_job(self, mock_parse):
@@ -1259,6 +1364,43 @@ class Plant3DIntakeTests(TestCase):
         job.refresh_from_db()
         self.assertEqual(job.status, "completed")
         self.assertEqual(job.render_packages.get().package_format, "GLB")
+
+    def test_queue_prunes_old_terminal_conversion_jobs_per_source(self):
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("job-prune.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+        for index in range(14):
+            ConversionJob.objects.create(
+                source_model=source,
+                job_type="metadata_index",
+                status="completed",
+                progress_percent=100,
+                tool_name=f"old-{index}",
+            )
+
+        job = queue_metadata_conversion(source)
+
+        self.assertEqual(job.status, "queued")
+        self.assertEqual(source.conversion_jobs.filter(status="completed").count(), 12)
+        self.assertEqual(source.conversion_jobs.count(), 13)
+
+    @patch("plant3d.services.parse_multiple_ifc_uploads")
+    def test_repeated_glb_conversion_keeps_latest_render_package_row(self, mock_parse):
+        mock_parse.return_value = self._sample_ifc_scene()
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("package-prune.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+        )
+
+        from .services import run_ifc_glb_conversion
+
+        _job_1, package_1 = run_ifc_glb_conversion(source)
+        _job_2, package_2 = run_ifc_glb_conversion(source)
+
+        self.assertFalse(RenderPackage.objects.filter(pk=package_1.pk).exists())
+        self.assertTrue(RenderPackage.objects.filter(pk=package_2.pk).exists())
+        self.assertEqual(source.render_packages.filter(package_format="GLB").count(), 1)
 
     @patch("plant3d.management.commands.process_plant3d_job.gc.collect")
     @patch("plant3d.services.parse_multiple_ifc_uploads")
@@ -1447,6 +1589,15 @@ class Plant3DIntakeTests(TestCase):
         package_response = self.client.get(reverse("plant3d_package_json", args=[package.pk]))
 
         self.assertEqual(package_response.status_code, 200)
+        self.assertIn("private", package_response["Cache-Control"])
+        self.assertIn("immutable", package_response["Cache-Control"])
+        self.assertTrue(package_response["ETag"].startswith('"'))
+        cached_package_response = self.client.get(
+            reverse("plant3d_package_json", args=[package.pk]),
+            HTTP_IF_NONE_MATCH=package_response["ETag"],
+        )
+        self.assertEqual(cached_package_response.status_code, 304)
+        self.assertEqual(cached_package_response["ETag"], package_response["ETag"])
         package_payload = package_response.json()
         self.assertEqual(package_payload["object_count"], 1)
         self.assertEqual(package_payload["tile_count"], 1)
@@ -1454,6 +1605,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(package_payload["tiles"][0]["rtc_origin"], [500000.5, 100.5, 2800000.5])
         self.assertEqual(len(package_payload["objects"]), 1)
         self.assertEqual(package_payload["objects"][0]["stable_id"], "ifc:beam-guid-1")
+        self.assertEqual(package_payload["objects"][0]["selection_summary"]["display_label"], "B-001")
+        self.assertEqual(package_payload["objects"][0]["selection_summary"]["hierarchy_group"], "Level 1 / IfcBeam")
         self.assertIn("/plant3d/objects/", package_payload["objects"][0]["url"])
         self.assertIn("/plant3d/tiles/", package_payload["tiles"][0]["url"])
 
@@ -1515,6 +1668,12 @@ class Plant3DIntakeTests(TestCase):
         tile = package.tiles.get()
         sidecar_response = self.client.get(reverse("plant3d_tile_json", args=[tile.pk]))
         self.assertEqual(sidecar_response.status_code, 200)
+        self.assertIn("immutable", sidecar_response["Cache-Control"])
+        cached_sidecar_response = self.client.get(
+            reverse("plant3d_tile_json", args=[tile.pk]),
+            HTTP_IF_NONE_MATCH=sidecar_response["ETag"],
+        )
+        self.assertEqual(cached_sidecar_response.status_code, 304)
         sidecar_payload = sidecar_response.json()
         self.assertEqual(sidecar_payload["format"], "GLB")
         self.assertEqual(sidecar_payload["object_features"][0]["feature_id"], 1)
@@ -1523,6 +1682,12 @@ class Plant3DIntakeTests(TestCase):
         blob_response = self.client.get(reverse("plant3d_tile_blob", args=[tile.pk]))
         self.assertEqual(blob_response.status_code, 200)
         self.assertEqual(blob_response["Content-Type"], "model/gltf-binary")
+        self.assertIn("immutable", blob_response["Cache-Control"])
+        cached_blob_response = self.client.get(
+            reverse("plant3d_tile_blob", args=[tile.pk]),
+            HTTP_IF_NONE_MATCH=blob_response["ETag"],
+        )
+        self.assertEqual(cached_blob_response.status_code, 304)
         self.assertEqual(blob_response.content[:4], b"glTF")
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
@@ -1654,7 +1819,20 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "plant3d viewer")
         self.assertContains(response, "fitSelectionBtn")
         self.assertContains(response, "clearSelectionBtn")
-        self.assertContains(response, "20260630_spanhighlight1")
+        self.assertContains(response, "navpanel-toggle")
+        self.assertContains(response, "navpanel-reopen")
+        self.assertContains(response, "hierarchy-content")
+        self.assertContains(response, "searchFocusBtn")
+        self.assertContains(response, "Filter List")
+        self.assertNotContains(response, "Check All / Uncheck All")
+        self.assertContains(response, "ehtToolPalette")
+        self.assertContains(response, "ehtDraftList")
+        self.assertContains(response, "data-eht-tool=\"distribution_board\"")
+        self.assertContains(response, "data-eht-tool=\"cold_cable\"")
+        self.assertContains(response, "ehtSaveLayerBtn")
+        self.assertContains(response, "sidepanel-toggle")
+        self.assertContains(response, "sidepanel-reopen")
+        self.assertContains(response, "20260702_ehtedit1")
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")
@@ -1670,8 +1848,14 @@ class Plant3DIntakeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'data-conversion-form')
+        self.assertContains(response, "Process 3D Model")
+        self.assertContains(response, "Save Geometry Case")
+        self.assertContains(response, "Working upload")
+        self.assertContains(response, "Developer actions")
+        self.assertContains(response, "Queue IFC JSON Debug Conversion")
         self.assertContains(response, 'data-watch-job')
         self.assertContains(response, 'plant3d/js/source_detail.js')
+        self.assertContains(response, "20260702_actions1")
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_source_detail_page_shows_conversion_timing_summary(self, mock_parse):

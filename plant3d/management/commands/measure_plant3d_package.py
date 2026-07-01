@@ -136,6 +136,14 @@ def collect_package_measurement(package):
     conversion_timings = package.metadata.get("conversion_timings") or {}
     if not conversion_timings and package.conversion_job_id:
         conversion_timings = (package.conversion_job.metrics or {}).get("timings") or {}
+    conversion_resource_metrics = package.metadata.get("conversion_resource_metrics") or {}
+    if not conversion_resource_metrics and package.conversion_job_id:
+        job_metrics = package.conversion_job.metrics or {}
+        conversion_resource_metrics = {
+            "conversion_duration_ms": job_metrics.get("conversion_duration_ms"),
+            "process_cpu_time_ms": job_metrics.get("process_cpu_time_ms"),
+            "process_cpu_to_wall_ratio": job_metrics.get("process_cpu_to_wall_ratio"),
+        }
 
     return {
         "package_id": package.pk,
@@ -167,6 +175,7 @@ def collect_package_measurement(package):
             "duration_ms": compression_duration_ms,
         },
         "conversion_timings": conversion_timings,
+        "conversion_resource_metrics": conversion_resource_metrics,
         "conversion_timing_breakdown": collect_timing_breakdown(conversion_timings),
         "tile_measurements": tile_rows,
     }
@@ -175,6 +184,14 @@ def collect_package_measurement(package):
 def collect_measurement_summary(measurements):
     compression_input_bytes = sum(item["compression"]["input_bytes"] for item in measurements)
     compression_output_bytes = sum(item["compression"]["output_bytes"] for item in measurements)
+    resource_wall_ms = sum(
+        _safe_timing_ms((item.get("conversion_resource_metrics") or {}).get("conversion_duration_ms"))
+        for item in measurements
+    )
+    resource_cpu_ms = sum(
+        _safe_timing_ms((item.get("conversion_resource_metrics") or {}).get("process_cpu_time_ms"))
+        for item in measurements
+    )
     return {
         "packages": len(measurements),
         "objects": sum(item["objects"] for item in measurements),
@@ -198,6 +215,11 @@ def collect_measurement_summary(measurements):
             "duration_ms": sum(item["compression"]["duration_ms"] for item in measurements),
         },
         "conversion_timing_breakdown": collect_aggregate_timing_breakdown(measurements),
+        "conversion_resource_metrics": {
+            "conversion_duration_ms": resource_wall_ms,
+            "process_cpu_time_ms": resource_cpu_ms,
+            "process_cpu_to_wall_ratio": round(resource_cpu_ms / resource_wall_ms, 2) if resource_wall_ms else None,
+        },
     }
 
 
@@ -300,6 +322,17 @@ class Command(BaseCommand):
                         dominant_percent=dominant_percent_text,
                     )
                 )
+            resources = measurement.get("conversion_resource_metrics") or {}
+            if resources.get("conversion_duration_ms") or resources.get("process_cpu_time_ms"):
+                ratio = resources.get("process_cpu_to_wall_ratio")
+                ratio_text = "n/a" if ratio is None else f"{float(ratio):.2f}"
+                self.stdout.write(
+                    "  resources: wall_ms={wall_ms} process_cpu_ms={cpu_ms} cpu_wall_ratio={ratio}".format(
+                        wall_ms=resources.get("conversion_duration_ms", "n/a"),
+                        cpu_ms=resources.get("process_cpu_time_ms", "n/a"),
+                        ratio=ratio_text,
+                    )
+                )
             for tile in measurement["tile_measurements"]:
                 tile_ratio = tile["compression_ratio"]
                 tile_ratio_text = "n/a" if tile_ratio is None else f"{tile_ratio:.4f}"
@@ -349,5 +382,16 @@ class Command(BaseCommand):
                     dominant_label=timing_summary.get("dominant_label") or "n/a",
                     dominant_ms=timing_summary.get("dominant_ms", 0),
                     dominant_percent=dominant_percent_text,
+                )
+            )
+        resource_summary = summary.get("conversion_resource_metrics") or {}
+        if resource_summary.get("conversion_duration_ms") or resource_summary.get("process_cpu_time_ms"):
+            ratio = resource_summary.get("process_cpu_to_wall_ratio")
+            ratio_text = "n/a" if ratio is None else f"{float(ratio):.2f}"
+            self.stdout.write(
+                "Summary resources: wall_ms={wall_ms} process_cpu_ms={cpu_ms} cpu_wall_ratio={ratio}".format(
+                    wall_ms=resource_summary.get("conversion_duration_ms", "n/a"),
+                    cpu_ms=resource_summary.get("process_cpu_time_ms", "n/a"),
+                    ratio=ratio_text,
                 )
             )

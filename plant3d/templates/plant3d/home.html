@@ -3,13 +3,36 @@
 <head>
   <meta charset="utf-8">
   <title>plant3d</title>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_shell1">
 </head>
-<body>
-  <main>
-    <h1>plant3d</h1>
-    <p>Source models: {{ source_count }}</p>
-    <p><a href="{% url 'plant3d_source_upload' %}">Upload source model</a></p>
+<body class="p3d-page">
+  <header class="p3d-topbar">
+    <div class="p3d-brand">
+      <h1 class="p3d-brand-title">plant3d</h1>
+      <span class="p3d-brand-subtitle">Model processing platform</span>
+    </div>
+    <a class="p3d-button p3d-button-primary" href="{% url 'plant3d_source_upload' %}">Upload Source Model</a>
+  </header>
+  <main class="p3d-shell">
+    <section class="p3d-card">
+      <div class="p3d-card-header">
+        <h2>Workspace</h2>
+        <p>Neutral 3D model processing for engineering applications.</p>
+      </div>
+      <div class="p3d-card-body">
+        <dl class="p3d-kv-grid">
+          <div class="p3d-kv">
+            <dt>Source models</dt>
+            <dd>{{ source_count }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Runtime path</dt>
+            <dd>GLB packages</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
   </main>
 </body>
 </html>
-

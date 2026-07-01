@@ -4,55 +4,164 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <style>
-    html, body { height: 100%; margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f4f6f8; color: #1f2933; }
-    body { display: grid; grid-template-columns: 280px 1fr; grid-template-rows: 100%; }
-    aside { border-right: 1px solid #d8dee8; background: #ffffff; padding: 16px; overflow: auto; }
-    main { position: relative; min-width: 0; }
-    #viewer { position: absolute; inset: 0; }
-    .meta { font-size: 12px; line-height: 1.45; color: #52606d; }
-    .meta strong { color: #243b53; }
-    .status { margin-top: 12px; padding: 8px; background: #f0f4f8; border: 1px solid #d9e2ec; font-size: 12px; }
-    .panel { margin-top: 12px; border-top: 1px solid #d8dee8; padding-top: 12px; }
-    .kv { margin: 0 0 8px; word-break: break-word; }
-    .kv span { display: block; color: #829ab1; font-size: 11px; text-transform: uppercase; }
-    .kv strong { display: block; color: #243b53; font-size: 12px; font-weight: 600; }
-    button { border: 1px solid #bcccdc; background: #fff; border-radius: 4px; padding: 6px 8px; cursor: pointer; }
-    button:hover { background: #f0f4f8; }
-    button:disabled { color: #9aa5b1; cursor: not-allowed; background: #f5f7fa; }
-    .toolbar { display: flex; gap: 8px; flex-wrap: wrap; }
-  </style>
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_ehtedit1">
 </head>
-<body>
-  <aside>
-    <h1>plant3d viewer</h1>
-    <div class="meta">
-      <p><strong>Source:</strong> {{ source.display_name }}</p>
-      <p><strong>Project:</strong> {{ source.project_id }}</p>
-      <p><strong>Package:</strong> {{ package.package_format }}</p>
-      <p><strong>Objects:</strong> {{ package.object_count }}</p>
-      <p><strong>Tiles:</strong> {{ package.tile_count }}</p>
-      <p><strong>Bytes:</strong> {{ package.byte_size }}</p>
+<body class="p3d-viewer-body">
+  <header class="p3d-topbar p3d-viewer-topbar">
+    <div class="p3d-brand">
+      <h1 class="p3d-brand-title">plant3d viewer</h1>
+      <span class="p3d-brand-subtitle" title="{{ source.display_name }}">{{ source.display_name }}</span>
     </div>
-    <div class="toolbar">
+    <div class="p3d-toolbar">
       <button id="resetViewBtn" type="button">Reset View</button>
       <button id="fitSelectionBtn" type="button" disabled>Fit Selected</button>
       <button id="clearSelectionBtn" type="button" disabled>Clear</button>
+      <a class="p3d-button" href="{% url 'plant3d_source_detail' source.pk %}">Back to Source</a>
     </div>
-    <div id="viewerStatus" class="status">Loading package...</div>
-    <section class="panel">
-      <h2>Runtime Metrics</h2>
-      <div id="runtimeMetrics" class="meta">Waiting for package...</div>
-    </section>
-    <section class="panel">
-      <h2>Selected Object</h2>
-      <div id="selectionPanel" class="meta">Click an object in the viewer.</div>
-    </section>
-    <p class="meta"><a href="{% url 'plant3d_source_detail' source.pk %}">Back to source</a></p>
-  </aside>
-  <main>
-    <div id="viewer" data-package-url="{{ package_api_url }}"></div>
+  </header>
+
+  <button id="navpanel-reopen" type="button" class="p3d-button p3d-nav-reopen">Show Assets</button>
+  <button id="sidepanel-reopen" type="button" class="p3d-button p3d-panel-reopen">Show Properties</button>
+
+  <main class="p3d-viewer-main">
+    <div id="viewer" class="p3d-viewer-canvas" data-package-url="{{ package_api_url }}"></div>
   </main>
+
+  <aside id="navpanel" class="p3d-viewer-navpanel">
+    <div class="p3d-viewer-sidepanel-inner">
+      <div class="p3d-toolbar" style="justify-content: space-between;">
+        <h2 class="p3d-panel-title">Assets</h2>
+        <button id="navpanel-toggle" type="button">Hide</button>
+      </div>
+
+      <section class="panel">
+        <dl class="p3d-kv-grid">
+          <div class="p3d-kv">
+            <dt>Source</dt>
+            <dd>{{ source.display_name }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Retention</dt>
+            <dd>{% if source.is_saved_case %}Saved case{% else %}Working upload{% endif %}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Format</dt>
+            <dd>{{ source.source_format }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Package</dt>
+            <dd>{{ package.package_format }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="panel">
+        <h2 class="p3d-panel-title">Hierarchy</h2>
+        <div class="p3d-hierarchy-controls">
+          <span class="p3d-checkline">Model objects</span>
+          <span id="hierarchySelectionCount" class="meta">Loading...</span>
+        </div>
+        <input id="hierarchySearchInput" class="p3d-search" type="search" placeholder="Search object, tag, type, line...">
+        <div class="p3d-toolbar" style="margin-top: 8px;">
+          <button id="searchFocusBtn" type="button">Focus</button>
+          <button id="searchIsolateBtn" type="button">Filter List</button>
+          <button id="searchClearBtn" type="button">Clear</button>
+        </div>
+        <div id="hierarchySearchStatus" class="meta" style="margin-top: 8px;">Search the current hierarchy</div>
+        <div id="hierarchy-content" class="p3d-hierarchy-tree"></div>
+        <p class="p3d-help" style="margin-top: 10px;">Model hierarchy controls focus and list filtering. Feature-level hide/show for merged GLB geometry is a future feature-mask pass.</p>
+      </section>
+
+      <section class="panel">
+        <h2 class="p3d-panel-title">EHT Draft Tools</h2>
+        <div id="ehtToolStatus" class="meta" style="margin: 8px 0;">Select a tool, then click the model.</div>
+        <div id="ehtToolPalette" class="p3d-eht-palette">
+          <div class="p3d-toolbar">
+            <button id="ehtSelectToolBtn" type="button" class="p3d-button-primary">Select</button>
+            <button id="ehtPaletteToggleBtn" type="button">Hide</button>
+          </div>
+          <div class="eht-palette-body">
+            <div class="p3d-tool-grid">
+              <button type="button" class="eht-tool-btn" data-eht-tool="distribution_board">DB</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="junction_box">JB</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="isolator">Isolator</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="rtd">RTD</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="end_termination">End Term</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="pipe_strap">Strap</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="tracer_sr">SR Tracer</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="tracer_mi">MI Tracer</button>
+              <button type="button" class="eht-tool-btn" data-eht-tool="cold_cable">Cold Cable</button>
+            </div>
+            <div id="ehtRouteControls" class="p3d-toolbar p3d-hidden" style="margin-top: 10px;">
+              <button id="ehtFinishRouteBtn" type="button" class="p3d-button-primary">Finish Route</button>
+              <button id="ehtCancelRouteBtn" type="button">Cancel</button>
+            </div>
+            <div class="p3d-toolbar" style="margin-top: 10px;">
+              <button class="eht-undo-btn" type="button" disabled>Undo</button>
+              <button id="ehtSaveLayerBtn" type="button">Save Draft</button>
+            </div>
+          </div>
+        </div>
+        <div id="ehtDraftList" class="p3d-hierarchy-tree"></div>
+      </section>
+
+      <section class="panel">
+        <h2 class="p3d-panel-title">Model Layers</h2>
+        <div class="meta">
+          <p><strong>Geometry</strong><br>GLB tile stream</p>
+          <p><strong>Metadata</strong><br>Feature-ID sidecars</p>
+          <p><strong>Selection</strong><br>Backend object index</p>
+        </div>
+      </section>
+    </div>
+  </aside>
+
+  <aside id="sidepanel" class="p3d-viewer-sidepanel">
+    <div class="p3d-viewer-sidepanel-inner">
+      <div class="p3d-toolbar" style="justify-content: space-between;">
+        <h2 class="p3d-panel-title">Properties</h2>
+        <button id="sidepanel-toggle" type="button">Hide</button>
+      </div>
+
+      <section class="panel">
+        <dl class="p3d-kv-grid">
+          <div class="p3d-kv">
+            <dt>Project</dt>
+            <dd>{{ source.project_id }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Package</dt>
+            <dd>{{ package.package_format }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Objects</dt>
+            <dd>{{ package.object_count }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Tiles</dt>
+            <dd>{{ package.tile_count }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Bytes</dt>
+            <dd>{{ package.byte_size }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <div id="viewerStatus" class="status">Loading package...</div>
+
+      <section class="panel">
+        <h2 class="p3d-panel-title">Runtime Metrics</h2>
+        <div id="runtimeMetrics" class="meta">Waiting for package...</div>
+      </section>
+
+      <section class="panel">
+        <h2 class="p3d-panel-title">Selected Object</h2>
+        <div id="selectionPanel" class="meta">Click an object in the viewer.</div>
+      </section>
+    </div>
+  </aside>
+
   <script type="importmap">
   {
     "imports": {
@@ -61,6 +170,32 @@
     }
   }
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260630_spanhighlight1"></script>
+  <script>
+    (() => {
+      const body = document.body;
+      const navHideBtn = document.getElementById('navpanel-toggle');
+      const navShowBtn = document.getElementById('navpanel-reopen');
+      const hideBtn = document.getElementById('sidepanel-toggle');
+      const showBtn = document.getElementById('sidepanel-reopen');
+      const resizeViewer = () => window.dispatchEvent(new Event('resize'));
+      navHideBtn?.addEventListener('click', () => {
+        body.classList.add('p3d-viewer-nav-hidden');
+        window.setTimeout(resizeViewer, 220);
+      });
+      navShowBtn?.addEventListener('click', () => {
+        body.classList.remove('p3d-viewer-nav-hidden');
+        window.setTimeout(resizeViewer, 220);
+      });
+      hideBtn?.addEventListener('click', () => {
+        body.classList.add('p3d-viewer-panel-hidden');
+        window.setTimeout(resizeViewer, 220);
+      });
+      showBtn?.addEventListener('click', () => {
+        body.classList.remove('p3d-viewer-panel-hidden');
+        window.setTimeout(resizeViewer, 220);
+      });
+    })();
+  </script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260702_ehtedit1"></script>
 </body>
 </html>

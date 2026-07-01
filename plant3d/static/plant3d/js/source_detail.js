@@ -25,6 +25,13 @@ function timingLine(data) {
   return `<br>Timings: ${escapeHtml(text)}`;
 }
 
+function resourceLine(data) {
+  const metrics = data.metrics || {};
+  if (!metrics.process_cpu_time_ms && !metrics.process_cpu_to_wall_ratio) return '';
+  const ratio = metrics.process_cpu_to_wall_ratio ?? 'n/a';
+  return `<br>CPU time: ${escapeHtml(metrics.process_cpu_time_ms ?? 'n/a')} ms, CPU/wall ratio=${escapeHtml(ratio)}`;
+}
+
 function rawMetricsBlock(data) {
   if (!data.metrics || !Object.keys(data.metrics).length) return '';
   return `<details><summary>Raw metrics</summary><pre>${escapeHtml(JSON.stringify(data.metrics))}</pre></details>`;
@@ -32,7 +39,7 @@ function rawMetricsBlock(data) {
 
 function jobLine(data) {
   const packageLinks = data.package
-    ? ` <a href="${escapeHtml(data.package.viewer_url)}">View</a> <a href="${escapeHtml(data.package.json_url)}">Package JSON</a>`
+    ? `<div class="p3d-list-actions"><a class="p3d-button p3d-button-primary" href="${escapeHtml(data.package.viewer_url)}">View</a> <a class="p3d-button p3d-button-quiet" href="${escapeHtml(data.package.json_url)}">Package JSON</a></div>`
     : '';
   const processHint = !data.package && data.process_hint
     ? `<br>Worker command: <code>${escapeHtml(data.process_hint)}</code>`
@@ -43,18 +50,20 @@ function jobLine(data) {
   const stage = data.metrics?.stage ? `<br>Stage: ${escapeHtml(data.metrics.stage)}` : '';
   const totalDuration = data.metrics?.conversion_duration_ms ? `<br>Total conversion: ${escapeHtml(data.metrics.conversion_duration_ms)} ms` : '';
   const timings = timingLine(data);
+  const resources = resourceLine(data);
   const metrics = rawMetricsBlock(data);
   const error = data.error_message ? `<br>Error: ${escapeHtml(data.error_message)}` : '';
   return [
-    `Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')} - ${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%`,
+    `<div class="p3d-list-title"><span>Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')}</span><span>${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%</span></div>`,
     processHint,
     workerHint,
     stage,
     totalDuration,
     timings,
+    resources,
     metrics,
     error,
-    ` <a href="${escapeHtml(data.url || `/plant3d/jobs/${data.id}/json/`)}">JSON</a>`,
+    `<div class="p3d-list-actions"><a class="p3d-button p3d-button-quiet" href="${escapeHtml(data.url || `/plant3d/jobs/${data.id}/json/`)}">Job JSON</a></div>`,
     packageLinks,
   ].join('');
 }
@@ -68,6 +77,7 @@ function upsertJobRow(data) {
   if (!row) {
     row = document.createElement('li');
     row.id = rowId;
+    row.className = 'p3d-list-item';
     jobList.prepend(row);
   }
   row.dataset.jobUrl = data.url || `/plant3d/jobs/${data.id}/json/`;

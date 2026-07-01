@@ -1,6 +1,7 @@
 import json
+from hashlib import sha256
 
-from django.http import HttpResponse, JsonResponse
+from django.http import HttpResponse, HttpResponseNotModified, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
@@ -15,6 +16,7 @@ from .access import (
 from .forms import SourceModelUploadForm
 from .services import (
     create_source_model_from_upload,
+    mark_source_saved_case,
     queue_ifc_geometry_conversion,
     queue_ifc_glb_conversion,
     queue_metadata_conversion,
@@ -22,6 +24,7 @@ from .services import (
 from .storage import exists as storage_exists, read_bytes, read_text
 
 PLANT3D_WORKER_COMMAND = "venv/bin/python manage.py process_plant3d_job --watch --parser-threads auto"
+IMMUTABLE_RENDER_CACHE_CONTROL = "private, max-age=31536000, immutable"
 TIMING_LABELS = [
     ("source_read_ms", "source read"),
     ("parse_ms", "IFC parse"),
@@ -36,6 +39,31 @@ TIMING_LABELS = [
     ("tileset_write_ms", "tileset write"),
     ("db_write_ms", "DB/index write"),
 ]
+
+
+def _quoted_etag(value):
+    return f'"{value}"'
+
+
+def _immutable_etag(*parts):
+    fingerprint = "|".join(str(part or "") for part in parts)
+    return _quoted_etag(sha256(fingerprint.encode("utf-8")).hexdigest()[:32])
+
+
+def _etag_matches(request, etag):
+    candidates = [candidate.strip() for candidate in request.headers.get("If-None-Match", "").split(",")]
+    return etag in candidates or "*" in candidates
+
+
+def _apply_immutable_headers(response, etag):
+    response["Cache-Control"] = IMMUTABLE_RENDER_CACHE_CONTROL
+    response["ETag"] = etag
+    return response
+
+
+def _not_modified_response(etag):
+    response = HttpResponseNotModified()
+    return _apply_immutable_headers(response, etag)
 
 
 def timing_summary_from_metrics(metrics):
@@ -104,6 +132,8 @@ def source_upload_view(request):
                 uploaded_file=form.cleaned_data["source_file"],
                 display_name=form.cleaned_data.get("display_name") or "",
                 source_system=form.cleaned_data.get("source_system") or "",
+                user=request.user,
+                replace_working=True,
             )
             return redirect("plant3d_source_detail", source_id=source.pk)
     else:
@@ -130,6 +160,25 @@ def source_detail_view(request, source_id):
     )
 
 
+@require_http_methods(["POST"])
+def source_save_case_view(request, source_id):
+    source = get_object_or_404(source_models_for_user(request.user).select_related("project"), pk=source_id)
+    try:
+        mark_source_saved_case(source)
+    except ValueError as exc:
+        return JsonResponse({"status": "error", "error": str(exc)}, status=400)
+    if request.headers.get("Accept") == "application/json":
+        return JsonResponse(
+            {
+                "status": "saved",
+                "source_id": source.pk,
+                "is_saved_case": source.is_saved_case,
+                "saved_at": source.saved_at.isoformat() if source.saved_at else "",
+            }
+        )
+    return redirect("plant3d_source_detail", source_id=source.pk)
+
+
 def source_models_json_view(request):
     sources = source_models_for_user(request.user).select_related("project").order_by("-created_at", "-pk")
     return JsonResponse(
@@ -144,6 +193,9 @@ def source_models_json_view(request):
                     "storage_key": source.storage_key,
                     "file_size_bytes": source.file_size_bytes,
                     "content_signature": source.content_signature,
+                    "uploaded_by_id": source.uploaded_by_id,
+                    "is_saved_case": source.is_saved_case,
+                    "saved_at": source.saved_at.isoformat() if source.saved_at else "",
                     "created_at": source.created_at.isoformat() if source.created_at else "",
                 }
                 for source in sources
@@ -265,6 +317,10 @@ def package_viewer_view(request, package_id):
 
 def package_json_view(request, package_id):
     package = get_object_or_404(render_packages_for_user(request.user).select_related("source_model"), pk=package_id)
+    etag = _immutable_etag("package", package.pk, package.updated_at.isoformat(), package.byte_size, package.tile_count)
+    if _etag_matches(request, etag):
+        return _not_modified_response(etag)
+
     tiles = package.tiles.order_by("sequence", "pk")
     objects = package.model_objects.order_by("stable_id", "pk")
     object_payload = [
@@ -276,6 +332,7 @@ def package_json_view(request, package_id):
             "tag": obj.tag,
             "line_id": obj.line_id,
             "bounds": obj.bounds,
+            "selection_summary": object_selection_summary(obj),
             "url": reverse("plant3d_model_object_json", args=[obj.pk]),
         }
         for obj in objects
@@ -322,7 +379,7 @@ def package_json_view(request, package_id):
 
         tileset_payload["root"] = enrich_tileset_node(tileset_payload.get("root") or {})
 
-    return JsonResponse(
+    response = JsonResponse(
         {
             "id": package.pk,
             "source_model_id": package.source_model_id,
@@ -341,6 +398,7 @@ def package_json_view(request, package_id):
             "tiles": tile_payload,
         }
     )
+    return _apply_immutable_headers(response, etag)
 
 
 def model_object_json_view(request, object_id):
@@ -370,20 +428,26 @@ def tile_json_view(request, tile_id):
     storage_key = tile.metadata.get("sidecar_storage_key") or tile.storage_key
     if not storage_exists(storage_key):
         return JsonResponse({"error": "Tile payload is missing from storage."}, status=404)
+    etag = _immutable_etag("tile-json", tile.pk, storage_key, tile.byte_size, tile.created_at.isoformat())
+    if _etag_matches(request, etag):
+        return _not_modified_response(etag)
 
     try:
         payload = json.loads(read_text(storage_key))
     except json.JSONDecodeError:
         return JsonResponse({"error": "Tile payload is not valid JSON."}, status=500)
 
-    return JsonResponse(payload)
+    return _apply_immutable_headers(JsonResponse(payload), etag)
 
 
 def tile_blob_view(request, tile_id):
     tile = get_object_or_404(render_tiles_for_user(request.user), pk=tile_id)
     if not storage_exists(tile.storage_key):
         return JsonResponse({"error": "Tile blob is missing from storage."}, status=404)
+    etag = _immutable_etag("tile-blob", tile.pk, tile.storage_key, tile.byte_size, tile.created_at.isoformat())
+    if _etag_matches(request, etag):
+        return _not_modified_response(etag)
     response = HttpResponse(read_bytes(tile.storage_key), content_type="model/gltf-binary")
     response["Content-Length"] = str(tile.byte_size)
     response["Content-Disposition"] = f'inline; filename="{tile.tile_id}.glb"'
-    return response
+    return _apply_immutable_headers(response, etag)

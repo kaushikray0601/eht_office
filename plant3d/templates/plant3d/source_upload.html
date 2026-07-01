@@ -3,17 +3,33 @@
 <head>
   <meta charset="utf-8">
   <title>Upload source model</title>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_shell1">
 </head>
-<body>
-  <main>
-    <h1>Upload source model</h1>
-    <form method="post" enctype="multipart/form-data">
-      {% csrf_token %}
-      {{ form.as_p }}
-      <button type="submit">Upload</button>
-    </form>
-    <p><a href="{% url 'plant3d_home' %}">Back to plant3d</a></p>
+<body class="p3d-page">
+  <header class="p3d-topbar">
+    <div class="p3d-brand">
+      <h1 class="p3d-brand-title">Upload Source Model</h1>
+      <span class="p3d-brand-subtitle">IFC intake for viewer-package processing</span>
+    </div>
+    <a class="p3d-button" href="{% url 'plant3d_home' %}">Back to plant3d</a>
+  </header>
+  <main class="p3d-shell">
+    <section class="p3d-card">
+      <div class="p3d-card-header">
+        <h2>Source File</h2>
+        <p>Upload the source model once; processing happens later through the background worker.</p>
+      </div>
+      <div class="p3d-card-body">
+        <form class="p3d-form" method="post" enctype="multipart/form-data">
+          {% csrf_token %}
+          {{ form.as_p }}
+          <div>
+            <button class="p3d-button-primary" type="submit">Upload Source Model</button>
+          </div>
+        </form>
+      </div>
+    </section>
   </main>
 </body>
 </html>
-

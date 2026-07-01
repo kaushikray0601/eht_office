@@ -1,4 +1,5 @@
 from django.core.validators import MaxValueValidator, MinValueValidator
+from django.conf import settings
 from django.db import models
 
 
@@ -17,6 +18,13 @@ class SourceModel(models.Model):
         on_delete=models.CASCADE,
         related_name="plant3d_source_models",
     )
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="plant3d_source_models",
+    )
     display_name = models.CharField(max_length=255)
     source_format = models.CharField(max_length=20, choices=SOURCE_FORMAT_CHOICES)
     original_filename = models.CharField(max_length=255)
@@ -28,6 +36,8 @@ class SourceModel(models.Model):
     coordinate_frame = models.CharField(max_length=80, blank=True, default="")
     bounds = models.JSONField(default=dict, blank=True)
     metadata = models.JSONField(default=dict, blank=True)
+    is_saved_case = models.BooleanField(default=False)
+    saved_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -36,6 +46,7 @@ class SourceModel(models.Model):
         indexes = [
             models.Index(fields=["project", "source_format"]),
             models.Index(fields=["project", "content_signature"]),
+            models.Index(fields=["project", "uploaded_by", "is_saved_case"]),
         ]
 
     def __str__(self):
@@ -197,4 +208,3 @@ class ModelObject(models.Model):
     def __str__(self):
         label = self.tag or self.line_id or self.source_object_id or self.stable_id
         return f"{label} [{self.object_type or 'object'}]"
-

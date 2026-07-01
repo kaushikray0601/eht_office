@@ -13,6 +13,7 @@ from .parsers.ifc import parse_multiple_ifc_uploads
 
 from .models import ConversionJob, RenderPackage, RenderTile, SourceModel
 from .storage import (
+    delete_key,
     exists as storage_exists,
     read_bytes,
     render_manifest_storage_key,
@@ -50,6 +51,8 @@ IFC_UNIT_DISPLAY = {
     ("KILO", "METRE"): "km",
 }
 GLB_TARGET_OBJECTS_PER_TILE = 500
+PLANT3D_MAX_SAVED_CASES_PER_USER_PROJECT = 5
+PLANT3D_MAX_JOBS_PER_SOURCE = 12
 
 
 def detect_source_format(filename, sample_bytes=b""):
@@ -83,12 +86,171 @@ def _read_chunks(uploaded_file):
     return hasher.hexdigest(), b"".join(chunks), size
 
 
-def create_source_model_from_upload(project, uploaded_file, display_name="", source_system=""):
+def _walk_storage_keys(value):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key.endswith("_storage_key") and isinstance(item, str) and item:
+                yield item
+            else:
+                yield from _walk_storage_keys(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _walk_storage_keys(item)
+
+
+def _source_storage_keys(source_model):
+    keys = set()
+    if source_model.storage_key:
+        keys.add(source_model.storage_key)
+    for package in source_model.render_packages.all():
+        if package.manifest_storage_key:
+            keys.add(package.manifest_storage_key)
+        keys.update(_walk_storage_keys(package.metadata))
+        for tile in package.tiles.all():
+            if tile.storage_key:
+                keys.add(tile.storage_key)
+            keys.update(_walk_storage_keys(tile.metadata))
+    for job in source_model.conversion_jobs.all():
+        if job.input_storage_key:
+            keys.add(job.input_storage_key)
+        keys.update(_walk_storage_keys(job.metrics))
+    return keys
+
+
+def delete_source_models_and_storage(sources):
+    sources = list(
+        SourceModel.objects
+        .filter(pk__in=[source.pk for source in sources])
+        .prefetch_related("conversion_jobs", "render_packages__tiles")
+    )
+    if not sources:
+        return {"deleted_sources": 0, "deleted_storage_keys": [], "skipped_storage_keys": []}
+
+    storage_keys = sorted({key for source in sources for key in _source_storage_keys(source)})
+    source_ids = [source.pk for source in sources]
+    with transaction.atomic():
+        SourceModel.objects.filter(pk__in=source_ids).delete()
+
+    deleted = []
+    skipped = []
+    for key in storage_keys:
+        if SourceModel.objects.filter(storage_key=key).exists():
+            skipped.append(key)
+            continue
+        try:
+            if delete_key(key):
+                deleted.append(key)
+        except OSError:
+            skipped.append(key)
+    return {"deleted_sources": len(source_ids), "deleted_storage_keys": deleted, "skipped_storage_keys": skipped}
+
+
+def delete_render_packages_and_direct_storage(packages):
+    packages = list(RenderPackage.objects.filter(pk__in=[package.pk for package in packages]).prefetch_related("tiles"))
+    if not packages:
+        return {"deleted_packages": 0, "deleted_storage_keys": [], "skipped_storage_keys": []}
+
+    storage_keys = set()
+    package_ids = [package.pk for package in packages]
+    for package in packages:
+        if package.manifest_storage_key:
+            storage_keys.add(package.manifest_storage_key)
+        for tile in package.tiles.all():
+            if tile.storage_key:
+                storage_keys.add(tile.storage_key)
+
+    with transaction.atomic():
+        RenderPackage.objects.filter(pk__in=package_ids).delete()
+
+    deleted = []
+    skipped = []
+    for key in sorted(storage_keys):
+        if (
+            SourceModel.objects.filter(storage_key=key).exists()
+            or RenderPackage.objects.filter(manifest_storage_key=key).exists()
+            or RenderTile.objects.filter(storage_key=key).exists()
+        ):
+            skipped.append(key)
+            continue
+        try:
+            if delete_key(key):
+                deleted.append(key)
+        except OSError:
+            skipped.append(key)
+    return {"deleted_packages": len(package_ids), "deleted_storage_keys": deleted, "skipped_storage_keys": skipped}
+
+
+def _owner_filter(user):
+    if user is not None and getattr(user, "is_authenticated", False):
+        return {"uploaded_by": user}
+    return {"uploaded_by__isnull": True}
+
+
+def prune_working_sources(project, user, keep_source_id=None):
+    candidates = SourceModel.objects.filter(
+        project=project,
+        is_saved_case=False,
+        **_owner_filter(user),
+    )
+    if keep_source_id:
+        candidates = candidates.exclude(pk=keep_source_id)
+    return delete_source_models_and_storage(candidates)
+
+
+def mark_source_saved_case(source_model, max_saved=PLANT3D_MAX_SAVED_CASES_PER_USER_PROJECT):
+    owner_filter = {"uploaded_by": source_model.uploaded_by} if source_model.uploaded_by_id else {"uploaded_by__isnull": True}
+    saved_count = SourceModel.objects.filter(
+        project=source_model.project,
+        is_saved_case=True,
+        **owner_filter,
+    ).exclude(pk=source_model.pk).count()
+    if saved_count >= max_saved and not source_model.is_saved_case:
+        raise ValueError(f"Only {max_saved} saved geometry cases are allowed per user/project.")
+    if not source_model.is_saved_case:
+        source_model.is_saved_case = True
+        source_model.saved_at = timezone.now()
+        source_model.save(update_fields=["is_saved_case", "saved_at", "updated_at"])
+    return source_model
+
+
+def prune_conversion_jobs(source_model, keep=PLANT3D_MAX_JOBS_PER_SOURCE):
+    terminal_ids = list(
+        source_model.conversion_jobs
+        .filter(status__in=["completed", "failed", "cancelled"])
+        .order_by("-created_at", "-pk")
+        .values_list("pk", flat=True)
+    )
+    delete_ids = terminal_ids[keep:]
+    if delete_ids:
+        ConversionJob.objects.filter(pk__in=delete_ids).delete()
+    return len(delete_ids)
+
+
+def prune_render_packages(source_model, package_format, keep=1):
+    package_ids = list(
+        source_model.render_packages
+        .filter(package_format=package_format)
+        .order_by("-created_at", "-pk")
+        .values_list("pk", flat=True)
+    )
+    delete_ids = package_ids[keep:]
+    if not delete_ids:
+        return {"deleted_packages": 0, "deleted_storage_keys": [], "skipped_storage_keys": []}
+    return delete_render_packages_and_direct_storage(RenderPackage.objects.filter(pk__in=delete_ids))
+
+
+def create_source_model_from_upload(project, uploaded_file, display_name="", source_system="", user=None, replace_working=False):
     signature, raw, size = _read_chunks(uploaded_file)
-    existing = SourceModel.objects.filter(project=project, content_signature=signature).order_by("-created_at").first()
+    existing = SourceModel.objects.filter(
+        project=project,
+        content_signature=signature,
+        **_owner_filter(user),
+    ).order_by("-created_at").first()
     if existing:
         if not storage_exists(existing.storage_key):
             write_bytes(existing.storage_key, raw)
+        if replace_working and not existing.is_saved_case:
+            prune_working_sources(project, user, keep_source_id=existing.pk)
         return existing
 
     filename = safe_name(uploaded_file.name)
@@ -96,8 +258,9 @@ def create_source_model_from_upload(project, uploaded_file, display_name="", sou
     key = source_storage_key(project.proj_id, signature, filename)
     write_bytes(key, raw)
 
-    return SourceModel.objects.create(
+    source = SourceModel.objects.create(
         project=project,
+        uploaded_by=user if user is not None and getattr(user, "is_authenticated", False) else None,
         display_name=(display_name or filename),
         source_format=source_format,
         original_filename=filename,
@@ -106,6 +269,9 @@ def create_source_model_from_upload(project, uploaded_file, display_name="", sou
         file_size_bytes=size,
         source_system=source_system,
     )
+    if replace_working:
+        prune_working_sources(project, user, keep_source_id=source.pk)
+    return source
 
 
 def _source_file_text(source_model, limit_bytes=2_000_000):
@@ -247,7 +413,7 @@ def build_metadata_manifest(source_model):
 
 
 def queue_metadata_conversion(source_model, tool_name="plant3d.metadata", tool_version="0.1"):
-    return ConversionJob.objects.create(
+    job = ConversionJob.objects.create(
         source_model=source_model,
         job_type="metadata_index",
         status="queued",
@@ -256,12 +422,14 @@ def queue_metadata_conversion(source_model, tool_name="plant3d.metadata", tool_v
         tool_version=tool_version,
         input_storage_key=source_model.storage_key,
     )
+    prune_conversion_jobs(source_model)
+    return job
 
 
 def queue_ifc_geometry_conversion(source_model, tool_name="plant3d.ifc-json", tool_version="0.1"):
     if source_model.source_format != "IFC":
         raise ValueError("IFC geometry conversion requires an IFC source model.")
-    return ConversionJob.objects.create(
+    job = ConversionJob.objects.create(
         source_model=source_model,
         job_type="render_package",
         status="queued",
@@ -270,6 +438,8 @@ def queue_ifc_geometry_conversion(source_model, tool_name="plant3d.ifc-json", to
         tool_version=tool_version,
         input_storage_key=source_model.storage_key,
     )
+    prune_conversion_jobs(source_model)
+    return job
 
 
 def queue_ifc_glb_conversion(source_model, tool_name="plant3d.ifc-glb", tool_version="0.1"):
@@ -304,10 +474,21 @@ def _update_job_progress(job, progress_percent, stage):
     job.save(update_fields=["progress_percent", "metrics", "log", "updated_at"])
 
 
+def _conversion_resource_metrics(started, cpu_started):
+    wall_ms = max(0, round((time.perf_counter() - started) * 1000))
+    cpu_ms = max(0, round((time.process_time() - cpu_started) * 1000))
+    return {
+        "conversion_duration_ms": wall_ms,
+        "process_cpu_time_ms": cpu_ms,
+        "process_cpu_to_wall_ratio": round(cpu_ms / wall_ms, 2) if wall_ms else None,
+    }
+
+
 def run_metadata_conversion(source_model, job=None, tool_name="plant3d.metadata", tool_version="0.1"):
     job = job or queue_metadata_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
     _mark_job_running(job, 10)
     started = time.perf_counter()
+    cpu_started = time.process_time()
 
     try:
         _update_job_progress(job, 20, "Reading source metadata")
@@ -353,7 +534,7 @@ def run_metadata_conversion(source_model, job=None, tool_name="plant3d.metadata"
                 "manifest_bytes": manifest_size,
                 "conversion_scope": "metadata-only",
                 "stage": "completed",
-                "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
+                **_conversion_resource_metrics(started, cpu_started),
             }
             job.save(update_fields=[
                 "status",
@@ -860,6 +1041,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
     job = job or queue_ifc_geometry_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
     _mark_job_running(job, 5)
     started = time.perf_counter()
+    cpu_started = time.process_time()
     timings = {}
 
     try:
@@ -977,7 +1159,7 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
                 "model_object_count": indexed_count,
                 "conversion_scope": "ifc-geometry-json",
                 "stage": "completed",
-                "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
+                **_conversion_resource_metrics(started, cpu_started),
                 "timings": timings,
                 "source_unit_hints": unit_hints,
                 "unit_metadata": unit_metadata,
@@ -985,6 +1167,13 @@ def _run_ifc_geometry_conversion(source_model, job=None, tool_name="plant3d.ifc-
             }
             _record_elapsed_ms(timings, "db_write_ms", db_started)
             job.metrics["timings"] = timings
+            package.metadata["conversion_resource_metrics"] = {
+                "conversion_duration_ms": job.metrics.get("conversion_duration_ms"),
+                "process_cpu_time_ms": job.metrics.get("process_cpu_time_ms"),
+                "process_cpu_to_wall_ratio": job.metrics.get("process_cpu_to_wall_ratio"),
+            }
+            package.save(update_fields=["metadata", "updated_at"])
+            prune_render_packages(source_model, package.package_format, keep=1)
             job.save(update_fields=[
                 "status",
                 "progress_percent",
@@ -1009,6 +1198,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
     job = job or queue_ifc_glb_conversion(source_model, tool_name=tool_name, tool_version=tool_version)
     _mark_job_running(job, 5)
     started = time.perf_counter()
+    cpu_started = time.process_time()
     timings = {}
 
     try:
@@ -1319,7 +1509,7 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
                 },
                 "conversion_scope": "ifc-glb",
                 "stage": "completed",
-                "conversion_duration_ms": round((time.perf_counter() - started) * 1000),
+                **_conversion_resource_metrics(started, cpu_started),
                 "timings": timings,
                 "source_unit_hints": unit_hints,
                 "unit_metadata": unit_metadata,
@@ -1328,7 +1518,13 @@ def _run_ifc_glb_conversion(source_model, job=None, tool_name="plant3d.ifc-glb",
             _record_elapsed_ms(timings, "db_write_ms", db_started)
             job.metrics["timings"] = timings
             package.metadata["conversion_timings"] = timings
+            package.metadata["conversion_resource_metrics"] = {
+                "conversion_duration_ms": job.metrics.get("conversion_duration_ms"),
+                "process_cpu_time_ms": job.metrics.get("process_cpu_time_ms"),
+                "process_cpu_to_wall_ratio": job.metrics.get("process_cpu_to_wall_ratio"),
+            }
             package.save(update_fields=["metadata", "updated_at"])
+            prune_render_packages(source_model, package.package_format, keep=1)
             job.save(update_fields=[
                 "status",
                 "progress_percent",

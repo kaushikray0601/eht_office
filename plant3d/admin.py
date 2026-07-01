@@ -5,9 +5,9 @@ from .models import ConversionJob, ModelObject, RenderPackage, RenderTile, Sourc
 
 @admin.register(SourceModel)
 class SourceModelAdmin(admin.ModelAdmin):
-    list_display = ("display_name", "source_format", "project", "source_system", "created_at")
-    list_filter = ("source_format", "source_system", "created_at")
-    search_fields = ("display_name", "original_filename", "storage_key", "content_signature")
+    list_display = ("display_name", "source_format", "project", "uploaded_by", "is_saved_case", "source_system", "created_at")
+    list_filter = ("source_format", "is_saved_case", "source_system", "created_at")
+    search_fields = ("display_name", "original_filename", "storage_key", "content_signature", "uploaded_by__username")
 
 
 @admin.register(ConversionJob)
@@ -36,4 +36,3 @@ class ModelObjectAdmin(admin.ModelAdmin):
     list_display = ("stable_id", "source_model", "object_type", "tag", "line_id")
     list_filter = ("object_type",)
     search_fields = ("stable_id", "source_object_id", "tag", "line_id")
-
