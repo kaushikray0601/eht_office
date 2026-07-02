@@ -524,6 +524,16 @@ idfviewer-parity work is progressing well and safely: additive migration `0002` 
 - Status: **OPEN**
 - Codex:
 
+### Claude re-review — 2026-07-02b (measurement / plot-plan / delete pass)
+
+62 tests green, `check` clean, production untouched. More idfviewer parity, all client-side or safely-scoped:
+
+- **ARCH1 held (important).** No new plant3d models (still only migration 0002), **no EHT backend** anywhere in plant3d core, and measurement/plot-plan are client-side — the platform stayed neutral. Good discipline; the EHT-placement decision is still correctly deferred until a backend is actually needed.
+- **Delete feature is safe and complete.** `source_delete_view` is POST-only, access-scoped, **owner-only** (403 otherwise), and `delete_source_models_and_storage` removes the source + all render/tile/manifest/sidecar blobs (via `_source_storage_keys` + metadata walk) while **skipping keys still shared by another source** (dedup-safe). Thorough.
+- **Measurement tool** adds **vertex snapping** (`vertexSnapToggleBtn`) — client-side, on-parity, and overlaps KR's later item (e). Plot-plan overlay is a textured plane (browser-only, matching idfviewer's known limitation).
+- **Minor access nuance (not a finding):** delete's owner-check is skipped when `uploaded_by` is NULL (`if source.uploaded_by_id and …`), so any project member can delete a legacy/null-owner source. Defensible (project-scoped, shared/legacy rows), but worth a conscious decision if source ownership is meant to be strict.
+- **UI1 still open:** with measurement/plot-plan now layered on, the viewer is feature-rich — the hierarchy checkboxes that don't hide geometry should still be resolved (real feature-ID visibility mask, or reframe the affordance).
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.

@@ -372,6 +372,44 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("Only 5 saved geometry cases", response.json()["error"])
         self.assertEqual(SourceModel.objects.filter(uploaded_by=user, is_saved_case=True).count(), 5)
 
+    def test_source_delete_view_removes_owned_source_and_storage(self):
+        user = get_user_model().objects.create_user(username="plant3d-delete-owner", password="pw")
+        assign_project(user, self.project)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("delete-me.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            user=user,
+        )
+        source_path = path_for_storage_key(source.storage_key)
+        self.assertTrue(source_path.exists())
+        self.client.force_login(user)
+
+        response = self.client.post(reverse("plant3d_source_delete", args=[source.pk]))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(SourceModel.objects.filter(pk=source.pk).exists())
+        self.assertFalse(source_path.exists())
+
+    def test_source_delete_view_blocks_other_project_user_owner(self):
+        owner = get_user_model().objects.create_user(username="plant3d-delete-owner-2", password="pw")
+        other = get_user_model().objects.create_user(username="plant3d-delete-other", password="pw")
+        assign_project(owner, self.project)
+        assign_project(other, self.project)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("other-owned.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            user=owner,
+        )
+        self.client.force_login(other)
+
+        response = self.client.post(
+            reverse("plant3d_source_delete", args=[source.pk]),
+            HTTP_ACCEPT="application/json",
+        )
+
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(SourceModel.objects.filter(pk=source.pk).exists())
+
     def test_storage_key_rejects_parent_directory_segments(self):
         with self.assertRaises(SuspiciousFileOperation):
             path_for_storage_key("plant3d/../secret.txt")
@@ -1820,15 +1858,24 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "fitSelectionBtn")
         self.assertContains(response, "clearSelectionBtn")
         self.assertContains(response, "measureToggleBtn")
+        self.assertContains(response, "vertexSnapToggleBtn")
         self.assertContains(response, "scaleToggleBtn")
         self.assertContains(response, "measurementHud")
         self.assertContains(response, "scaleHud")
+        self.assertContains(response, "viewerQuickTools")
+        self.assertContains(response, "quickTopBtn")
+        self.assertContains(response, "quickSideBtn")
         self.assertContains(response, "plotPlanInput")
         self.assertContains(response, "plotPlanOpacity")
         self.assertContains(response, "plotPlanClearBtn")
+        self.assertContains(response, "navpanel-width-toggle")
+        self.assertContains(response, "sidepanel-width-toggle")
         self.assertContains(response, "navpanel-toggle")
         self.assertContains(response, "navpanel-reopen")
         self.assertContains(response, "hierarchy-content")
+        self.assertContains(response, "<summary>Assets</summary>", html=True)
+        self.assertContains(response, "Model Hierarchy")
+        self.assertContains(response, "Reference Layers")
         self.assertContains(response, "searchFocusBtn")
         self.assertContains(response, "Filter List")
         self.assertNotContains(response, "Check All / Uncheck All")
@@ -1839,7 +1886,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "ehtSaveLayerBtn")
         self.assertContains(response, "sidepanel-toggle")
         self.assertContains(response, "sidepanel-reopen")
-        self.assertContains(response, "20260702_plotroute1")
+        self.assertContains(response, "20260702_navsnap1")
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")
@@ -1857,6 +1904,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, 'data-conversion-form')
         self.assertContains(response, "Process 3D Model")
         self.assertContains(response, "Save Geometry Case")
+        self.assertContains(response, "Delete Source Model")
         self.assertContains(response, "Working upload")
         self.assertContains(response, "Developer actions")
         self.assertContains(response, "Queue IFC JSON Debug Conversion")

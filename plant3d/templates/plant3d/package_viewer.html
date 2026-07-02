@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_plotroute1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_sidebar1">
 </head>
 <body class="p3d-viewer-body">
   <header class="p3d-topbar p3d-viewer-topbar">
@@ -17,6 +17,7 @@
       <button id="fitSelectionBtn" type="button" disabled>Fit Selected</button>
       <button id="clearSelectionBtn" type="button" disabled>Clear</button>
       <button id="measureToggleBtn" type="button" aria-pressed="false">Measure</button>
+      <button id="vertexSnapToggleBtn" type="button" aria-pressed="true">Snap Vertex On</button>
       <button id="scaleToggleBtn" type="button" aria-pressed="true">Grid On</button>
       <a class="p3d-button" href="{% url 'plant3d_source_detail' source.pk %}">Back to Source</a>
     </div>
@@ -32,16 +33,29 @@
       <strong>Measure</strong>
       <div id="measurementStatus">Pick the first point.</div>
     </div>
+    <div id="viewerQuickTools" class="p3d-quick-tools">
+      <button id="quickSelectBtn" type="button" title="Select objects">Sel</button>
+      <button id="quickOrbitBtn" type="button" title="Left mouse rotates/orbits">Orb</button>
+      <button id="quickPanBtn" type="button" title="Left mouse pans">Pan</button>
+      <button id="quickTopBtn" type="button" title="Top view">Top</button>
+      <button id="quickFrontBtn" type="button" title="Front view">Front</button>
+      <button id="quickSideBtn" type="button" title="Side view">Side</button>
+      <button id="quickFitBtn" type="button" title="Fit model or selection">Fit</button>
+    </div>
   </main>
 
   <aside id="navpanel" class="p3d-viewer-navpanel">
     <div class="p3d-viewer-sidepanel-inner">
       <div class="p3d-toolbar" style="justify-content: space-between;">
-        <h2 class="p3d-panel-title">Assets</h2>
-        <button id="navpanel-toggle" type="button">Hide</button>
+        <h2 class="p3d-panel-title">Workspace</h2>
+        <div class="p3d-toolbar">
+          <button id="navpanel-width-toggle" type="button">Wide</button>
+          <button id="navpanel-toggle" type="button">Hide</button>
+        </div>
       </div>
 
-      <section class="panel">
+      <details class="panel p3d-viewer-section p3d-panel-compact">
+        <summary>Assets</summary>
         <dl class="p3d-kv-grid">
           <div class="p3d-kv">
             <dt>Source</dt>
@@ -60,10 +74,10 @@
             <dd>{{ package.package_format }}</dd>
           </div>
         </dl>
-      </section>
+      </details>
 
-      <section class="panel">
-        <h2 class="p3d-panel-title">Hierarchy</h2>
+      <details class="panel p3d-viewer-section">
+        <summary>Model Hierarchy</summary>
         <div class="p3d-hierarchy-controls">
           <span class="p3d-checkline">Model objects</span>
           <span id="hierarchySelectionCount" class="meta">Loading...</span>
@@ -77,10 +91,10 @@
         <div id="hierarchySearchStatus" class="meta" style="margin-top: 8px;">Search the current hierarchy</div>
         <div id="hierarchy-content" class="p3d-hierarchy-tree"></div>
         <p class="p3d-help" style="margin-top: 10px;">Model hierarchy controls focus and list filtering. Feature-level hide/show for merged GLB geometry is a future feature-mask pass.</p>
-      </section>
+      </details>
 
-      <section class="panel">
-        <h2 class="p3d-panel-title">EHT Draft Tools</h2>
+      <details class="panel p3d-viewer-section">
+        <summary>EHT Draft Tools</summary>
         <div id="ehtToolStatus" class="meta" style="margin: 8px 0;">Select a tool, then click the model.</div>
         <div id="ehtToolPalette" class="p3d-eht-palette">
           <div class="p3d-toolbar">
@@ -110,10 +124,10 @@
           </div>
         </div>
         <div id="ehtDraftList" class="p3d-hierarchy-tree"></div>
-      </section>
+      </details>
 
-      <section class="panel">
-        <h2 class="p3d-panel-title">Model Layers</h2>
+      <details class="panel p3d-viewer-section">
+        <summary>Reference Layers</summary>
         <div class="meta">
           <p><strong>Geometry</strong><br>GLB tile stream</p>
           <p><strong>Metadata</strong><br>Feature-ID sidecars</p>
@@ -135,7 +149,7 @@
           <button id="plotPlanClearBtn" type="button">Clear Plot Plan</button>
           <p id="plotPlanStatus" class="p3d-help">Local image only; not saved yet.</p>
         </div>
-      </section>
+      </details>
     </div>
   </aside>
 
@@ -143,10 +157,21 @@
     <div class="p3d-viewer-sidepanel-inner">
       <div class="p3d-toolbar" style="justify-content: space-between;">
         <h2 class="p3d-panel-title">Properties</h2>
-        <button id="sidepanel-toggle" type="button">Hide</button>
+        <div class="p3d-toolbar">
+          <button id="sidepanel-width-toggle" type="button">Wide</button>
+          <button id="sidepanel-toggle" type="button">Hide</button>
+        </div>
       </div>
 
       <section class="panel">
+        <h2 class="p3d-panel-title">Selected Object</h2>
+        <div id="selectionPanel" class="meta">Click an object in the viewer.</div>
+      </section>
+
+      <div id="viewerStatus" class="status">Loading package...</div>
+
+      <details class="panel p3d-viewer-section">
+        <summary>Package Summary</summary>
         <dl class="p3d-kv-grid">
           <div class="p3d-kv">
             <dt>Project</dt>
@@ -169,19 +194,12 @@
             <dd>{{ package.byte_size }}</dd>
           </div>
         </dl>
-      </section>
+      </details>
 
-      <div id="viewerStatus" class="status">Loading package...</div>
-
-      <section class="panel">
-        <h2 class="p3d-panel-title">Runtime Metrics</h2>
+      <details class="panel p3d-viewer-section">
+        <summary>Runtime Metrics</summary>
         <div id="runtimeMetrics" class="meta">Waiting for package...</div>
-      </section>
-
-      <section class="panel">
-        <h2 class="p3d-panel-title">Selected Object</h2>
-        <div id="selectionPanel" class="meta">Click an object in the viewer.</div>
-      </section>
+      </details>
     </div>
   </aside>
 
@@ -198,15 +216,26 @@
       const body = document.body;
       const navHideBtn = document.getElementById('navpanel-toggle');
       const navShowBtn = document.getElementById('navpanel-reopen');
+      const navWideBtn = document.getElementById('navpanel-width-toggle');
       const hideBtn = document.getElementById('sidepanel-toggle');
       const showBtn = document.getElementById('sidepanel-reopen');
+      const sideWideBtn = document.getElementById('sidepanel-width-toggle');
       const resizeViewer = () => window.dispatchEvent(new Event('resize'));
+      const syncWidthLabels = () => {
+        if (navWideBtn) navWideBtn.textContent = body.classList.contains('p3d-viewer-nav-wide') ? 'Normal' : 'Wide';
+        if (sideWideBtn) sideWideBtn.textContent = body.classList.contains('p3d-viewer-panel-wide') ? 'Normal' : 'Wide';
+      };
       navHideBtn?.addEventListener('click', () => {
         body.classList.add('p3d-viewer-nav-hidden');
         window.setTimeout(resizeViewer, 220);
       });
       navShowBtn?.addEventListener('click', () => {
         body.classList.remove('p3d-viewer-nav-hidden');
+        window.setTimeout(resizeViewer, 220);
+      });
+      navWideBtn?.addEventListener('click', () => {
+        body.classList.toggle('p3d-viewer-nav-wide');
+        syncWidthLabels();
         window.setTimeout(resizeViewer, 220);
       });
       hideBtn?.addEventListener('click', () => {
@@ -217,8 +246,14 @@
         body.classList.remove('p3d-viewer-panel-hidden');
         window.setTimeout(resizeViewer, 220);
       });
+      sideWideBtn?.addEventListener('click', () => {
+        body.classList.toggle('p3d-viewer-panel-wide');
+        syncWidthLabels();
+        window.setTimeout(resizeViewer, 220);
+      });
+      syncWidthLabels();
     })();
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260702_plotroute1"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260702_navsnap1"></script>
 </body>
 </html>

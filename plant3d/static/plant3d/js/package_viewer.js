@@ -10,6 +10,7 @@ const resetBtn = document.getElementById('resetViewBtn');
 const fitSelectionBtn = document.getElementById('fitSelectionBtn');
 const clearSelectionBtn = document.getElementById('clearSelectionBtn');
 const measureToggleBtn = document.getElementById('measureToggleBtn');
+const vertexSnapToggleBtn = document.getElementById('vertexSnapToggleBtn');
 const scaleToggleBtn = document.getElementById('scaleToggleBtn');
 const scaleHud = document.getElementById('scaleHud');
 const measurementHud = document.getElementById('measurementHud');
@@ -38,6 +39,13 @@ const plotPlanVisibleToggle = document.getElementById('plotPlanVisibleToggle');
 const plotPlanOpacity = document.getElementById('plotPlanOpacity');
 const plotPlanClearBtn = document.getElementById('plotPlanClearBtn');
 const plotPlanStatus = document.getElementById('plotPlanStatus');
+const quickSelectBtn = document.getElementById('quickSelectBtn');
+const quickOrbitBtn = document.getElementById('quickOrbitBtn');
+const quickPanBtn = document.getElementById('quickPanBtn');
+const quickTopBtn = document.getElementById('quickTopBtn');
+const quickFrontBtn = document.getElementById('quickFrontBtn');
+const quickSideBtn = document.getElementById('quickSideBtn');
+const quickFitBtn = document.getElementById('quickFitBtn');
 const DRAFT_PARAMETER_FIELDS = [
   { key: 'label', label: 'Label', type: 'text' },
   { key: 'width_m', label: 'Width m', type: 'number', step: '0.05' },
@@ -68,6 +76,9 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 controls.zoomSpeed = 0.65;
 controls.panSpeed = 0.75;
+controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
 
 scene.add(new THREE.HemisphereLight(0xffffff, 0xb8c4d0, 1.8));
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.4);
@@ -108,6 +119,8 @@ let selectedDraftId = '';
 let movingDraftId = '';
 let showGridScale = true;
 let measureModeActive = false;
+let vertexSnapEnabled = true;
+let navigationMode = 'orbit';
 let measurementPoints = [];
 let measurementLine = null;
 let currentGridLayout = { size: 20, step: 1, divisions: 20 };
@@ -186,10 +199,12 @@ const EHT_TOOL_DEFS = {
 };
 const highlightMaterial = new THREE.MeshBasicMaterial({
   color: 0xffb020,
-  wireframe: true,
+  wireframe: false,
   depthTest: false,
+  depthWrite: false,
   transparent: true,
-  opacity: 0.95,
+  opacity: 0.42,
+  side: THREE.DoubleSide,
 });
 
 function setStatus(text) {
@@ -860,6 +875,51 @@ function setMeasurementStatus(text) {
   if (measurementStatus) measurementStatus.textContent = text;
 }
 
+function setVertexSnapEnabled(enabled) {
+  vertexSnapEnabled = Boolean(enabled);
+  if (vertexSnapToggleBtn) {
+    vertexSnapToggleBtn.textContent = vertexSnapEnabled ? 'Snap Vertex On' : 'Snap Vertex Off';
+    vertexSnapToggleBtn.setAttribute('aria-pressed', vertexSnapEnabled ? 'true' : 'false');
+    vertexSnapToggleBtn.classList.toggle('p3d-button-primary', vertexSnapEnabled);
+  }
+}
+
+function nearestFaceVertex(hit) {
+  if (!vertexSnapEnabled || !hit?.object?.geometry || !Number.isInteger(hit.faceIndex)) return null;
+  const geometry = hit.object.geometry;
+  const positions = geometry.getAttribute?.('position');
+  if (!positions) return null;
+  const faceVertexIndices = [0, 1, 2].map(offset => {
+    const rawIndex = hit.faceIndex * 3 + offset;
+    return geometry.index ? geometry.index.getX(rawIndex) : rawIndex;
+  });
+  let best = null;
+  let bestDistance = Infinity;
+  const candidate = new THREE.Vector3();
+  for (const vertexIndex of faceVertexIndices) {
+    candidate.fromBufferAttribute(positions, vertexIndex);
+    hit.object.localToWorld(candidate);
+    const distance = candidate.distanceToSquared(hit.point);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = candidate.clone();
+    }
+  }
+  return best;
+}
+
+function measurementPointFromViewerEvent(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+  const hits = selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : [];
+  if (hits.length) {
+    return nearestFaceVertex(hits[0]) || hits[0].point.clone();
+  }
+  return pointFromViewerEvent(event);
+}
+
 function createMeasurementMarker(point) {
   const radius = Math.max(camera.position.distanceTo(controls.target) * 0.006, 0.05);
   const geometry = new THREE.SphereGeometry(radius, 16, 16);
@@ -951,9 +1011,48 @@ function setMeasureMode(active) {
     measureToggleBtn.setAttribute('aria-pressed', measureModeActive ? 'true' : 'false');
     measureToggleBtn.classList.toggle('p3d-button-primary', measureModeActive);
   }
-  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : '';
+  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
   setMeasurementHudVisible(measureModeActive || measurementPoints.length > 0);
   if (measureModeActive && measurementPoints.length === 0) setMeasurementStatus('Pick the first point.');
+}
+
+function setNavigationMode(mode) {
+  navigationMode = mode === 'pan' ? 'pan' : 'orbit';
+  controls.mouseButtons.LEFT = navigationMode === 'pan' ? THREE.MOUSE.PAN : THREE.MOUSE.ROTATE;
+  controls.mouseButtons.MIDDLE = THREE.MOUSE.DOLLY;
+  controls.mouseButtons.RIGHT = navigationMode === 'pan' ? THREE.MOUSE.ROTATE : THREE.MOUSE.PAN;
+  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+  [quickOrbitBtn, quickPanBtn].forEach(button => button?.classList.remove('p3d-button-primary'));
+  if (navigationMode === 'pan') quickPanBtn?.classList.add('p3d-button-primary');
+  if (navigationMode === 'orbit') quickOrbitBtn?.classList.add('p3d-button-primary');
+}
+
+function frameFromDirection(direction) {
+  const bounds = selectedDraftElement()
+    ? new THREE.Box3().setFromObject(selectedDraftElement().object3d)
+    : selectedHighlight
+      ? new THREE.Box3().setFromObject(selectedHighlight)
+      : packageBounds;
+  if (!(bounds instanceof THREE.Box3) || bounds.isEmpty()) return;
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  bounds.getSize(size);
+  bounds.getCenter(center);
+  const radius = Math.max(size.length() * 0.5, 1);
+  const viewDirection = direction.clone().normalize();
+  camera.position.copy(center).add(viewDirection.multiplyScalar(radius * 2.6));
+  controls.target.copy(center);
+  camera.near = Math.max(radius / 500, 0.01);
+  camera.far = Math.max(radius * 25, 1000);
+  camera.updateProjectionMatrix();
+  controls.update();
+}
+
+function quickSelectMode() {
+  setMeasureMode(false);
+  setActiveEhtTool('');
+  movingDraftId = '';
+  setNavigationMode('orbit');
 }
 
 function pointFromViewerEvent(event) {
@@ -2231,7 +2330,7 @@ async function showGlbFeatureSelection(hit) {
 
 function pick(event) {
   if (measureModeActive) {
-    addMeasurementPoint(pointFromViewerEvent(event));
+    addMeasurementPoint(measurementPointFromViewerEvent(event));
     return;
   }
   if (handleEhtToolClick(event)) {
@@ -2331,6 +2430,22 @@ if (measureToggleBtn) {
 if (scaleToggleBtn) {
   scaleToggleBtn.addEventListener('click', () => setGridScaleVisible(!showGridScale));
 }
+if (vertexSnapToggleBtn) {
+  vertexSnapToggleBtn.addEventListener('click', () => setVertexSnapEnabled(!vertexSnapEnabled));
+}
+if (quickSelectBtn) quickSelectBtn.addEventListener('click', quickSelectMode);
+if (quickOrbitBtn) quickOrbitBtn.addEventListener('click', () => setNavigationMode('orbit'));
+if (quickPanBtn) quickPanBtn.addEventListener('click', () => setNavigationMode('pan'));
+if (quickTopBtn) quickTopBtn.addEventListener('click', () => frameFromDirection(new THREE.Vector3(0, 1, 0)));
+if (quickFrontBtn) quickFrontBtn.addEventListener('click', () => frameFromDirection(new THREE.Vector3(0, 0, 1)));
+if (quickSideBtn) quickSideBtn.addEventListener('click', () => frameFromDirection(new THREE.Vector3(1, 0, 0)));
+if (quickFitBtn) quickFitBtn.addEventListener('click', () => {
+  if (!fitSelectionBtn?.disabled) {
+    fitSelectedObject();
+  } else {
+    frameScene();
+  }
+});
 if (plotPlanInput) {
   plotPlanInput.addEventListener('change', () => {
     const file = plotPlanInput.files?.[0];
@@ -2349,6 +2464,8 @@ if (plotPlanClearBtn) {
 renderer.domElement.addEventListener('click', pick);
 bindEhtTools();
 setGridScaleVisible(showGridScale);
+setVertexSnapEnabled(vertexSnapEnabled);
+setNavigationMode('orbit');
 window.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     if (measureModeActive) {

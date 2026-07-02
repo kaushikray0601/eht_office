@@ -16,6 +16,7 @@ from .access import (
 from .forms import SourceModelUploadForm
 from .services import (
     create_source_model_from_upload,
+    delete_source_models_and_storage,
     mark_source_saved_case,
     queue_ifc_geometry_conversion,
     queue_ifc_glb_conversion,
@@ -177,6 +178,17 @@ def source_save_case_view(request, source_id):
             }
         )
     return redirect("plant3d_source_detail", source_id=source.pk)
+
+
+@require_http_methods(["POST"])
+def source_delete_view(request, source_id):
+    source = get_object_or_404(source_models_for_user(request.user).select_related("project"), pk=source_id)
+    if source.uploaded_by_id and source.uploaded_by_id != request.user.id:
+        return JsonResponse({"status": "error", "error": "Only the owner can delete this source model."}, status=403)
+    result = delete_source_models_and_storage([source])
+    if request.headers.get("Accept") == "application/json":
+        return JsonResponse({"status": "deleted", **result})
+    return redirect("plant3d_home")
 
 
 def source_models_json_view(request):
