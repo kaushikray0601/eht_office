@@ -15,6 +15,7 @@ const scaleToggleBtn = document.getElementById('scaleToggleBtn');
 const scaleHud = document.getElementById('scaleHud');
 const measurementHud = document.getElementById('measurementHud');
 const measurementStatus = document.getElementById('measurementStatus');
+const viewerContextMenu = document.getElementById('viewerContextMenu');
 const metricsEl = document.getElementById('runtimeMetrics');
 const selectionEl = document.getElementById('selectionPanel');
 const hierarchyContent = document.getElementById('hierarchy-content');
@@ -107,10 +108,12 @@ let objectById = new Map();
 let featureIndex = new Map();
 let featureSpanIndex = new Map();
 let selectableMeshes = [];
+let hiddenGlbFeatureIds = new Set();
 let packageObjectRows = [];
 let hierarchySearchMatches = new Set();
 let selectedMesh = null;
 let selectedHighlight = null;
+let selectedGlbFeatureId = null;
 let hierarchySelectedObjectId = null;
 let activeEhtTool = '';
 let pendingRoutePoints = [];
@@ -198,13 +201,16 @@ const EHT_TOOL_DEFS = {
   cold_cable: { label: 'Cold Cable', kind: 'route', color: 0x0284c7, defaults: { width_m: '', height_m: '', depth_m: '', weight_kg: '', voltage_v: 230, power_w: 0, circuit_ref: '', cable_type: 'Cold cable' } },
 };
 const highlightMaterial = new THREE.MeshBasicMaterial({
-  color: 0xffb020,
+  color: 0x2563eb,
   wireframe: false,
-  depthTest: false,
+  depthTest: true,
   depthWrite: false,
   transparent: true,
-  opacity: 0.42,
+  opacity: 0.36,
   side: THREE.DoubleSide,
+  polygonOffset: true,
+  polygonOffsetFactor: -2,
+  polygonOffsetUnits: -2,
 });
 
 function setStatus(text) {
@@ -638,6 +644,7 @@ function renderDraftSelectionPanel(element = selectedDraftElement()) {
     kvRow('Draft EHT Element', draftLabel(element)),
     kvRow('Type', def.label),
     kvRow('Mode', element.kind),
+    kvRow('Visibility', isDraftElementVisible(element) ? 'Visible' : 'Hidden'),
     kvRow('Points', element.points.length),
     element.kind === 'route' ? kvRow('Route Length', `${formatDimension(draftLength(element))} m`) : kvRow('Position', draftPositionText(element)),
     `<form id="ehtParameterForm" class="p3d-form" data-draft-id="${escapeHtml(element.id)}">`,
@@ -681,6 +688,86 @@ function deleteDraftElement(element) {
   if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
   renderDraftList();
   setEhtStatus(`${label} deleted.`);
+}
+
+function setDraftElementHidden(element, hidden) {
+  if (!element) return;
+  if (hidden) {
+    hiddenEhtDraftIds.add(element.id);
+  } else {
+    hiddenEhtDraftIds.delete(element.id);
+    hiddenEhtTypes.delete(element.type);
+  }
+  applyDraftVisibility();
+  renderDraftList();
+}
+
+function toggleSelectedDraftVisibility() {
+  const element = selectedDraftElement();
+  if (!element) return false;
+  const hide = isDraftElementVisible(element);
+  setDraftElementHidden(element, hide);
+  setEhtStatus(`${draftLabel(element)} ${hide ? 'hidden' : 'visible'} in this viewer session.`);
+  renderDraftSelectionPanel(element);
+  return true;
+}
+
+function hideSelectedGlbFeature() {
+  if (!Number.isFinite(selectedGlbFeatureId)) return;
+  hiddenGlbFeatureIds.add(selectedGlbFeatureId);
+  refreshFeatureVisibilityMasks();
+  clearSelection({ keepDraft: true });
+  if (selectionEl) {
+    selectionEl.innerHTML = [
+      '<p class="meta">Selected model object hidden in this viewer session.</p>',
+      modelVisibilityActionsHtml(),
+    ].join('');
+  }
+  setStatus(`${hiddenGlbFeatureIds.size} model object${hiddenGlbFeatureIds.size === 1 ? '' : 's'} hidden in this viewer session.`);
+}
+
+function unhideAllGlbFeatures() {
+  if (!hiddenGlbFeatureIds.size) return;
+  hiddenGlbFeatureIds.clear();
+  refreshFeatureVisibilityMasks();
+  if (selectionEl) selectionEl.textContent = 'All hidden model objects are visible again.';
+  setStatus('All hidden model objects are visible again.');
+}
+
+function hasHiddenDraftElements() {
+  return hiddenEhtDraftIds.size > 0 || hiddenEhtTypes.size > 0;
+}
+
+function unhideAllViewerItems() {
+  const hadModelHidden = hiddenGlbFeatureIds.size > 0;
+  const hadDraftHidden = hasHiddenDraftElements();
+  if (hadModelHidden) {
+    hiddenGlbFeatureIds.clear();
+    refreshFeatureVisibilityMasks();
+  }
+  if (hadDraftHidden) {
+    hiddenEhtDraftIds.clear();
+    hiddenEhtTypes.clear();
+    applyDraftVisibility();
+    renderDraftList();
+  }
+  if (hadModelHidden || hadDraftHidden) {
+    if (selectionEl) selectionEl.textContent = 'All hidden viewer items are visible again.';
+    setStatus('All hidden viewer items are visible again.');
+  }
+}
+
+function toggleModelVisibilityShortcut() {
+  if (selectedDraftElement()) return toggleSelectedDraftVisibility();
+  if (Number.isFinite(selectedGlbFeatureId)) {
+    hideSelectedGlbFeature();
+    return true;
+  }
+  if (hiddenGlbFeatureIds.size || hasHiddenDraftElements()) {
+    unhideAllViewerItems();
+    return true;
+  }
+  return false;
 }
 
 function moveDraftElementTo(element, point) {
@@ -908,24 +995,71 @@ function nearestFaceVertex(hit) {
   return best;
 }
 
+function selectedMeasurementSnapObjects() {
+  const draftElement = selectedDraftElement();
+  if (draftElement?.object3d) return [draftElement.object3d];
+  if (selectedHighlight) return [selectedHighlight];
+  return [];
+}
+
 function measurementPointFromViewerEvent(event) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hits = selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : [];
-  if (hits.length) {
-    return nearestFaceVertex(hits[0]) || hits[0].point.clone();
+  if (vertexSnapEnabled) {
+    const snapTargets = selectedMeasurementSnapObjects();
+    if (snapTargets.length) {
+      const selectedHits = raycaster.intersectObjects(snapTargets, true);
+      if (selectedHits.length) {
+        return nearestFaceVertex(selectedHits[0]) || selectedHits[0].point.clone();
+      }
+      setMeasurementStatus('Snap Vertex On: click on the selected component, or turn snap off for free measurement.');
+      return null;
+    } else {
+      setMeasurementStatus('Snap Vertex On: select a component first, or turn snap off for free measurement.');
+      return null;
+    }
   }
+  const hit = firstVisibleGlbHit(selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : []);
+  if (hit) return hit.point.clone();
   return pointFromViewerEvent(event);
 }
 
+function worldUnitsForScreenPixels(point, pixels, minValue = 0.004, maxValue = 0.12) {
+  const distance = camera.position.distanceTo(point || controls.target);
+  const viewportHeight = Math.max(renderer.domElement.clientHeight || 1, 1);
+  const visibleHeight = 2 * Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * Math.max(distance, 0.001);
+  return THREE.MathUtils.clamp((visibleHeight / viewportHeight) * pixels, minValue, maxValue);
+}
+
+function updateMeasurementGraphicScale(object) {
+  if (!object?.userData?.screenScale) return;
+  const config = object.userData.screenScale;
+  const worldSize = worldUnitsForScreenPixels(
+    object.position,
+    config.pixels,
+    config.min,
+    config.max,
+  );
+  if (config.kind === 'sprite') {
+    object.scale.set(worldSize * (config.aspect || 1), worldSize, 1);
+  } else {
+    object.scale.setScalar(worldSize);
+  }
+}
+
+function updateMeasurementGraphicsScale() {
+  measurementGroup.children.forEach(updateMeasurementGraphicScale);
+}
+
 function createMeasurementMarker(point) {
-  const radius = Math.max(camera.position.distanceTo(controls.target) * 0.006, 0.05);
-  const geometry = new THREE.SphereGeometry(radius, 16, 16);
+  const geometry = new THREE.SphereGeometry(1, 16, 16);
   const material = new THREE.MeshBasicMaterial({ color: 0xf97316, depthTest: false });
   const marker = new THREE.Mesh(geometry, material);
   marker.position.copy(point);
+  marker.userData.screenScale = { kind: 'marker', pixels: 5, min: 0.004, max: 0.08 };
+  updateMeasurementGraphicScale(marker);
   marker.renderOrder = 30;
   measurementGroup.add(marker);
 }
@@ -967,9 +1101,9 @@ function createMeasurementLabel(text, position) {
   });
   const sprite = new THREE.Sprite(material);
   const aspect = canvas.width / canvas.height;
-  const height = Math.max(camera.position.distanceTo(controls.target) * 0.035, 0.18);
-  sprite.scale.set(height * aspect, height, 1);
   sprite.position.copy(position);
+  sprite.userData.screenScale = { kind: 'sprite', pixels: 28, min: 0.12, max: 0.65, aspect };
+  updateMeasurementGraphicScale(sprite);
   sprite.renderOrder = 31;
   measurementGroup.add(sprite);
 }
@@ -995,6 +1129,7 @@ function renderMeasurement() {
 }
 
 function addMeasurementPoint(point) {
+  if (!point) return;
   if (measurementPoints.length >= 2) measurementPoints = [];
   measurementPoints.push(point.clone());
   renderMeasurement();
@@ -1060,8 +1195,8 @@ function pointFromViewerEvent(event) {
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hits = selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : [];
-  if (hits.length) return hits[0].point.clone();
+  const hit = firstVisibleGlbHit(selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : []);
+  if (hit) return hit.point.clone();
 
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -controls.target.y);
   const point = new THREE.Vector3();
@@ -1413,6 +1548,16 @@ if (selectionEl) {
     if (deleteButton) {
       const element = selectedDraftElement();
       if (element) deleteDraftElement(element);
+      return;
+    }
+    const hideSelectedButton = event.target.closest?.('#hideSelectedModelObjectBtn');
+    if (hideSelectedButton) {
+      hideSelectedGlbFeature();
+      return;
+    }
+    const unhideAllButton = event.target.closest?.('#unhideAllModelObjectsBtn');
+    if (unhideAllButton) {
+      unhideAllGlbFeatures();
     }
   });
 }
@@ -1432,7 +1577,23 @@ function selectionDetailsHtml(data, featureId = null) {
     kvRow('Group', summary.hierarchy_group),
     kvRow('Stable ID', summary.stable_id || data?.stable_id),
     kvRow('Source Object', summary.source_object_id || data?.source_object_id),
+    modelVisibilityActionsHtml(featureId),
     metadataDetails(data),
+  ].join('');
+}
+
+function modelVisibilityActionsHtml(featureId = null) {
+  if (!Number.isFinite(Number(featureId))) {
+    return hiddenGlbFeatureIds.size
+      ? `<div class="p3d-toolbar p3d-selection-actions"><button type="button" id="unhideAllModelObjectsBtn">Unhide All (${hiddenGlbFeatureIds.size})</button></div>`
+      : '';
+  }
+  const isHidden = hiddenGlbFeatureIds.has(Number(featureId));
+  return [
+    '<div class="p3d-toolbar p3d-selection-actions">',
+    `<button type="button" id="hideSelectedModelObjectBtn" class="${isHidden ? '' : 'p3d-button-quiet'}">${isHidden ? 'Hidden' : 'Hide Selected'}</button>`,
+    hiddenGlbFeatureIds.size ? `<button type="button" id="unhideAllModelObjectsBtn">Unhide All (${hiddenGlbFeatureIds.size})</button>` : '',
+    '</div>',
   ].join('');
 }
 
@@ -1814,7 +1975,77 @@ function tuneLoadedGlbMaterial(material) {
   if (typeof material.metalness === 'number') material.metalness = 0.0;
   if (typeof material.roughness === 'number') material.roughness = Math.max(material.roughness, 0.9);
   if (typeof material.envMapIntensity === 'number') material.envMapIntensity = 0.0;
+  if (!material.userData?.plant3dVisibilityMask) {
+    material.userData = { ...(material.userData || {}), plant3dVisibilityMask: true };
+    material.onBeforeCompile = shader => {
+      shader.vertexShader = shader.vertexShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nattribute float plant3dHiddenFeature;\nvarying float vPlant3dHiddenFeature;',
+        )
+        .replace(
+          '#include <begin_vertex>',
+          '#include <begin_vertex>\nvPlant3dHiddenFeature = plant3dHiddenFeature;',
+        );
+      shader.fragmentShader = shader.fragmentShader
+        .replace(
+          '#include <common>',
+          '#include <common>\nvarying float vPlant3dHiddenFeature;',
+        )
+        .replace(
+          '#include <clipping_planes_fragment>',
+          '#include <clipping_planes_fragment>\nif (vPlant3dHiddenFeature > 0.5) discard;',
+        );
+    };
+    material.customProgramCacheKey = () => 'plant3d-feature-visibility-v1';
+  }
   material.needsUpdate = true;
+}
+
+function featureAttributeForGeometry(geometry) {
+  return geometry?.getAttribute?.('_FEATURE_ID_0') || geometry?.getAttribute?.('_feature_id_0') || null;
+}
+
+function ensureFeatureVisibilityAttribute(mesh) {
+  const geometry = mesh?.geometry;
+  const positions = geometry?.getAttribute?.('position');
+  if (!geometry || !positions || geometry.getAttribute('plant3dHiddenFeature')) return;
+  geometry.setAttribute('plant3dHiddenFeature', new THREE.Float32BufferAttribute(new Float32Array(positions.count), 1));
+}
+
+function updateFeatureVisibilityForMesh(mesh) {
+  const geometry = mesh?.geometry;
+  const hiddenAttribute = geometry?.getAttribute?.('plant3dHiddenFeature');
+  const featureAttribute = featureAttributeForGeometry(geometry);
+  if (!hiddenAttribute || !featureAttribute) return;
+  for (let index = 0; index < hiddenAttribute.count; index += 1) {
+    const featureId = Math.round(featureAttribute.getX(index));
+    hiddenAttribute.setX(index, hiddenGlbFeatureIds.has(featureId) ? 1 : 0);
+  }
+  hiddenAttribute.needsUpdate = true;
+}
+
+function refreshFeatureVisibilityMasks() {
+  selectableMeshes.forEach(updateFeatureVisibilityForMesh);
+}
+
+function featureIdFromHit(hit) {
+  const geometry = hit.object?.geometry;
+  if (!geometry || !Number.isInteger(hit.faceIndex)) return null;
+  const featureAttribute = featureAttributeForGeometry(geometry);
+  if (!featureAttribute) return null;
+
+  const firstVertex = hit.faceIndex * 3;
+  const vertexIndex = geometry.index ? geometry.index.getX(firstVertex) : firstVertex;
+  const featureId = featureAttribute.getX(vertexIndex);
+  return Number.isFinite(featureId) ? Math.round(featureId) : null;
+}
+
+function firstVisibleGlbHit(hits) {
+  return (hits || []).find(hit => {
+    const featureId = featureIdFromHit(hit);
+    return !Number.isFinite(featureId) || !hiddenGlbFeatureIds.has(featureId);
+  }) || null;
 }
 
 function disposeObject3D(object) {
@@ -1963,6 +2194,8 @@ async function loadGlbTileState(state, pkg) {
         tileKey: state.key,
       };
       tuneLoadedGlbMaterial(node.material);
+      ensureFeatureVisibilityAttribute(node);
+      updateFeatureVisibilityForMesh(node);
       selectableMeshes.push(node);
       const geometry = node.geometry;
       const index = geometry?.index;
@@ -2133,6 +2366,7 @@ async function loadGlbPackage(pkg, started) {
   indexPackageObjects(pkg);
   featureIndex = new Map();
   featureSpanIndex = new Map();
+  hiddenGlbFeatureIds = new Set();
   selectableMeshes = [];
   prepareGlbTileStates(pkg);
   const approximateBounds = approximatePackageBounds(pkg);
@@ -2150,6 +2384,7 @@ function clearSelection({ keepDraft = false } = {}) {
     selectedHighlight = null;
   }
   selectedMesh = null;
+  selectedGlbFeatureId = null;
   if (!keepDraft) {
     selectedDraftId = '';
     movingDraftId = '';
@@ -2192,18 +2427,6 @@ async function showSelection(mesh) {
   } catch (error) {
     selectionEl.innerHTML = baseRows.join('') + `<p class="meta">${escapeHtml(error.message || 'Unable to load metadata.')}</p>`;
   }
-}
-
-function featureIdFromHit(hit) {
-  const geometry = hit.object?.geometry;
-  if (!geometry || !Number.isInteger(hit.faceIndex)) return null;
-  const featureAttribute = geometry.getAttribute('_FEATURE_ID_0') || geometry.getAttribute('_feature_id_0');
-  if (!featureAttribute) return null;
-
-  const firstVertex = hit.faceIndex * 3;
-  const vertexIndex = geometry.index ? geometry.index.getX(firstVertex) : firstVertex;
-  const featureId = featureAttribute.getX(vertexIndex);
-  return Number.isFinite(featureId) ? Math.round(featureId) : null;
 }
 
 function vertexIndexForGeometryIndex(geometry, geometryIndex) {
@@ -2298,6 +2521,7 @@ async function showGlbFeatureSelection(hit) {
     return;
   }
 
+  selectedGlbFeatureId = featureId;
   showGlbFeatureHighlight(hit, featureId);
   const feature = featureIndex.get(featureId);
   const objectSummary = feature.objectSummary;
@@ -2328,7 +2552,50 @@ async function showGlbFeatureSelection(hit) {
   }
 }
 
+function updatePointerFromViewerEvent(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+  raycaster.setFromCamera(pointer, camera);
+}
+
+async function selectItemFromViewerEvent(event, { clearOnMiss = true } = {}) {
+  const pickStarted = performance.now();
+  updatePointerFromViewerEvent(event);
+  const draftElement = pickDraftElement();
+  if (draftElement) {
+    runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
+    renderMetrics();
+    selectDraftElement(draftElement);
+    return 'draft';
+  }
+  if (!selectableMeshes.length) {
+    runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
+    renderMetrics();
+    if (clearOnMiss && selectionEl) selectionEl.textContent = 'Object picking is not available for this package format yet.';
+    return '';
+  }
+  const hits = raycaster.intersectObjects(selectableMeshes, false);
+  runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
+  renderMetrics();
+  const hit = firstVisibleGlbHit(hits);
+  if (!hit) {
+    if (clearOnMiss) {
+      clearSelection();
+      if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
+    }
+    return '';
+  }
+  if (hit.object?.userData?.packageFormat === 'GLB') {
+    await showGlbFeatureSelection(hit);
+    return 'model';
+  }
+  await showSelection(hit.object);
+  return 'model';
+}
+
 function pick(event) {
+  hideContextMenu();
   if (measureModeActive) {
     addMeasurementPoint(measurementPointFromViewerEvent(event));
     return;
@@ -2336,37 +2603,125 @@ function pick(event) {
   if (handleEhtToolClick(event)) {
     return;
   }
-  const pickStarted = performance.now();
-  const rect = renderer.domElement.getBoundingClientRect();
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-  raycaster.setFromCamera(pointer, camera);
-  const draftElement = pickDraftElement();
-  if (draftElement) {
-    runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
-    renderMetrics();
-    selectDraftElement(draftElement);
-    return;
+  selectItemFromViewerEvent(event);
+}
+
+function contextMenuButton(action) {
+  return viewerContextMenu?.querySelector(`[data-context-action="${action}"]`);
+}
+
+function setContextActionEnabled(action, enabled) {
+  const button = contextMenuButton(action);
+  if (button) button.disabled = !enabled;
+}
+
+function updateContextMenuState() {
+  const draftElement = selectedDraftElement();
+  const hasDraftSelection = Boolean(draftElement);
+  const hasModelSelection = Number.isFinite(selectedGlbFeatureId);
+  const hasAnySelection = hasDraftSelection || hasModelSelection || Boolean(selectedHighlight);
+  const hideButton = contextMenuButton('hide');
+  const unhideButton = contextMenuButton('unhide');
+  if (hideButton) {
+    const label = hasDraftSelection && !isDraftElementVisible(draftElement) ? 'Unhide Selected' : 'Hide Selected';
+    hideButton.firstChild.nodeValue = label;
   }
-  if (!selectableMeshes.length) {
-    runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
-    renderMetrics();
-    if (selectionEl) selectionEl.textContent = 'Object picking is not available for this package format yet.';
-    return;
+  if (unhideButton) {
+    unhideButton.firstChild.nodeValue = `Unhide All${hiddenGlbFeatureIds.size || hasHiddenDraftElements() ? '' : ''}`;
   }
-  const hits = raycaster.intersectObjects(selectableMeshes, false);
-  runtimeStats.pickLatencyMs = Math.round(performance.now() - pickStarted);
-  renderMetrics();
-  if (!hits.length) {
-    clearSelection();
-    if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
-    return;
+  setContextActionEnabled('fit', hasAnySelection);
+  setContextActionEnabled('hide', hasDraftSelection || hasModelSelection);
+  setContextActionEnabled('unhide', hiddenGlbFeatureIds.size > 0 || hasHiddenDraftElements());
+  setContextActionEnabled('move-draft', hasDraftSelection);
+  setContextActionEnabled('delete-draft', hasDraftSelection);
+}
+
+function hideContextMenu() {
+  if (!viewerContextMenu) return;
+  viewerContextMenu.classList.add('p3d-hidden');
+}
+
+function placeContextMenu(event) {
+  if (!viewerContextMenu) return;
+  updateContextMenuState();
+  viewerContextMenu.classList.remove('p3d-hidden');
+  const menuRect = viewerContextMenu.getBoundingClientRect();
+  const left = Math.min(event.clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(event.clientY, window.innerHeight - menuRect.height - 8);
+  viewerContextMenu.style.left = `${Math.max(left, 8)}px`;
+  viewerContextMenu.style.top = `${Math.max(top, 8)}px`;
+}
+
+async function showContextMenu(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  await selectItemFromViewerEvent(event, { clearOnMiss: false });
+  placeContextMenu(event);
+}
+
+function moveSelectedDraftFromContext() {
+  const element = selectedDraftElement();
+  if (!element) return;
+  movingDraftId = movingDraftId === element.id ? '' : element.id;
+  setActiveEhtTool('');
+  renderDraftSelectionPanel(element);
+  setEhtStatus(movingDraftId ? `${draftLabel(element)} move mode: click a new model position.` : `${draftLabel(element)} move cancelled.`);
+}
+
+function executeContextAction(action) {
+  hideContextMenu();
+  if (action === 'orbit') {
+    setNavigationMode('orbit');
+  } else if (action === 'pan') {
+    setNavigationMode('pan');
+  } else if (action === 'fit') {
+    fitSelectedObject();
+  } else if (action === 'hide') {
+    toggleModelVisibilityShortcut();
+  } else if (action === 'unhide') {
+    unhideAllViewerItems();
+  } else if (action === 'move-draft') {
+    moveSelectedDraftFromContext();
+  } else if (action === 'delete-draft') {
+    const element = selectedDraftElement();
+    if (element) deleteDraftElement(element);
   }
-  if (hits[0].object?.userData?.packageFormat === 'GLB') {
-    showGlbFeatureSelection(hits[0]);
-    return;
+}
+
+function isTypingTarget(target) {
+  const tagName = target?.tagName?.toLowerCase?.() || '';
+  return target?.isContentEditable || ['input', 'textarea', 'select'].includes(tagName);
+}
+
+function handleViewerShortcut(event) {
+  if (isTypingTarget(event.target)) return false;
+  const key = event.key.toLowerCase();
+  if (event.ctrlKey && key === 'h') {
+    event.preventDefault();
+    toggleModelVisibilityShortcut();
+    return true;
   }
-  showSelection(hits[0].object);
+  if (event.ctrlKey || event.metaKey || event.altKey) return false;
+  if (event.key === 'Delete' || event.key === 'Backspace') {
+    const element = selectedDraftElement();
+    if (element) {
+      event.preventDefault();
+      deleteDraftElement(element);
+      return true;
+    }
+    return false;
+  }
+  if (key === 'p') {
+    setNavigationMode('pan');
+    return true;
+  } else if (key === 'o' || key === 'r') {
+    setNavigationMode('orbit');
+    return true;
+  } else if (key === 'f') {
+    fitSelectedObject();
+    return true;
+  }
+  return false;
 }
 
 function animate() {
@@ -2374,6 +2729,7 @@ function animate() {
   runtimeStats.frameMs = Number((now - lastFrameAt).toFixed(1));
   lastFrameAt = now;
   controls.update();
+  updateMeasurementGraphicsScale();
   if (runtimeStats.package?.package_format === 'GLB') {
     updateGlbTileStreaming(runtimeStats.package);
   }
@@ -2462,12 +2818,26 @@ if (plotPlanClearBtn) {
   plotPlanClearBtn.addEventListener('click', clearPlotPlan);
 }
 renderer.domElement.addEventListener('click', pick);
+renderer.domElement.addEventListener('contextmenu', showContextMenu);
+if (viewerContextMenu) {
+  viewerContextMenu.addEventListener('click', event => {
+    const button = event.target.closest?.('[data-context-action]');
+    if (!button || button.disabled) return;
+    executeContextAction(button.dataset.contextAction);
+  });
+}
+document.addEventListener('click', event => {
+  if (!viewerContextMenu || viewerContextMenu.classList.contains('p3d-hidden')) return;
+  if (!viewerContextMenu.contains(event.target)) hideContextMenu();
+});
 bindEhtTools();
 setGridScaleVisible(showGridScale);
 setVertexSnapEnabled(vertexSnapEnabled);
 setNavigationMode('orbit');
 window.addEventListener('keydown', event => {
+  if (handleViewerShortcut(event)) return;
   if (event.key === 'Escape') {
+    hideContextMenu();
     if (measureModeActive) {
       measurementPoints = [];
       clearMeasurementGraphics();

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_sidebar1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260703_context1">
 </head>
 <body class="p3d-viewer-body">
   <header class="p3d-topbar p3d-viewer-topbar">
@@ -16,6 +16,15 @@
       <button id="resetViewBtn" type="button">Reset View</button>
       <button id="fitSelectionBtn" type="button" disabled>Fit Selected</button>
       <button id="clearSelectionBtn" type="button" disabled>Clear</button>
+      <span id="viewerQuickTools" class="p3d-toolbar p3d-viewer-toolbar-group">
+        <button id="quickSelectBtn" type="button" title="Select objects">Select</button>
+        <button id="quickOrbitBtn" type="button" title="Left mouse rotates/orbits">Orbit</button>
+        <button id="quickPanBtn" type="button" title="Left mouse pans">Pan</button>
+        <button id="quickTopBtn" type="button" title="Top view">Top</button>
+        <button id="quickFrontBtn" type="button" title="Front view">Front</button>
+        <button id="quickSideBtn" type="button" title="Side view">Side</button>
+        <button id="quickFitBtn" type="button" title="Fit model or selection">Fit</button>
+      </span>
       <button id="measureToggleBtn" type="button" aria-pressed="false">Measure</button>
       <button id="vertexSnapToggleBtn" type="button" aria-pressed="true">Snap Vertex On</button>
       <button id="scaleToggleBtn" type="button" aria-pressed="true">Grid On</button>
@@ -33,14 +42,16 @@
       <strong>Measure</strong>
       <div id="measurementStatus">Pick the first point.</div>
     </div>
-    <div id="viewerQuickTools" class="p3d-quick-tools">
-      <button id="quickSelectBtn" type="button" title="Select objects">Sel</button>
-      <button id="quickOrbitBtn" type="button" title="Left mouse rotates/orbits">Orb</button>
-      <button id="quickPanBtn" type="button" title="Left mouse pans">Pan</button>
-      <button id="quickTopBtn" type="button" title="Top view">Top</button>
-      <button id="quickFrontBtn" type="button" title="Front view">Front</button>
-      <button id="quickSideBtn" type="button" title="Side view">Side</button>
-      <button id="quickFitBtn" type="button" title="Fit model or selection">Fit</button>
+    <div id="viewerContextMenu" class="p3d-context-menu p3d-hidden" role="menu" aria-label="Viewer context menu">
+      <button type="button" data-context-action="orbit" role="menuitem">Orbit / Rotate <span>O</span></button>
+      <button type="button" data-context-action="pan" role="menuitem">Pan <span>P</span></button>
+      <button type="button" data-context-action="fit" role="menuitem">Fit Selection <span>F</span></button>
+      <hr>
+      <button type="button" data-context-action="hide" role="menuitem">Hide Selected <span>Ctrl+H</span></button>
+      <button type="button" data-context-action="unhide" role="menuitem">Unhide All <span>Ctrl+H</span></button>
+      <hr>
+      <button type="button" data-context-action="move-draft" role="menuitem">Move EHT Item <span>M</span></button>
+      <button type="button" data-context-action="delete-draft" role="menuitem" class="p3d-context-danger">Delete EHT Item <span>Del</span></button>
     </div>
   </main>
 
@@ -90,7 +101,7 @@
         </div>
         <div id="hierarchySearchStatus" class="meta" style="margin-top: 8px;">Search the current hierarchy</div>
         <div id="hierarchy-content" class="p3d-hierarchy-tree"></div>
-        <p class="p3d-help" style="margin-top: 10px;">Model hierarchy controls focus and list filtering. Feature-level hide/show for merged GLB geometry is a future feature-mask pass.</p>
+        <p class="p3d-help" style="margin-top: 10px;">Model hierarchy controls focus and list filtering. Use Hide Selected from the properties panel for temporary viewer-session hide/unhide.</p>
       </details>
 
       <details class="panel p3d-viewer-section">
@@ -254,6 +265,6 @@
       syncWidthLabels();
     })();
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260702_navsnap1"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260703_context1"></script>
 </body>
 </html>

@@ -2,7 +2,7 @@
 
 Date: 2026-06-22
 
-Status: execution spike in progress; GLB/Three.js viewer path is healthy on current samples; current focus is correctness gates plus conversion-stage timing, not render/pick optimization
+Status: render/conversion spike accepted at current sample scale; current focus is extraction readiness, stable platform boundaries, and disciplined viewer/tool maturation
 
 ## Objective
 
@@ -14,6 +14,13 @@ The spike should answer:
 - What conversion/package strategy should become the first platform foundation?
 - What metadata and precision fields are required from day one?
 - How much of the current `idfviewer` prototype should be harvested?
+
+Post-spike objective, accepted 2026-07-04:
+
+- Keep developing `plant3d` as a neutral 3D engineering platform that can later run as an independent service.
+- Loosen EHT coupling without throwing away the proven GLB/Three.js/tiled-viewer work.
+- Keep EHT, raceway, cable routing, and future engineering modules as consumers of `plant3d`, not owners of `plant3d` internals.
+- Defer Celery/Redis and full service/database extraction until the platform boundary, API contract, and overlay integration seams are stable.
 
 ## Guardrails
 
@@ -269,17 +276,19 @@ Deferred / TODO:
 
 ## Immediate Next Actions
 
-> **Claude sequence review (2026-06-23) — see audit R1-R3 / C1-C5.** KR confirmed real-GPU rendering is smooth (15-17 FPS is a headless artifact) and a plant-global IFC is weeks away. Claude recommended promoting a synthetic large-coordinate offset fixture, known-dimension unit fixture, and meshopt compression. The 2026-06-28 pass landed the synthetic known-one-metre fixture, a synthetic large-coordinate GLB child-tile regression, and first viewer streaming because package 24 already gave us a useful 9-child-tile runtime proof. The list below is the post-2026-06-28 order.
+> **Plan refresh (2026-07-04):** the GLB/Three.js viewer path is accepted at current sample scale. Stage 0 service-extraction work has started and the hard EHT project FK/cascade has been removed. KR has explicitly deferred Celery/Redis for later. The immediate priority is now maintainable extraction readiness plus continued 3D-tool maturity, not more render-format churn.
 
-1. Correctness gate F3: obtain or create a real plant-global/georeferenced IFC test before marking float32 jitter, RTC precision, orbit stability, or measurement stability as proven.
-2. Correctness gate C3/F4: synthetic metre-declared and foot-declared one-metre fixtures are covered; add a real source-system/exporter known-dimension proof before marking measurement/federation scale fully trusted.
-3. Conversion performance A/B: **done for current 13.7 MB sample.** Worker parser threading is a confirmed local win: 61,073 ms -> 11,826 ms total conversion, with stable RAM. The recommended local/dev worker hint now uses `--parser-threads auto`. Before making this a hard production default, repeat on the largest available IFC and size worker CPU/RAM intentionally.
-4. Phase 7 partial decision: write the rendering decision with current evidence: Three.js-first and GLB + tiling + complete-review are acceptable at current sample scale; precision-at-scale and unit truth remain open gates. **Done 2026-06-30: see `plant3d/records/decisions/0003-phase-7-rendering-spike-decision.md`.**
-5. Opportunistic only: when `gltfpack` is available, measure real meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness with `measure_plant3d_package`. Payload is not the current bottleneck.
-6. If real `gltfpack -cc` output is rejected by the feature-ID gate, discuss before changing format strategy: options include safer gltfpack args, keeping meshopt disabled, or a future `EXT_mesh_features`/metadata-extension pass.
-7. Evaluate `three-mesh-bvh` acceleration only if direct render-mesh raycast becomes sluggish on larger samples.
-8. Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed.
-9. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+1. **Boundary/API contract pass.** Document the public `plant3d` surface that EHT, raceway, and future modules may consume: source upload/list/detail, conversion queue/status, package/tileset/tile/object metadata, viewer route, project access seam, storage/blob access pattern, and overlay/layer anchors.
+2. **Project gateway hardening.** Add focused tests around `plant3d.project_gateway`: accessible project ids, picker enumeration/display, write-time validation, invalid project rejection, and the Stage 0 rule that EHT imports remain confined to the gateway seam.
+3. **Overlay integration seam.** Refactor/document the viewer-side overlay contract so EHT draft tools, future raceway tools, measurements, reference layers, and review visibility all plug into `plant3d` through generic layer/anchor concepts. Do not add EHT/raceway persistence models to `plant3d` core.
+4. **Raceway placement decision.** Before coding cable tray/raceway persistence, decide and record whether `raceway` becomes a peer app consuming `plant3d` (recommended) or remains inside an EHT integration layer.
+5. **Viewer maturity backlog.** Continue improving the engineering UI after the boundary work: hierarchy-wide hide/filter semantics, cleaner layer controls, robust context actions, snap/measurement refinements, plane-distance measurement, persistent review states, and professional layout polish.
+6. **Correctness gate F3.** Obtain a real plant-global/georeferenced IFC before marking float32 jitter, RTC precision, orbit stability, or measurement stability as proven. Synthetic large-coordinate tests reduce risk but do not replace this gate.
+7. **Correctness gate C3/F4.** Synthetic metre-declared and foot-declared one-metre fixtures are covered; add a real source-system/exporter known-dimension proof before marking measurement/federation scale fully trusted.
+8. **Performance scale checks.** Worker parser threading is a confirmed local win: 61,073 ms -> 11,826 ms total conversion on the 13.7 MB sample, with stable RAM. Repeat on the largest available IFC and size worker CPU/RAM intentionally before making aggressive defaults for constrained containers.
+9. **Opportunistic package optimization only.** When `gltfpack` is available, measure meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness. Payload is not the current bottleneck, so do not let compression displace boundary work.
+10. **Deferred infrastructure.** Celery/Redis, signed object-storage delivery, Stage 1 service/database extraction, BVH, HLOD/LOD, and full meshopt/Draco comparison are deferred until the boundary/API and overlay seams are stable or a concrete scale trigger appears.
+11. **Clean retests and guardrails.** Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
 2026-07-01 coding note: Phase 7 tracker checkboxes are now closed against decision record 0003, but the acceptance remains deliberately scoped to current sample scale. Added a stronger synthetic F3 guard proving child-tile GLB payloads keep plant-global coordinates in tile RTC metadata while GLB vertex positions stay tile-local and reconstruct back into source-coordinate tile bounds. This does not replace the real plant-global IFC gate.
 
@@ -466,10 +475,60 @@ Current manual check path:
 - 2026-07-02: Added owner-safe source-model delete from the source detail page so saved/working geometry cases, conversion jobs, render packages, object indexes, and stored geometry files can be deliberately removed. Deletion is project-access scoped and blocks deleting another user's owned source in the same project.
 - 2026-07-02: Reworked the package viewer sidebars for readability: left panel now uses collapsible Model Hierarchy, EHT Draft Tools, and Reference Layers sections; right panel now prioritizes Selected Object, with Package Summary and Runtime Metrics collapsed below. Added low-risk Wide/Normal toggles for both sidebars instead of a drag splitter.
 - 2026-07-02: `venv/bin/python -m py_compile plant3d/views.py plant3d/tests.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, focused delete/viewer tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after source-delete/sidebar pass. Plant3d suite: 62 tests.
-- 2026-07-02: Added viewer polish without changing the EHT persistence boundary: left panel sections now default folded, package summary/runtime metrics stay folded while selected-object properties remain open, a small glass-style quick navigation palette provides select/orbit/pan/top/front/side/fit controls, and measurement now has a `Snap Vertex` toggle that snaps measurement clicks to the nearest vertex on the picked triangle.
-- 2026-07-02: Changed selected model-object highlighting from a wireframe overlay to a translucent color overlay to make selection easier to read against structural steel. This is still overlay-based, so it avoids mutating original GLB materials.
+- 2026-07-02: Added viewer polish without changing the EHT persistence boundary: left panel sections now default folded, package summary/runtime metrics stay folded while selected-object properties remain open, quick navigation controls now sit unfolded in the top toolbar beside Reset/Fit, and measurement has a `Snap Vertex` toggle.
+- 2026-07-02: Tightened measurement snap behavior. With `Snap Vertex` on, measurement clicks are scoped to the currently selected model feature or draft component, avoiding accidental snaps to unrelated background geometry; users can turn snap off for free point/grid measurement. Measurement markers and labels now keep a screen-sized scale while orbiting/zooming so the endpoint spheres do not become oversized at close zoom.
+- 2026-07-02: Changed selected model-object highlighting from a wireframe overlay to a depth-tested translucent color overlay to make selection easier to read against structural steel while reducing the impression that unrelated objects behind a large selected plate are also selected. This is still overlay-based, so it avoids mutating original GLB materials.
 - 2026-07-02: Added `plant3d/records/planning/cable-tray-authoring-framework-2026-07-02.md` for cable tray and support authoring. The plan keeps tray/support persistence outside `plant3d` core and records plane-distance measurement as a feasible future pass.
-- 2026-07-02: `venv/bin/python -m py_compile plant3d/tests.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, focused package viewer test, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after viewer-polish/snap/cable-tray-planning pass. Plant3d suite: 62 tests.
+- 2026-07-02: `venv/bin/python -m py_compile plant3d/tests.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, focused package viewer test, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, and `git diff --check` passed after toolbar/snap/highlight/sidebar polish. Plant3d suite: 62 tests.
+- 2026-07-02: Changed model selection highlight color from yellow/orange to blue to better match the older `idfviewer` visual language, and restyled the top quick tools as a compact glass segmented toolbar rather than a loose set of ordinary buttons.
+- 2026-07-02: Added first real selected-model hide/unhide support for GLB packages. Hidden model features use a per-vertex visibility mask and shader discard on the loaded merged GLB batches, and canvas picking skips hidden feature IDs. This is viewer-session local only; hierarchy-wide filters and persistent review visibility sets remain future work.
+- 2026-07-02: `venv/bin/python -m py_compile plant3d/tests.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, focused package viewer test, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, and `git diff --check` passed after blue-selection/toolbar/selected-hide pass. Plant3d suite: 62 tests.
+- 2026-07-03: Added a viewport right-click context menu with navigation actions, fit, selected hide/unhide, EHT draft move, and EHT draft delete. Added CAD-style shortcuts: `P` for pan, `O`/`R` for orbit/rotate, `F` for fit selected, `Ctrl+H` for hide/unhide toggle, and `Delete`/`Backspace` for deleting the selected EHT draft element. Shortcuts are ignored while typing in inputs/forms.
+- 2026-07-03: Extended viewer-session visibility controls to EHT draft elements as well as GLB model features. Hidden EHT drafts reuse the existing draft hierarchy visibility state; `Unhide All` restores both hidden model features and hidden EHT draft items.
+- 2026-07-03: `venv/bin/python -m py_compile plant3d/tests.py`, `node --check /tmp/package_viewer.mjs`, `venv/bin/python manage.py check`, focused package viewer test, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, and `git diff --check` passed after context-menu/shortcut pass. Plant3d suite: 62 tests.
+- 2026-07-04: Accepted the Stage 0 service-extraction pivot in `plant3d/records/decisions/0005-plant3d-independent-platform-boundary.md`: `plant3d` is now treated as an independent platform boundary co-located in the current repo, with full service/database extraction deferred until a concrete trigger.
+- 2026-07-04: Loosened the hard EHT project coupling. `SourceModel.project` FK/cascade was replaced with a loose `project_id` string reference; upload project listing, project access, and write-time validation now go through `plant3d.project_gateway`. The gateway still calls EHT internally during Stage 0, but the dependency is confined to one seam.
+- 2026-07-04: Added migration `0003_loosen_project_reference` and a regression test proving deleting an EHT `ProjectData` row no longer cascades into `plant3d` source models. Removed `select_related("project")` runtime assumptions and updated upload tests to use `proj_id` as the public boundary identifier.
+- 2026-07-04: `venv/bin/python -m py_compile plant3d/models.py plant3d/forms.py plant3d/access.py plant3d/project_gateway.py plant3d/services.py plant3d/views.py plant3d/tests.py`, `venv/bin/python manage.py check`, `venv/bin/python manage.py migrate plant3d`, `venv/bin/python manage.py makemigrations plant3d --check --dry-run`, focused no-cascade test, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after Stage 0 decoupling. Plant3d suite: 63 tests.
+- 2026-07-04: KR manually checked EHT and `plant3d` after Stage 0 decoupling and reported no regression or side effect. The tracker was refreshed to prioritize extraction readiness, API/overlay boundaries, gateway hardening, and continued 3D-tool maturity while explicitly deferring Celery/Redis until later.
+
+## Cable Tray / Raceway Module — Claude Architecture Notes (2026-07-02)
+
+Research-based thought process on Codex's `cable-tray-authoring-framework-2026-07-02.md`. Full design: `plant3d/records/planning/raceway-module-architecture-2026-07-02.md`.
+
+### Strong agreement
+
+- Tray/support persistence **must stay out of `plant3d` core** — same as decision 0004 for EHT. The viewer hosts the *interaction* layer; the discipline owns its data. This is the correct, non-negotiable boundary.
+- Route-first draft tools, snapping to model/grid/vertices, parametric width/depth preview, auto-support spacing, plane-distance measurement as a focused later pass — all sound.
+
+### One refinement worth a KR decision (the fork)
+
+Codex's framework folds tray persistence into the **"EHT/electrical integration layer."** I recommend instead a **separate `raceway` peer app**, *not* a sub-part of EHT. Rationale:
+- Raceway is **shared physical infrastructure** consumed by *multiple* disciplines — EHT, power/control cable routing, and construction/pulling all reference the same trays. It is not an EHT feature; putting it under EHT recreates a coupling and blocks the other consumers.
+- Dependency shape should be: `eht → plant3d`, `raceway → plant3d`, and later `cable-routing → raceway + plant3d`. Raceway is a **peer** of EHT, not a child of it.
+- Net: keep the boundary Codex drew (out of `plant3d` core) **and** give raceway its own app. Same rule, cleaner placement.
+
+### Research-based pillars to fold into the framework
+
+1. **Overlay contract (shared).** Formalise how any module plugs into the viewer: read `ModelObject` + the **RTC coordinate contract**, register an overlay group (like `measurementGroup`), reuse `access.*_for_user`. EHT and raceway use the identical seam.
+2. **Route-as-truth, parts-as-derived.** User edits a centerline `TrayRun`; straights + fittings + supports are **materialised** from the catalogue and regenerated on edit — mirrors plant3d's own "source → derived package" model. Never hand-edit derived parts.
+3. **Parametric library, not stored meshes.** Types × sizes × fittings × supports is combinatorial — store parameters + generation rules + **load/span tables** (NEMA VE / IEC 61537), not a mesh per instance. Generic families first; vendor parts under the existing validation governance.
+4. **Hybrid geometry.** Client-side live generation while drafting (instant feel) → server "bake" to a GLB overlay on save, riding the existing RTC/tile/feature-ID pipeline (pickable tray parts, no new renderer).
+5. **Graph-ready from day one.** `TrayRun`/`TrayNode` *is* the node/edge graph the future cable-routing/pulling module traverses (edges carry length + fill capacity). Design stable keys now; attach later without schema change.
+6. **Support spacing is engineered.** Auto-place from the load table (tray + cable-fill weight vs allowable span), anchored to a structural `ModelObject.stable_id`, with pass/fail — not a fixed spacing guess.
+7. **Deliverables, phased.** BOQ/schedules first (near-free from derived rows) → DXF layout drawings (AutoCAD-openable for both contractors) → support **fabrication** sheets. Full drafting-grade 2D is a large subsystem; do not front-load it.
+
+### UX (the commercial differentiator)
+
+One principle: **route-first, part-later** — the failure mode of plant tools is placing 3 m sections one at a time. Key moves: **elevation-plane (2.5D) routing** (lock a working plane at EL, draw like on a floor, riser up/down), snapping as the product, a **live route HUD** (length/fill/next support/clashes), colour-by-service, recolour-selection (not wireframe — matches KR item d), and a **ghost-the-plant focus mode** (Navisworks-style).
+
+### Open decisions for KR (before raceway coding starts)
+
+1. **Module placement:** separate `raceway` app (recommended) vs fold into EHT-integration.
+2. **App name:** `raceway` (covers ladder/tray/trunking/conduit) vs `cabletray`.
+3. **Governing standard** for support span / fill defaults: NEMA VE-1/VE-2 vs IEC 61537 (configurable per project).
+4. **Catalogue seed:** ship a curated generic library vs start empty.
+5. **Geometry approach:** confirm the hybrid (client live-author + server bake). Recommended.
 
 ## Platform Rules Discovered During Implementation
 

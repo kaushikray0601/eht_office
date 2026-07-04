@@ -570,52 +570,88 @@ button:disabled {
   text-transform: uppercase;
 }
 
-.p3d-quick-tools {
-  position: absolute;
-  top: 14px;
-  left: 50%;
-  z-index: 13;
-  display: flex;
-  gap: 5px;
-  max-width: 38px;
-  overflow: hidden;
-  padding: 6px;
-  border: 1px solid rgba(216, 224, 234, 0.8);
+.p3d-viewer-toolbar-group {
+  flex-wrap: nowrap;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid rgba(185, 199, 216, 0.72);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.54);
-  box-shadow: 0 10px 28px rgba(31, 42, 55, 0.12);
-  opacity: 0.68;
-  transform: translateX(-50%);
-  transition: max-width 0.18s ease, opacity 0.18s ease, background 0.18s ease;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(241, 245, 249, 0.72));
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.85), 0 8px 18px rgba(31, 42, 55, 0.08);
   backdrop-filter: blur(14px);
 }
 
-.p3d-quick-tools::before {
-  content: "Tools";
-  display: inline-flex;
-  align-items: center;
-  min-width: 32px;
+.p3d-viewer-toolbar-group button {
+  min-height: 28px;
+  padding: 4px 8px;
+  border-color: transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #405168;
+  font-size: 11px;
+}
+
+.p3d-viewer-toolbar-group button:hover,
+.p3d-viewer-toolbar-group button.p3d-button-primary {
+  border-color: rgba(37, 99, 235, 0.2);
+  background: #ffffff;
+  color: #1d4ed8;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.12);
+}
+
+.p3d-selection-actions {
+  margin: 10px 0;
+}
+
+.p3d-context-menu {
+  position: fixed;
+  z-index: 40;
+  display: grid;
+  min-width: 190px;
+  padding: 6px;
+  border: 1px solid rgba(185, 199, 216, 0.78);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 16px 38px rgba(31, 42, 55, 0.18);
+  backdrop-filter: blur(16px);
+}
+
+.p3d-context-menu button {
+  justify-content: space-between;
+  min-height: 30px;
+  padding: 5px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: #24364b;
+  font-size: 12px;
+}
+
+.p3d-context-menu button:hover:not(:disabled) {
+  border-color: rgba(37, 99, 235, 0.16);
+  background: rgba(239, 246, 255, 0.92);
+  color: #1d4ed8;
+}
+
+.p3d-context-menu button:disabled {
+  background: transparent;
+  color: #a7b1c0;
+}
+
+.p3d-context-menu button span {
   color: var(--p3d-muted);
   font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  writing-mode: vertical-rl;
+  font-weight: 700;
 }
 
-.p3d-quick-tools:hover,
-.p3d-quick-tools:focus-within {
-  max-width: 560px;
-  background: rgba(255, 255, 255, 0.86);
-  opacity: 1;
+.p3d-context-menu .p3d-context-danger {
+  color: #9f1239;
 }
 
-.p3d-quick-tools button {
-  min-width: 42px;
-  min-height: 28px;
-  padding: 4px 7px;
-  border-color: rgba(216, 224, 234, 0.95);
-  background: rgba(255, 255, 255, 0.82);
-  font-size: 10px;
+.p3d-context-menu hr {
+  width: 100%;
+  margin: 5px 0;
+  border: 0;
+  border-top: 1px solid var(--p3d-border-soft);
 }
 
 .p3d-viewer-canvas {
@@ -663,7 +699,7 @@ button:disabled {
 }
 
 .p3d-viewer-sidepanel-inner {
-  padding: 18px;
+  padding: 16px;
 }
 
 .p3d-viewer-nav-hidden .p3d-viewer-main {
@@ -762,7 +798,8 @@ button:disabled {
 }
 
 .p3d-viewer-section {
-  padding-bottom: 2px;
+  margin-top: 12px;
+  padding: 10px 0 2px;
 }
 
 .p3d-viewer-section summary {
@@ -770,10 +807,10 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   cursor: pointer;
-  color: var(--p3d-text);
+  color: #2f3c4d;
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.07em;
   list-style: none;
   text-transform: uppercase;
 }
@@ -792,6 +829,32 @@ button:disabled {
 
 .p3d-viewer-section[open] summary::after {
   content: "Hide";
+}
+
+.p3d-viewer-section[open] {
+  padding-bottom: 10px;
+}
+
+.p3d-viewer-section[open] > :not(summary) {
+  margin-top: 10px;
+}
+
+.p3d-viewer-sidepanel .p3d-panel-title,
+.p3d-viewer-navpanel .p3d-panel-title {
+  color: #24364b;
+  letter-spacing: 0.08em;
+}
+
+.p3d-viewer-sidepanel button,
+.p3d-viewer-navpanel button {
+  min-height: 30px;
+  padding: 5px 9px;
+  font-size: 11px;
+}
+
+.p3d-viewer-sidepanel .p3d-kv-grid,
+.p3d-viewer-navpanel .p3d-kv-grid {
+  gap: 10px;
 }
 
 .meta {

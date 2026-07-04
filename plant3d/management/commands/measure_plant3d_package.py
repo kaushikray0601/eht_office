@@ -240,7 +240,6 @@ class Command(BaseCommand):
 
         query = RenderPackage.objects.select_related(
             "source_model",
-            "source_model__project",
             "conversion_job",
         ).prefetch_related("tiles")
         if package_ids:

@@ -5,8 +5,8 @@ from .models import ConversionJob, ModelObject, RenderPackage, RenderTile, Sourc
 
 @admin.register(SourceModel)
 class SourceModelAdmin(admin.ModelAdmin):
-    list_display = ("display_name", "source_format", "project", "uploaded_by", "is_saved_case", "source_system", "created_at")
-    list_filter = ("source_format", "is_saved_case", "source_system", "created_at")
+    list_display = ("display_name", "source_format", "project_id", "uploaded_by", "is_saved_case", "source_system", "created_at")
+    list_filter = ("source_format", "project_id", "is_saved_case", "source_system", "created_at")
     search_fields = ("display_name", "original_filename", "storage_key", "content_signature", "uploaded_by__username")
 
 

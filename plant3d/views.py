@@ -144,7 +144,7 @@ def source_upload_view(request):
 
 
 def source_detail_view(request, source_id):
-    source = get_object_or_404(source_models_for_user(request.user).select_related("project"), pk=source_id)
+    source = get_object_or_404(source_models_for_user(request.user), pk=source_id)
     packages = source.render_packages.order_by("-created_at")
     jobs = list(source.conversion_jobs.order_by("-created_at"))
     for job in jobs:
@@ -163,7 +163,7 @@ def source_detail_view(request, source_id):
 
 @require_http_methods(["POST"])
 def source_save_case_view(request, source_id):
-    source = get_object_or_404(source_models_for_user(request.user).select_related("project"), pk=source_id)
+    source = get_object_or_404(source_models_for_user(request.user), pk=source_id)
     try:
         mark_source_saved_case(source)
     except ValueError as exc:
@@ -182,7 +182,7 @@ def source_save_case_view(request, source_id):
 
 @require_http_methods(["POST"])
 def source_delete_view(request, source_id):
-    source = get_object_or_404(source_models_for_user(request.user).select_related("project"), pk=source_id)
+    source = get_object_or_404(source_models_for_user(request.user), pk=source_id)
     if source.uploaded_by_id and source.uploaded_by_id != request.user.id:
         return JsonResponse({"status": "error", "error": "Only the owner can delete this source model."}, status=403)
     result = delete_source_models_and_storage([source])
@@ -192,7 +192,7 @@ def source_delete_view(request, source_id):
 
 
 def source_models_json_view(request):
-    sources = source_models_for_user(request.user).select_related("project").order_by("-created_at", "-pk")
+    sources = source_models_for_user(request.user).order_by("-created_at", "-pk")
     return JsonResponse(
         {
             "sources": [
@@ -313,7 +313,7 @@ def job_json_view(request, job_id):
 
 def package_viewer_view(request, package_id):
     package = get_object_or_404(
-        render_packages_for_user(request.user).select_related("source_model", "source_model__project"),
+        render_packages_for_user(request.user).select_related("source_model"),
         pk=package_id,
     )
     return render(

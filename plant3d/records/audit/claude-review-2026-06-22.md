@@ -534,6 +534,37 @@ idfviewer-parity work is progressing well and safely: additive migration `0002` 
 - **Minor access nuance (not a finding):** delete's owner-check is skipped when `uploaded_by` is NULL (`if source.uploaded_by_id and …`), so any project member can delete a legacy/null-owner source. Defensible (project-scoped, shared/legacy rows), but worth a conscious decision if source ownership is meant to be strict.
 - **UI1 still open:** with measurement/plot-plan now layered on, the viewer is feature-rich — the hierarchy checkboxes that don't hide geometry should still be resolved (real feature-ID visibility mask, or reframe the affordance).
 
+### Claude re-review — 2026-07-02c (viewer-tools passes: structural health)
+
+No **goal** drift — idfviewer parity is the stated priority and the ARCH1/decision-0004 boundary holds (no EHT backend in `plant3d`). UI1 was closed *correctly* (real GLB feature-visibility masking, `hideSelectedGlbFeature`/`refreshFeatureVisibilityMasks`, not fake checkboxes). Delete/save-case safe. But the *structural* health of the viewer is the thing to watch now.
+
+## STRUCT1 — `package_viewer.js` is a 2,653-line monolith with ~44 module-level mutable globals
+
+- Severity: **MEDIUM (fragile structure — the fragility ceiling before raceway/EHT viewer work)**
+- Where: [package_viewer.js](../../static/plant3d/js/package_viewer.js) — one ES module, ~232 functions, **44 top-level `let` globals** coordinating streaming, picking, selection, hierarchy, EHT drafts, measurement, plot-plan, visibility masks, adaptive quality.
+- Issue: every feature shares one global namespace, so features couple *implicitly* through mutable state — hard to reason about, and a natural incubator for order-dependent bugs (SIDE1 below is a live example) and the intermittent test flake (FLAKE1). Adding raceway/EHT *authoring* on top of this will compound it.
+- Recommend (before the raceway viewer work): split into ES modules **by concern** — `sceneCore` (renderer/camera/controls, the one shared dependency), `tileStreaming`, `pickingSelection`, `hierarchyPanel`, `measurement`, `ehtDraftOverlay`, `visibilityMask`. Each owns its state and exposes a small API. Pure extraction, behaviour-preserving, with the current tests as the guard. Medium-effort but the highest-value structural investment right now — do it *before* the module explosion, not after.
+- Status: **OPEN**
+- Codex:
+
+## SIDE1 — Feature-visibility mask is not re-applied when a tile streams in (hidden objects reappear)
+
+- Severity: **LOW now / MEDIUM at large-file streaming (latent bug; concrete symptom of STRUCT1)**
+- Where: [package_viewer.js:2149-2168](../../static/plant3d/js/package_viewer.js#L2149) (`loadGlbTileState` adds the tile + `state.loaded=true` but never calls `refreshFeatureVisibilityMasks()`)
+- Issue: `hiddenGlbFeatureIds` persists, but only tiles present at hide-time get masked. A tile that loads/reloads *after* a hide (active streaming for large packages) comes back **unmasked** → a hidden object reappears. Invisible today because review-complete small packages load all tiles once and never unload; will surface exactly at the large/plant-global-file streaming scenario.
+- Recommend: call `refreshFeatureVisibilityMasks()` at the end of `loadGlbTileState` (finally block, after add). One line. Same pattern applies to any per-object state (selection highlight) that mutates loaded tiles — the streaming loop should re-assert overlay state on tile load.
+- Status: **OPEN**
+- Codex:
+
+## FLAKE1 — Test suite is intermittently non-deterministic
+
+- Severity: **LOW–MEDIUM (erodes the green-bar trust the project relies on)**
+- Where: `plant3d/tests.py` — the `process_plant3d_job` command tests run with `parser_threads="auto"` (real `effective_cpu_count`, `resolved=4`) and `watch=True`; DB is shared in-memory SQLite (`cache=shared`).
+- Issue: full suite failed once this session (`test_package_viewer_page_exposes_package_api_url`, a template test) then passed 3× — the failing test passes in isolation, so it's **order/state-dependent**, not a real assertion bug. Real threads + a watch loop + a shared in-memory DB is a classic flake recipe.
+- Recommend: make the worker/threaded command tests deterministic — force `--parser-threads 1` for behaviour tests (unit-test thread *resolution* separately with mocks), bound the watch loop explicitly (`--max-jobs 1`), and ensure no background thread survives teardown. Separately, the recurring **brittle `?v=` asset-version assertions** (`assertContains "20260702_visibility1"`) break on every UI bump — assert a stable marker (the static path) instead of the exact cache-bust string.
+- Status: **OPEN**
+- Codex:
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.

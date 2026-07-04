@@ -1,12 +1,5 @@
-from eht.models import ManagedProject
-
 from .models import ConversionJob, ModelObject, RenderPackage, RenderTile, SourceModel
-
-
-def accessible_project_ids(user):
-    if not getattr(user, "is_authenticated", False):
-        return []
-    return list(ManagedProject.available_to_user(user).values_list("proj_id", flat=True))
+from .project_gateway import accessible_project_ids
 
 
 def source_models_for_user(user):

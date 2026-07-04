@@ -2,6 +2,8 @@ from django.core.validators import MaxValueValidator, MinValueValidator
 from django.conf import settings
 from django.db import models
 
+from .project_gateway import project_identifier
+
 
 class SourceModel(models.Model):
     SOURCE_FORMAT_CHOICES = [
@@ -11,13 +13,7 @@ class SourceModel(models.Model):
         ("OTHER", "Other"),
     ]
 
-    project = models.ForeignKey(
-        "eht.ProjectData",
-        to_field="proj_id",
-        db_column="project_id",
-        on_delete=models.CASCADE,
-        related_name="plant3d_source_models",
-    )
+    project_id = models.CharField(max_length=80, db_index=True)
     uploaded_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         null=True,
@@ -44,10 +40,16 @@ class SourceModel(models.Model):
     class Meta:
         ordering = ["-created_at", "-id"]
         indexes = [
-            models.Index(fields=["project", "source_format"]),
-            models.Index(fields=["project", "content_signature"]),
-            models.Index(fields=["project", "uploaded_by", "is_saved_case"]),
+            models.Index(fields=["project_id", "source_format"]),
+            models.Index(fields=["project_id", "content_signature"]),
+            models.Index(fields=["project_id", "uploaded_by", "is_saved_case"]),
         ]
+
+    def __init__(self, *args, **kwargs):
+        project = kwargs.pop("project", None)
+        if project is not None and "project_id" not in kwargs:
+            kwargs["project_id"] = project_identifier(project)
+        super().__init__(*args, **kwargs)
 
     def __str__(self):
         return f"{self.display_name} [{self.source_format}]"

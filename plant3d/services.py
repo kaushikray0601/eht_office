@@ -12,6 +12,7 @@ from .glb import build_glb_from_meshes, validate_glb_feature_ids
 from .parsers.ifc import parse_multiple_ifc_uploads
 
 from .models import ConversionJob, RenderPackage, RenderTile, SourceModel
+from .project_gateway import project_identifier
 from .storage import (
     delete_key,
     exists as storage_exists,
@@ -187,8 +188,9 @@ def _owner_filter(user):
 
 
 def prune_working_sources(project, user, keep_source_id=None):
+    project_id = project_identifier(project)
     candidates = SourceModel.objects.filter(
-        project=project,
+        project_id=project_id,
         is_saved_case=False,
         **_owner_filter(user),
     )
@@ -200,7 +202,7 @@ def prune_working_sources(project, user, keep_source_id=None):
 def mark_source_saved_case(source_model, max_saved=PLANT3D_MAX_SAVED_CASES_PER_USER_PROJECT):
     owner_filter = {"uploaded_by": source_model.uploaded_by} if source_model.uploaded_by_id else {"uploaded_by__isnull": True}
     saved_count = SourceModel.objects.filter(
-        project=source_model.project,
+        project_id=source_model.project_id,
         is_saved_case=True,
         **owner_filter,
     ).exclude(pk=source_model.pk).count()
@@ -240,9 +242,10 @@ def prune_render_packages(source_model, package_format, keep=1):
 
 
 def create_source_model_from_upload(project, uploaded_file, display_name="", source_system="", user=None, replace_working=False):
+    project_id = project_identifier(project)
     signature, raw, size = _read_chunks(uploaded_file)
     existing = SourceModel.objects.filter(
-        project=project,
+        project_id=project_id,
         content_signature=signature,
         **_owner_filter(user),
     ).order_by("-created_at").first()
@@ -255,11 +258,11 @@ def create_source_model_from_upload(project, uploaded_file, display_name="", sou
 
     filename = safe_name(uploaded_file.name)
     source_format = detect_source_format(filename, raw[:4096])
-    key = source_storage_key(project.proj_id, signature, filename)
+    key = source_storage_key(project_id, signature, filename)
     write_bytes(key, raw)
 
     source = SourceModel.objects.create(
-        project=project,
+        project_id=project_id,
         uploaded_by=user if user is not None and getattr(user, "is_authenticated", False) else None,
         display_name=(display_name or filename),
         source_format=source_format,
@@ -270,7 +273,7 @@ def create_source_model_from_upload(project, uploaded_file, display_name="", sou
         source_system=source_system,
     )
     if replace_working:
-        prune_working_sources(project, user, keep_source_id=source.pk)
+        prune_working_sources(project_id, user, keep_source_id=source.pk)
     return source
 
 
@@ -994,7 +997,7 @@ def _ifc_scene_context(source_model, timings=None):
     _record_elapsed_ms(timings, "source_read_ms", read_started)
 
     parse_started = time.perf_counter()
-    scene = parse_multiple_ifc_uploads([(source_model.original_filename, raw)], source_model.project)
+    scene = parse_multiple_ifc_uploads([(source_model.original_filename, raw)], None)
     _record_elapsed_ms(timings, "parse_ms", parse_started)
 
     metadata_started = time.perf_counter()

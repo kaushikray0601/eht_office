@@ -152,9 +152,24 @@ class Plant3DModelTests(TestCase):
             bounds={"min": [0, 0, 0], "max": [10, 20, 5]},
         )
 
-        self.assertEqual(source.project, project)
+        self.assertEqual(source.project_id, project.proj_id)
         self.assertEqual(source.source_format, "IFC")
         self.assertEqual(source.bounds["max"], [10, 20, 5])
+
+    def test_source_model_project_reference_does_not_cascade_from_eht_project(self):
+        project = create_project("P3D-NO-CASCADE")
+        source = SourceModel.objects.create(
+            project=project,
+            display_name="Independent IFC",
+            source_format="IFC",
+            original_filename="independent.ifc",
+            storage_key="source/P3D-NO-CASCADE/independent.ifc",
+        )
+
+        project.delete()
+
+        source.refresh_from_db()
+        self.assertEqual(source.project_id, "P3D-NO-CASCADE")
 
     def test_conversion_job_progress_is_validated(self):
         project = create_project()
@@ -289,7 +304,7 @@ class Plant3DIntakeTests(TestCase):
         response_1 = self.client.post(
             reverse("plant3d_source_upload"),
             {
-                "project": self.project.pk,
+                "project": self.project.proj_id,
                 "source_file": SimpleUploadedFile("first.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
             },
         )
@@ -300,7 +315,7 @@ class Plant3DIntakeTests(TestCase):
         response_2 = self.client.post(
             reverse("plant3d_source_upload"),
             {
-                "project": self.project.pk,
+                "project": self.project.proj_id,
                 "source_file": SimpleUploadedFile("second.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#1=IFCPROJECT();"),
             },
         )
@@ -333,7 +348,7 @@ class Plant3DIntakeTests(TestCase):
         self.client.post(
             reverse("plant3d_source_upload"),
             {
-                "project": self.project.pk,
+                "project": self.project.proj_id,
                 "source_file": SimpleUploadedFile("working.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;\nDATA;\n#2=IFCPROJECT();"),
             },
         )
@@ -624,7 +639,7 @@ class Plant3DIntakeTests(TestCase):
         response = self.client.post(
             reverse("plant3d_source_upload"),
             {
-                "project": self.project.pk,
+                "project": self.project.proj_id,
                 "display_name": "Uploaded IFC",
                 "source_system": "Sample",
                 "source_file": SimpleUploadedFile(
@@ -637,7 +652,7 @@ class Plant3DIntakeTests(TestCase):
         source = SourceModel.objects.get()
         self.assertEqual(response.status_code, 302)
         self.assertEqual(source.display_name, "Uploaded IFC")
-        self.assertEqual(source.project, self.project)
+        self.assertEqual(source.project_id, self.project.proj_id)
         self.assertTrue(path_for_storage_key(source.storage_key).exists())
 
     def _sample_ifc_scene(self):
@@ -1861,6 +1876,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "vertexSnapToggleBtn")
         self.assertContains(response, "scaleToggleBtn")
         self.assertContains(response, "measurementHud")
+        self.assertContains(response, "viewerContextMenu")
+        self.assertContains(response, "data-context-action=\"delete-draft\"")
         self.assertContains(response, "scaleHud")
         self.assertContains(response, "viewerQuickTools")
         self.assertContains(response, "quickTopBtn")
@@ -1884,9 +1901,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "data-eht-tool=\"distribution_board\"")
         self.assertContains(response, "data-eht-tool=\"cold_cable\"")
         self.assertContains(response, "ehtSaveLayerBtn")
+        self.assertContains(response, "p3d-viewer-toolbar-group")
         self.assertContains(response, "sidepanel-toggle")
         self.assertContains(response, "sidepanel-reopen")
-        self.assertContains(response, "20260702_navsnap1")
+        self.assertContains(response, "20260703_context1")
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")
