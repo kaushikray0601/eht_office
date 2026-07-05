@@ -124,8 +124,8 @@ Useful independent research topics for Claude:
 
 ## Immediate Coding Plan
 
-1. Add direct tests for `plant3d.project_gateway`.
-2. Write the boundary/API contract record.
-3. Refactor or document the viewer overlay interface so current EHT draft tools are clearly a consumer adapter.
+1. Add direct tests for `plant3d.project_gateway`. **Done 2026-07-05.**
+2. Write the boundary/API contract record. **Done 2026-07-05: see `public-api-boundary-contract-2026-07-05.md`.**
+3. Refactor or document the viewer overlay interface so current EHT draft tools are clearly a consumer adapter. **Started 2026-07-05 with the generic viewer-layer registry; continued with visible Reference Layers controls backed by the same registry.**
 4. Keep UI polish scoped to low-risk engineering usability improvements.
 5. Revisit raceway only after the placement decision is recorded.

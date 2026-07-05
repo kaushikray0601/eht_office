@@ -565,6 +565,74 @@ No **goal** drift — idfviewer parity is the stated priority and the ARCH1/deci
 - Status: **OPEN**
 - Codex:
 
+## Stage 0 architecture pass + product features (2026-07-05) — review
+
+Codex implemented Stage 0 (FK loosening, `project_gateway`, per-source endpoint, `coordinate_transform` promotion, a real layer registry) **and** shipped a viewer product feature (context menu/quick tools) in the same window. 73 tests, `check` clean. Verified in code, not taken on trust.
+
+## CONTRACT1 — `manifest_storage_key` leak fixed in one endpoint, still present in another
+
+- Severity: **MEDIUM (contract inconsistency, not just a leak)**
+- Where: `package_json_view` top-level response ([views.py:441-459](../../views.py#L441)) correctly **no longer** returns `manifest_storage_key` — the exact fix I recommended. But `job_json_view`'s embedded `package` sub-object ([views.py:350](../../views.py#L350)) **still returns it**.
+- Issue: the same field is now treated as internal in one endpoint and public in another. This is exactly the inconsistency a stability-tier contract exists to prevent — a consumer reading `job_json_view` still gets the storage-key leak the other endpoint just closed.
+- Recommend: drop `manifest_storage_key` from `job_json_view`'s embedded package summary too (it already exposes `viewer_url`/`json_url`, which is the correct pointer shape).
+- Status: **OPEN**
+- Codex:
+
+## LAYER1 — The new layer registry is real and well-designed, but not yet an external contract
+
+- Severity: **MEDIUM (the load-bearing gap for "share one viewer without coupling data models")**
+- Where: `registerViewerLayer`/`updateViewerLayer`/`setViewerLayerVisible` ([package_viewer.js:97-274](../../static/plant3d/js/package_viewer.js#L97)) — genuinely good work: `ehtDraftGroup`/`measurementGroup`/`pendingRouteGroup`/grid/plot-plan are now unified through one registry with explicit `owner: 'eht'` vs `'plant3d'` tagging, custom `setVisible` hooks, `hiddenInControls`. This is a faithful, in some ways richer, implementation of the overlay-unification idea both my contract doc and Codex's asked for.
+- Issue: `registerViewerLayer` is a **module-local function, not exported**. `package_viewer.js` is confirmed a real ES module (`import * as THREE from 'three'` etc.), so it *could* export these functions — but today only `window.plant3dViewerLayers.{summary, ids}` (read-only) is global. **A future raceway/EHT consumer module has no way to actually call `registerViewerLayer` from outside this file.** The registry is proven with two consumers today, but both are defined *inside* `package_viewer.js` itself — it hasn't yet been proven as something an independent module can hook into, which is the entire point.
+- Recommend: `export { registerViewerLayer, updateViewerLayer, setViewerLayerVisible }` (or attach them to `window.plant3dViewerLayers` alongside the read-only helpers) before raceway's first overlay is built against it — cheap now, and it's the one thing that turns "we built a registry" into "we built the contract."
+- Status: **OPEN**
+- Codex:
+
+## HYGIENE1 — Unrelated binary file committed inside a plant3d commit
+
+- Severity: **LOW-MEDIUM (process/repo hygiene)**
+- Where: `file_storage/error_file/error_file_01.xlsx` was added in commit `c0cf195` ("Enhance package viewer with context menu and quick tools") — confirmed genuinely committed (`git check-ignore` returns nothing).
+- Issue: this file is unrelated to `plant3d` (looks like a generated error-report artifact from an unrelated EHT bulk-upload feature) and has no reason to be in version control at all, let alone bundled into a plant3d viewer-feature commit. Strongly suggests `git add` was run broadly rather than staging specific files for that commit — worth a quiet correction, not an alarm.
+- Recommend: `git rm --cached file_storage/error_file/error_file_01.xlsx`, add `file_storage/` (or the specific error-file pattern) to `.gitignore` if it's meant to be runtime-generated, and revert to staging specific files per commit (the project's established discipline elsewhere).
+- Status: **OPEN**
+- Codex:
+
+## PROCESS1 — Two competing contract documents now exist for the same boundary
+
+- Severity: **LOW (documentation drift risk)**
+- Where: `plant3d-platform-boundary-contract-2026-07-05.md` (mine) and `public-api-boundary-contract-2026-07-05.md` (Codex's), both dated the same day, describing overlapping ground with real differences — mine has an explicit three-tier stability model (STABLE/PROVISIONAL/INTERNAL) and an additive-only evolution rule; Codex's uses a looser per-section "stable/not stable" list without a named versioning discipline.
+- Issue: two same-day RFCs on the identical topic is exactly the kind of fragmentation that erodes "which document is the actual contract" over time, especially once raceway starts reading one of them.
+- Recommend: consolidate into **one** canonical file. My suggestion: keep Codex's as the base (it's the one being built against and has good additions mine lacks — `layer id`/`element id`/style-classification/editability fields, the "Deferred API Decisions" section), and fold in the tiering model + additive-only rule + the two concrete endpoint fixes (CONTRACT1, and the promoted `coordinate_transform` already done) as amendments. Archive or clearly supersede the other.
+- Status: **OPEN**
+- Codex:
+
+## FLAKE1 — Still open after 3+ reviews; recurring, unaddressed
+
+- Severity: **LOW-MEDIUM (erodes trust in the green bar; now a repeat item)**
+- Where: `parser_threads="auto"` still used in two test cases ([tests.py:1577,1606](../../tests.py#L1577)) — real OS threads, non-deterministic timing. Exact-string asset-version assertions (`assertContains(response, "202607...")`) still present (2 instances) — brittle on every UI version bump.
+- Issue: this was flagged in my 2026-07-02 review and hasn't moved. Not urgent individually, but a finding that sits open across four review cycles either needs a fix or an explicit "won't fix, here's why" — silently carrying it forward isn't a decision.
+- Recommend: force `--parser-threads 1` for the auto-threading *behavior* tests (test thread-count *resolution* separately with mocks, no real threads needed); assert a stable marker (the static path) instead of the exact cache-bust string.
+- Status: **OPEN (repeat)**
+- Codex:
+
+### Credit — this pass
+
+- Stage 0 verified solid end-to-end: zero remaining direct `eht` imports outside `project_gateway.py`, `forms.py`'s `ChoiceField` fix holds, migration clean, 73 tests green (up from 63 — real coverage growth, not just features).
+- Per-source JSON endpoint added exactly as requested; `coordinate_transform` correctly promoted to a top-level key in the main package endpoint.
+- The layer registry's internal design (owner/kind tagging, custom visibility hooks) is genuinely thoughtful — better than my own sketch in places.
+- Raceway correctly still gated behind the placement decision; no EHT/raceway persistence crept into `plant3d` core.
+
+### Claude re-review — 2026-07-06 (fix verification)
+
+Re-checked all five findings from the prior pass against real code:
+
+- **CONTRACT1 — CLOSED (verified).** `job_json_view`'s embedded package summary no longer includes `manifest_storage_key`.
+- **LAYER1 — CLOSED (verified).** `window.plant3dViewerLayers` now exposes `register`, `update`, `setVisible`, `isVisible` alongside the read-only helpers — an external module can genuinely hook into the layer registry now.
+- **HYGIENE1 — CLOSED (verified).** `file_storage/error_file/error_file_01.xlsx` removed, `.gitignore` updated.
+- **FLAKE1 — still OPEN.** `parser_threads="auto"` remains in two tests; brittle exact-version assertions remain (2 instances). Fourth review cycle this has appeared unaddressed.
+- **PROCESS1 — still OPEN.** Both same-day contract docs still exist unconsolidated.
+
+Also reviewed this pass's UX/UI work (compact route-node coordinate CSS, node-labels-hidden-by-default + toggle, blue selection tint for EHT drafts/routes) and the new collision/routing engineering stance in the raceway RFC — all verified genuinely implemented as claimed, no issues found. Full findings shared with KR in chat, including a code-traced explanation of the conversion-progress-bar mechanism and its non-uniform behavior.
+
 ## Credit (no action)
 
 - Production protected: idfviewer 23 green, zero `eht` changes, additive INSTALLED_APPS/URL wiring only.

@@ -27,6 +27,12 @@ from .parsers.ifc import (
     configured_ifc_iterator_thread_count,
     extract_ifc_length_unit_stats,
 )
+from .project_gateway import (
+    accessible_project_ids,
+    project_identifier,
+    project_options_for_user,
+    validate_project_id,
+)
 from .services import (
     create_source_model_from_upload,
     extract_ifc_unit_hints,
@@ -171,6 +177,7 @@ class Plant3DModelTests(TestCase):
         source.refresh_from_db()
         self.assertEqual(source.project_id, "P3D-NO-CASCADE")
 
+
     def test_conversion_job_progress_is_validated(self):
         project = create_project()
         source = SourceModel.objects.create(
@@ -260,6 +267,79 @@ class Plant3DModelTests(TestCase):
 
         with self.assertRaises(IntegrityError):
             ModelObject.objects.create(source_model=source, stable_id="ifc-guid-1", object_type="IfcColumn")
+
+
+class Plant3DProjectGatewayTests(TestCase):
+    def test_project_identifier_accepts_project_objects_and_strings(self):
+        project = create_project("P3D-GATEWAY-ID")
+
+        self.assertEqual(project_identifier(project), "P3D-GATEWAY-ID")
+        self.assertEqual(project_identifier(" P3D-GATEWAY-ID "), "P3D-GATEWAY-ID")
+        self.assertEqual(project_identifier(None), "")
+
+    def test_accessible_project_ids_are_empty_for_anonymous_user(self):
+        class AnonymousUser:
+            is_authenticated = False
+
+        self.assertEqual(accessible_project_ids(AnonymousUser()), [])
+
+    def test_project_options_are_scoped_to_user_access(self):
+        user = get_user_model().objects.create_user(username="gateway-user", password="pw")
+        accessible = create_project("P3D-GATEWAY-ACCESS")
+        inaccessible = create_project("P3D-GATEWAY-BLOCKED")
+        assign_project(user, accessible)
+
+        options = project_options_for_user(user)
+
+        self.assertEqual([option.project_id for option in options], [accessible.proj_id])
+        self.assertEqual(options[0].label, str(accessible))
+        self.assertNotIn(inaccessible.proj_id, [option.project_id for option in options])
+
+    def test_validate_project_id_accepts_accessible_proj_id(self):
+        user = get_user_model().objects.create_user(username="gateway-valid-user", password="pw")
+        project = create_project("P3D-GATEWAY-VALID")
+        assign_project(user, project)
+
+        self.assertEqual(validate_project_id(project.proj_id, user), project.proj_id)
+
+    def test_validate_project_id_rejects_inaccessible_project_for_user(self):
+        user = get_user_model().objects.create_user(username="gateway-blocked-user", password="pw")
+        project = create_project("P3D-GATEWAY-INACCESSIBLE")
+
+        self.assertEqual(validate_project_id(project.proj_id, user), "")
+
+    def test_validate_project_id_resolves_legacy_primary_key_input(self):
+        user = get_user_model().objects.create_user(username="gateway-pk-user", password="pw")
+        project = create_project("P3D-GATEWAY-PK")
+        assign_project(user, project)
+
+        self.assertEqual(validate_project_id(str(project.pk), user), project.proj_id)
+
+    def test_validate_project_id_rejects_unknown_project(self):
+        user = get_user_model().objects.create_user(username="gateway-unknown-user", password="pw")
+
+        self.assertEqual(validate_project_id("P3D-GATEWAY-MISSING", user), "")
+
+    def test_eht_model_imports_stay_confined_to_project_gateway(self):
+        root = os.path.dirname(__file__)
+        offenders = []
+        for directory, _dirnames, filenames in os.walk(root):
+            path_parts = set(os.path.relpath(directory, root).split(os.sep))
+            if "__pycache__" in path_parts or "migrations" in path_parts:
+                continue
+            for filename in filenames:
+                if not filename.endswith(".py"):
+                    continue
+                path = os.path.join(directory, filename)
+                rel_path = os.path.relpath(path, root)
+                if rel_path in {"project_gateway.py", "tests.py"}:
+                    continue
+                with open(path, encoding="utf-8") as handle:
+                    content = handle.read()
+                if "from eht.models import" in content or "import eht.models" in content:
+                    offenders.append(rel_path)
+
+        self.assertEqual(offenders, [])
 
 
 class Plant3DIntakeTests(TestCase):
@@ -1618,6 +1698,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("process_plant3d_job --watch", payload["worker_hint"])
         self.assertIn("--parser-threads auto", payload["worker_hint"])
         self.assertEqual(payload["package"]["object_count"], 1)
+        self.assertNotIn("manifest_storage_key", payload["package"])
         self.assertIn("/plant3d/packages/", payload["package"]["viewer_url"])
         self.assertIn("/plant3d/packages/", payload["package"]["json_url"])
         self.assertTrue(payload["timing_summary"])
@@ -1654,6 +1735,9 @@ class Plant3DIntakeTests(TestCase):
         package_payload = package_response.json()
         self.assertEqual(package_payload["object_count"], 1)
         self.assertEqual(package_payload["tile_count"], 1)
+        self.assertNotIn("manifest_storage_key", package_payload)
+        self.assertEqual(package_payload["coordinate_transform"]["origin_source_xyz"], [500000.5, 2800000.5, 100.5])
+        self.assertEqual(package_payload["coordinate_transform"]["rtc_origin_render_xyz"], [500000.5, 100.5, 2800000.5])
         self.assertEqual(len(package_payload["tiles"]), 1)
         self.assertEqual(package_payload["tiles"][0]["rtc_origin"], [500000.5, 100.5, 2800000.5])
         self.assertEqual(len(package_payload["objects"]), 1)
@@ -1708,7 +1792,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(package_response.status_code, 200)
         package_payload = package_response.json()
         self.assertEqual(package_payload["package_format"], "GLB")
-        self.assertEqual(package_payload["manifest_storage_key"], package.manifest_storage_key)
+        self.assertNotIn("manifest_storage_key", package_payload)
+        self.assertEqual(package_payload["coordinate_transform"]["rtc_origin_render_xyz"], package.metadata["rtc_origin_render_xyz"])
         self.assertEqual(package_payload["tileset"]["asset"]["version"], "1.1")
         self.assertEqual(package_payload["tileset"]["root"]["content"]["url"], package_payload["tiles"][0]["blob_url"])
         self.assertEqual(package_payload["tileset"]["root"]["extras"]["metadata_url"], package_payload["tiles"][0]["metadata_url"])
@@ -1873,6 +1958,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "fitSelectionBtn")
         self.assertContains(response, "clearSelectionBtn")
         self.assertContains(response, "measureToggleBtn")
+        self.assertContains(response, "planeDistanceBtn")
         self.assertContains(response, "vertexSnapToggleBtn")
         self.assertContains(response, "scaleToggleBtn")
         self.assertContains(response, "measurementHud")
@@ -1893,6 +1979,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "<summary>Assets</summary>", html=True)
         self.assertContains(response, "Model Hierarchy")
         self.assertContains(response, "Reference Layers")
+        self.assertContains(response, "viewerLayerList")
+        self.assertContains(response, "viewerLayerStatus")
+        self.assertContains(response, "showAllLayersBtn")
+        self.assertContains(response, "hideOverlayLayersBtn")
         self.assertContains(response, "searchFocusBtn")
         self.assertContains(response, "Filter List")
         self.assertNotContains(response, "Check All / Uncheck All")
@@ -1904,7 +1994,50 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "p3d-viewer-toolbar-group")
         self.assertContains(response, "sidepanel-toggle")
         self.assertContains(response, "sidepanel-reopen")
-        self.assertContains(response, "20260703_context1")
+        self.assertContains(response, "20260705_routeui2")
+
+    def test_package_viewer_static_js_exposes_generic_layer_registry(self):
+        script_path = os.path.join(
+            os.path.dirname(__file__),
+            "static",
+            "plant3d",
+            "js",
+            "package_viewer.js",
+        )
+
+        with open(script_path, encoding="utf-8") as script:
+            content = script.read()
+
+        self.assertIn("const viewerLayers = new Map();", content)
+        self.assertIn("function registerViewerLayer", content)
+        self.assertIn("window.plant3dViewerLayers", content)
+        self.assertIn("register: registerViewerLayer", content)
+        self.assertIn("setVisible: setViewerLayerVisible", content)
+        self.assertIn("function setViewerLayerVisible", content)
+        self.assertIn("function renderViewerLayerControls", content)
+        self.assertIn("function showAllViewerLayers", content)
+        self.assertIn("function hideOverlayViewerLayers", content)
+        self.assertIn("function reportPlaneDistanceForSelection", content)
+        self.assertIn("function saveDraftLayerToLocalStorage", content)
+        self.assertIn("function restoreDraftLayerFromLocalStorage", content)
+        self.assertIn("function liveUpdateDraftPositionFromInput", content)
+        self.assertIn("function updateRouteNodeCoordinate", content)
+        self.assertIn("function pointDevicePlacementFromViewerEvent", content)
+        self.assertIn("function focusFromViewerDoubleClick", content)
+        self.assertIn("function nearestConnectableDraftAnchor", content)
+        self.assertIn("function connectionPointForDraftElement", content)
+        self.assertIn("function routeNodeLabel", content)
+        self.assertIn("function refreshRouteNodeLabelVisibility", content)
+        self.assertIn("function routeNodeLabelShouldBeVisible", content)
+        self.assertIn("function setDraftElementSelectedVisual", content)
+        self.assertIn("function clearDraftSelectionVisual", content)
+        self.assertIn("pendingRouteAnchors", content)
+        self.assertIn("p3d-coordinate-row", content)
+        self.assertIn("id: 'eht-draft'", content)
+        self.assertIn("owner: 'eht'", content)
+        self.assertIn("id: 'measurement'", content)
+        self.assertIn("id: 'reference-grid'", content)
+        self.assertIn("id: 'reference-plot-plan'", content)
 
     def test_source_detail_page_wires_conversion_polling_script(self):
         user = get_user_model().objects.create_user(username="plant3d-source-detail-user", password="pw")
@@ -1928,7 +2061,9 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "Queue IFC JSON Debug Conversion")
         self.assertContains(response, 'data-watch-job')
         self.assertContains(response, 'plant3d/js/source_detail.js')
-        self.assertContains(response, "20260702_actions1")
+        self.assertContains(response, "p3d-progress")
+        self.assertContains(response, "Technical source details")
+        self.assertContains(response, "20260705_progress1")
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_source_detail_page_shows_conversion_timing_summary(self, mock_parse):
@@ -1973,6 +2108,27 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(response.status_code, 200)
         names = [row["display_name"] for row in response.json()["sources"]]
         self.assertEqual(names, ["Visible"])
+        self.assertNotIn("storage_key", response.json()["sources"][0])
+
+    def test_source_model_json_returns_single_accessible_source(self):
+        user = get_user_model().objects.create_user(username="plant3d-source-json-user", password="pw")
+        assign_project(user, self.project)
+        self.client.force_login(user)
+        source = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("single.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            display_name="Single Source",
+        )
+
+        response = self.client.get(reverse("plant3d_source_json", args=[source.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["id"], source.pk)
+        self.assertEqual(payload["project_id"], self.project.proj_id)
+        self.assertEqual(payload["display_name"], "Single Source")
+        self.assertIn("/plant3d/sources/", payload["detail_url"])
+        self.assertNotIn("storage_key", payload)
 
     def test_source_detail_blocks_unassigned_project(self):
         user = get_user_model().objects.create_user(username="plant3d-denied-user", password="pw")

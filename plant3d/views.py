@@ -112,6 +112,20 @@ def object_selection_summary(model_object):
     }
 
 
+def package_coordinate_transform(package):
+    metadata = package.metadata if isinstance(package.metadata, dict) else {}
+    transform = metadata.get("coordinate_transform")
+    if isinstance(transform, dict):
+        return transform
+    return {
+        "source_axis_order": metadata.get("source_axis_order") or ["x", "y", "z"],
+        "render_axis_order": metadata.get("render_axis_order") or ["x", "z", "y"],
+        "origin_source_xyz": metadata.get("origin_source_xyz") or metadata.get("raw_origin_source_xyz") or [],
+        "rtc_origin_render_xyz": metadata.get("rtc_origin_render_xyz") or [],
+        "scale_to_m": metadata.get("scale_to_m") or metadata.get("render_coordinate_scale_to_m") or 1,
+    }
+
+
 def platform_home_view(request):
     sources = source_models_for_user(request.user)
     return render(
@@ -191,29 +205,62 @@ def source_delete_view(request, source_id):
     return redirect("plant3d_home")
 
 
+def source_model_payload(source):
+    return {
+        "id": source.pk,
+        "project_id": source.project_id,
+        "display_name": source.display_name,
+        "source_format": source.source_format,
+        "original_filename": source.original_filename,
+        "file_size_bytes": source.file_size_bytes,
+        "content_signature": source.content_signature,
+        "uploaded_by_id": source.uploaded_by_id,
+        "is_saved_case": source.is_saved_case,
+        "saved_at": source.saved_at.isoformat() if source.saved_at else "",
+        "created_at": source.created_at.isoformat() if source.created_at else "",
+        "detail_url": reverse("plant3d_source_detail", args=[source.pk]),
+        "json_url": reverse("plant3d_source_json", args=[source.pk]),
+    }
+
+
 def source_models_json_view(request):
     sources = source_models_for_user(request.user).order_by("-created_at", "-pk")
     return JsonResponse(
         {
             "sources": [
-                {
-                    "id": source.pk,
-                    "project_id": source.project_id,
-                    "display_name": source.display_name,
-                    "source_format": source.source_format,
-                    "original_filename": source.original_filename,
-                    "storage_key": source.storage_key,
-                    "file_size_bytes": source.file_size_bytes,
-                    "content_signature": source.content_signature,
-                    "uploaded_by_id": source.uploaded_by_id,
-                    "is_saved_case": source.is_saved_case,
-                    "saved_at": source.saved_at.isoformat() if source.saved_at else "",
-                    "created_at": source.created_at.isoformat() if source.created_at else "",
-                }
+                source_model_payload(source)
                 for source in sources
             ],
         }
     )
+
+
+def source_model_json_view(request, source_id):
+    source = get_object_or_404(source_models_for_user(request.user), pk=source_id)
+    latest_package = source.render_packages.order_by("-created_at").first()
+    latest_job = source.conversion_jobs.order_by("-created_at").first()
+    payload = source_model_payload(source)
+    payload.update(
+        {
+            "latest_package": {
+                "id": latest_package.pk,
+                "package_format": latest_package.package_format,
+                "tile_count": latest_package.tile_count,
+                "object_count": latest_package.object_count,
+                "byte_size": latest_package.byte_size,
+                "viewer_url": reverse("plant3d_package_viewer", args=[latest_package.pk]),
+                "json_url": reverse("plant3d_package_json", args=[latest_package.pk]),
+            } if latest_package else None,
+            "latest_job": {
+                "id": latest_job.pk,
+                "job_type": latest_job.job_type,
+                "status": latest_job.status,
+                "progress_percent": latest_job.progress_percent,
+                "url": reverse("plant3d_job_json", args=[latest_job.pk]),
+            } if latest_job else None,
+        }
+    )
+    return JsonResponse(payload)
 
 
 @require_http_methods(["POST"])
@@ -300,7 +347,6 @@ def job_json_view(request, job_id):
             "package": {
                 "id": package.pk,
                 "package_format": package.package_format,
-                "manifest_storage_key": package.manifest_storage_key,
                 "tile_count": package.tile_count,
                 "object_count": package.object_count,
                 "byte_size": package.byte_size,
@@ -397,12 +443,12 @@ def package_json_view(request, package_id):
             "source_model_id": package.source_model_id,
             "source_display_name": package.source_model.display_name,
             "package_format": package.package_format,
-            "manifest_storage_key": package.manifest_storage_key,
             "object_count": package.object_count,
             "tile_count": package.tile_count,
             "byte_size": package.byte_size,
             "coordinate_unit": package.coordinate_unit,
             "coordinate_frame": package.coordinate_frame,
+            "coordinate_transform": package_coordinate_transform(package),
             "bounds": package.bounds,
             "metadata": package.metadata,
             "tileset": tileset_payload,

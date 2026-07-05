@@ -222,3 +222,59 @@ This is deliberately the same shell as the plant3d viewer (collapsible panels �
 - **Parametric library:** the combinatorial catalogue stays small and the model stays light — reusing GLB/RTC/feature-ID machinery, not a new engine.
 - **Graph-ready:** the tray network is already the graph the future cable-routing module needs.
 - **UX-first:** route-first authoring + elevation planes + snapping + live feedback is the difference between "another tedious plant tool" and something engineers *want* to use — which is exactly where the commercial value is.
+
+---
+
+## 12. Current Plant3D Readiness Update — 2026-07-05
+
+The viewer now has enough generic authoring primitives to begin the raceway MVP without building a separate render shell:
+
+- Generic overlay/layer controls exist for plant model, measurement, reference grid, plot plan, and consumer draft overlays.
+- EHT draft routes now have editable nodes in the inspector. This is the small prototype for future tray-run node editing: route geometry should update from node coordinates, not from hand-placed physical tray parts.
+- Component placement now has a first surface-normal offset so point devices do not intentionally place their centerline on the clicked structure face. Raceway will need the stronger version: face/elevation-aware mounting with orientation and clearance.
+- Cable routes now have first-pass endpoint anchoring to EHT point devices. This is the same authoring pattern raceway needs later for tray endpoints, tees, and support anchors: an endpoint should resolve to a domain object/anchor, while intermediate bend nodes can remain free route geometry.
+- Plane-distance measurement is available against the current grid/reference plane. Raceway should extend this into explicit working-plane/elevation routing rather than free-3D dragging for every tray node.
+- Draft persistence is still browser-local. Durable EHT/raceway data must be owned by the consumer module or integration app, with `plant3d` supplying anchors, coordinate transforms, and render-package context only.
+
+Near-term raceway sequencing remains:
+
+1. Define the `raceway` app boundary and overlay payload contract.
+2. Implement route-first tray centerline drafting on an elevation plane.
+3. Add a small generic catalogue and live client preview.
+4. Persist route-as-truth in the raceway app, then server-bake a GLB overlay cache using the existing plant3d coordinate/RTC discipline.
+
+---
+
+## 13. Collision And Cable-Routing Engine Gate — 2026-07-05
+
+Manual testing showed that ad hoc "soft stop" behavior is not enough for engineering authoring. Before serious tray/ladder/trench/duct/sleeve tools are built, the platform needs a deliberate collision and routing foundation.
+
+### Collision stance
+
+- Do **not** ship partial hard-stop physics as if it is authoritative. A false stop or missed clash is worse than no stop because users will trust it.
+- Keep the current authoring controls clean and free-moving until a real collision layer exists.
+- Build collision in three levels:
+  1. **Warning only:** selected draft item reports nearest structure penetration / clearance risk in the inspector.
+  2. **Preview constraint:** while dragging or coordinate-editing, show a red/amber state when the next position clashes, but allow override.
+  3. **Hard constraint:** only after component mounting faces, bounding volumes, route sweeps, and override rules are designed and tested.
+- Use simple bounding boxes/spheres only as early UX hints. Production clash checks should move toward BVH-backed mesh or swept-volume tests, especially for cable trays, supports, ducts, trenches, and sleeves.
+
+### Cable route stance
+
+- Cable routing should move from free air-clicking to a source/destination-first workflow:
+  1. Pick source component.
+  2. Pick destination component.
+  3. Suggest a Manhattan route as a dotted preview.
+  4. Let the user edit route nodes inside a reasonable routing envelope.
+- A* or Dijkstra should be introduced as a **suggestion engine**, not an automatic design authority. Early graph nodes can be component anchors, route bends, tray/raceway nodes, and blocked/avoid zones.
+- SR tracer routes should normally auto-place or require an end termination at the final end. Recommended UX: allow route from JB, then auto-create an End Termination at Finish Route if none exists at the destination.
+- Bend handling should start with orthogonal/Manhattan suggestions and bend-radius warnings. Full curved bend geometry should be added after the route-as-truth model has cable diameter and bend-radius metadata.
+
+### Suggested coding order
+
+1. **Viewer UX cleanup:** keep route controls compact; show node labels only while creating or selecting a route; keep coordinates editable but stop growing the inspector as the main long-route editor.
+2. **Source/destination route mode:** user selects source and destination components first, then the route is edited between locked anchors.
+3. **Routing core module:** create a small pure-Python/JS-neutral routing service that can accept anchors, obstacles/avoid zones, orthogonal preference, bend radius metadata, and later raceway graph edges. Keep it independent of Django views and Three.js.
+4. **Manhattan suggestion:** first route suggestion is deterministic orthogonal routing with minimal bends inside a bounding corridor.
+5. **A*/Dijkstra extension:** add only after the routing core shape is stable. Dijkstra is useful on established raceway/tray graphs; A* is useful for geometric/grid routing with heuristic distance. Both should return suggestions with reasons, not silently commit design.
+6. **Collision layer integration:** route suggestions consume collision/clearance results as costs or blocked cells/edges; the collision engine remains separate from route authoring UI.

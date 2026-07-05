@@ -7,6 +7,7 @@ urlpatterns = [
     path("sources/", views.source_models_json_view, name="plant3d_source_models_json"),
     path("sources/upload/", views.source_upload_view, name="plant3d_source_upload"),
     path("sources/<int:source_id>/", views.source_detail_view, name="plant3d_source_detail"),
+    path("sources/<int:source_id>/json/", views.source_model_json_view, name="plant3d_source_json"),
     path("sources/<int:source_id>/save-case/", views.source_save_case_view, name="plant3d_source_save_case"),
     path("sources/<int:source_id>/delete/", views.source_delete_view, name="plant3d_source_delete"),
     path("sources/<int:source_id>/convert-metadata/", views.source_metadata_convert_view, name="plant3d_source_metadata_convert"),

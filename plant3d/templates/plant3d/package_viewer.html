@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260703_context1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260705_routeui2">
 </head>
 <body class="p3d-viewer-body">
   <header class="p3d-topbar p3d-viewer-topbar">
@@ -26,6 +26,7 @@
         <button id="quickFitBtn" type="button" title="Fit model or selection">Fit</button>
       </span>
       <button id="measureToggleBtn" type="button" aria-pressed="false">Measure</button>
+      <button id="planeDistanceBtn" type="button" title="Report selected item distance from the current grid plane">Plane Δ</button>
       <button id="vertexSnapToggleBtn" type="button" aria-pressed="true">Snap Vertex On</button>
       <button id="scaleToggleBtn" type="button" aria-pressed="true">Grid On</button>
       <a class="p3d-button" href="{% url 'plant3d_source_detail' source.pk %}">Back to Source</a>
@@ -130,7 +131,7 @@
             </div>
             <div class="p3d-toolbar" style="margin-top: 10px;">
               <button class="eht-undo-btn" type="button" disabled>Undo</button>
-              <button id="ehtSaveLayerBtn" type="button">Save Draft</button>
+              <button id="ehtSaveLayerBtn" type="button">Save Draft Local</button>
             </div>
           </div>
         </div>
@@ -139,6 +140,12 @@
 
       <details class="panel p3d-viewer-section">
         <summary>Reference Layers</summary>
+        <div class="p3d-toolbar p3d-layer-actions">
+          <button id="showAllLayersBtn" type="button">Show All</button>
+          <button id="hideOverlayLayersBtn" type="button">Hide Overlays</button>
+        </div>
+        <div id="viewerLayerList" class="p3d-layer-list"></div>
+        <p id="viewerLayerStatus" class="p3d-help">Layer visibility is viewer-session only.</p>
         <div class="meta">
           <p><strong>Geometry</strong><br>GLB tile stream</p>
           <p><strong>Metadata</strong><br>Feature-ID sidecars</p>
@@ -265,6 +272,6 @@
       syncWidthLabels();
     })();
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260703_context1"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260705_routeui2"></script>
 </body>
 </html>

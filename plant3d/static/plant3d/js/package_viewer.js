@@ -15,6 +15,7 @@ const scaleToggleBtn = document.getElementById('scaleToggleBtn');
 const scaleHud = document.getElementById('scaleHud');
 const measurementHud = document.getElementById('measurementHud');
 const measurementStatus = document.getElementById('measurementStatus');
+const planeDistanceBtn = document.getElementById('planeDistanceBtn');
 const viewerContextMenu = document.getElementById('viewerContextMenu');
 const metricsEl = document.getElementById('runtimeMetrics');
 const selectionEl = document.getElementById('selectionPanel');
@@ -40,6 +41,10 @@ const plotPlanVisibleToggle = document.getElementById('plotPlanVisibleToggle');
 const plotPlanOpacity = document.getElementById('plotPlanOpacity');
 const plotPlanClearBtn = document.getElementById('plotPlanClearBtn');
 const plotPlanStatus = document.getElementById('plotPlanStatus');
+const viewerLayerList = document.getElementById('viewerLayerList');
+const viewerLayerStatus = document.getElementById('viewerLayerStatus');
+const showAllLayersBtn = document.getElementById('showAllLayersBtn');
+const hideOverlayLayersBtn = document.getElementById('hideOverlayLayersBtn');
 const quickSelectBtn = document.getElementById('quickSelectBtn');
 const quickOrbitBtn = document.getElementById('quickOrbitBtn');
 const quickPanBtn = document.getElementById('quickPanBtn');
@@ -88,6 +93,107 @@ scene.add(keyLight);
 
 const root = new THREE.Group();
 scene.add(root);
+
+const viewerLayers = new Map();
+
+function registerViewerLayer(config) {
+  const layer = {
+    id: config.id,
+    owner: config.owner || 'plant3d',
+    kind: config.kind || 'overlay',
+    label: config.label || config.id,
+    group: config.group || null,
+    getObjects: config.getObjects || (() => (config.group ? [config.group] : [])),
+    getElements: config.getElements || (() => []),
+    setVisible: config.setVisible || null,
+    hiddenInControls: Boolean(config.hiddenInControls),
+    visible: config.visible !== false,
+  };
+  viewerLayers.set(layer.id, layer);
+  if (layer.group) layer.group.userData.plant3dLayerId = layer.id;
+  return layer;
+}
+
+function updateViewerLayer(id, patch) {
+  const layer = viewerLayers.get(id);
+  if (!layer) return null;
+  Object.assign(layer, patch);
+  return layer;
+}
+
+function isViewerLayerVisible(layer) {
+  if (!layer) return false;
+  if (typeof layer.isVisible === 'function') return Boolean(layer.isVisible());
+  if (layer.group) return Boolean(layer.group.visible);
+  const objects = layer.getObjects?.() || [];
+  if (objects.length) return objects.some(object => object?.visible !== false);
+  return Boolean(layer.visible);
+}
+
+function isViewerLayerIdVisible(id) {
+  return isViewerLayerVisible(viewerLayers.get(id));
+}
+
+function syncViewerLayerVisibility(id, visible) {
+  const layer = viewerLayers.get(id);
+  if (layer) layer.visible = Boolean(visible);
+}
+
+function setViewerLayerVisible(id, visible, { renderControls = true } = {}) {
+  const layer = viewerLayers.get(id);
+  if (!layer) return;
+  const nextVisible = Boolean(visible);
+  layer.visible = nextVisible;
+  if (typeof layer.setVisible === 'function') {
+    layer.setVisible(nextVisible);
+  } else if (layer.group) {
+    layer.group.visible = nextVisible;
+  } else {
+    (layer.getObjects?.() || []).forEach(object => {
+      if (object) object.visible = nextVisible;
+    });
+  }
+  if (!nextVisible && id === 'measurement') {
+    measureModeActive = false;
+    if (measureToggleBtn) {
+      measureToggleBtn.textContent = 'Measure';
+      measureToggleBtn.setAttribute('aria-pressed', 'false');
+      measureToggleBtn.classList.remove('p3d-button-primary');
+    }
+    renderer.domElement.style.cursor = navigationMode === 'pan' ? 'grab' : '';
+  }
+  if (!nextVisible && id === 'eht-draft') {
+    setActiveEhtTool('');
+    movingDraftId = '';
+  }
+  if (renderControls) renderViewerLayerControls();
+}
+
+function viewerLayerSummary() {
+  return Array.from(viewerLayers.values()).map(layer => {
+    const objects = layer.getObjects?.() || [];
+    const elements = layer.getElements?.() || [];
+    return {
+      id: layer.id,
+      owner: layer.owner,
+      kind: layer.kind,
+      label: layer.label,
+      visible: isViewerLayerVisible(layer),
+      objectCount: objects.filter(Boolean).length,
+      elementCount: elements.filter(Boolean).length,
+    };
+  });
+}
+
+window.plant3dViewerLayers = {
+  summary: viewerLayerSummary,
+  ids: () => Array.from(viewerLayers.keys()),
+  register: registerViewerLayer,
+  update: updateViewerLayer,
+  setVisible: setViewerLayerVisible,
+  isVisible: isViewerLayerIdVisible,
+};
+
 const ehtDraftGroup = new THREE.Group();
 scene.add(ehtDraftGroup);
 const pendingRouteGroup = new THREE.Group();
@@ -101,6 +207,74 @@ gridHelper.material.transparent = true;
 scene.add(gridHelper);
 let axesHelper = new THREE.AxesHelper(5);
 scene.add(axesHelper);
+
+registerViewerLayer({
+  id: 'model',
+  owner: 'plant3d',
+  kind: 'model',
+  label: 'Plant model',
+  group: root,
+  getObjects: () => selectableMeshes,
+  setVisible: visible => {
+    root.visible = Boolean(visible);
+    if (!visible && Number.isFinite(selectedGlbFeatureId)) {
+      clearSelection({ keepDraft: true });
+      if (selectionEl) selectionEl.textContent = 'Model layer hidden.';
+    }
+  },
+});
+registerViewerLayer({
+  id: 'measurement',
+  owner: 'plant3d',
+  kind: 'tool-overlay',
+  label: 'Measurement',
+  group: measurementGroup,
+  getElements: () => measurementPoints,
+});
+registerViewerLayer({
+  id: 'reference-grid',
+  owner: 'plant3d',
+  kind: 'reference',
+  label: 'Grid and axes',
+  getObjects: () => [gridHelper, axesHelper].filter(Boolean),
+  setVisible: visible => setGridScaleVisible(visible, { syncLayer: false, renderControls: false }),
+});
+registerViewerLayer({
+  id: 'reference-plot-plan',
+  owner: 'plant3d',
+  kind: 'reference',
+  label: '2D plot plan',
+  getObjects: () => plotPlanMesh ? [plotPlanMesh] : [],
+  setVisible: visible => {
+    if (plotPlanVisibleToggle) plotPlanVisibleToggle.checked = Boolean(visible);
+    updatePlotPlanVisibility({ syncLayer: false, renderControls: false });
+  },
+});
+registerViewerLayer({
+  id: 'eht-draft',
+  owner: 'eht',
+  kind: 'consumer-draft-overlay',
+  label: 'EHT draft tools',
+  group: ehtDraftGroup,
+  getElements: () => ehtDraftElements,
+  setVisible: visible => {
+    ehtDraftGroup.visible = Boolean(visible);
+    applyDraftVisibility();
+    if (!visible && selectedDraftElement()) {
+      clearSelection();
+      if (selectionEl) selectionEl.textContent = 'EHT draft layer hidden.';
+    }
+  },
+});
+registerViewerLayer({
+  id: 'eht-route-preview',
+  owner: 'eht',
+  kind: 'consumer-draft-preview',
+  label: 'EHT route preview',
+  group: pendingRouteGroup,
+  getElements: () => pendingRoutePoints,
+  hiddenInControls: true,
+});
 
 let packageBounds = new THREE.Box3();
 let objectIndex = new Map();
@@ -117,6 +291,7 @@ let selectedGlbFeatureId = null;
 let hierarchySelectedObjectId = null;
 let activeEhtTool = '';
 let pendingRoutePoints = [];
+let pendingRouteAnchors = [];
 let ehtDraftElements = [];
 let selectedDraftId = '';
 let movingDraftId = '';
@@ -126,6 +301,8 @@ let vertexSnapEnabled = true;
 let navigationMode = 'orbit';
 let measurementPoints = [];
 let measurementLine = null;
+let pointerDownState = null;
+let suppressNextViewerClick = false;
 let currentGridLayout = { size: 20, step: 1, divisions: 20 };
 let plotPlanMesh = null;
 let plotPlanObjectUrl = '';
@@ -243,6 +420,79 @@ function escapeHtml(value) {
 function kvRow(label, value) {
   if (value === null || value === undefined || value === '') return '';
   return `<p class="kv"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></p>`;
+}
+
+function layerCountText(layer) {
+  const elementCount = (layer.getElements?.() || []).filter(Boolean).length;
+  const objectCount = (layer.getObjects?.() || []).filter(Boolean).length;
+  if (elementCount) return `${elementCount}`;
+  if (objectCount) return `${objectCount}`;
+  return '';
+}
+
+function hiddenStateSummary() {
+  const hiddenLayers = Array.from(viewerLayers.values())
+    .filter(layer => !layer.hiddenInControls && !isViewerLayerVisible(layer));
+  const parts = [];
+  if (hiddenLayers.length) parts.push(`${hiddenLayers.length} layer${hiddenLayers.length === 1 ? '' : 's'} off`);
+  if (hiddenGlbFeatureIds.size) parts.push(`${hiddenGlbFeatureIds.size} model hidden`);
+  const hiddenDraftCount = ehtDraftElements.filter(element => !isDraftElementVisible(element)).length;
+  if (hiddenDraftCount) parts.push(`${hiddenDraftCount} EHT hidden`);
+  return parts;
+}
+
+function updateViewerLayerStatus(message = '') {
+  if (!viewerLayerStatus) return;
+  const hiddenParts = hiddenStateSummary();
+  const badges = hiddenParts.map(part => `<span class="p3d-state-badge p3d-state-warning">${escapeHtml(part)}</span>`).join('');
+  const base = message || 'Layer visibility is viewer-session only.';
+  viewerLayerStatus.innerHTML = `${badges}${badges ? '<br>' : ''}${escapeHtml(base)}`;
+}
+
+function renderViewerLayerControls() {
+  if (!viewerLayerList) return;
+  const layers = Array.from(viewerLayers.values()).filter(layer => !layer.hiddenInControls);
+  viewerLayerList.innerHTML = layers.map(layer => `
+    <label class="p3d-layer-row ${isViewerLayerVisible(layer) ? '' : 'p3d-layer-off'}" data-layer-id="${escapeHtml(layer.id)}">
+      <input type="checkbox" class="viewer-layer-toggle" data-layer-id="${escapeHtml(layer.id)}" ${isViewerLayerVisible(layer) ? 'checked' : ''}>
+      <span>
+        <span class="p3d-layer-name">${escapeHtml(layer.label)}</span>
+        <span class="p3d-layer-meta">${escapeHtml(layer.owner)} / ${escapeHtml(layer.kind)}</span>
+      </span>
+      <span class="p3d-layer-count">${escapeHtml(layerCountText(layer))}</span>
+    </label>
+  `).join('');
+  viewerLayerList.querySelectorAll('.viewer-layer-toggle').forEach(toggle => {
+    toggle.addEventListener('change', () => {
+      setViewerLayerVisible(toggle.dataset.layerId, toggle.checked);
+      updateViewerLayerStatus();
+    });
+  });
+  updateViewerLayerStatus();
+}
+
+function showAllViewerLayers() {
+  Array.from(viewerLayers.values())
+    .filter(layer => !layer.hiddenInControls)
+    .forEach(layer => setViewerLayerVisible(layer.id, true, { renderControls: false }));
+  hiddenGlbFeatureIds.clear();
+  hiddenEhtDraftIds.clear();
+  hiddenEhtTypes.clear();
+  refreshFeatureVisibilityMasks();
+  applyDraftVisibility();
+  renderDraftList();
+  renderViewerLayerControls();
+  updateViewerLayerStatus('All viewer layers and hidden session items are visible.');
+  setStatus('All viewer layers and hidden session items are visible.');
+}
+
+function hideOverlayViewerLayers() {
+  Array.from(viewerLayers.values())
+    .filter(layer => !layer.hiddenInControls && layer.id !== 'model')
+    .forEach(layer => setViewerLayerVisible(layer.id, false, { renderControls: false }));
+  renderViewerLayerControls();
+  updateViewerLayerStatus('Overlays hidden. Plant model remains visible.');
+  setStatus('Overlays hidden. Plant model remains visible.');
 }
 
 function formatDimension(value) {
@@ -529,6 +779,7 @@ function setActiveEhtTool(tool) {
   activeEhtTool = tool || '';
   if (activeEhtTool && measureModeActive) setMeasureMode(false);
   if (activeEhtTool) movingDraftId = '';
+  if (activeEhtTool) setViewerLayerVisible('eht-draft', true, { renderControls: false });
   document.querySelectorAll('.eht-tool-btn').forEach(button => {
     button.classList.toggle('p3d-tool-active', button.dataset.ehtTool === activeEhtTool);
   });
@@ -540,6 +791,7 @@ function setActiveEhtTool(tool) {
     ehtRouteControls.classList.toggle('p3d-hidden', !def || def.kind !== 'route');
   }
   pendingRoutePoints = [];
+  pendingRouteAnchors = [];
   clearPendingRoutePreview();
   setEhtStatus(def ? `${def.label}: click the model to place ${def.kind === 'route' ? 'route points' : 'an element'}.` : 'Select a tool, then click the model.');
 }
@@ -550,6 +802,64 @@ function updateUndoState() {
 
 function selectedDraftElement() {
   return selectedDraftId ? ehtDraftElements.find(element => element.id === selectedDraftId) || null : null;
+}
+
+function isConnectableDraftElement(element) {
+  return element?.kind === 'point' && !['pipe_strap'].includes(element.type);
+}
+
+function connectionPointForDraftElement(element, targetPoint = null) {
+  if (!element?.object3d) return null;
+  const bounds = new THREE.Box3().setFromObject(element.object3d);
+  if (bounds.isEmpty()) return element.object3d.position.clone();
+  const center = new THREE.Vector3();
+  bounds.getCenter(center);
+  if (!targetPoint) return center;
+  const candidates = [];
+  const addCandidate = (point, label) => candidates.push({ point, label });
+  const clampedX = THREE.MathUtils.clamp(targetPoint.x, bounds.min.x, bounds.max.x);
+  const clampedY = THREE.MathUtils.clamp(targetPoint.y, bounds.min.y, bounds.max.y);
+  const clampedZ = THREE.MathUtils.clamp(targetPoint.z, bounds.min.z, bounds.max.z);
+  if (['distribution_board', 'isolator'].includes(element.type)) {
+    addCandidate(new THREE.Vector3(clampedX, bounds.min.y, center.z), 'bottom');
+    addCandidate(new THREE.Vector3(clampedX, bounds.max.y, center.z), 'top');
+  } else if (element.type === 'junction_box') {
+    addCandidate(new THREE.Vector3(bounds.min.x, clampedY, center.z), 'left');
+    addCandidate(new THREE.Vector3(bounds.max.x, clampedY, center.z), 'right');
+    addCandidate(new THREE.Vector3(clampedX, bounds.min.y, center.z), 'bottom');
+    addCandidate(new THREE.Vector3(clampedX, bounds.max.y, center.z), 'top');
+  } else {
+    addCandidate(center, 'center');
+  }
+  candidates.sort((a, b) => a.point.distanceToSquared(targetPoint) - b.point.distanceToSquared(targetPoint));
+  const best = candidates[0] || { point: center, label: 'center' };
+  return { point: best.point, label: best.label };
+}
+
+function nearestConnectableDraftAnchor(point) {
+  const candidates = ehtDraftElements
+    .filter(isConnectableDraftElement)
+    .filter(isDraftElementVisible)
+    .map(element => {
+      const connection = connectionPointForDraftElement(element, point);
+      const connectionPoint = connection?.point || element.object3d.position.clone();
+      return {
+        element,
+        point: connectionPoint,
+        entryFace: connection?.label || 'center',
+        distance: connectionPoint.distanceTo(point),
+      };
+    })
+    .sort((a, b) => a.distance - b.distance);
+  const best = candidates[0] || null;
+  if (!best) return null;
+  const threshold = Math.max(worldUnitsForScreenPixels(point, 34, 0.25, 1.5), 0.35);
+  return best.distance <= threshold ? best : null;
+}
+
+function draftAnchorLabel(anchor) {
+  if (!anchor?.element) return '';
+  return `${draftLabel(anchor.element)} ${anchor.entryFace || ''}`.trim();
 }
 
 function draftDefaults(type, sequence) {
@@ -595,6 +905,56 @@ function draftPositionText(element) {
   return point.map(value => formatDimension(value)).join(', ');
 }
 
+function draftOriginVector(element) {
+  if (Array.isArray(element?.points?.[0])) return new THREE.Vector3(...element.points[0]);
+  if (element?.object3d) return element.object3d.position.clone();
+  return new THREE.Vector3();
+}
+
+function coordinateInputHtml(axis, name, value, extraAttrs = '') {
+  return `
+    <label class="p3d-coordinate-axis">
+      <span>${escapeHtml(axis.toUpperCase())}</span>
+      <input name="${escapeHtml(name)}" type="number" step="0.01" value="${escapeHtml(formatDimension(value))}" ${extraAttrs}>
+    </label>
+  `;
+}
+
+function coordinateRowHtml(label, controlsHtml) {
+  return `
+    <div class="p3d-coordinate-row">
+      <span class="p3d-coordinate-label">${escapeHtml(label)}</span>
+      <div class="p3d-coordinate-controls">${controlsHtml}</div>
+    </div>
+  `;
+}
+
+function draftPositionRows(element) {
+  if (element?.kind === 'route') {
+    return (element.points || []).map((point, index) => {
+      const vector = Array.isArray(point) ? new THREE.Vector3(...point) : new THREE.Vector3();
+      const controls = [
+        coordinateInputHtml('x', `route_node_${index}_x`, vector.x, `data-route-node-index="${index}" data-route-node-axis="x"`),
+        coordinateInputHtml('y', `route_node_${index}_y`, vector.y, `data-route-node-index="${index}" data-route-node-axis="y"`),
+        coordinateInputHtml('z', `route_node_${index}_z`, vector.z, `data-route-node-index="${index}" data-route-node-axis="z"`),
+      ].join('');
+      return `
+        <fieldset class="p3d-route-node-fieldset">
+          <legend>N${index + 1}</legend>
+          ${coordinateRowHtml('XYZ', controls)}
+        </fieldset>
+      `;
+    }).join('');
+  }
+  const origin = draftOriginVector(element);
+  const controls = [
+    coordinateInputHtml('x', 'position_x', origin.x),
+    coordinateInputHtml('y', 'position_y', origin.y),
+    coordinateInputHtml('z', 'position_z', origin.z),
+  ].join('');
+  return coordinateRowHtml('Position', controls);
+}
+
 function draftLength(element) {
   if (!Array.isArray(element.points) || element.points.length < 2) return 0;
   let total = 0;
@@ -604,6 +964,76 @@ function draftLength(element) {
     total += previous.distanceTo(current);
   }
   return total;
+}
+
+function selectedItemBounds() {
+  const draftElement = selectedDraftElement();
+  if (isViewerLayerIdVisible('eht-draft') && draftElement?.object3d) {
+    return new THREE.Box3().setFromObject(draftElement.object3d);
+  }
+  if (isViewerLayerIdVisible('model') && selectedHighlight) {
+    return new THREE.Box3().setFromObject(selectedHighlight);
+  }
+  return null;
+}
+
+function planeDistanceSummary(bounds = selectedItemBounds()) {
+  if (!bounds || bounds.isEmpty() || !gridHelper) return null;
+  const planeY = Number(gridHelper.position.y || 0);
+  const bottom = bounds.min.y - planeY;
+  const top = bounds.max.y - planeY;
+  const center = ((bounds.min.y + bounds.max.y) / 2) - planeY;
+  return { planeY, bottom, top, center };
+}
+
+function planeDistanceHtml(bounds = selectedItemBounds()) {
+  const summary = planeDistanceSummary(bounds);
+  if (!summary) return '';
+  return [
+    kvRow('Plane Δ bottom', formatSceneLength(summary.bottom)),
+    kvRow('Plane Δ top', formatSceneLength(summary.top)),
+    kvRow('Plane Δ center', formatSceneLength(summary.center)),
+  ].join('');
+}
+
+function reportPlaneDistanceForSelection() {
+  const summary = planeDistanceSummary();
+  if (!summary) {
+    setMeasurementHudVisible(true);
+    setMeasurementStatus('Select a model object or EHT draft item first.');
+    return false;
+  }
+  setMeasurementHudVisible(true);
+  setMeasurementStatus(
+    `Grid plane EL ${formatSceneLength(summary.planeY)} | bottom ${formatSceneLength(summary.bottom)}, top ${formatSceneLength(summary.top)}, center ${formatSceneLength(summary.center)}.`,
+  );
+  return true;
+}
+
+function rememberPointerDown(event) {
+  pointerDownState = {
+    x: event.clientX,
+    y: event.clientY,
+  };
+  suppressNextViewerClick = false;
+}
+
+function trackPointerMove(event) {
+  if (!pointerDownState) return;
+  const dx = event.clientX - pointerDownState.x;
+  const dy = event.clientY - pointerDownState.y;
+  if ((dx * dx) + (dy * dy) > 36) suppressNextViewerClick = true;
+}
+
+function forgetPointerDown() {
+  pointerDownState = null;
+}
+
+function shouldIgnoreToolPlacementClick() {
+  if (!suppressNextViewerClick && !isInteracting) return false;
+  suppressNextViewerClick = false;
+  setEhtStatus('Navigation gesture ignored for placement. Click without dragging to place the selected tool.');
+  return true;
 }
 
 function applyPointDimensions(element) {
@@ -620,19 +1050,116 @@ function applyPointDimensions(element) {
 function rebuildRouteGeometry(element) {
   if (!element || element.kind !== 'route' || !element.object3d) return;
   replaceRouteVisualChildren(element.object3d, (element.points || []).map(point => new THREE.Vector3(...point)), ehtDef(element.type), false, element.type);
+  if (selectedDraftId === element.id) setDraftElementSelectedVisual(element, true);
+}
+
+function setDraftElementOrigin(element, point) {
+  if (!element || !point) return;
+  const nextPoint = point.clone();
+  if (element.kind === 'point') {
+    element.object3d.position.copy(nextPoint);
+    element.points = [nextPoint.toArray()];
+  } else if (element.kind === 'route' && element.points.length) {
+    const first = new THREE.Vector3(...element.points[0]);
+    const delta = nextPoint.sub(first);
+    element.points = element.points.map(existing => new THREE.Vector3(...existing).add(delta).toArray());
+    rebuildRouteGeometry(element);
+  }
+}
+
+function rememberDraftMaterialState(material) {
+  if (!material || material.userData?.draftOriginalMaterial) return;
+  material.userData = {
+    ...(material.userData || {}),
+    draftOriginalMaterial: {
+      color: material.color?.getHex?.(),
+      emissive: material.emissive?.getHex?.(),
+      opacity: material.opacity,
+      transparent: material.transparent,
+    },
+  };
+}
+
+function setDraftElementSelectedVisual(element, selected) {
+  if (!element?.object3d) return;
+  element.object3d.traverse(node => {
+    if (!node.isMesh || node.isSprite || node.userData?.routeNodeLabel) return;
+    const materials = Array.isArray(node.material) ? node.material : [node.material];
+    materials.filter(Boolean).forEach(material => {
+      rememberDraftMaterialState(material);
+      const original = material.userData?.draftOriginalMaterial || {};
+      if (selected) {
+        material.color?.set?.(0x2563eb);
+        material.emissive?.set?.(0x1d4ed8);
+        if (material.emissiveIntensity !== undefined) material.emissiveIntensity = 0.25;
+      } else {
+        if (original.color !== undefined) material.color?.setHex?.(original.color);
+        if (original.emissive !== undefined) material.emissive?.setHex?.(original.emissive);
+        if (material.emissiveIntensity !== undefined) material.emissiveIntensity = 0;
+        if (original.opacity !== undefined) material.opacity = original.opacity;
+        if (original.transparent !== undefined) material.transparent = original.transparent;
+      }
+      material.needsUpdate = true;
+    });
+  });
+}
+
+function clearDraftSelectionVisual() {
+  const current = selectedDraftElement();
+  if (current) setDraftElementSelectedVisual(current, false);
+}
+
+function updateRouteNodeCoordinate(element, index, axis, value) {
+  if (!element || element.kind !== 'route') return false;
+  const point = element.points?.[index];
+  const nextValue = Number(value);
+  if (!Array.isArray(point) || !Number.isFinite(nextValue)) return false;
+  const axisIndex = { x: 0, y: 1, z: 2 }[axis];
+  if (axisIndex === undefined) return false;
+  point[axisIndex] = nextValue;
+  rebuildRouteGeometry(element);
+  return true;
+}
+
+function liveUpdateDraftPositionFromInput(input) {
+  const form = input?.form;
+  const element = ehtDraftElements.find(item => item.id === form?.dataset?.draftId);
+  if (!element) return;
+  if (input.dataset.routeNodeIndex !== undefined) {
+    const updated = updateRouteNodeCoordinate(
+      element,
+      Number(input.dataset.routeNodeIndex),
+      input.dataset.routeNodeAxis,
+      input.value,
+    );
+    if (updated) setEhtStatus(`${draftLabel(element)} route node updated. Save Draft Local to retain after refresh.`);
+  } else {
+    const x = Number(form.elements.position_x?.value);
+    const y = Number(form.elements.position_y?.value);
+    const z = Number(form.elements.position_z?.value);
+    if ([x, y, z].every(Number.isFinite)) {
+      setDraftElementOrigin(element, new THREE.Vector3(x, y, z));
+      setEhtStatus(`${draftLabel(element)} position updated. Save Draft Local to retain after refresh.`);
+    }
+  }
+  renderDraftList();
+  renderViewerLayerControls();
 }
 
 function selectDraftElement(element, { frame = false } = {}) {
   if (!element) return;
+  clearDraftSelectionVisual();
   clearSelection({ keepDraft: true });
   selectedDraftId = element.id;
   movingDraftId = movingDraftId === element.id ? movingDraftId : '';
+  setDraftElementSelectedVisual(element, true);
   setSelectionActionsEnabled(true);
   renderDraftSelectionPanel(element);
   if (frame) {
     const bounds = new THREE.Box3().setFromObject(element.object3d);
     frameBounds(bounds);
   }
+  refreshRouteNodeLabelVisibility();
   renderDraftList();
 }
 
@@ -647,7 +1174,9 @@ function renderDraftSelectionPanel(element = selectedDraftElement()) {
     kvRow('Visibility', isDraftElementVisible(element) ? 'Visible' : 'Hidden'),
     kvRow('Points', element.points.length),
     element.kind === 'route' ? kvRow('Route Length', `${formatDimension(draftLength(element))} m`) : kvRow('Position', draftPositionText(element)),
+    planeDistanceHtml(new THREE.Box3().setFromObject(element.object3d)),
     `<form id="ehtParameterForm" class="p3d-form" data-draft-id="${escapeHtml(element.id)}">`,
+    draftPositionRows(element),
     draftParameterRows(element),
     '<div class="p3d-toolbar p3d-form-actions">',
     '<button type="submit" class="p3d-button-primary">Apply Parameters</button>',
@@ -662,6 +1191,12 @@ function renderDraftSelectionPanel(element = selectedDraftElement()) {
 function updateDraftParametersFromForm(form) {
   const element = ehtDraftElements.find(item => item.id === form?.dataset?.draftId);
   if (!element) return;
+  const x = Number(form.elements.position_x?.value);
+  const y = Number(form.elements.position_y?.value);
+  const z = Number(form.elements.position_z?.value);
+  if ([x, y, z].every(Number.isFinite)) {
+    setDraftElementOrigin(element, new THREE.Vector3(x, y, z));
+  }
   const next = { ...(element.parameters || {}) };
   for (const field of DRAFT_PARAMETER_FIELDS) {
     const input = form.elements[field.key];
@@ -700,6 +1235,7 @@ function setDraftElementHidden(element, hidden) {
   }
   applyDraftVisibility();
   renderDraftList();
+  renderViewerLayerControls();
 }
 
 function toggleSelectedDraftVisibility() {
@@ -724,6 +1260,7 @@ function hideSelectedGlbFeature() {
     ].join('');
   }
   setStatus(`${hiddenGlbFeatureIds.size} model object${hiddenGlbFeatureIds.size === 1 ? '' : 's'} hidden in this viewer session.`);
+  renderViewerLayerControls();
 }
 
 function unhideAllGlbFeatures() {
@@ -732,6 +1269,7 @@ function unhideAllGlbFeatures() {
   refreshFeatureVisibilityMasks();
   if (selectionEl) selectionEl.textContent = 'All hidden model objects are visible again.';
   setStatus('All hidden model objects are visible again.');
+  renderViewerLayerControls();
 }
 
 function hasHiddenDraftElements() {
@@ -754,6 +1292,7 @@ function unhideAllViewerItems() {
   if (hadModelHidden || hadDraftHidden) {
     if (selectionEl) selectionEl.textContent = 'All hidden viewer items are visible again.';
     setStatus('All hidden viewer items are visible again.');
+    renderViewerLayerControls();
   }
 }
 
@@ -772,16 +1311,7 @@ function toggleModelVisibilityShortcut() {
 
 function moveDraftElementTo(element, point) {
   if (!element || !point) return;
-  const nextPoint = point.clone();
-  if (element.kind === 'point') {
-    element.object3d.position.copy(nextPoint);
-    element.points = [nextPoint.toArray()];
-  } else if (element.kind === 'route' && element.points.length) {
-    const first = new THREE.Vector3(...element.points[0]);
-    const delta = nextPoint.sub(first);
-    element.points = element.points.map(existing => new THREE.Vector3(...existing).add(delta).toArray());
-    rebuildRouteGeometry(element);
-  }
+  setDraftElementOrigin(element, point);
   movingDraftId = '';
   selectDraftElement(element);
   setEhtStatus(`${draftLabel(element)} moved. Draft is not persisted yet.`);
@@ -799,6 +1329,7 @@ function draftElementFromObject(object) {
 }
 
 function pickDraftElement() {
+  if (!isViewerLayerIdVisible('eht-draft')) return null;
   const draftObjects = ehtDraftElements
     .filter(isDraftElementVisible)
     .map(element => element.object3d)
@@ -816,7 +1347,7 @@ function setScaleHud(text) {
   if (scaleHud) scaleHud.textContent = text;
 }
 
-function setGridScaleVisible(visible) {
+function setGridScaleVisible(visible, { syncLayer = true, renderControls = true } = {}) {
   showGridScale = Boolean(visible);
   if (gridHelper) gridHelper.visible = showGridScale;
   if (axesHelper) axesHelper.visible = showGridScale;
@@ -826,6 +1357,8 @@ function setGridScaleVisible(visible) {
     scaleToggleBtn.setAttribute('aria-pressed', showGridScale ? 'true' : 'false');
     scaleToggleBtn.classList.toggle('p3d-button-primary', showGridScale);
   }
+  if (syncLayer) syncViewerLayerVisibility('reference-grid', showGridScale);
+  if (renderControls) renderViewerLayerControls();
 }
 
 function disposeSceneHelper(helper) {
@@ -874,13 +1407,15 @@ function plotPlanOpacityValue() {
   return Number.isFinite(opacity) ? THREE.MathUtils.clamp(opacity, 0.1, 1) : 0.45;
 }
 
-function updatePlotPlanVisibility() {
-  if (!plotPlanMesh) return;
-  plotPlanMesh.visible = Boolean(plotPlanVisibleToggle?.checked ?? true);
-  if (plotPlanMesh.material) {
+function updatePlotPlanVisibility({ syncLayer = true, renderControls = true } = {}) {
+  const visible = Boolean(plotPlanVisibleToggle?.checked ?? true);
+  if (plotPlanMesh) plotPlanMesh.visible = visible;
+  if (plotPlanMesh?.material) {
     plotPlanMesh.material.opacity = plotPlanOpacityValue();
     plotPlanMesh.material.needsUpdate = true;
   }
+  if (syncLayer) syncViewerLayerVisibility('reference-plot-plan', visible);
+  if (renderControls) renderViewerLayerControls();
 }
 
 function updatePlotPlanPlacement() {
@@ -911,6 +1446,8 @@ function clearPlotPlan() {
     plotPlanObjectUrl = '';
   }
   if (plotPlanInput) plotPlanInput.value = '';
+  syncViewerLayerVisibility('reference-plot-plan', false);
+  renderViewerLayerControls();
   setPlotPlanStatus('Local image only; not saved yet.');
 }
 
@@ -997,8 +1534,8 @@ function nearestFaceVertex(hit) {
 
 function selectedMeasurementSnapObjects() {
   const draftElement = selectedDraftElement();
-  if (draftElement?.object3d) return [draftElement.object3d];
-  if (selectedHighlight) return [selectedHighlight];
+  if (isViewerLayerIdVisible('eht-draft') && draftElement?.object3d) return [draftElement.object3d];
+  if (isViewerLayerIdVisible('model') && selectedHighlight) return [selectedHighlight];
   return [];
 }
 
@@ -1021,7 +1558,8 @@ function measurementPointFromViewerEvent(event) {
       return null;
     }
   }
-  const hit = firstVisibleGlbHit(selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : []);
+  const canPickModel = isViewerLayerIdVisible('model') && selectableMeshes.length;
+  const hit = firstVisibleGlbHit(canPickModel ? raycaster.intersectObjects(selectableMeshes, false) : []);
   if (hit) return hit.point.clone();
   return pointFromViewerEvent(event);
 }
@@ -1051,6 +1589,8 @@ function updateMeasurementGraphicScale(object) {
 
 function updateMeasurementGraphicsScale() {
   measurementGroup.children.forEach(updateMeasurementGraphicScale);
+  ehtDraftGroup.traverse(updateMeasurementGraphicScale);
+  pendingRouteGroup.traverse(updateMeasurementGraphicScale);
 }
 
 function createMeasurementMarker(point) {
@@ -1073,24 +1613,24 @@ function createMeasurementLine(start, end) {
   measurementLine = line;
 }
 
-function createMeasurementLabel(text, position) {
+function createCanvasLabelSprite(text, position, options = {}) {
   const canvas = document.createElement('canvas');
   const context = canvas.getContext('2d');
-  if (!context) return;
-  const fontSize = 22;
-  const paddingX = 12;
-  const paddingY = 6;
+  if (!context) return null;
+  const fontSize = options.fontSize || 22;
+  const paddingX = options.paddingX || 12;
+  const paddingY = options.paddingY || 6;
   context.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
-  canvas.width = Math.max(Math.ceil(context.measureText(text).width + paddingX * 2), 90);
+  canvas.width = Math.max(Math.ceil(context.measureText(text).width + paddingX * 2), options.minWidth || 90);
   canvas.height = fontSize + paddingY * 2;
   context.font = `700 ${fontSize}px Inter, Arial, sans-serif`;
   context.textBaseline = 'middle';
-  context.fillStyle = 'rgba(255, 247, 237, 0.92)';
-  context.strokeStyle = 'rgba(249, 115, 22, 0.45)';
+  context.fillStyle = options.fillStyle || 'rgba(255, 247, 237, 0.92)';
+  context.strokeStyle = options.strokeStyle || 'rgba(249, 115, 22, 0.45)';
   context.lineWidth = 2;
   context.fillRect(1, 1, canvas.width - 2, canvas.height - 2);
   context.strokeRect(1, 1, canvas.width - 2, canvas.height - 2);
-  context.fillStyle = '#9a3412';
+  context.fillStyle = options.textStyle || '#9a3412';
   context.fillText(text, paddingX, canvas.height / 2);
   const texture = new THREE.CanvasTexture(canvas);
   const material = new THREE.SpriteMaterial({
@@ -1102,10 +1642,21 @@ function createMeasurementLabel(text, position) {
   const sprite = new THREE.Sprite(material);
   const aspect = canvas.width / canvas.height;
   sprite.position.copy(position);
-  sprite.userData.screenScale = { kind: 'sprite', pixels: 28, min: 0.12, max: 0.65, aspect };
+  sprite.userData.screenScale = {
+    kind: 'sprite',
+    pixels: options.pixels || 28,
+    min: options.minScale || 0.12,
+    max: options.maxScale || 0.65,
+    aspect,
+  };
   updateMeasurementGraphicScale(sprite);
-  sprite.renderOrder = 31;
-  measurementGroup.add(sprite);
+  sprite.renderOrder = options.renderOrder || 31;
+  return sprite;
+}
+
+function createMeasurementLabel(text, position) {
+  const sprite = createCanvasLabelSprite(text, position);
+  if (sprite) measurementGroup.add(sprite);
 }
 
 function renderMeasurement() {
@@ -1133,6 +1684,7 @@ function addMeasurementPoint(point) {
   if (measurementPoints.length >= 2) measurementPoints = [];
   measurementPoints.push(point.clone());
   renderMeasurement();
+  renderViewerLayerControls();
 }
 
 function setMeasureMode(active) {
@@ -1140,6 +1692,7 @@ function setMeasureMode(active) {
   if (measureModeActive) {
     setActiveEhtTool('');
     movingDraftId = '';
+    setViewerLayerVisible('measurement', true, { renderControls: false });
   }
   if (measureToggleBtn) {
     measureToggleBtn.textContent = measureModeActive ? 'Measuring' : 'Measure';
@@ -1191,17 +1744,49 @@ function quickSelectMode() {
 }
 
 function pointFromViewerEvent(event) {
+  return pointAndNormalFromViewerEvent(event).point;
+}
+
+function pointAndNormalFromViewerEvent(event) {
   const rect = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
-  const hit = firstVisibleGlbHit(selectableMeshes.length ? raycaster.intersectObjects(selectableMeshes, false) : []);
-  if (hit) return hit.point.clone();
+  const canPickModel = isViewerLayerIdVisible('model') && selectableMeshes.length;
+  const hit = firstVisibleGlbHit(canPickModel ? raycaster.intersectObjects(selectableMeshes, false) : []);
+  if (hit) {
+    let normal = null;
+    if (hit.face?.normal && hit.object) {
+      normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld).normalize();
+    }
+    return { point: hit.point.clone(), normal, hit };
+  }
 
   const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -controls.target.y);
   const point = new THREE.Vector3();
-  if (raycaster.ray.intersectPlane(plane, point)) return point;
-  return controls.target.clone();
+  if (raycaster.ray.intersectPlane(plane, point)) return { point, normal: new THREE.Vector3(0, 1, 0), hit: null };
+  return { point: controls.target.clone(), normal: null, hit: null };
+}
+
+function pointDevicePlacementFromViewerEvent(event, type) {
+  const { point, normal } = pointAndNormalFromViewerEvent(event);
+  const def = ehtDef(type);
+  const defaults = def.defaults || {};
+  if (normal) {
+    const visibleNormal = normal.clone().normalize();
+    const cameraSide = camera.position.clone().sub(point).normalize();
+    if (visibleNormal.dot(cameraSide) < 0) visibleNormal.negate();
+    const width = Math.max(Number(defaults.width_m) || 0.45, 0.05);
+    const height = Math.max(Number(defaults.height_m) || 0.45, 0.05);
+    const depth = Math.max(Number(defaults.depth_m) || 0.25, 0.05);
+    const halfExtent = (
+      Math.abs(visibleNormal.x) * width
+      + Math.abs(visibleNormal.y) * height
+      + Math.abs(visibleNormal.z) * depth
+    ) / 2;
+    return point.clone().add(visibleNormal.multiplyScalar(halfExtent));
+  }
+  return point;
 }
 
 function createDraftPointMesh(position, def) {
@@ -1252,6 +1837,45 @@ function routePointMarker(point, def, preview = false) {
   return marker;
 }
 
+function routeNodeLabel(point, index, preview = false) {
+  const position = point.clone();
+  position.y += preview ? 0.16 : 0.22;
+  const sprite = createCanvasLabelSprite(`N${index + 1}`, position, {
+    fontSize: 18,
+    paddingX: 8,
+    paddingY: 4,
+    fillStyle: preview ? 'rgba(239, 246, 255, 0.84)' : 'rgba(236, 253, 245, 0.92)',
+    strokeStyle: preview ? 'rgba(37, 99, 235, 0.45)' : 'rgba(15, 118, 110, 0.45)',
+    textStyle: preview ? '#1d4ed8' : '#0f766e',
+    pixels: preview ? 20 : 22,
+    minScale: 0.08,
+    maxScale: 0.42,
+    minWidth: 30,
+    renderOrder: preview ? 27 : 12,
+  });
+  if (sprite) sprite.userData.routeNodeLabel = index + 1;
+  if (sprite) sprite.visible = false;
+  return sprite;
+}
+
+function routeNodeLabelShouldBeVisible(node) {
+  let cursor = node;
+  while (cursor) {
+    if (cursor === pendingRouteGroup) return pendingRoutePoints.length > 0;
+    if (cursor.userData?.ehtDraftId) return cursor.userData.ehtDraftId === selectedDraftId;
+    cursor = cursor.parent;
+  }
+  return false;
+}
+
+function refreshRouteNodeLabelVisibility() {
+  [ehtDraftGroup, pendingRouteGroup].forEach(group => {
+    group.traverse(node => {
+      if (node.userData?.routeNodeLabel) node.visible = routeNodeLabelShouldBeVisible(node);
+    });
+  });
+}
+
 function replaceRouteVisualChildren(group, points, def, preview = false, type = '') {
   while (group.children.length) {
     const child = group.children.pop();
@@ -1259,7 +1883,14 @@ function replaceRouteVisualChildren(group, points, def, preview = false, type = 
     disposeObject3D(child);
   }
   const routePoints = (points || []).filter(point => point instanceof THREE.Vector3);
-  routePoints.forEach(point => group.add(routePointMarker(point, def, preview)));
+  routePoints.forEach((point, index) => {
+    const marker = routePointMarker(point, def, preview);
+    marker.userData.routeNodeIndex = index;
+    group.add(marker);
+    const label = routeNodeLabel(point, index, preview);
+    if (label) group.add(label);
+  });
+  refreshRouteNodeLabelVisibility();
   if (routePoints.length < 2) return;
   const curve = new THREE.CatmullRomCurve3(routePoints, false, 'catmullrom', 0.05);
   const radius = cableRadiusForTool(type, preview);
@@ -1280,9 +1911,13 @@ function clearPendingRoutePreview() {
 
 function updatePendingRoutePreview() {
   clearPendingRoutePreview();
-  if (!activeEhtTool || pendingRoutePoints.length === 0) return;
+  if (!activeEhtTool || pendingRoutePoints.length === 0) {
+    refreshRouteNodeLabelVisibility();
+    return;
+  }
   const def = ehtDef(activeEhtTool);
   replaceRouteVisualChildren(pendingRouteGroup, pendingRoutePoints, def, true, activeEhtTool);
+  refreshRouteNodeLabelVisibility();
 }
 
 function draftLabel(element) {
@@ -1307,7 +1942,7 @@ function isDraftElementVisible(element) {
 
 function applyDraftVisibility() {
   for (const element of ehtDraftElements) {
-    element.object3d.visible = isDraftElementVisible(element);
+    element.object3d.visible = isViewerLayerIdVisible('eht-draft') && isDraftElementVisible(element);
   }
 }
 
@@ -1325,6 +1960,7 @@ function renderDraftList() {
   if (!ehtDraftElements.length) {
     ehtDraftList.innerHTML = '<div class="meta">No EHT draft elements yet.</div>';
     updateUndoState();
+    renderViewerLayerControls();
     return;
   }
   const byType = new Map();
@@ -1342,7 +1978,7 @@ function renderDraftList() {
     return `
       <div class="p3d-tree-node eht-type-group" data-eht-type="${escapeHtml(type)}">
         <div class="p3d-tree-row">
-          <button type="button" class="eht-type-collapse-toggle" data-eht-type="${escapeHtml(type)}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(def.label)}">${collapsed ? '▸' : '▾'}</button>
+          <button type="button" class="eht-type-collapse-toggle" data-eht-type="${escapeHtml(type)}" aria-label="${collapsed ? 'Expand' : 'Collapse'} ${escapeHtml(def.label)}">${collapsed ? '+' : '-'}</button>
           <input type="checkbox" class="eht-type-toggle" data-eht-type="${escapeHtml(type)}" ${allVisible ? 'checked' : ''} ${someVisible && !allVisible ? 'data-indeterminate="true"' : ''}>
           <span class="p3d-tree-label" title="${escapeHtml(def.label)}">${escapeHtml(def.label)}</span>
           <span class="p3d-tree-count">${elements.length}</span>
@@ -1419,9 +2055,10 @@ function renderDraftList() {
   applyDraftVisibility();
   if (currentHierarchyQuery()) applyHierarchySearch();
   updateUndoState();
+  renderViewerLayerControls();
 }
 
-function addDraftElement(type, kind, points, object3d) {
+function addDraftElement(type, kind, points, object3d, parameterPatch = {}) {
   const sequence = ehtDraftElements.length + 1;
   const element = {
     id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -1429,7 +2066,7 @@ function addDraftElement(type, kind, points, object3d) {
     kind,
     sequence,
     points: points.map(point => point.toArray()),
-    parameters: draftDefaults(type, sequence),
+    parameters: { ...draftDefaults(type, sequence), ...parameterPatch },
     object3d,
   };
   object3d.userData.ehtDraftId = element.id;
@@ -1446,6 +2083,80 @@ function addDraftElement(type, kind, points, object3d) {
   return element;
 }
 
+function draftStorageKey() {
+  return `plant3d:eht-draft:${viewer.dataset.packageUrl || window.location.pathname}`;
+}
+
+function serializeDraftElements() {
+  return ehtDraftElements.map(element => ({
+    id: element.id,
+    type: element.type,
+    kind: element.kind,
+    sequence: element.sequence,
+    points: element.points,
+    parameters: element.parameters || {},
+    hidden: hiddenEhtDraftIds.has(element.id),
+  }));
+}
+
+function saveDraftLayerToLocalStorage() {
+  try {
+    window.localStorage.setItem(draftStorageKey(), JSON.stringify({
+      saved_at: new Date().toISOString(),
+      elements: serializeDraftElements(),
+    }));
+    setEhtStatus(`${ehtDraftElements.length} draft element${ehtDraftElements.length === 1 ? '' : 's'} saved locally in this browser.`);
+  } catch (error) {
+    setEhtStatus(error.message || 'Unable to save draft locally.');
+  }
+}
+
+function restoreDraftElement(saved) {
+  const def = EHT_TOOL_DEFS[saved.type];
+  if (!def || !Array.isArray(saved.points) || !saved.points.length) return null;
+  const points = saved.points
+    .map(point => Array.isArray(point) ? new THREE.Vector3(Number(point[0]), Number(point[1]), Number(point[2])) : null)
+    .filter(point => point && [point.x, point.y, point.z].every(Number.isFinite));
+  if (!points.length) return null;
+  const object3d = saved.kind === 'route'
+    ? createDraftRouteObject(points, def)
+    : createDraftPointMesh(points[0], def);
+  const element = {
+    id: saved.id || `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    type: saved.type,
+    kind: saved.kind === 'route' ? 'route' : 'point',
+    sequence: Number(saved.sequence) || ehtDraftElements.length + 1,
+    points: points.map(point => point.toArray()),
+    parameters: { ...draftDefaults(saved.type, Number(saved.sequence) || ehtDraftElements.length + 1), ...(saved.parameters || {}) },
+    object3d,
+  };
+  object3d.userData.ehtDraftId = element.id;
+  ehtDraftGroup.add(object3d);
+  if (saved.hidden) hiddenEhtDraftIds.add(element.id);
+  applyPointDimensions(element);
+  ehtDraftElements.push(element);
+  return element;
+}
+
+function restoreDraftLayerFromLocalStorage() {
+  let saved = null;
+  try {
+    const raw = window.localStorage.getItem(draftStorageKey());
+    if (!raw) return;
+    saved = JSON.parse(raw);
+  } catch (error) {
+    setEhtStatus('Unable to read local draft.');
+    return;
+  }
+  const elements = Array.isArray(saved?.elements) ? saved.elements : [];
+  const restored = elements.map(restoreDraftElement).filter(Boolean);
+  if (!restored.length) return;
+  selectedDraftId = '';
+  renderDraftList();
+  applyDraftVisibility();
+  setEhtStatus(`${restored.length} local draft element${restored.length === 1 ? '' : 's'} restored from this browser.`);
+}
+
 function placeEhtPoint(type, point) {
   const def = ehtDef(type);
   const mesh = createDraftPointMesh(point, def);
@@ -1457,15 +2168,31 @@ function finishEhtRoute() {
     setEhtStatus('Pick at least two route points before finishing.');
     return;
   }
+  const startAnchor = pendingRouteAnchors[0] || null;
+  const endAnchor = pendingRouteAnchors[pendingRouteAnchors.length - 1] || null;
+  if (!startAnchor || !endAnchor) {
+    setEhtStatus('Cable route must start and end on an EHT component. Click near a DB, JB, isolator, RTD, or termination for the first and last points.');
+    return;
+  }
+  if (startAnchor.element?.id && startAnchor.element.id === endAnchor.element?.id) {
+    setEhtStatus('Cable route must end on a different EHT component. Add the final node near another DB, JB, isolator, RTD, or termination.');
+    return;
+  }
   const def = ehtDef(activeEhtTool);
   const line = createDraftRouteObject(pendingRoutePoints, def);
-  addDraftElement(activeEhtTool, 'route', pendingRoutePoints, line);
+  addDraftElement(activeEhtTool, 'route', pendingRoutePoints, line, {
+    from_ref: draftAnchorLabel(startAnchor),
+    to_ref: draftAnchorLabel(endAnchor),
+  });
+  setEhtStatus(`${def.label}: connected from ${draftAnchorLabel(startAnchor)} to ${draftAnchorLabel(endAnchor)}. Save Draft Local to retain after refresh.`);
   pendingRoutePoints = [];
+  pendingRouteAnchors = [];
   clearPendingRoutePreview();
 }
 
 function cancelEhtRoute() {
   pendingRoutePoints = [];
+  pendingRouteAnchors = [];
   clearPendingRoutePreview();
   setEhtStatus(activeEhtTool ? `${ehtDef(activeEhtTool).label}: route cancelled.` : 'Route cancelled.');
 }
@@ -1481,13 +2208,23 @@ function handleEhtToolClick(event) {
   }
   if (!activeEhtTool) return false;
   const def = ehtDef(activeEhtTool);
-  const point = pointFromViewerEvent(event);
   if (def.kind === 'route') {
+    let point = pointFromViewerEvent(event);
+    const anchor = nearestConnectableDraftAnchor(point);
+    if (pendingRoutePoints.length === 0 && !anchor) {
+      setEhtStatus(`${def.label}: start the cable on an EHT component. Click near a DB, JB, isolator, RTD, or termination.`);
+      return true;
+    }
+    if (anchor) point = anchor.point.clone();
     pendingRoutePoints.push(point);
+    pendingRouteAnchors.push(anchor);
     updatePendingRoutePreview();
-    setEhtStatus(`${def.label}: ${pendingRoutePoints.length} point(s) picked. Use Finish Route when complete.`);
+    setEhtStatus(anchor
+      ? `${def.label}: node ${pendingRoutePoints.length} snapped to ${draftAnchorLabel(anchor)}. Use Finish Route when complete.`
+      : `${def.label}: bend node ${pendingRoutePoints.length} picked. End the cable by clicking near an EHT component.`);
     return true;
   }
+  const point = pointDevicePlacementFromViewerEvent(event, activeEhtTool);
   placeEhtPoint(activeEhtTool, point);
   return true;
 }
@@ -1520,9 +2257,7 @@ function bindEhtTools() {
   if (ehtCancelRouteBtn) ehtCancelRouteBtn.addEventListener('click', cancelEhtRoute);
   if (ehtUndoBtn) ehtUndoBtn.addEventListener('click', undoLastDraftElement);
   if (ehtSaveLayerBtn) {
-    ehtSaveLayerBtn.addEventListener('click', () => {
-      setEhtStatus('Draft save is not wired yet. Next pass will add backend EHT layer persistence.');
-    });
+    ehtSaveLayerBtn.addEventListener('click', saveDraftLayerToLocalStorage);
   }
   renderDraftList();
 }
@@ -1532,6 +2267,26 @@ if (selectionEl) {
     if (event.target?.id !== 'ehtParameterForm') return;
     event.preventDefault();
     updateDraftParametersFromForm(event.target);
+  });
+  selectionEl.addEventListener('input', event => {
+    const input = event.target;
+    if (!input?.closest?.('#ehtParameterForm')) return;
+    if (
+      ['position_x', 'position_y', 'position_z'].includes(input.name)
+      || input.dataset.routeNodeIndex !== undefined
+    ) {
+      liveUpdateDraftPositionFromInput(input);
+    }
+  });
+  selectionEl.addEventListener('change', event => {
+    const input = event.target;
+    if (!input?.closest?.('#ehtParameterForm')) return;
+    if (
+      ['position_x', 'position_y', 'position_z'].includes(input.name)
+      || input.dataset.routeNodeIndex !== undefined
+    ) {
+      liveUpdateDraftPositionFromInput(input);
+    }
   });
   selectionEl.addEventListener('click', event => {
     const moveButton = event.target.closest?.('#ehtMoveSelectedBtn');
@@ -1577,6 +2332,7 @@ function selectionDetailsHtml(data, featureId = null) {
     kvRow('Group', summary.hierarchy_group),
     kvRow('Stable ID', summary.stable_id || data?.stable_id),
     kvRow('Source Object', summary.source_object_id || data?.source_object_id),
+    planeDistanceHtml(),
     modelVisibilityActionsHtml(featureId),
     metadataDetails(data),
   ].join('');
@@ -2042,6 +2798,7 @@ function featureIdFromHit(hit) {
 }
 
 function firstVisibleGlbHit(hits) {
+  if (!isViewerLayerIdVisible('model')) return null;
   return (hits || []).find(hit => {
     const featureId = featureIdFromHit(hit);
     return !Number.isFinite(featureId) || !hiddenGlbFeatureIds.has(featureId);
@@ -2291,6 +3048,7 @@ async function updateGlbTileStreaming(pkg, force = false) {
       frameScene();
     }
     setStatus(`${glbCompletenessText(pkg, loadedCount, loadingCount, failedCount)} Feature-ID picking enabled; BVH acceleration deferred.`);
+    renderViewerLayerControls();
   } finally {
     isStreamingUpdateRunning = false;
   }
@@ -2359,6 +3117,7 @@ async function loadJsonPackage(pkg, started) {
   const elapsedMs = Math.round(performance.now() - started);
   setStatus(`Loaded ${meshCount} mesh(es) as ${renderBatchCount} render batch(es) from ${tileCount} tile(s) in ${elapsedMs} ms.`);
   setMetrics(pkg, meshCount, renderBatchCount, selectableMeshes.length, tileCount, triangleCount, elapsedMs);
+  renderViewerLayerControls();
 }
 
 async function loadGlbPackage(pkg, started) {
@@ -2375,6 +3134,7 @@ async function loadGlbPackage(pkg, started) {
   setGlbRuntimeMetrics(pkg, elapsedMs);
   setStatus(`Prepared GLB tile stream with ${glbTileStates.length} tile(s) in ${elapsedMs} ms. Loading visible tiles...`);
   await updateGlbTileStreaming(pkg, true);
+  renderViewerLayerControls();
 }
 
 function clearSelection({ keepDraft = false } = {}) {
@@ -2386,8 +3146,10 @@ function clearSelection({ keepDraft = false } = {}) {
   selectedMesh = null;
   selectedGlbFeatureId = null;
   if (!keepDraft) {
+    clearDraftSelectionVisual();
     selectedDraftId = '';
     movingDraftId = '';
+    refreshRouteNodeLabelVisibility();
     renderDraftList();
   }
   setSelectionActionsEnabled(false);
@@ -2597,13 +3359,26 @@ async function selectItemFromViewerEvent(event, { clearOnMiss = true } = {}) {
 function pick(event) {
   hideContextMenu();
   if (measureModeActive) {
+    if (suppressNextViewerClick) {
+      suppressNextViewerClick = false;
+      return;
+    }
     addMeasurementPoint(measurementPointFromViewerEvent(event));
+    return;
+  }
+  if ((activeEhtTool || movingDraftId) && shouldIgnoreToolPlacementClick()) {
     return;
   }
   if (handleEhtToolClick(event)) {
     return;
   }
   selectItemFromViewerEvent(event);
+}
+
+async function focusFromViewerDoubleClick(event) {
+  if (activeEhtTool || movingDraftId || measureModeActive) return;
+  const picked = await selectItemFromViewerEvent(event, { clearOnMiss: false });
+  if (picked) fitSelectedObject();
 }
 
 function contextMenuButton(action) {
@@ -2783,6 +3558,9 @@ if (clearSelectionBtn) {
 if (measureToggleBtn) {
   measureToggleBtn.addEventListener('click', () => setMeasureMode(!measureModeActive));
 }
+if (planeDistanceBtn) {
+  planeDistanceBtn.addEventListener('click', reportPlaneDistanceForSelection);
+}
 if (scaleToggleBtn) {
   scaleToggleBtn.addEventListener('click', () => setGridScaleVisible(!showGridScale));
 }
@@ -2817,7 +3595,18 @@ if (plotPlanOpacity) {
 if (plotPlanClearBtn) {
   plotPlanClearBtn.addEventListener('click', clearPlotPlan);
 }
+if (showAllLayersBtn) {
+  showAllLayersBtn.addEventListener('click', showAllViewerLayers);
+}
+if (hideOverlayLayersBtn) {
+  hideOverlayLayersBtn.addEventListener('click', hideOverlayViewerLayers);
+}
 renderer.domElement.addEventListener('click', pick);
+renderer.domElement.addEventListener('dblclick', focusFromViewerDoubleClick);
+renderer.domElement.addEventListener('pointerdown', rememberPointerDown);
+renderer.domElement.addEventListener('pointermove', trackPointerMove);
+renderer.domElement.addEventListener('pointerup', forgetPointerDown);
+renderer.domElement.addEventListener('pointercancel', forgetPointerDown);
 renderer.domElement.addEventListener('contextmenu', showContextMenu);
 if (viewerContextMenu) {
   viewerContextMenu.addEventListener('click', event => {
@@ -2831,6 +3620,8 @@ document.addEventListener('click', event => {
   if (!viewerContextMenu.contains(event.target)) hideContextMenu();
 });
 bindEhtTools();
+restoreDraftLayerFromLocalStorage();
+refreshRouteNodeLabelVisibility();
 setGridScaleVisible(showGridScale);
 setVertexSnapEnabled(vertexSnapEnabled);
 setNavigationMode('orbit');
@@ -2838,7 +3629,14 @@ window.addEventListener('keydown', event => {
   if (handleViewerShortcut(event)) return;
   if (event.key === 'Escape') {
     hideContextMenu();
-    if (measureModeActive) {
+    if (activeEhtTool || movingDraftId || pendingRoutePoints.length) {
+      pendingRoutePoints = [];
+      pendingRouteAnchors = [];
+      clearPendingRoutePreview();
+      movingDraftId = '';
+      setActiveEhtTool('');
+      setEhtStatus('Drawing tool cancelled.');
+    } else if (measureModeActive) {
       measurementPoints = [];
       clearMeasurementGraphics();
       setMeasureMode(false);

@@ -22,6 +22,7 @@ This folder is the project record book for the new neutral 3D engineering platfo
 ## Current Active Plan
 
 - `planning/extraction-readiness-and-claude-brief-2026-07-04.md` - current extraction-readiness plan, deferred Celery/Redis note, and Claude review/research brief.
+- `planning/public-api-boundary-contract-2026-07-05.md` - Stage 0 public boundary contract for project/source/job/package/object/overlay integration.
 
 ## Source Discussion
 

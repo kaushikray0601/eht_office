@@ -55,6 +55,7 @@ function jobLine(data) {
   const error = data.error_message ? `<br>Error: ${escapeHtml(data.error_message)}` : '';
   return [
     `<div class="p3d-list-title"><span>Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')}</span><span>${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%</span></div>`,
+    `<div class="p3d-progress" aria-label="Conversion progress"><div class="p3d-progress-bar" style="width: ${Math.max(0, Math.min(100, Number(data.progress_percent) || 0))}%;"></div></div>`,
     processHint,
     workerHint,
     stage,

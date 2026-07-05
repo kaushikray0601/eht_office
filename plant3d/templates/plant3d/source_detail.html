@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }}</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_delete1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260705_source1">
 </head>
 <body class="p3d-page">
   <header class="p3d-topbar">
@@ -47,11 +47,27 @@
               <dt>Retention</dt>
               <dd>{% if source.is_saved_case %}Saved case{% else %}Working upload{% endif %}</dd>
             </div>
-            <div class="p3d-kv">
-              <dt>Storage key</dt>
-              <dd>{{ source.storage_key }}</dd>
-            </div>
           </dl>
+
+          <details class="p3d-details">
+            <summary>Technical source details</summary>
+            <div class="p3d-details-body">
+              <dl class="p3d-kv-grid">
+                <div class="p3d-kv">
+                  <dt>Storage key</dt>
+                  <dd>{{ source.storage_key }}</dd>
+                </div>
+                <div class="p3d-kv">
+                  <dt>Source system</dt>
+                  <dd>{{ source.source_system|default:"Not recorded" }}</dd>
+                </div>
+                <div class="p3d-kv">
+                  <dt>Signature</dt>
+                  <dd>{{ source.content_signature|default:"Not recorded" }}</dd>
+                </div>
+              </dl>
+            </div>
+          </details>
 
           {% if not source.is_saved_case %}
             <form method="post" action="{% url 'plant3d_source_save_case' source.pk %}">
@@ -152,6 +168,9 @@
                 <span>{{ job.created_at }} - {{ job.job_type }}</span>
                 <span>{{ job.status }} - {{ job.progress_percent }}%</span>
               </div>
+              <div class="p3d-progress" aria-label="Conversion progress">
+                <div class="p3d-progress-bar" style="width: {{ job.progress_percent }}%;"></div>
+              </div>
               {% if job.metrics.stage %}<br>Stage: {{ job.metrics.stage }}{% endif %}
               {% if job.metrics.conversion_duration_ms %}<br>Total conversion: {{ job.metrics.conversion_duration_ms }} ms{% endif %}
               {% if job.timing_summary %}
@@ -183,6 +202,6 @@
     </section>
   </main>
 
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260702_actions1" defer></script>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260705_progress1" defer></script>
 </body>
 </html>
