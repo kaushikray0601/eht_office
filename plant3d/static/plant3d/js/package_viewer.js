@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { routeDiagnostics, suggestManhattanRoute, validateRoute } from './routing_core.js';
 
 const viewer = document.getElementById('viewer');
 const statusEl = document.getElementById('viewerStatus');
@@ -33,8 +34,14 @@ const ehtSelectToolBtn = document.getElementById('ehtSelectToolBtn');
 const ehtRouteControls = document.getElementById('ehtRouteControls');
 const ehtFinishRouteBtn = document.getElementById('ehtFinishRouteBtn');
 const ehtCancelRouteBtn = document.getElementById('ehtCancelRouteBtn');
+const ehtUndoGuideBtn = document.getElementById('ehtUndoGuideBtn');
+const ehtDeleteGuideBtn = document.getElementById('ehtDeleteGuideBtn');
+const ehtResetRouteBtn = document.getElementById('ehtResetRouteBtn');
+const ehtSelectedRouteControls = document.getElementById('ehtSelectedRouteControls');
+const ehtEditSelectedRouteBtn = document.getElementById('ehtEditSelectedRouteBtn');
 const ehtSaveLayerBtn = document.getElementById('ehtSaveLayerBtn');
 const ehtUndoBtn = document.querySelector('.eht-undo-btn');
+const ehtRedoBtn = document.querySelector('.eht-redo-btn');
 const ehtDraftList = document.getElementById('ehtDraftList');
 const plotPlanInput = document.getElementById('plotPlanInput');
 const plotPlanVisibleToggle = document.getElementById('plotPlanVisibleToggle');
@@ -292,9 +299,22 @@ let hierarchySelectedObjectId = null;
 let activeEhtTool = '';
 let pendingRoutePoints = [];
 let pendingRouteAnchors = [];
+let pendingRouteGuidePoints = [];
+let routeWorkflowState = 'idle';
+let routeSourceAnchor = null;
+let routeDestinationAnchor = null;
+let editingRouteId = '';
+let draggingRouteGuideIndex = -1;
+let routeGuideDragPlane = null;
+let selectedRouteGuideIndex = -1;
 let ehtDraftElements = [];
 let selectedDraftId = '';
 let movingDraftId = '';
+let draftUndoStack = [];
+let draftRedoStack = [];
+let routeUndoStack = [];
+let routeRedoStack = [];
+let restoringDraftHistory = false;
 let showGridScale = true;
 let measureModeActive = false;
 let vertexSnapEnabled = true;
@@ -775,6 +795,182 @@ function setEhtStatus(message) {
   if (ehtToolStatus) ehtToolStatus.textContent = message;
 }
 
+function draftSnapshot() {
+  return {
+    elements: serializeDraftElements(),
+    hidden_types: Array.from(hiddenEhtTypes),
+    hidden_ids: Array.from(hiddenEhtDraftIds),
+    selected_id: selectedDraftId,
+  };
+}
+
+function pushDraftHistory() {
+  if (restoringDraftHistory) return;
+  draftUndoStack.push(draftSnapshot());
+  if (draftUndoStack.length > 80) draftUndoStack.shift();
+  draftRedoStack = [];
+  updateUndoState();
+}
+
+function clearDraftObjects() {
+  for (const element of ehtDraftElements) {
+    element.object3d?.parent?.remove(element.object3d);
+    disposeObject3D(element.object3d);
+  }
+  ehtDraftElements = [];
+  hiddenEhtDraftIds.clear();
+  hiddenEhtTypes.clear();
+  selectedDraftId = '';
+  movingDraftId = '';
+}
+
+function restoreDraftSnapshot(snapshot) {
+  restoringDraftHistory = true;
+  clearDraftSelectionVisual();
+  clearDraftObjects();
+  hiddenEhtTypes = new Set(snapshot?.hidden_types || []);
+  hiddenEhtDraftIds = new Set(snapshot?.hidden_ids || []);
+  const restored = (snapshot?.elements || []).map(restoreDraftElement).filter(Boolean);
+  const selected = restored.find(element => element.id === snapshot?.selected_id) || null;
+  selectedDraftId = selected ? selected.id : '';
+  applyDraftVisibility();
+  renderDraftList();
+  if (selected) {
+    setDraftElementSelectedVisual(selected, true);
+    renderDraftSelectionPanel(selected);
+  } else if (selectionEl) {
+    selectionEl.textContent = 'Click an object in the viewer.';
+  }
+  renderViewerLayerControls();
+  updateUndoState();
+  restoringDraftHistory = false;
+}
+
+function undoDraftChange() {
+  if (!draftUndoStack.length) {
+    setEhtStatus('No draft action to undo.');
+    return false;
+  }
+  draftRedoStack.push(draftSnapshot());
+  restoreDraftSnapshot(draftUndoStack.pop());
+  setEhtStatus('Draft action undone.');
+  return true;
+}
+
+function redoDraftChange() {
+  if (!draftRedoStack.length) {
+    setEhtStatus('No draft action to redo.');
+    return false;
+  }
+  draftUndoStack.push(draftSnapshot());
+  restoreDraftSnapshot(draftRedoStack.pop());
+  setEhtStatus('Draft action redone.');
+  return true;
+}
+
+function cloneRouteAnchor(anchor) {
+  if (!anchor) return null;
+  return {
+    element: anchor.element,
+    point: anchor.point?.clone ? anchor.point.clone() : null,
+    entryFace: anchor.entryFace || '',
+    distance: Number(anchor.distance) || 0,
+  };
+}
+
+function routeEditSnapshot() {
+  return {
+    workflow_state: routeWorkflowState,
+    source_anchor: cloneRouteAnchor(routeSourceAnchor),
+    destination_anchor: cloneRouteAnchor(routeDestinationAnchor),
+    editing_route_id: editingRouteId,
+    selected_guide_index: selectedRouteGuideIndex,
+    guide_points: pendingRouteGuidePoints.map(point => point.clone()),
+    anchors: pendingRouteAnchors.map(cloneRouteAnchor),
+  };
+}
+
+function restoreRouteEditSnapshot(snapshot) {
+  if (!snapshot) return;
+  routeWorkflowState = snapshot.workflow_state || 'idle';
+  routeSourceAnchor = cloneRouteAnchor(snapshot.source_anchor);
+  routeDestinationAnchor = cloneRouteAnchor(snapshot.destination_anchor);
+  editingRouteId = snapshot.editing_route_id || '';
+  selectedRouteGuideIndex = Number.isInteger(snapshot.selected_guide_index) ? snapshot.selected_guide_index : -1;
+  pendingRouteGuidePoints = (snapshot.guide_points || []).map(point => point.clone());
+  pendingRouteAnchors = (snapshot.anchors || []).map(cloneRouteAnchor);
+  refreshPendingRouteFromGuidePoints();
+  updatePendingRoutePreview();
+  updateUndoState();
+}
+
+function pushRouteHistory() {
+  if (routeWorkflowState !== 'edit_route') return;
+  routeUndoStack.push(routeEditSnapshot());
+  if (routeUndoStack.length > 80) routeUndoStack.shift();
+  routeRedoStack = [];
+  updateUndoState();
+}
+
+function undoRouteChange() {
+  if (routeWorkflowState !== 'edit_route' || !routeUndoStack.length) return false;
+  routeRedoStack.push(routeEditSnapshot());
+  restoreRouteEditSnapshot(routeUndoStack.pop());
+  setEhtStatus(`Route edit undone. ${routeWorkflowStatus()}`);
+  return true;
+}
+
+function redoRouteChange() {
+  if (routeWorkflowState !== 'edit_route' || !routeRedoStack.length) return false;
+  routeUndoStack.push(routeEditSnapshot());
+  restoreRouteEditSnapshot(routeRedoStack.pop());
+  setEhtStatus(`Route edit redone. ${routeWorkflowStatus()}`);
+  return true;
+}
+
+function clearRouteHistory() {
+  routeUndoStack = [];
+  routeRedoStack = [];
+}
+
+function resetRouteWorkflow({ clearPreview = true } = {}) {
+  routeWorkflowState = 'idle';
+  routeSourceAnchor = null;
+  routeDestinationAnchor = null;
+  editingRouteId = '';
+  draggingRouteGuideIndex = -1;
+  routeGuideDragPlane = null;
+  selectedRouteGuideIndex = -1;
+  controls.enabled = true;
+  pendingRoutePoints = [];
+  pendingRouteAnchors = [];
+  pendingRouteGuidePoints = [];
+  clearRouteHistory();
+  if (clearPreview) clearPendingRoutePreview();
+}
+
+function routeWorkflowStatus(def = activeEhtTool ? ehtDef(activeEhtTool) : null) {
+  const label = def?.label || 'Cable route';
+  if (routeWorkflowState === 'select_source') {
+    return `${label}: select the source component first.`;
+  }
+  if (routeWorkflowState === 'select_destination') {
+    return `${label}: source ${draftAnchorLabel(routeSourceAnchor)} selected. Select destination component.`;
+  }
+  if (routeWorkflowState === 'edit_route') {
+    const validation = routeValidationForPoints(pendingRoutePoints, routeSourceAnchor, routeDestinationAnchor);
+    const warningText = validation.warnings.length ? ` ${validation.warnings.length} warning(s): ${routeWarningSummary(validation.warnings)}` : ' No route warnings.';
+    return `${label}: ${draftAnchorLabel(routeSourceAnchor)} -> ${draftAnchorLabel(routeDestinationAnchor)} | ${Math.max(pendingRouteGuidePoints.length - 2, 0)} guide point(s), ${formatDimension(validation.diagnostics.length_m)} m.${warningText} Click rough path points or drag guide handles.`;
+  }
+  return def ? `${label}: select a source component.` : 'Select a tool, then click the model.';
+}
+
+function beginRouteWorkflow(def) {
+  resetRouteWorkflow();
+  routeWorkflowState = 'select_source';
+  setEhtStatus(routeWorkflowStatus(def));
+}
+
 function setActiveEhtTool(tool) {
   activeEhtTool = tool || '';
   if (activeEhtTool && measureModeActive) setMeasureMode(false);
@@ -790,14 +986,28 @@ function setActiveEhtTool(tool) {
   if (ehtRouteControls) {
     ehtRouteControls.classList.toggle('p3d-hidden', !def || def.kind !== 'route');
   }
-  pendingRoutePoints = [];
-  pendingRouteAnchors = [];
-  clearPendingRoutePreview();
-  setEhtStatus(def ? `${def.label}: click the model to place ${def.kind === 'route' ? 'route points' : 'an element'}.` : 'Select a tool, then click the model.');
+  if (def?.kind === 'route') {
+    beginRouteWorkflow(def);
+  } else {
+    resetRouteWorkflow();
+    setEhtStatus(def ? `${def.label}: click the model to place an element.` : 'Select a tool, then click the model.');
+  }
 }
 
 function updateUndoState() {
-  if (ehtUndoBtn) ehtUndoBtn.disabled = ehtDraftElements.length === 0;
+  const routeEditing = routeWorkflowState === 'edit_route';
+  if (ehtRedoBtn) ehtRedoBtn.disabled = routeEditing ? routeRedoStack.length === 0 : draftRedoStack.length === 0;
+  if (ehtUndoBtn) ehtUndoBtn.disabled = routeEditing ? routeUndoStack.length === 0 : draftUndoStack.length === 0;
+  if (ehtEditSelectedRouteBtn) {
+    const routeSelected = selectedDraftElement()?.kind === 'route';
+    ehtEditSelectedRouteBtn.disabled = !routeSelected;
+  }
+  if (ehtSelectedRouteControls) {
+    ehtSelectedRouteControls.classList.toggle('p3d-hidden', selectedDraftElement()?.kind !== 'route');
+  }
+  if (ehtDeleteGuideBtn) {
+    ehtDeleteGuideBtn.disabled = routeWorkflowState !== 'edit_route' || selectedRouteGuideIndex <= 0 || selectedRouteGuideIndex >= pendingRouteGuidePoints.length - 1;
+  }
 }
 
 function selectedDraftElement() {
@@ -857,9 +1067,115 @@ function nearestConnectableDraftAnchor(point) {
   return best.distance <= threshold ? best : null;
 }
 
+function connectableAnchorFromViewerEvent(event) {
+  updatePointerFromViewerEvent(event);
+  const connectableObjects = ehtDraftElements
+    .filter(isConnectableDraftElement)
+    .filter(isDraftElementVisible)
+    .map(element => element.object3d)
+    .filter(Boolean);
+  const hits = connectableObjects.length ? raycaster.intersectObjects(connectableObjects, true) : [];
+  if (hits.length) {
+    const element = draftElementFromObject(hits[0].object);
+    if (isConnectableDraftElement(element)) {
+      const connection = connectionPointForDraftElement(element, hits[0].point);
+      return {
+        element,
+        point: (connection?.point || hits[0].point).clone(),
+        entryFace: connection?.label || 'center',
+        distance: 0,
+      };
+    }
+  }
+  return nearestConnectableDraftAnchor(pointFromViewerEvent(event));
+}
+
 function draftAnchorLabel(anchor) {
   if (!anchor?.element) return '';
   return `${draftLabel(anchor.element)} ${anchor.entryFace || ''}`.trim();
+}
+
+function routeValidationForPoints(points, startAnchor = null, endAnchor = null) {
+  return validateRoute((points || []).map(point => (
+    point instanceof THREE.Vector3 ? { x: point.x, y: point.y, z: point.z } : point
+  )), {
+    sourceId: startAnchor?.element?.id || '',
+    destinationId: endAnchor?.element?.id || '',
+    minSegmentLengthM: 0.1,
+    maxBendCount: 24,
+  });
+}
+
+function routeWarningSummary(warnings = [], maxCount = 2) {
+  if (!warnings.length) return 'No route warnings.';
+  const shown = warnings.slice(0, maxCount).map(warning => warning.message).join(' ');
+  const hidden = warnings.length > maxCount ? ` +${warnings.length - maxCount} more.` : '';
+  return `${shown}${hidden}`;
+}
+
+function routeWarningBadgesHtml(warnings = []) {
+  if (!warnings.length) return '<span class="p3d-state-badge">No route warnings</span>';
+  return warnings.map(warning => `
+    <span class="p3d-state-badge p3d-route-warning-${escapeHtml(warning.severity || 'warn')}" title="${escapeHtml(warning.message)}">
+      ${escapeHtml((warning.severity || 'warn').toUpperCase())}: ${escapeHtml(warning.code || 'route')}
+    </span>
+  `).join('');
+}
+
+function serializePoint(point) {
+  return point instanceof THREE.Vector3 ? [point.x, point.y, point.z] : point;
+}
+
+function routeAnchorMetadata(anchor) {
+  if (!anchor?.element) return {};
+  return {
+    draft_id: anchor.element.id,
+    entry_face: anchor.entryFace || '',
+    label: draftAnchorLabel(anchor),
+  };
+}
+
+function pointFromSerialized(value) {
+  if (!Array.isArray(value) || value.length < 3) return null;
+  const point = new THREE.Vector3(Number(value[0]), Number(value[1]), Number(value[2]));
+  return [point.x, point.y, point.z].every(Number.isFinite) ? point : null;
+}
+
+function routeGuidePointsFromElement(element) {
+  const savedGuides = Array.isArray(element?.parameters?.route_guide_points)
+    ? element.parameters.route_guide_points
+    : element?.points || [];
+  const guides = savedGuides.map(pointFromSerialized).filter(Boolean);
+  return guides.length >= 2 ? guides : (element?.points || []).map(pointFromSerialized).filter(Boolean);
+}
+
+function routeAnchorFromMetadata(metadata, fallbackPoint = null) {
+  const draftId = metadata?.draft_id;
+  const element = draftId ? ehtDraftElements.find(item => item.id === draftId) : null;
+  if (!element || !isConnectableDraftElement(element)) return null;
+  const fallback = fallbackPoint || element.object3d?.position || null;
+  const connection = connectionPointForDraftElement(element, fallback);
+  return {
+    element,
+    point: (connection?.point || fallback || new THREE.Vector3()).clone(),
+    entryFace: metadata?.entry_face || connection?.label || 'center',
+    distance: 0,
+  };
+}
+
+function routeMetadataPatch(startAnchor, endAnchor) {
+  const validation = routeValidationForPoints(pendingRoutePoints, startAnchor, endAnchor);
+  return {
+    from_ref: draftAnchorLabel(startAnchor),
+    to_ref: draftAnchorLabel(endAnchor),
+    route_method: 'manhattan_guide',
+    guide_point_count: pendingRouteGuidePoints.length,
+    route_guide_points: pendingRouteGuidePoints.map(serializePoint),
+    route_diagnostics: validation.diagnostics,
+    route_warnings: validation.warnings,
+    source_anchor: routeAnchorMetadata(startAnchor),
+    destination_anchor: routeAnchorMetadata(endAnchor),
+  };
 }
 
 function draftDefaults(type, sequence) {
@@ -996,6 +1312,25 @@ function planeDistanceHtml(bounds = selectedItemBounds()) {
   ].join('');
 }
 
+function draftRouteValidationHtml(element) {
+  if (!element || element.kind !== 'route') return '';
+  const validation = validateRoute(element.points || [], {
+    sourceId: element.parameters?.source_anchor?.draft_id || '',
+    destinationId: element.parameters?.destination_anchor?.draft_id || '',
+    minSegmentLengthM: 0.1,
+    maxBendCount: 24,
+  });
+  const diagnostics = validation.diagnostics || {};
+  const warnings = validation.warnings || [];
+  return `
+    <div class="p3d-route-validation">
+      <div class="kv"><span>Route Diagnostics</span><strong>${formatDimension(diagnostics.length_m || 0)} m | ${diagnostics.segment_count || 0} segments | ${diagnostics.bend_count || 0} bends</strong></div>
+      <div class="p3d-route-warning-list">${routeWarningBadgesHtml(warnings)}</div>
+      ${warnings.length ? `<p class="meta">${escapeHtml(routeWarningSummary(warnings, 3))}</p>` : ''}
+    </div>
+  `;
+}
+
 function reportPlaneDistanceForSelection() {
   const summary = planeDistanceSummary();
   if (!summary) {
@@ -1034,6 +1369,121 @@ function shouldIgnoreToolPlacementClick() {
   suppressNextViewerClick = false;
   setEhtStatus('Navigation gesture ignored for placement. Click without dragging to place the selected tool.');
   return true;
+}
+
+function pendingRouteGuideHandles() {
+  const handles = [];
+  pendingRouteGroup.traverse(node => {
+    if (node.userData?.routeGuideHandle) handles.push(node);
+  });
+  return handles;
+}
+
+function pickPendingRouteGuideHandle(event) {
+  if (routeWorkflowState !== 'edit_route' || pendingRouteGuidePoints.length <= 2) return null;
+  updatePointerFromViewerEvent(event);
+  const hits = raycaster.intersectObjects(pendingRouteGuideHandles(), false);
+  const hit = hits.find(item => item.object?.userData?.draggableRouteGuide);
+  if (!hit) return null;
+  const index = Number(hit.object.userData.routeGuideIndex);
+  return Number.isInteger(index) && index > 0 && index < pendingRouteGuidePoints.length - 1 ? index : null;
+}
+
+function routeGuidePointFromDragEvent(event) {
+  updatePointerFromViewerEvent(event);
+  const point = new THREE.Vector3();
+  if (routeGuideDragPlane && raycaster.ray.intersectPlane(routeGuideDragPlane, point)) {
+    return point;
+  }
+  return pointFromViewerEvent(event);
+}
+
+function beginRouteGuideDrag(event) {
+  const guideIndex = pickPendingRouteGuideHandle(event);
+  if (guideIndex === null) return false;
+  pushRouteHistory();
+  draggingRouteGuideIndex = guideIndex;
+  selectedRouteGuideIndex = guideIndex;
+  const guidePoint = pendingRouteGuidePoints[guideIndex];
+  routeGuideDragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -guidePoint.y);
+  suppressNextViewerClick = true;
+  controls.enabled = false;
+  renderer.domElement.style.cursor = 'grabbing';
+  setEhtStatus(`Dragging guide G${guideIndex}. Release to keep the route preview.`);
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
+function updateRouteGuideDrag(event) {
+  if (draggingRouteGuideIndex < 0) return false;
+  const nextPoint = routeGuidePointFromDragEvent(event);
+  if (nextPoint) {
+    pendingRouteGuidePoints[draggingRouteGuideIndex] = nextPoint.clone();
+    refreshPendingRouteFromGuidePoints();
+    updatePendingRoutePreview();
+  }
+  suppressNextViewerClick = true;
+  event.preventDefault();
+  event.stopPropagation();
+  return true;
+}
+
+function finishRouteGuideDrag() {
+  if (draggingRouteGuideIndex < 0) return false;
+  const guideIndex = draggingRouteGuideIndex;
+  draggingRouteGuideIndex = -1;
+  selectedRouteGuideIndex = guideIndex;
+  routeGuideDragPlane = null;
+  controls.enabled = true;
+  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+  setEhtStatus(`Guide G${guideIndex} moved. ${routeWorkflowStatus()}`);
+  updatePendingRoutePreview();
+  updateUndoState();
+  return true;
+}
+
+function selectRouteGuide(index) {
+  if (routeWorkflowState !== 'edit_route') return false;
+  if (!Number.isInteger(index) || index <= 0 || index >= pendingRouteGuidePoints.length - 1) return false;
+  selectedRouteGuideIndex = index;
+  updatePendingRoutePreview();
+  updateUndoState();
+  setEhtStatus(`Guide G${index} selected. Press Delete or use Delete Guide to remove it.`);
+  return true;
+}
+
+function deleteSelectedRouteGuide() {
+  if (routeWorkflowState !== 'edit_route' || selectedRouteGuideIndex <= 0 || selectedRouteGuideIndex >= pendingRouteGuidePoints.length - 1) {
+    setEhtStatus('Select an intermediate route guide first. Source and destination cannot be deleted.');
+    return false;
+  }
+  const deletedIndex = selectedRouteGuideIndex;
+  pushRouteHistory();
+  pendingRouteGuidePoints.splice(selectedRouteGuideIndex, 1);
+  pendingRouteAnchors.splice(selectedRouteGuideIndex, 1);
+  selectedRouteGuideIndex = Math.min(deletedIndex, pendingRouteGuidePoints.length - 2);
+  if (selectedRouteGuideIndex <= 0) selectedRouteGuideIndex = -1;
+  refreshPendingRouteFromGuidePoints();
+  updatePendingRoutePreview();
+  updateUndoState();
+  setEhtStatus(`Guide G${deletedIndex} deleted. Adjacent route sections reconnected.`);
+  return true;
+}
+
+function handleViewerPointerDown(event) {
+  rememberPointerDown(event);
+  beginRouteGuideDrag(event);
+}
+
+function handleViewerPointerMove(event) {
+  if (updateRouteGuideDrag(event)) return;
+  trackPointerMove(event);
+}
+
+function handleViewerPointerUp() {
+  finishRouteGuideDrag();
+  forgetPointerDown();
 }
 
 function applyPointDimensions(element) {
@@ -1125,6 +1575,7 @@ function liveUpdateDraftPositionFromInput(input) {
   const form = input?.form;
   const element = ehtDraftElements.find(item => item.id === form?.dataset?.draftId);
   if (!element) return;
+  draftRedoStack = [];
   if (input.dataset.routeNodeIndex !== undefined) {
     const updated = updateRouteNodeCoordinate(
       element,
@@ -1175,6 +1626,7 @@ function renderDraftSelectionPanel(element = selectedDraftElement()) {
     kvRow('Points', element.points.length),
     element.kind === 'route' ? kvRow('Route Length', `${formatDimension(draftLength(element))} m`) : kvRow('Position', draftPositionText(element)),
     planeDistanceHtml(new THREE.Box3().setFromObject(element.object3d)),
+    draftRouteValidationHtml(element),
     `<form id="ehtParameterForm" class="p3d-form" data-draft-id="${escapeHtml(element.id)}">`,
     draftPositionRows(element),
     draftParameterRows(element),
@@ -1191,6 +1643,7 @@ function renderDraftSelectionPanel(element = selectedDraftElement()) {
 function updateDraftParametersFromForm(form) {
   const element = ehtDraftElements.find(item => item.id === form?.dataset?.draftId);
   if (!element) return;
+  pushDraftHistory();
   const x = Number(form.elements.position_x?.value);
   const y = Number(form.elements.position_y?.value);
   const z = Number(form.elements.position_z?.value);
@@ -1210,19 +1663,49 @@ function updateDraftParametersFromForm(form) {
   setEhtStatus(`${draftLabel(element)} parameters updated. Draft is not persisted yet.`);
 }
 
-function deleteDraftElement(element) {
+function routeReferencesDraftElement(routeElement, draftId) {
+  if (!routeElement || routeElement.kind !== 'route' || !draftId) return false;
+  return (
+    routeElement.parameters?.source_anchor?.draft_id === draftId
+    || routeElement.parameters?.destination_anchor?.draft_id === draftId
+  );
+}
+
+function disposeDraftElement(element) {
   if (!element) return;
-  const label = draftLabel(element);
-  ehtDraftElements = ehtDraftElements.filter(item => item.id !== element.id);
   hiddenEhtDraftIds.delete(element.id);
   element.object3d.parent?.remove(element.object3d);
   disposeObject3D(element.object3d);
-  if (selectedDraftId === element.id) selectedDraftId = '';
-  if (movingDraftId === element.id) movingDraftId = '';
+}
+
+function deleteDraftElement(element, { recordHistory = true } = {}) {
+  if (!element) return;
+  const label = draftLabel(element);
+  const cascadeRoutes = element.kind === 'point'
+    ? ehtDraftElements.filter(item => routeReferencesDraftElement(item, element.id))
+    : [];
+  const deleteIds = new Set([element.id, ...cascadeRoutes.map(item => item.id)]);
+  if (recordHistory) pushDraftHistory();
+  for (const item of ehtDraftElements.filter(candidate => deleteIds.has(candidate.id))) {
+    disposeDraftElement(item);
+  }
+  ehtDraftElements = ehtDraftElements.filter(item => !deleteIds.has(item.id));
+  if (deleteIds.has(selectedDraftId)) selectedDraftId = '';
+  if (deleteIds.has(movingDraftId)) movingDraftId = '';
+  if (
+    routeSourceAnchor?.element?.id && deleteIds.has(routeSourceAnchor.element.id)
+    || routeDestinationAnchor?.element?.id && deleteIds.has(routeDestinationAnchor.element.id)
+    || editingRouteId && deleteIds.has(editingRouteId)
+  ) {
+    resetRouteWorkflow();
+  }
   clearSelection();
   if (selectionEl) selectionEl.textContent = 'Click an object in the viewer.';
   renderDraftList();
-  setEhtStatus(`${label} deleted.`);
+  updateUndoState();
+  setEhtStatus(cascadeRoutes.length
+    ? `${label} deleted with ${cascadeRoutes.length} associated cable route${cascadeRoutes.length === 1 ? '' : 's'}.`
+    : `${label} deleted.`);
 }
 
 function setDraftElementHidden(element, hidden) {
@@ -1311,6 +1794,7 @@ function toggleModelVisibilityShortcut() {
 
 function moveDraftElementTo(element, point) {
   if (!element || !point) return;
+  pushDraftHistory();
   setDraftElementOrigin(element, point);
   movingDraftId = '';
   selectDraftElement(element);
@@ -1858,6 +2342,42 @@ function routeNodeLabel(point, index, preview = false) {
   return sprite;
 }
 
+function manhattanRouteThroughGuides(guides) {
+  const cleanGuides = (guides || []).filter(point => point instanceof THREE.Vector3);
+  return suggestManhattanRoute(cleanGuides.map(point => ({ x: point.x, y: point.y, z: point.z })))
+    .map(point => new THREE.Vector3(point.x, point.y, point.z));
+}
+
+function refreshPendingRouteFromGuidePoints() {
+  pendingRoutePoints = manhattanRouteThroughGuides(pendingRouteGuidePoints);
+}
+
+function routeGuideHandle(point, index, total) {
+  const isEndpoint = index === 0 || index === total - 1;
+  const isSelected = index === selectedRouteGuideIndex;
+  const geometry = new THREE.SphereGeometry(isEndpoint ? 0.105 : 0.145, 16, 16);
+  const material = new THREE.MeshBasicMaterial({
+    color: isSelected ? 0x2563eb : isEndpoint ? 0x0f766e : 0xf97316,
+    transparent: true,
+    opacity: isSelected ? 1 : isEndpoint ? 0.72 : 0.95,
+    depthTest: false,
+  });
+  const marker = new THREE.Mesh(geometry, material);
+  marker.position.copy(point);
+  marker.renderOrder = 34;
+  marker.userData.routeGuideHandle = true;
+  marker.userData.routeGuideIndex = index;
+  marker.userData.draggableRouteGuide = !isEndpoint;
+  return marker;
+}
+
+function renderPendingRouteGuideHandles() {
+  if (routeWorkflowState !== 'edit_route' || !pendingRouteGuidePoints.length) return;
+  pendingRouteGuidePoints.forEach((point, index) => {
+    pendingRouteGroup.add(routeGuideHandle(point, index, pendingRouteGuidePoints.length));
+  });
+}
+
 function routeNodeLabelShouldBeVisible(node) {
   let cursor = node;
   while (cursor) {
@@ -1917,6 +2437,7 @@ function updatePendingRoutePreview() {
   }
   const def = ehtDef(activeEhtTool);
   replaceRouteVisualChildren(pendingRouteGroup, pendingRoutePoints, def, true, activeEhtTool);
+  renderPendingRouteGuideHandles();
   refreshRouteNodeLabelVisibility();
 }
 
@@ -2058,7 +2579,8 @@ function renderDraftList() {
   renderViewerLayerControls();
 }
 
-function addDraftElement(type, kind, points, object3d, parameterPatch = {}) {
+function addDraftElement(type, kind, points, object3d, parameterPatch = {}, { recordHistory = true } = {}) {
+  if (recordHistory) pushDraftHistory();
   const sequence = ehtDraftElements.length + 1;
   const element = {
     id: `draft-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -2164,37 +2686,171 @@ function placeEhtPoint(type, point) {
 }
 
 function finishEhtRoute() {
-  if (!activeEhtTool || pendingRoutePoints.length < 2) {
-    setEhtStatus('Pick at least two route points before finishing.');
+  refreshPendingRouteFromGuidePoints();
+  if (!activeEhtTool || routeWorkflowState !== 'edit_route' || pendingRoutePoints.length < 2) {
+    setEhtStatus(routeWorkflowState === 'select_source' || routeWorkflowState === 'select_destination'
+      ? routeWorkflowStatus()
+      : 'Select source and destination components before finishing a route.');
     return;
   }
-  const startAnchor = pendingRouteAnchors[0] || null;
-  const endAnchor = pendingRouteAnchors[pendingRouteAnchors.length - 1] || null;
+  const startAnchor = routeSourceAnchor || pendingRouteAnchors[0] || null;
+  const endAnchor = routeDestinationAnchor || pendingRouteAnchors[pendingRouteAnchors.length - 1] || null;
   if (!startAnchor || !endAnchor) {
-    setEhtStatus('Cable route must start and end on an EHT component. Click near a DB, JB, isolator, RTD, or termination for the first and last points.');
+    setEhtStatus('Cable route must have source and destination components before Finish Route.');
     return;
   }
   if (startAnchor.element?.id && startAnchor.element.id === endAnchor.element?.id) {
-    setEhtStatus('Cable route must end on a different EHT component. Add the final node near another DB, JB, isolator, RTD, or termination.');
+    setEhtStatus('Cable route must end on a different EHT component.');
     return;
   }
   const def = ehtDef(activeEhtTool);
-  const line = createDraftRouteObject(pendingRoutePoints, def);
-  addDraftElement(activeEhtTool, 'route', pendingRoutePoints, line, {
-    from_ref: draftAnchorLabel(startAnchor),
-    to_ref: draftAnchorLabel(endAnchor),
-  });
-  setEhtStatus(`${def.label}: connected from ${draftAnchorLabel(startAnchor)} to ${draftAnchorLabel(endAnchor)}. Save Draft Local to retain after refresh.`);
-  pendingRoutePoints = [];
-  pendingRouteAnchors = [];
-  clearPendingRoutePreview();
+  const metadata = routeMetadataPatch(startAnchor, endAnchor);
+  const editingElement = editingRouteId ? ehtDraftElements.find(item => item.id === editingRouteId) : null;
+  if (editingElement?.kind === 'route') {
+    pushDraftHistory();
+    editingElement.points = pendingRoutePoints.map(point => point.toArray());
+    editingElement.parameters = { ...(editingElement.parameters || {}), ...metadata };
+    rebuildRouteGeometry(editingElement);
+    selectDraftElement(editingElement);
+    setEhtStatus(`${draftLabel(editingElement)} updated from ${draftAnchorLabel(startAnchor)} to ${draftAnchorLabel(endAnchor)}. Save Draft Local to retain after refresh.`);
+  } else {
+    const line = createDraftRouteObject(pendingRoutePoints, def);
+    addDraftElement(activeEhtTool, 'route', pendingRoutePoints, line, metadata);
+    setEhtStatus(`${def.label}: connected from ${draftAnchorLabel(startAnchor)} to ${draftAnchorLabel(endAnchor)}. Save Draft Local to retain after refresh.`);
+  }
+  resetRouteWorkflow();
 }
 
 function cancelEhtRoute() {
-  pendingRoutePoints = [];
-  pendingRouteAnchors = [];
-  clearPendingRoutePreview();
+  resetRouteWorkflow();
   setEhtStatus(activeEhtTool ? `${ehtDef(activeEhtTool).label}: route cancelled.` : 'Route cancelled.');
+}
+
+function setRouteSourceAnchor(anchor) {
+  routeSourceAnchor = anchor;
+  routeDestinationAnchor = null;
+  routeWorkflowState = 'select_destination';
+  pendingRouteGuidePoints = [anchor.point.clone()];
+  selectedRouteGuideIndex = -1;
+  refreshPendingRouteFromGuidePoints();
+  pendingRouteAnchors = [anchor];
+  updatePendingRoutePreview();
+  setEhtStatus(routeWorkflowStatus());
+}
+
+function setRouteDestinationAnchor(anchor) {
+  if (routeSourceAnchor?.element?.id && anchor?.element?.id === routeSourceAnchor.element.id) {
+    setEhtStatus('Destination must be a different EHT component.');
+    return;
+  }
+  routeDestinationAnchor = anchor;
+  routeWorkflowState = 'edit_route';
+  pendingRouteGuidePoints = [routeSourceAnchor.point.clone(), anchor.point.clone()];
+  selectedRouteGuideIndex = -1;
+  refreshPendingRouteFromGuidePoints();
+  pendingRouteAnchors = [routeSourceAnchor, anchor];
+  updatePendingRoutePreview();
+  setEhtStatus(routeWorkflowStatus());
+}
+
+function addRouteGuidePoint(point) {
+  if (!routeSourceAnchor || !routeDestinationAnchor) {
+    setEhtStatus(routeWorkflowStatus());
+    return;
+  }
+  const insertAt = Math.max(pendingRouteGuidePoints.length - 1, 1);
+  pushRouteHistory();
+  pendingRouteGuidePoints.splice(insertAt, 0, point.clone());
+  pendingRouteAnchors.splice(insertAt, 0, null);
+  selectedRouteGuideIndex = insertAt;
+  refreshPendingRouteFromGuidePoints();
+  updatePendingRoutePreview();
+  setEhtStatus(routeWorkflowStatus());
+}
+
+function undoLastRouteGuidePoint() {
+  if (routeWorkflowState !== 'edit_route' || pendingRouteGuidePoints.length <= 2) {
+    setEhtStatus('No guide point to undo.');
+    return;
+  }
+  pushRouteHistory();
+  pendingRouteGuidePoints.splice(pendingRouteGuidePoints.length - 2, 1);
+  pendingRouteAnchors.splice(Math.max(pendingRouteAnchors.length - 2, 1), 1);
+  selectedRouteGuideIndex = -1;
+  refreshPendingRouteFromGuidePoints();
+  updatePendingRoutePreview();
+  setEhtStatus(routeWorkflowStatus());
+}
+
+function resetRouteGuidePath() {
+  if (!routeSourceAnchor || !routeDestinationAnchor) {
+    setEhtStatus(routeWorkflowStatus());
+    return;
+  }
+  pushRouteHistory();
+  pendingRouteGuidePoints = [routeSourceAnchor.point.clone(), routeDestinationAnchor.point.clone()];
+  pendingRouteAnchors = [routeSourceAnchor, routeDestinationAnchor];
+  selectedRouteGuideIndex = -1;
+  refreshPendingRouteFromGuidePoints();
+  updatePendingRoutePreview();
+  setEhtStatus('Guide path reset to direct orthogonal route.');
+}
+
+function editDraftRoute(element = selectedDraftElement()) {
+  if (!element || element.kind !== 'route') return false;
+  const guides = routeGuidePointsFromElement(element);
+  if (guides.length < 2) {
+    setEhtStatus('Unable to edit this route: no route points found.');
+    return false;
+  }
+  const sourceAnchor = routeAnchorFromMetadata(element.parameters?.source_anchor, guides[0]);
+  const destinationAnchor = routeAnchorFromMetadata(element.parameters?.destination_anchor, guides[guides.length - 1]);
+  if (!sourceAnchor || !destinationAnchor) {
+    setEhtStatus('Unable to edit this route: source or destination component is missing. Recreate the route.');
+    return false;
+  }
+  setActiveEhtTool(element.type);
+  editingRouteId = element.id;
+  routeWorkflowState = 'edit_route';
+  routeSourceAnchor = sourceAnchor;
+  routeDestinationAnchor = destinationAnchor;
+  pendingRouteGuidePoints = guides.map(point => point.clone());
+  pendingRouteGuidePoints[0] = sourceAnchor.point.clone();
+  pendingRouteGuidePoints[pendingRouteGuidePoints.length - 1] = destinationAnchor.point.clone();
+  pendingRouteAnchors = pendingRouteGuidePoints.map(() => null);
+  pendingRouteAnchors[0] = sourceAnchor;
+  pendingRouteAnchors[pendingRouteAnchors.length - 1] = destinationAnchor;
+  refreshPendingRouteFromGuidePoints();
+  updatePendingRoutePreview();
+  setEhtStatus(`Editing ${draftLabel(element)}. Click rough path points, Undo Guide, Reset Path, then Finish Route.`);
+  return true;
+}
+
+function handleRouteWorkflowClick(event, def) {
+  if (routeWorkflowState === 'select_source') {
+    const anchor = connectableAnchorFromViewerEvent(event);
+    if (!anchor) {
+      setEhtStatus(`${def.label}: select a source EHT component first.`);
+      return true;
+    }
+    setRouteSourceAnchor(anchor);
+    return true;
+  }
+  if (routeWorkflowState === 'select_destination') {
+    const anchor = connectableAnchorFromViewerEvent(event);
+    if (!anchor) {
+      setEhtStatus(`${def.label}: select a destination EHT component.`);
+      return true;
+    }
+    setRouteDestinationAnchor(anchor);
+    return true;
+  }
+  if (routeWorkflowState === 'edit_route') {
+    addRouteGuidePoint(pointFromViewerEvent(event));
+    return true;
+  }
+  beginRouteWorkflow(def);
+  return true;
 }
 
 function handleEhtToolClick(event) {
@@ -2209,20 +2865,7 @@ function handleEhtToolClick(event) {
   if (!activeEhtTool) return false;
   const def = ehtDef(activeEhtTool);
   if (def.kind === 'route') {
-    let point = pointFromViewerEvent(event);
-    const anchor = nearestConnectableDraftAnchor(point);
-    if (pendingRoutePoints.length === 0 && !anchor) {
-      setEhtStatus(`${def.label}: start the cable on an EHT component. Click near a DB, JB, isolator, RTD, or termination.`);
-      return true;
-    }
-    if (anchor) point = anchor.point.clone();
-    pendingRoutePoints.push(point);
-    pendingRouteAnchors.push(anchor);
-    updatePendingRoutePreview();
-    setEhtStatus(anchor
-      ? `${def.label}: node ${pendingRoutePoints.length} snapped to ${draftAnchorLabel(anchor)}. Use Finish Route when complete.`
-      : `${def.label}: bend node ${pendingRoutePoints.length} picked. End the cable by clicking near an EHT component.`);
-    return true;
+    return handleRouteWorkflowClick(event, def);
   }
   const point = pointDevicePlacementFromViewerEvent(event, activeEhtTool);
   placeEhtPoint(activeEhtTool, point);
@@ -2230,6 +2873,8 @@ function handleEhtToolClick(event) {
 }
 
 function undoLastDraftElement() {
+  if (!ehtDraftElements.length) return;
+  pushDraftHistory();
   const element = ehtDraftElements.pop();
   if (!element) return;
   element.object3d.parent?.remove(element.object3d);
@@ -2254,8 +2899,17 @@ function bindEhtTools() {
     });
   }
   if (ehtFinishRouteBtn) ehtFinishRouteBtn.addEventListener('click', finishEhtRoute);
+  if (ehtUndoGuideBtn) ehtUndoGuideBtn.addEventListener('click', undoLastRouteGuidePoint);
+  if (ehtDeleteGuideBtn) ehtDeleteGuideBtn.addEventListener('click', deleteSelectedRouteGuide);
+  if (ehtResetRouteBtn) ehtResetRouteBtn.addEventListener('click', resetRouteGuidePath);
   if (ehtCancelRouteBtn) ehtCancelRouteBtn.addEventListener('click', cancelEhtRoute);
-  if (ehtUndoBtn) ehtUndoBtn.addEventListener('click', undoLastDraftElement);
+  if (ehtEditSelectedRouteBtn) ehtEditSelectedRouteBtn.addEventListener('click', () => editDraftRoute());
+  if (ehtUndoBtn) ehtUndoBtn.addEventListener('click', () => {
+    if (!undoRouteChange()) undoDraftChange();
+  });
+  if (ehtRedoBtn) ehtRedoBtn.addEventListener('click', () => {
+    if (!redoRouteChange()) redoDraftChange();
+  });
   if (ehtSaveLayerBtn) {
     ehtSaveLayerBtn.addEventListener('click', saveDraftLayerToLocalStorage);
   }
@@ -2289,6 +2943,11 @@ if (selectionEl) {
     }
   });
   selectionEl.addEventListener('click', event => {
+    const editRouteButton = event.target.closest?.('#ehtEditRouteBtn');
+    if (editRouteButton) {
+      editDraftRoute();
+      return;
+    }
     const moveButton = event.target.closest?.('#ehtMoveSelectedBtn');
     if (moveButton) {
       const element = selectedDraftElement();
@@ -3471,6 +4130,15 @@ function isTypingTarget(target) {
 function handleViewerShortcut(event) {
   if (isTypingTarget(event.target)) return false;
   const key = event.key.toLowerCase();
+  if ((event.ctrlKey || event.metaKey) && key === 'z') {
+    event.preventDefault();
+    if (event.shiftKey) {
+      if (!redoRouteChange()) redoDraftChange();
+    } else if (!undoRouteChange()) {
+      undoDraftChange();
+    }
+    return true;
+  }
   if (event.ctrlKey && key === 'h') {
     event.preventDefault();
     toggleModelVisibilityShortcut();
@@ -3478,6 +4146,11 @@ function handleViewerShortcut(event) {
   }
   if (event.ctrlKey || event.metaKey || event.altKey) return false;
   if (event.key === 'Delete' || event.key === 'Backspace') {
+    if (routeWorkflowState === 'edit_route' && selectedRouteGuideIndex > 0) {
+      event.preventDefault();
+      deleteSelectedRouteGuide();
+      return true;
+    }
     const element = selectedDraftElement();
     if (element) {
       event.preventDefault();
@@ -3603,10 +4276,10 @@ if (hideOverlayLayersBtn) {
 }
 renderer.domElement.addEventListener('click', pick);
 renderer.domElement.addEventListener('dblclick', focusFromViewerDoubleClick);
-renderer.domElement.addEventListener('pointerdown', rememberPointerDown);
-renderer.domElement.addEventListener('pointermove', trackPointerMove);
-renderer.domElement.addEventListener('pointerup', forgetPointerDown);
-renderer.domElement.addEventListener('pointercancel', forgetPointerDown);
+renderer.domElement.addEventListener('pointerdown', handleViewerPointerDown);
+renderer.domElement.addEventListener('pointermove', handleViewerPointerMove);
+renderer.domElement.addEventListener('pointerup', handleViewerPointerUp);
+renderer.domElement.addEventListener('pointercancel', handleViewerPointerUp);
 renderer.domElement.addEventListener('contextmenu', showContextMenu);
 if (viewerContextMenu) {
   viewerContextMenu.addEventListener('click', event => {
@@ -3630,9 +4303,7 @@ window.addEventListener('keydown', event => {
   if (event.key === 'Escape') {
     hideContextMenu();
     if (activeEhtTool || movingDraftId || pendingRoutePoints.length) {
-      pendingRoutePoints = [];
-      pendingRouteAnchors = [];
-      clearPendingRoutePreview();
+      resetRouteWorkflow();
       movingDraftId = '';
       setActiveEhtTool('');
       setEhtStatus('Drawing tool cancelled.');

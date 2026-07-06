@@ -908,6 +908,40 @@ button:disabled {
   color: #92400e;
 }
 
+.p3d-route-validation {
+  display: grid;
+  gap: 6px;
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--p3d-border-soft);
+  border-radius: 6px;
+  background: #fbfdff;
+}
+
+.p3d-route-warning-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.p3d-route-warning-block {
+  border-color: #fca5a5;
+  background: #fff1f2;
+  color: #9f1239;
+}
+
+.p3d-route-warning-warn {
+  border-color: #f59e0b;
+  background: #fffbeb;
+  color: #92400e;
+}
+
+.p3d-route-warning-info {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
 .p3d-metric {
   margin: 0 0 8px;
   overflow-wrap: anywhere;

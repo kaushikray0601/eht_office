@@ -291,6 +291,180 @@ Deferred / TODO:
 11. **Deferred infrastructure.** Celery/Redis, signed object-storage delivery, Stage 1 service/database extraction, BVH, HLOD/LOD, and full meshopt/Draco comparison are deferred until the boundary/API and overlay seams are stable or a concrete scale trigger appears.
 12. **Clean retests and guardrails.** Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
+## Next Big Coding Step — Source/Destination-First Cable Routing Foundation
+
+**Objective:** replace the current free-click cable route workflow with a source/destination-first routing foundation that can grow into Manhattan suggestions, bend-radius checks, A*/Dijkstra routing, collision-aware routing, raceway/tray graph routing, and durable EHT/raceway persistence without rewriting the viewer again.
+
+### Why this is the next big step
+
+- The current route tool proves geometry and node editing, but it still lets users create routes by free air-clicking.
+- Engineering cable routes should have explicit anchors: from DB/JB/isolator/etc. to JB/isolator/RTD/end termination/etc.
+- Long routes need route intent, not hundreds of visible XYZ rows in the property panel.
+- Raceway/tray work will need the same primitives: anchors, nodes, route graph, validation, suggestions, and collision costs.
+- Collision physics should not be mixed directly into the EHT drawing tool. It needs a reusable engine that can serve cable, tray, duct, trench, sleeve, and future modules.
+
+### Phase 1 — Viewer Workflow Refactor (safe product step)
+
+Deliverable: a cleaner cable route authoring workflow inside the current `plant3d` viewer.
+
+- Add a route mode state machine:
+  - `idle`
+  - `select_source`
+  - `select_destination`
+  - `edit_route`
+  - `review_route`
+- For route tools (`cold_cable`, `tracer_sr`, `tracer_mi`), ask the user to select a source component first, then a destination component.
+- Lock route endpoints to component anchors once selected.
+- Keep intermediate guide points editable, but do not force full collision/orthogonal rules yet.
+- Replace free-click “Finish Route” assumptions with explicit route state:
+  - Start and end anchors are known before route editing begins.
+  - Finish/Save only commits a route with valid anchors.
+  - Cancel returns cleanly to select mode.
+- Show a small route HUD:
+  - source label
+  - destination label
+  - route length
+  - node count
+  - warning count
+- Keep node labels contextual:
+  - visible while editing/selecting a route
+  - hidden otherwise
+- Keep route node coordinate editing available, but prepare to move long-route editing toward selected-node/on-canvas editing in a later pass.
+
+Acceptance checks:
+
+- User can select DB/JB/etc. as source and destination before drawing a cable.
+- Route preview appears between locked anchors.
+- Route cannot be committed without both anchors.
+- Existing local draft save/restore still works.
+- Existing point component placement, selection, delete, hide/unhide, and measurement remain unchanged.
+
+### Phase 2 — Routing Core Skeleton (separate from viewer)
+
+Deliverable: a small pure routing module that has no Django view or Three.js dependency.
+
+Recommended location for now:
+
+- `plant3d/routing/`
+
+Initial responsibilities:
+
+- Define route input shapes:
+  - anchors
+  - free nodes
+  - route options
+  - preferred orthogonal axes
+  - bend radius metadata
+  - avoid zones placeholder
+  - route graph placeholder
+- Return route result shapes:
+  - suggested nodes
+  - length
+  - bend count
+  - warnings
+  - reasons/diagnostics
+- Implement the first deterministic helper:
+  - `suggest_manhattan_route(source, destination, options)`
+- Keep A*/Dijkstra as placeholders, not active production behavior yet.
+
+Acceptance checks:
+
+- Unit tests prove the routing core can suggest a simple Manhattan route.
+- Unit tests prove it returns route warnings without mutating viewer state.
+- Viewer can call the routing core output shape later without knowing the final algorithm.
+
+### Phase 3 — Soft Orthogonal Assist (UX step)
+
+Deliverable: a natural assist, not forced geometry.
+
+- Show a dotted/ghost Manhattan suggestion after source and destination are selected.
+- Let the user accept the suggestion or keep editing manually.
+- When adding a node close to an orthogonal alignment, snap softly to X/Z-aligned movement.
+- Display bend-radius warning text only after cable diameter/type is known.
+- Do not force 90-degree bends until the software earns user trust through predictable previews.
+
+Acceptance checks:
+
+- Suggested route is visible and clearly separate from committed geometry.
+- User can ignore or modify the suggestion.
+- Manual override remains possible.
+
+### Phase 4 — Electrical Rule Layer
+
+Deliverable: first discipline-aware cable rules.
+
+- SR tracer finish behavior:
+  - Recommended default: allow the user to route from JB and auto-create an End Termination at the final end if one is not already present.
+  - Record the auto-created termination as a draft element and link it to the route metadata.
+- Component connection faces:
+  - DB/isolator: top/bottom preferred entry.
+  - JB: side/top/bottom entries, front/back discouraged.
+  - RTD/end termination: endpoint-only role.
+- Add warning placeholders:
+  - unrealistic open cable end
+  - same source and destination
+  - too many cables on one device
+  - bend radius below minimum
+
+Acceptance checks:
+
+- SR route can complete with an end termination rule.
+- Warnings are visible but do not over-block the user at this stage.
+
+### Phase 5 — Collision/Routing Engine Gate
+
+Deliverable: a design/implementation bridge before raceway/tray/duct work.
+
+- Introduce collision as a reusable service, not a viewer-side patch.
+- Start with bounding-box warning mode only:
+  - detect rough overlap/penetration
+  - show warning in selected route/component panel
+  - do not hard-stop movement yet
+- Later evolve to:
+  - BVH-backed clash checks
+  - swept-volume route checks
+  - clearance envelopes
+  - collision costs for A*/Dijkstra
+
+Acceptance checks:
+
+- Collision warnings are clearly marked as approximate.
+- No false claim that hard collision physics is production-ready.
+
+### Phase 6 — Persistence Boundary
+
+Deliverable: decide and implement durable route storage in the correct owner module.
+
+- Do not persist EHT cable routes in `plant3d` core tables.
+- Use an EHT/integration-owned model in the current shared database for now.
+- Store:
+  - plant3d package/source/project anchors
+  - route source/destination anchor references
+  - route node coordinates
+  - cable/tracer type
+  - warnings/validation snapshot
+  - created/updated metadata
+- Keep future service extraction clean: EHT owns EHT cable data; `plant3d` owns model/package/render context.
+
+### What Claude Can Help With
+
+Ask Claude for targeted review/research in parallel with Codex implementation:
+
+1. **Routing state-machine review:** validate the proposed `idle/select_source/select_destination/edit_route/review_route` flow and identify edge cases before coding.
+2. **Cable/raceway algorithm research:** recommend clean abstractions for Manhattan routing now and A*/Dijkstra later, including where each algorithm is appropriate.
+3. **Electrical rule checklist:** define practical first-pass validation rules for SR/MI/cold cable routing, JB/DB/isolator entries, end termination placement, and bend-radius warnings.
+4. **Collision engine staging:** recommend a staged collision architecture for bounding boxes -> BVH -> swept volumes, including what should remain approximate in the MVP.
+5. **Persistence model review:** review the future EHT/integration-owned route persistence model so we do not accidentally re-couple `plant3d` to EHT domain data.
+
+### Non-Goals For This Milestone
+
+- No full tray/raceway persistence yet.
+- No hard collision physics yet.
+- No automatic clash resolution.
+- No full A*/Dijkstra production router yet.
+- No forced 90-degree bend behavior.
+- No Celery/Redis or service split work.
+
 2026-07-01 coding note: Phase 7 tracker checkboxes are now closed against decision record 0003, but the acceptance remains deliberately scoped to current sample scale. Added a stronger synthetic F3 guard proving child-tile GLB payloads keep plant-global coordinates in tile RTC metadata while GLB vertex positions stay tile-local and reconstruct back into source-coordinate tile bounds. This does not replace the real plant-global IFC gate.
 
 2026-07-01 timing note: KR's fresh 13.7 MB `8-SSPAU-800203.ifc` GLB run recorded 61,073 ms total, with `parse_ms=59,656 ms`, GLB build 479 ms, tile write 29 ms, tileset write 1 ms, and DB/index write 329 ms. The next pass added an explicit `process_plant3d_job --parser-threads` option so the A/B test is repeatable without hidden environment variables.
@@ -514,6 +688,19 @@ Current manual check path:
 - 2026-07-05: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/package_viewer.mjs`, focused viewer tests, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, `git diff --check`, and `git diff --cached --check` passed after the route-UI/collision-planning pass. Plant3d suite: 73 tests.
 - 2026-07-05: Took the route clutter cleanup pass. Removed the explicit `Node Labels` button; route node labels now appear automatically while creating a route or when an existing route is selected. Component and route-node XYZ controls now use compact grouped coordinate rows. Confirmed there is no hard/soft floor-stop collision code to remove; the retained logic is only the surface-normal placement offset. Raceway planning now carries the recommended route-engine order: source/destination mode, routing core, Manhattan suggestion, A*/Dijkstra extension, then collision-cost integration.
 - 2026-07-05: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/package_viewer.mjs`, focused viewer tests, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, `git diff --check`, and `git diff --cached --check` passed after the route clutter cleanup pass. Plant3d suite: 73 tests.
+- 2026-07-05: Started the source/destination-first route workflow. Route tools now enter an explicit workflow state (`select_source`, `select_destination`, `edit_route`) instead of free-clicking from the first point. The user selects a source EHT component, then a destination EHT component; the viewer locks those endpoints and starts a route preview. `Finish Route` now requires the route to be in edit mode with valid, different anchors.
+- 2026-07-05: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/package_viewer.mjs`, focused viewer tests, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, `git diff --check`, and `git diff --cached --check` passed after the source/destination-first route workflow pass. Plant3d suite: 73 tests.
+- 2026-07-06: Took KR manual-feedback correction on route UX. After source/destination are locked, additional clicks are now route guide points, not exact physical cable nodes. The viewer expands guide points into a deterministic Manhattan-style orthogonal route (`X -> Z -> Y` per guide segment), previews that route, and commits the generated route on `Finish Route` with `route_method=manhattan_guide`. Immediate Claude takeaways accepted: same-source/destination rejection at transition, Escape/Cancel-to-idle behavior, source/destination-first route state, Manhattan heuristic before graph search. Deferred/discussion items: live anchor re-resolution, RTD workflow scope, persistence owner app, collision/BVH, route warnings severity, and A*/Dijkstra graph search.
+- 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/package_viewer.mjs`, focused viewer tests, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, `git diff --check`, and `git diff --cached --check` passed after the Manhattan guide-point route UX pass. Plant3d suite: 73 tests.
+- 2026-07-06: Added the first route re-edit loop. Finished cable routes now carry guide-point and loose source/destination anchor metadata. Selecting a route exposes `Edit Route`, which reopens the same route into the source/destination-first workflow; `Finish Route` updates that route instead of duplicating it. Added contextual route controls for `Undo Guide` and `Reset Path` while editing/creating a route. This improves usability but does not replace the planned pure routing-core extraction.
+- 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/package_viewer.mjs`, focused viewer tests, `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`, `git diff --check`, and `git diff --cached --check` passed after the route re-edit loop pass. Plant3d suite: 73 tests.
+- 2026-07-06: Took the next cable-routing control pass. Added a small browser-side `routing_core.js` with pure Manhattan route helpers and diagnostics so the viewer is no longer the only owner of route math. Added on-scene draggable intermediate guide handles while creating/editing a route; source/destination endpoints remain anchored and non-draggable. This gives users direct route-shaping control without forcing premature collision physics or A*/Dijkstra.
+- 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/routing_core.mjs`, `node --check /tmp/package_viewer.mjs`, focused viewer/static tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the route-core/guide-handle pass. Plant3d suite: 73 tests.
+- 2026-07-06: Added the first reusable route validation layer. `routing_core.js` now returns route diagnostics and block/warn/info validation messages for impossible anchors, very short segments, non-orthogonal segments, excessive bends, and simplifiable collinear nodes. The viewer records warnings in route metadata and shows compact diagnostics/warning badges on selected cable routes. Architectural direction confirmed: author raceway/containment networks first where available, then route cables through them; keep free/manual cable routing as a controlled exception path until raceway graph routing exists.
+- 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/routing_core.mjs`, `node --check /tmp/package_viewer.mjs`, focused viewer/static tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the route-validation pass. Plant3d suite: 73 tests.
+- 2026-07-06: Took the routing-control polish pass. Added browser-side draft undo/redo stacks with `Ctrl+Z` and `Ctrl+Shift+Z`, plus separate in-progress route-edit history so cable guide-point edits undo without touching committed draft elements. Added left-panel `Edit Selected Route`, `Delete Guide`, and `Redo` controls. Selected intermediate route guide points can now be deleted; source/destination guide points remain protected. Deleting a source/destination EHT point component now cascades to associated cable routes so cables do not hang without anchors.
+- 2026-07-06 strategy note: JS routing code is the responsive preview/authoring layer only. Python must become the authoritative route validator before any durable EHT/raceway save is accepted. Keep the overlap intentionally small: JS owns instant interaction, guide dragging, ghost routes, and optimistic warnings; Python owns persisted-rule gates for bend radius, dangling ends, source/destination validity, segregation/capacity, and future construction deliverables.
+- 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/routing_core.mjs`, `node --check /tmp/package_viewer.mjs`, focused viewer/static tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the routing-control polish pass. Plant3d suite: 73 tests.
 
 ## Cable Tray / Raceway Module — Claude Architecture Notes (2026-07-02)
 

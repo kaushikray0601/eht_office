@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260705_routeui2">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260706_routecontrol1">
 </head>
 <body class="p3d-viewer-body">
   <header class="p3d-topbar p3d-viewer-topbar">
@@ -127,10 +127,17 @@
             </div>
             <div id="ehtRouteControls" class="p3d-toolbar p3d-hidden" style="margin-top: 10px;">
               <button id="ehtFinishRouteBtn" type="button" class="p3d-button-primary">Finish Route</button>
+              <button id="ehtUndoGuideBtn" type="button">Undo Guide</button>
+              <button id="ehtDeleteGuideBtn" type="button">Delete Guide</button>
+              <button id="ehtResetRouteBtn" type="button">Reset Path</button>
               <button id="ehtCancelRouteBtn" type="button">Cancel</button>
+            </div>
+            <div id="ehtSelectedRouteControls" class="p3d-toolbar p3d-hidden" style="margin-top: 10px;">
+              <button id="ehtEditSelectedRouteBtn" type="button">Edit Selected Route</button>
             </div>
             <div class="p3d-toolbar" style="margin-top: 10px;">
               <button class="eht-undo-btn" type="button" disabled>Undo</button>
+              <button class="eht-redo-btn" type="button" disabled>Redo</button>
               <button id="ehtSaveLayerBtn" type="button">Save Draft Local</button>
             </div>
           </div>
@@ -272,6 +279,6 @@
       syncWidthLabels();
     })();
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260705_routeui2"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260706_routecontrol1"></script>
 </body>
 </html>
