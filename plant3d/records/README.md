@@ -10,6 +10,7 @@ This folder is the project record book for the new neutral 3D engineering platfo
 - `tracking/` - active progress trackers and execution checklists.
 - `decisions/` - durable decisions that should survive implementation details.
 - `operations/` - runbooks for local/dev/prototype operation and future container roles.
+- `prompts/` - restart prompts for Codex and Claude/Fable.
 
 ## Current Durable Decisions
 
@@ -21,8 +22,19 @@ This folder is the project record book for the new neutral 3D engineering platfo
 
 ## Current Active Plan
 
-- `planning/extraction-readiness-and-claude-brief-2026-07-04.md` - current extraction-readiness plan, deferred Celery/Redis note, and Claude review/research brief.
+- `planning/platform-reset-handover-2026-07-08.md` - reset handover for the next chat after the cable-routing/raceway pivot.
+- `planning/platform-ecosystem-development-plan-2026-07-08.md` - active post-reset development plan.
+- `tracking/platform-ecosystem-reset-tracker-2026-07-08.md` - active post-reset tracker.
+- `planning/raceway-mvp-execution-plan-2026-07-08.md` - detailed execution plan for the raceway/tray MVP.
+- `tracking/raceway-mvp-progress-tracker-2026-07-08.md` - detailed progress tracker for the raceway/tray MVP.
+- `prompts/codex-platform-reset-start-prompt-2026-07-08.md` - Codex restart prompt.
+- `prompts/claude-platform-architecture-review-prompt-2026-07-08.md` - Claude/Fable architecture review prompt.
+- `planning/extraction-readiness-and-claude-brief-2026-07-04.md` - extraction-readiness plan and Claude brief; now historical/supporting context behind the reset plan.
 - `planning/public-api-boundary-contract-2026-07-05.md` - Stage 0 public boundary contract for project/source/job/package/object/overlay integration.
+
+## Superseded Active Trackers
+
+- `tracking/pipeline-spike-tracker-2026-06-22.md` remains the rendering/conversion spike history and detailed verification log, but the active development tracker is now `tracking/platform-ecosystem-reset-tracker-2026-07-08.md`.
 
 ## Source Discussion
 

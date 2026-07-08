@@ -1,9 +1,81 @@
 # Codex Memory
 
-Last updated: 2026-06-15
+Last updated: 2026-07-08
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
+
+## Current Plant3D Reset Snapshot - 2026-07-08
+
+Primary restart context:
+
+- `plant3d/records/prompts/codex-platform-reset-start-prompt-2026-07-08.md`
+- `plant3d/records/planning/platform-reset-handover-2026-07-08.md`
+- `plant3d/records/planning/platform-ecosystem-development-plan-2026-07-08.md`
+- `plant3d/records/tracking/platform-ecosystem-reset-tracker-2026-07-08.md`
+- `plant3d/records/decisions/0005-plant3d-independent-platform-boundary.md`
+- `plant3d/records/planning/raceway-module-architecture-2026-07-02.md`
+
+North star: `plant3d` is the neutral 3D engineering platform. EHT,
+raceway/tray, cable routing, construction, review, and future modules consume
+it through stable anchors and viewer/API seams. They do not put domain
+persistence into `plant3d`.
+
+Current pivot: stop pushing cable-first free-space autorouting. Real EPC cable
+routing is shared raceway/tray/trunk first, then cable assignment. Existing EHT
+cable centerline tools remain draft/manual exception tooling and a useful
+editing prototype, not the product architecture.
+
+Immediate active plan:
+
+1. Record `raceway` as a peer app, not an EHT submodule.
+2. Scaffold minimal `raceway` Django app only after KR approves coding.
+3. Register app/URL safely.
+4. Add import-boundary tests: `plant3d` must not import `raceway`; `raceway`
+   may consume `plant3d` contracts.
+5. Keep schema narrow: `RacewayLayer`, `RacewayRun`, `RacewayNode`,
+   `RacewayFamily`, `RacewaySize` are candidates. Supports/fittings/vendor
+   catalogue/cable assignment are later.
+6. Update `plant3d/records/tracking/platform-ecosystem-reset-tracker-2026-07-08.md`
+   after each pass.
+
+Code facts verified on 2026-07-08:
+
+- No `raceway` app exists yet; `ELECSENSE/settings.py` still lists `eht`,
+  `idfviewer`, and `plant3d`.
+- `plant3d.models.SourceModel.project_id` is a loose string reference, not a
+  hard FK to EHT. The EHT-backed access dependency is intentionally confined to
+  `plant3d.project_gateway`.
+- `plant3d.tests.Plant3DProjectGatewayTests.test_eht_model_imports_stay_confined_to_project_gateway`
+  guards that boundary.
+- `plant3d.urls` has source list/upload/detail/json, job json, package viewer
+  and package/object/tile APIs.
+- `package_json_view` already exposes top-level `coordinate_transform` and does
+  not expose `manifest_storage_key`; `source_model_json_view` already exists.
+  These satisfy important July 5 contract recommendations.
+- `package_viewer.js` already exposes `window.plant3dViewerLayers` with
+  `register`, `update`, `setVisible`, `isVisible`, and summaries. Current
+  registered layers include model, measurement, reference grid, plot plan, EHT
+  draft, and hidden EHT route preview.
+- `routing_core.js` remains pure JS with route diagnostics/validation and graph
+  primitives, but no server-authoritative validation yet.
+
+Guardrails:
+
+- Do not modify EHT calculation logic while working on `plant3d`/`raceway`.
+- Do not add EHT or raceway domain persistence to `plant3d`.
+- Do not revive always-on Manhattan/free-click routing as the main UX.
+- Do not build smarter cable autorouting before a raceway graph exists.
+- Do not split repo/service or add Celery/Redis unless KR explicitly restarts
+  that infrastructure track.
+- Do not add AGPL runtime dependencies.
+- Do not hide model completeness or coordinate/precision uncertainty.
+- Collision/pathfinding must begin as warnings/previews. Hard constraints and
+  authoritative routing wait for tested collision/pathfinding foundations.
+
+Claude/Fable role: architecture advisor, auditor, reviewer, and independent
+researcher. Treat Claude output as valuable review input, not automatic coding
+instruction. Major pivots go back to KR before implementation.
 
 ## Current Objective
 
