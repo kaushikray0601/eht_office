@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }}</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260705_source1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260706_sourceui1">
 </head>
 <body class="p3d-page">
   <header class="p3d-topbar">
@@ -13,7 +13,7 @@
       <span class="p3d-brand-subtitle">Source model</span>
     </div>
     <div class="p3d-toolbar">
-      <a class="p3d-button" href="{% url 'plant3d_source_upload' %}">Upload Another</a>
+      <a class="p3d-button" href="{% url 'plant3d_source_upload' %}">Upload / Replace Working Model</a>
       <a class="p3d-button" href="{% url 'plant3d_home' %}">plant3d Home</a>
     </div>
   </header>
@@ -22,10 +22,33 @@
     <div class="p3d-grid">
       <section class="p3d-card">
         <div class="p3d-card-header">
-          <h2>Model Processing</h2>
-          <p>Build the production viewer package from this source model.</p>
+          <h2>3D Model</h2>
+          <p>Open the viewer package or process this source model.</p>
         </div>
         <div class="p3d-card-body p3d-action-stack">
+          {% if latest_package %}
+            <div class="p3d-primary-action">
+              <a class="p3d-button p3d-button-primary" href="{% url 'plant3d_package_viewer' latest_package.pk %}">Open 3D Viewer</a>
+              <p class="p3d-help">Latest package: {{ latest_package.package_format }} · {{ latest_package.byte_size }} bytes · {{ latest_package.tile_count }} tile{{ latest_package.tile_count|pluralize }}</p>
+            </div>
+          {% elif source.source_format == "IFC" %}
+            <div class="p3d-primary-action">
+              <form method="post" action="{% url 'plant3d_source_ifc_glb_convert' source.pk %}" data-conversion-form data-conversion-kind="viewer-package">
+                {% csrf_token %}
+                <button class="p3d-button-primary" type="submit">Process 3D Model</button>
+              </form>
+              <p class="p3d-help">Creates the GLB tiled viewer package with feature-ID picking and metadata sidecar files.</p>
+            </div>
+          {% else %}
+            <div class="p3d-primary-action">
+              <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}" data-conversion-form data-conversion-kind="metadata">
+                {% csrf_token %}
+                <button class="p3d-button-primary" type="submit">Process Source Metadata</button>
+              </form>
+              <p class="p3d-help">This source format does not yet have a production 3D package converter.</p>
+            </div>
+          {% endif %}
+
           <dl class="p3d-kv-grid">
             <div class="p3d-kv">
               <dt>Project</dt>
@@ -49,6 +72,19 @@
             </div>
           </dl>
 
+          {% if latest_package and source.source_format == "IFC" %}
+            <details class="p3d-details">
+              <summary>Reprocess model</summary>
+              <div class="p3d-details-body">
+                <form method="post" action="{% url 'plant3d_source_ifc_glb_convert' source.pk %}" data-conversion-form data-conversion-kind="viewer-package">
+                  {% csrf_token %}
+                  <button type="submit">Rebuild 3D Viewer Package</button>
+                </form>
+                <p class="p3d-help">Use this after changing converter code or when a package needs to be regenerated.</p>
+              </div>
+            </details>
+          {% endif %}
+
           <details class="p3d-details">
             <summary>Technical source details</summary>
             <div class="p3d-details-body">
@@ -70,37 +106,33 @@
           </details>
 
           {% if not source.is_saved_case %}
-            <form method="post" action="{% url 'plant3d_source_save_case' source.pk %}">
-              {% csrf_token %}
-              <button type="submit">Save Geometry Case</button>
-            </form>
-            <p class="p3d-help">Working uploads are replaced by the next upload for the same user and project. Save only cases that must be retained; up to five saved geometry cases are allowed per user/project.</p>
-          {% else %}
-            <p class="p3d-help">This source is protected as a saved geometry case and will not be replaced by normal working uploads.</p>
-          {% endif %}
+            <details class="p3d-details">
+              <summary>Retention and cleanup</summary>
+              <div class="p3d-details-body">
+                <form method="post" action="{% url 'plant3d_source_save_case' source.pk %}">
+                  {% csrf_token %}
+                  <button type="submit">Save This Geometry Case</button>
+                </form>
+                <p class="p3d-help">Working uploads are replaced by the next upload for the same user and project. Save only cases that must be retained; up to five saved geometry cases are allowed per user/project.</p>
 
-          <form method="post" action="{% url 'plant3d_source_delete' source.pk %}" onsubmit="return confirm('Delete this source model, conversion jobs, render packages, object index, and stored geometry files?');">
-            {% csrf_token %}
-            <button type="submit" class="p3d-button-danger">Delete Source Model</button>
-          </form>
-          <p class="p3d-help">Deletes this source model and its generated geometry packages from plant3d storage. Use this to free test/development resources.</p>
-
-          {% if source.source_format == "IFC" %}
-            <div class="p3d-primary-action">
-              <form method="post" action="{% url 'plant3d_source_ifc_glb_convert' source.pk %}" data-conversion-form data-conversion-kind="viewer-package">
-                {% csrf_token %}
-                <button class="p3d-button-primary" type="submit">Process 3D Model</button>
-              </form>
-              <p class="p3d-help">Creates the GLB tiled viewer package with feature-ID picking and metadata sidecar files.</p>
-            </div>
+                <form method="post" action="{% url 'plant3d_source_delete' source.pk %}" onsubmit="return confirm('Delete this current source model, its conversion jobs, render packages, object index, and stored geometry files?');">
+                  {% csrf_token %}
+                  <button type="submit" class="p3d-button-danger">Delete This Source Model</button>
+                </form>
+                <p class="p3d-help">Deletes only this current source model and its generated plant3d packages. It does not delete other saved cases or other users' models.</p>
+              </div>
+            </details>
           {% else %}
-            <div class="p3d-primary-action">
-              <form method="post" action="{% url 'plant3d_source_metadata_convert' source.pk %}" data-conversion-form data-conversion-kind="metadata">
-                {% csrf_token %}
-                <button class="p3d-button-primary" type="submit">Process Source Metadata</button>
-              </form>
-              <p class="p3d-help">This source format does not yet have a production 3D package converter.</p>
-            </div>
+            <details class="p3d-details">
+              <summary>Retention and cleanup</summary>
+              <div class="p3d-details-body">
+                <p class="p3d-help">This source is protected as a saved geometry case and will not be replaced by normal working uploads.</p>
+                <form method="post" action="{% url 'plant3d_source_delete' source.pk %}" onsubmit="return confirm('Delete this saved source model, its conversion jobs, render packages, object index, and stored geometry files?');">
+                  {% csrf_token %}
+                  <button type="submit" class="p3d-button-danger">Delete This Saved Case</button>
+                </form>
+              </div>
+            </details>
           {% endif %}
 
           <details class="p3d-details">
@@ -121,7 +153,7 @@
           </details>
 
           <div id="conversionQueueStatus" class="p3d-status"></div>
-          <p class="p3d-help">
+          <p class="p3d-help p3d-admin-note">
             Queued conversions are processed by the local worker:
             <code class="p3d-code">{{ worker_command }}</code>
           </p>
@@ -130,8 +162,8 @@
 
       <aside class="p3d-card">
         <div class="p3d-card-header">
-          <h2>Render Packages</h2>
-          <p>Open the latest GLB package for review.</p>
+          <h2>Packages</h2>
+          <p>Generated viewer outputs for this source.</p>
         </div>
         <div class="p3d-card-body">
           <ul class="p3d-list">
@@ -141,11 +173,17 @@
                   <span>{{ package.package_format }}</span>
                   <span>{{ package.byte_size }} bytes</span>
                 </div>
-                <div class="meta">{{ package.manifest_storage_key }}</div>
+                <div class="meta">{{ package.created_at }} · {{ package.tile_count }} tile{{ package.tile_count|pluralize }}</div>
                 <div class="p3d-list-actions">
                   <a class="p3d-button p3d-button-primary" href="{% url 'plant3d_package_viewer' package.pk %}">View</a>
                   <a class="p3d-button p3d-button-quiet" href="{% url 'plant3d_package_json' package.pk %}">Package JSON</a>
                 </div>
+                <details class="p3d-details" style="margin-top: 10px;">
+                  <summary>Technical package details</summary>
+                  <div class="p3d-details-body">
+                    <div class="meta">{{ package.manifest_storage_key }}</div>
+                  </div>
+                </details>
               </li>
             {% empty %}
               <li class="p3d-list-item">No render packages yet.</li>
@@ -155,13 +193,15 @@
       </aside>
     </div>
 
-    <section class="p3d-card" style="margin-top: 18px;">
-      <div class="p3d-card-header">
-        <h2>Conversion Jobs</h2>
-        <p>Background worker progress and timing evidence.</p>
-      </div>
+    <details class="p3d-card p3d-source-admin-card" style="margin-top: 18px;">
+      <summary class="p3d-card-header">
+        <span>
+          <h2>Conversion Jobs</h2>
+          <p>Background worker progress and timing evidence.</p>
+        </span>
+      </summary>
       <div class="p3d-card-body">
-        <ul id="conversionJobList" class="p3d-list">
+        <ul id="conversionJobList" class="p3d-list p3d-compact-job-list">
           {% for job in jobs %}
             <li class="p3d-list-item" id="plant3d-job-{{ job.pk }}" data-job-url="{% url 'plant3d_job_json' job.pk %}" {% if job.status == "queued" or job.status == "running" %}data-watch-job{% endif %}>
               <div class="p3d-list-title">
@@ -199,9 +239,9 @@
           {% endfor %}
         </ul>
       </div>
-    </section>
+    </details>
   </main>
 
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260705_progress1" defer></script>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260706_sourceui1" defer></script>
 </body>
 </html>

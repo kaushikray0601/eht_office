@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>Upload source model</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_shell1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260706_sourceui1">
 </head>
 <body class="p3d-page">
   <header class="p3d-topbar">
@@ -18,18 +18,57 @@
     <section class="p3d-card">
       <div class="p3d-card-header">
         <h2>Source File</h2>
-        <p>Upload the source model once; processing happens later through the background worker.</p>
+        <p>Choose project and optional labels first. Selecting the file starts the upload automatically.</p>
       </div>
       <div class="p3d-card-body">
-        <form class="p3d-form" method="post" enctype="multipart/form-data">
+        <form id="plant3dSourceUploadForm" class="p3d-form" method="post" enctype="multipart/form-data">
           {% csrf_token %}
-          {{ form.as_p }}
-          <div>
-            <button class="p3d-button-primary" type="submit">Upload Source Model</button>
-          </div>
+          {% if form.non_field_errors %}
+            <div class="p3d-form-errors">{{ form.non_field_errors }}</div>
+          {% endif %}
+
+          <label class="p3d-form-row" for="{{ form.project.id_for_label }}">
+            <span>Project</span>
+            {{ form.project }}
+            {{ form.project.errors }}
+          </label>
+
+          <label class="p3d-form-row" for="{{ form.display_name.id_for_label }}">
+            <span>Display name</span>
+            {{ form.display_name }}
+            {{ form.display_name.errors }}
+          </label>
+
+          <label class="p3d-form-row" for="{{ form.source_system.id_for_label }}">
+            <span>Source system</span>
+            {{ form.source_system }}
+            {{ form.source_system.errors }}
+          </label>
+
+          <label class="p3d-upload-dropzone" for="{{ form.source_file.id_for_label }}">
+            <span class="p3d-upload-title">Choose IFC / source model</span>
+            <span class="p3d-upload-help">The selected file uploads immediately as the current working model for this user/project.</span>
+            {{ form.source_file }}
+            {{ form.source_file.errors }}
+          </label>
+
+          <div id="sourceUploadStatus" class="p3d-status">Waiting for file selection.</div>
         </form>
       </div>
     </section>
   </main>
+  <script>
+    (() => {
+      const form = document.getElementById('plant3dSourceUploadForm');
+      const input = form?.querySelector('input[type="file"]');
+      const status = document.getElementById('sourceUploadStatus');
+      if (!form || !input) return;
+      input.addEventListener('change', () => {
+        if (!input.files || !input.files.length) return;
+        if (status) status.textContent = `Uploading ${input.files[0].name}...`;
+        form.submit();
+      });
+    })();
+  </script>
 </body>
 </html>

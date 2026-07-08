@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <title>{{ source.display_name }} - plant3d viewer</title>
   {% load static %}
-  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260706_routecontrol1">
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260707_centerline1">
 </head>
 <body class="p3d-viewer-body">
   <header class="p3d-topbar p3d-viewer-topbar">
@@ -43,6 +43,7 @@
       <strong>Measure</strong>
       <div id="measurementStatus">Pick the first point.</div>
     </div>
+    <div id="ehtRouteHud" class="p3d-route-hud p3d-hidden"></div>
     <div id="viewerContextMenu" class="p3d-context-menu p3d-hidden" role="menu" aria-label="Viewer context menu">
       <button type="button" data-context-action="orbit" role="menuitem">Orbit / Rotate <span>O</span></button>
       <button type="button" data-context-action="pan" role="menuitem">Pan <span>P</span></button>
@@ -130,6 +131,7 @@
               <button id="ehtUndoGuideBtn" type="button">Undo Guide</button>
               <button id="ehtDeleteGuideBtn" type="button">Delete Guide</button>
               <button id="ehtResetRouteBtn" type="button">Reset Path</button>
+              <button id="ehtOrthogonalRouteBtn" type="button" class="p3d-button-primary" title="Centerline mode draws the route through clicked path points in order. Toggle for optional orthogonal assist.">Centerline</button>
               <button id="ehtCancelRouteBtn" type="button">Cancel</button>
             </div>
             <div id="ehtSelectedRouteControls" class="p3d-toolbar p3d-hidden" style="margin-top: 10px;">
@@ -279,6 +281,6 @@
       syncWidthLabels();
     })();
   </script>
-  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260706_routecontrol1"></script>
+  <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260707_centerline1"></script>
 </body>
 </html>

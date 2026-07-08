@@ -283,21 +283,23 @@ Deferred / TODO:
 3. **Overlay integration seam.** Refactor/document the viewer-side overlay contract so EHT draft tools, future raceway tools, measurements, reference layers, and review visibility all plug into `plant3d` through generic layer/anchor concepts. Do not add EHT/raceway persistence models to `plant3d` core. **Started 2026-07-05: viewer now has an inspectable generic layer registry for model, measurement, reference-grid, reference-plot-plan, EHT draft, and EHT route-preview layers. Continued 2026-07-05: Reference Layers now exposes user-facing layer visibility controls backed by the same registry.**
 4. **Raceway placement decision.** Before coding cable tray/raceway persistence, decide and record whether `raceway` becomes a peer app consuming `plant3d` (recommended) or remains inside an EHT integration layer.
 5. **Viewer maturity backlog.** Continue improving the engineering UI after the boundary work: hierarchy-wide hide/filter semantics, cleaner layer controls, robust context actions, snap/measurement refinements, plane-distance measurement, persistent review states, and professional layout polish.
-6. **Boundary contract follow-up from Claude RFC.** Near-term but not this product pass: remove raw `manifest_storage_key` from public package JSON, promote `coordinate_transform` to a top-level stable response key, add a per-source JSON endpoint, and add contract tests for stable API fields/RTC round-trip. Strategic decision still needed: confirm `OverlayAnchor` is a plain shared shape/helper, not a `plant3d`-owned annotations table.
-7. **Correctness gate F3.** Obtain a real plant-global/georeferenced IFC before marking float32 jitter, RTC precision, orbit stability, or measurement stability as proven. Synthetic large-coordinate tests reduce risk but do not replace this gate.
-8. **Correctness gate C3/F4.** Synthetic metre-declared and foot-declared one-metre fixtures are covered; add a real source-system/exporter known-dimension proof before marking measurement/federation scale fully trusted.
-9. **Performance scale checks.** Worker parser threading is a confirmed local win: 61,073 ms -> 11,826 ms total conversion on the 13.7 MB sample, with stable RAM. Repeat on the largest available IFC and size worker CPU/RAM intentionally before making aggressive defaults for constrained containers.
-10. **Opportunistic package optimization only.** When `gltfpack` is available, measure meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness. Payload is not the current bottleneck, so do not let compression displace boundary work.
-11. **Deferred infrastructure.** Celery/Redis, signed object-storage delivery, Stage 1 service/database extraction, BVH, HLOD/LOD, and full meshopt/Draco comparison are deferred until the boundary/API and overlay seams are stable or a concrete scale trigger appears.
-12. **Clean retests and guardrails.** Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
+6. **EHT-owned route persistence.** Move browser-local cable/component drafts toward durable persistence in an EHT/integration-owned model/API in the current shared database. Do not add EHT route tables to `plant3d`; `plant3d` supplies package/source/object anchors and render context, while EHT owns electrical route data and server-side validation.
+7. **Route-authoring correctness gap closure.** Keep the JS routing layer as responsive preview/authoring only. Before durable save, add Python-authoritative validation for source/destination validity, dangling ends, route payload shape, and basic warnings. Decide/document live anchors versus snapshot anchors before route data becomes construction-grade.
+8. **Boundary contract follow-up from Claude RFC.** Near-term but not this product pass: remove raw `manifest_storage_key` from public package JSON, promote `coordinate_transform` to a top-level stable response key, add a per-source JSON endpoint, and add contract tests for stable API fields/RTC round-trip. Strategic decision still needed: confirm `OverlayAnchor` is a plain shared shape/helper, not a `plant3d`-owned annotations table.
+9. **Correctness gate F3.** Obtain a real plant-global/georeferenced IFC before marking float32 jitter, RTC precision, orbit stability, or measurement stability as proven. Synthetic large-coordinate tests reduce risk but do not replace this gate.
+10. **Correctness gate C3/F4.** Synthetic metre-declared and foot-declared one-metre fixtures are covered; add a real source-system/exporter known-dimension proof before marking measurement/federation scale fully trusted.
+11. **Performance scale checks.** Worker parser threading is a confirmed local win: 61,073 ms -> 11,826 ms total conversion on the 13.7 MB sample, with stable RAM. Repeat on the largest available IFC and size worker CPU/RAM intentionally before making aggressive defaults for constrained containers.
+12. **Opportunistic package optimization only.** When `gltfpack` is available, measure meshopt compression ratio, compression duration, browser decode/load time, and feature-ID correctness. Payload is not the current bottleneck, so do not let compression displace boundary work.
+13. **Deferred infrastructure.** Celery/Redis, signed object-storage delivery, Stage 1 service/database extraction, BVH, HLOD/LOD, and full meshopt/Draco comparison are deferred until the boundary/API and overlay seams are stable or a concrete scale trigger appears.
+14. **Clean retests and guardrails.** Use `purge_plant3d_data` for clean local retests when DB rows and storage blobs should both be removed. Keep production EHT, cold cable, SLD, and `idfviewer` behavior unchanged.
 
 ## Next Big Coding Step — Source/Destination-First Cable Routing Foundation
 
-**Objective:** replace the current free-click cable route workflow with a source/destination-first routing foundation that can grow into Manhattan suggestions, bend-radius checks, A*/Dijkstra routing, collision-aware routing, raceway/tray graph routing, and durable EHT/raceway persistence without rewriting the viewer again.
+**Objective:** replace the old free-click cable route workflow with a source/destination-first, centerline-drafting foundation that can later grow into Manhattan suggestions, bend-radius checks, A*/Dijkstra routing, collision-aware routing, raceway/tray graph routing, and durable EHT/raceway persistence without rewriting the viewer again.
 
 ### Why this is the next big step
 
-- The current route tool proves geometry and node editing, but it still lets users create routes by free air-clicking.
+- The route tool proves geometry and node editing, but it must stay predictable for users: source, destination, then ordered centerline points.
 - Engineering cable routes should have explicit anchors: from DB/JB/isolator/etc. to JB/isolator/RTD/end termination/etc.
 - Long routes need route intent, not hundreds of visible XYZ rows in the property panel.
 - Raceway/tray work will need the same primitives: anchors, nodes, route graph, validation, suggestions, and collision costs.
@@ -315,7 +317,7 @@ Deliverable: a cleaner cable route authoring workflow inside the current `plant3
   - `review_route`
 - For route tools (`cold_cable`, `tracer_sr`, `tracer_mi`), ask the user to select a source component first, then a destination component.
 - Lock route endpoints to component anchors once selected.
-- Keep intermediate guide points editable, but do not force full collision/orthogonal rules yet.
+- Keep intermediate centerline/guide points editable, but do not force full collision/orthogonal rules yet.
 - Replace free-click “Finish Route” assumptions with explicit route state:
   - Start and end anchors are known before route editing begins.
   - Finish/Save only commits a route with valid anchors.
@@ -334,7 +336,7 @@ Deliverable: a cleaner cable route authoring workflow inside the current `plant3
 Acceptance checks:
 
 - User can select DB/JB/etc. as source and destination before drawing a cable.
-- Route preview appears between locked anchors.
+- Route preview appears between locked anchors and follows clicked centerline points in order.
 - Route cannot be committed without both anchors.
 - Existing local draft save/restore still works.
 - Existing point component placement, selection, delete, hide/unhide, and measurement remain unchanged.
@@ -363,31 +365,33 @@ Initial responsibilities:
   - bend count
   - warnings
   - reasons/diagnostics
-- Implement the first deterministic helper:
-  - `suggest_manhattan_route(source, destination, options)`
+- Implement deterministic helpers:
+  - direct centerline route through ordered guide points
+  - optional `suggest_manhattan_route(source, destination, options)` for assist/suggestion workflows
 - Keep A*/Dijkstra as placeholders, not active production behavior yet.
 
 Acceptance checks:
 
-- Unit tests prove the routing core can suggest a simple Manhattan route.
+- Unit tests prove the routing core can preserve a direct centerline route and can suggest a simple Manhattan route.
 - Unit tests prove it returns route warnings without mutating viewer state.
 - Viewer can call the routing core output shape later without knowing the final algorithm.
 
-### Phase 3 — Soft Orthogonal Assist (UX step)
+### Phase 3 — Centerline First, Orthogonal Assist Later (UX step)
 
-Deliverable: a natural assist, not forced geometry.
+Deliverable: predictable centerline drafting as the default, with optional assist modes clearly separated from committed user intent.
 
-- Show a dotted/ghost Manhattan suggestion after source and destination are selected.
-- Let the user accept the suggestion or keep editing manually.
-- When adding a node close to an orthogonal alignment, snap softly to X/Z-aligned movement.
+- Default route drawing is source -> ordered centerline points -> destination.
+- Optional Ortho Assist may show or generate a Manhattan route, but it must not silently replace the user's centerline.
+- Any future dotted/ghost Manhattan suggestion must be explicitly accepted before it changes committed geometry.
+- When editing a route, new centerline points append predictably before destination unless the user has selected a guide insertion point.
 - Display bend-radius warning text only after cable diameter/type is known.
 - Do not force 90-degree bends until the software earns user trust through predictable previews.
 
 Acceptance checks:
 
-- Suggested route is visible and clearly separate from committed geometry.
-- User can ignore or modify the suggestion.
-- Manual override remains possible.
+- Centerline drafting can create direct non-orthogonal route segments when the user chooses them.
+- Ortho Assist is visible as an assist mode, not the hidden/default behavior.
+- Non-orthogonal/free-space warnings remain visible without blocking drafting.
 
 ### Phase 4 — Electrical Rule Layer
 
@@ -472,6 +476,18 @@ Ask Claude for targeted review/research in parallel with Codex implementation:
 2026-07-01 A/B result: the same sample converted with `process_plant3d_job --watch --parser-threads auto` completed in 11,826 ms, with `parse_ms=10,411 ms`. CPU rose to about 97%, GPU stayed unchanged as expected, and RAM stayed around 30%. The source-detail and JSON worker hints now recommend the threaded worker command for local/dev conversion.
 
 2026-07-01 worker sizing note: `auto` now uses Docker/cgroup-aware effective CPU count and cgroup memory limits where Linux exposes quota files. It supports a hard thread cap (`--parser-thread-cap N` or `PLANT3D_PARSER_THREAD_CAP=N`) and memory assumptions (`PLANT3D_PARSER_MEMORY_PER_THREAD_MB`, `PLANT3D_PARSER_MEMORY_RESERVE_MB`). The worker also calls Python garbage collection after each job. Native IfcOpenShell allocations can still benefit from operational recycling, so production/shared Docker workers should use explicit CPU/RAM limits and consider `--max-jobs` plus container restart policy for long-running conversion loads.
+
+2026-07-06 touchup note: source upload is now user-flow oriented rather than developer-form oriented. The upload form places project/name/source-system fields before file selection, and choosing a file auto-submits the form. Source detail now presents a simpler normal-user path (`Open 3D Viewer` or `Process 3D Model`) while retaining conversion jobs, reprocess buttons, package internals, and cleanup actions inside explicit advanced/detail sections. Delete wording was clarified: working source deletion affects only the current source and generated plant3d artifacts, not saved cases or other users' data.
+
+2026-07-06 route-edit note: the selected-route HUD was moved out of the left sidebar into a compact floating glass card over the viewer. Route edit clicks now insert guide points into the nearest existing route segment instead of always appending before the destination, reducing the unrealistic long zigzag behavior when a user wants an existing cable to pass through one additional point. This is still a guide-point editing heuristic, not a full pathfinding or collision-aware reroute engine.
+
+2026-07-06 persistence note: browser `localStorage` remains an interim draft convenience only. Durable DB persistence for EHT routes/components should be the next product-grade boundary pass: create EHT/integration-owned storage in the current shared database, load it into the viewer on package open, and validate route payloads server-side before save. Do not persist EHT route data in `plant3d` core tables.
+
+2026-07-07 route-edit note, superseded by centerline correction below: guide-handle dragging was tested as orthogonal by default on the current elevation plane, with a visible `Ortho Move` / `Free Move` toggle and a temporary `Shift` override for free planar drag. Manual testing later showed this still felt too clever/unpredictable for first-pass authoring.
+
+2026-07-07 route-mode correction, superseded by centerline correction below: `Free Move` was changed to affect route geometry, not just handle dragging. This proved direct polyline routes were needed, but the final current direction is simpler: centerline-first route drafting with optional `Ortho Assist`.
+
+2026-07-07 centerline correction: after KR manual testing, the routing UI was simplified again. New cable routes now default to `Centerline` drafting: select source, select destination, click centerline/path points in order, then `Finish Route`. `Ortho Assist` remains available as an optional Manhattan helper, but it is no longer the default authoring mode. Centerline clicks append predictably before the destination, or after the selected guide if one is selected.
 
 Current manual check path:
 
@@ -701,6 +717,13 @@ Current manual check path:
 - 2026-07-06: Took the routing-control polish pass. Added browser-side draft undo/redo stacks with `Ctrl+Z` and `Ctrl+Shift+Z`, plus separate in-progress route-edit history so cable guide-point edits undo without touching committed draft elements. Added left-panel `Edit Selected Route`, `Delete Guide`, and `Redo` controls. Selected intermediate route guide points can now be deleted; source/destination guide points remain protected. Deleting a source/destination EHT point component now cascades to associated cable routes so cables do not hang without anchors.
 - 2026-07-06 strategy note: JS routing code is the responsive preview/authoring layer only. Python must become the authoritative route validator before any durable EHT/raceway save is accepted. Keep the overlap intentionally small: JS owns instant interaction, guide dragging, ghost routes, and optimistic warnings; Python owns persisted-rule gates for bend radius, dangling ends, source/destination validity, segregation/capacity, and future construction deliverables.
 - 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/routing_core.mjs`, `node --check /tmp/package_viewer.mjs`, focused viewer/static tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the routing-control polish pass. Plant3d suite: 73 tests.
+- 2026-07-06: Added the first route HUD/intent pass. The left EHT panel now shows a compact active/selected route HUD with source, destination, length, segments/bends, guide count, substrate, warning count, and next action. `routing_core.js` now also exposes a neutral graph skeleton (`createRouteGraph`, `summarizeRouteGraph`) so future raceway/tray/duct networks can be represented as nodes/edges before A*/Dijkstra or persisted `raceway` models are introduced.
+- 2026-07-06: `venv/bin/python -m py_compile plant3d/tests.py`, `venv/bin/python manage.py check`, `node --check /tmp/routing_core.mjs`, `node --check /tmp/package_viewer.mjs`, focused viewer/static tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed after the route-HUD/graph-skeleton pass. Plant3d suite: 73 tests.
+- 2026-07-06: Took the source-page and route-edit touchup pass. Upload source now auto-submits when a file is selected; source detail now defaults to a clean normal-user path with advanced conversion/job/package/cleanup details tucked behind explicit sections; selected-route HUD now floats over the viewer instead of consuming left-panel space; route edit guide clicks now insert into the nearest existing route segment to reduce unrealistic zigzag reroutes. `node --check /tmp/routing_core.mjs`, `node --check /tmp/package_viewer.mjs`, focused upload/source/viewer tests, and `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1` passed. Plant3d suite: 74 tests.
+- 2026-07-07: Superseded experiment: tightened route-edit controls with orthogonal default dragging plus `Ortho Move` / `Free Move`. Manual testing rejected this as still too clever/unpredictable for first-pass cable authoring.
+- 2026-07-07: Superseded experiment: corrected `Free Move` route semantics after KR manual review. This proved direct polyline routes were needed, but the final UI was simplified further into centerline-first authoring.
+- 2026-07-07: Simplified route authoring to default centerline drafting. New source/destination routes start in Centerline mode, clicks add ordered centerline points, and `Ortho Assist` is now an optional toggle rather than the primary behavior. This intentionally steps back from clever auto-routing until the raceway/collision/pathfinding layer is ready.
+- 2026-07-07: Took the routing housekeeping pass after multiple UX experiments. Removed stale route import/test expectation, corrected user-facing route status text, simplified Ortho Assist insertion helper, refreshed the active tracker plan to centerline-first, and marked the rejected Ortho/Free experiments as superseded. Added a supersession note to Claude's cable-routing RFC so always-on Manhattan analysis is treated as historical.
 
 ## Cable Tray / Raceway Module — Claude Architecture Notes (2026-07-02)
 

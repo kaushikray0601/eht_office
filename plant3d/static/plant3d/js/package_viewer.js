@@ -3,7 +3,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { routeDiagnostics, suggestManhattanRoute, validateRoute } from './routing_core.js';
+import { manhattanSegmentPoints, routeProfile, suggestManhattanRoute, validateRoute } from './routing_core.js';
 
 const viewer = document.getElementById('viewer');
 const statusEl = document.getElementById('viewerStatus');
@@ -32,11 +32,13 @@ const ehtToolStatus = document.getElementById('ehtToolStatus');
 const ehtPaletteToggleBtn = document.getElementById('ehtPaletteToggleBtn');
 const ehtSelectToolBtn = document.getElementById('ehtSelectToolBtn');
 const ehtRouteControls = document.getElementById('ehtRouteControls');
+const ehtRouteHud = document.getElementById('ehtRouteHud');
 const ehtFinishRouteBtn = document.getElementById('ehtFinishRouteBtn');
 const ehtCancelRouteBtn = document.getElementById('ehtCancelRouteBtn');
 const ehtUndoGuideBtn = document.getElementById('ehtUndoGuideBtn');
 const ehtDeleteGuideBtn = document.getElementById('ehtDeleteGuideBtn');
 const ehtResetRouteBtn = document.getElementById('ehtResetRouteBtn');
+const ehtOrthogonalRouteBtn = document.getElementById('ehtOrthogonalRouteBtn');
 const ehtSelectedRouteControls = document.getElementById('ehtSelectedRouteControls');
 const ehtEditSelectedRouteBtn = document.getElementById('ehtEditSelectedRouteBtn');
 const ehtSaveLayerBtn = document.getElementById('ehtSaveLayerBtn');
@@ -306,7 +308,10 @@ let routeDestinationAnchor = null;
 let editingRouteId = '';
 let draggingRouteGuideIndex = -1;
 let routeGuideDragPlane = null;
+let routeGuideDragStartPoint = null;
 let selectedRouteGuideIndex = -1;
+let routeHudCollapsed = false;
+let routeOrthogonalEdit = false;
 let ehtDraftElements = [];
 let selectedDraftId = '';
 let movingDraftId = '';
@@ -885,6 +890,7 @@ function routeEditSnapshot() {
     destination_anchor: cloneRouteAnchor(routeDestinationAnchor),
     editing_route_id: editingRouteId,
     selected_guide_index: selectedRouteGuideIndex,
+    route_orthogonal_edit: routeOrthogonalEdit,
     guide_points: pendingRouteGuidePoints.map(point => point.clone()),
     anchors: pendingRouteAnchors.map(cloneRouteAnchor),
   };
@@ -897,6 +903,7 @@ function restoreRouteEditSnapshot(snapshot) {
   routeDestinationAnchor = cloneRouteAnchor(snapshot.destination_anchor);
   editingRouteId = snapshot.editing_route_id || '';
   selectedRouteGuideIndex = Number.isInteger(snapshot.selected_guide_index) ? snapshot.selected_guide_index : -1;
+  routeOrthogonalEdit = Boolean(snapshot.route_orthogonal_edit);
   pendingRouteGuidePoints = (snapshot.guide_points || []).map(point => point.clone());
   pendingRouteAnchors = (snapshot.anchors || []).map(cloneRouteAnchor);
   refreshPendingRouteFromGuidePoints();
@@ -933,6 +940,15 @@ function clearRouteHistory() {
   routeRedoStack = [];
 }
 
+function updateOrthogonalRouteButton() {
+  if (!ehtOrthogonalRouteBtn) return;
+  ehtOrthogonalRouteBtn.classList.toggle('p3d-button-primary', !routeOrthogonalEdit);
+  ehtOrthogonalRouteBtn.textContent = routeOrthogonalEdit ? 'Ortho Assist' : 'Centerline';
+  ehtOrthogonalRouteBtn.title = routeOrthogonalEdit
+    ? 'Optional assist: route is regenerated as Manhattan/orthogonal segments through guide points.'
+    : 'Default drafting mode: route is drawn directly through clicked centerline points in order.';
+}
+
 function resetRouteWorkflow({ clearPreview = true } = {}) {
   routeWorkflowState = 'idle';
   routeSourceAnchor = null;
@@ -940,6 +956,7 @@ function resetRouteWorkflow({ clearPreview = true } = {}) {
   editingRouteId = '';
   draggingRouteGuideIndex = -1;
   routeGuideDragPlane = null;
+  routeGuideDragStartPoint = null;
   selectedRouteGuideIndex = -1;
   controls.enabled = true;
   pendingRoutePoints = [];
@@ -960,7 +977,10 @@ function routeWorkflowStatus(def = activeEhtTool ? ehtDef(activeEhtTool) : null)
   if (routeWorkflowState === 'edit_route') {
     const validation = routeValidationForPoints(pendingRoutePoints, routeSourceAnchor, routeDestinationAnchor);
     const warningText = validation.warnings.length ? ` ${validation.warnings.length} warning(s): ${routeWarningSummary(validation.warnings)}` : ' No route warnings.';
-    return `${label}: ${draftAnchorLabel(routeSourceAnchor)} -> ${draftAnchorLabel(routeDestinationAnchor)} | ${Math.max(pendingRouteGuidePoints.length - 2, 0)} guide point(s), ${formatDimension(validation.diagnostics.length_m)} m.${warningText} Click rough path points or drag guide handles.`;
+    const editMode = routeOrthogonalEdit
+      ? 'Ortho Assist is on: route is Manhattan/orthogonal through guides.'
+      : 'Centerline mode: click path points in order; Finish Route converts the centerline to cable geometry.';
+    return `${label}: ${draftAnchorLabel(routeSourceAnchor)} -> ${draftAnchorLabel(routeDestinationAnchor)} | ${Math.max(pendingRouteGuidePoints.length - 2, 0)} guide point(s), ${formatDimension(validation.diagnostics.length_m)} m.${warningText} ${editMode} Drag guides to adjust; Delete removes the selected intermediate guide.`;
   }
   return def ? `${label}: select a source component.` : 'Select a tool, then click the model.';
 }
@@ -1008,6 +1028,8 @@ function updateUndoState() {
   if (ehtDeleteGuideBtn) {
     ehtDeleteGuideBtn.disabled = routeWorkflowState !== 'edit_route' || selectedRouteGuideIndex <= 0 || selectedRouteGuideIndex >= pendingRouteGuidePoints.length - 1;
   }
+  updateOrthogonalRouteButton();
+  renderRouteHud();
 }
 
 function selectedDraftElement() {
@@ -1122,6 +1144,87 @@ function routeWarningBadgesHtml(warnings = []) {
   `).join('');
 }
 
+function routeProfileForPoints(points, startAnchor = null, endAnchor = null) {
+  return routeProfile((points || []).map(point => (
+    point instanceof THREE.Vector3 ? { x: point.x, y: point.y, z: point.z } : point
+  )), {
+    sourceId: startAnchor?.element?.id || '',
+    destinationId: endAnchor?.element?.id || '',
+    minSegmentLengthM: 0.1,
+    maxBendCount: 24,
+    routeMode: routeOrthogonalEdit ? 'manual_manhattan' : 'manual_direct',
+    substrate: 'free_space',
+  });
+}
+
+function routeProfileForElement(element) {
+  if (!element || element.kind !== 'route') return null;
+  return routeProfile(element.points || [], {
+    sourceId: element.parameters?.source_anchor?.draft_id || '',
+    destinationId: element.parameters?.destination_anchor?.draft_id || '',
+    minSegmentLengthM: 0.1,
+    maxBendCount: 24,
+    routeMode: element.parameters?.route_method || 'manual_manhattan',
+    substrate: element.parameters?.route_substrate || 'free_space',
+  });
+}
+
+function routeHudHtml(title, sourceLabel, destinationLabel, profile, guideCount = null) {
+  const diagnostics = profile?.diagnostics || {};
+  const counts = profile?.warning_counts || {};
+  const totalWarnings = counts.total || 0;
+  const statusClass = counts.block ? 'p3d-route-warning-block' : counts.warn ? 'p3d-route-warning-warn' : 'p3d-route-warning-info';
+  return `
+    <div class="p3d-route-hud-title">
+      <span>${escapeHtml(title)}</span>
+      <span class="p3d-route-hud-title-actions">
+        <span class="p3d-state-badge ${statusClass}">${totalWarnings ? `${totalWarnings} warning${totalWarnings === 1 ? '' : 's'}` : 'Ready'}</span>
+        <button id="ehtRouteHudToggle" type="button" title="${routeHudCollapsed ? 'Expand route summary' : 'Collapse route summary'}">${routeHudCollapsed ? '+' : '-'}</button>
+      </span>
+    </div>
+    ${routeHudCollapsed ? '' : `
+      <div class="p3d-route-hud-grid">
+        <div class="kv"><span>Source</span><strong>${escapeHtml(sourceLabel || '-')}</strong></div>
+        <div class="kv"><span>Destination</span><strong>${escapeHtml(destinationLabel || '-')}</strong></div>
+        <div class="kv"><span>Length</span><strong>${formatDimension(diagnostics.length_m || 0)} m</strong></div>
+        <div class="kv"><span>Segments / Bends</span><strong>${diagnostics.segment_count || 0} / ${diagnostics.bend_count || 0}</strong></div>
+        <div class="kv"><span>Guide Points</span><strong>${guideCount === null ? '-' : guideCount}</strong></div>
+        <div class="kv"><span>Substrate</span><strong>${escapeHtml(profile?.substrate || 'free_space')}</strong></div>
+      </div>
+      <p class="p3d-route-hud-note">${escapeHtml(profile?.next_action || 'Select a route tool to begin.')}</p>
+    `}
+  `;
+}
+
+function renderRouteHud() {
+  if (!ehtRouteHud) return;
+  let html = '';
+  if (routeWorkflowState === 'edit_route') {
+    const profile = routeProfileForPoints(pendingRoutePoints, routeSourceAnchor, routeDestinationAnchor);
+    html = routeHudHtml(
+      editingRouteId ? 'Editing Route' : 'Route Preview',
+      draftAnchorLabel(routeSourceAnchor),
+      draftAnchorLabel(routeDestinationAnchor),
+      profile,
+      Math.max(pendingRouteGuidePoints.length - 2, 0),
+    );
+  } else {
+    const selectedRoute = selectedDraftElement();
+    if (selectedRoute?.kind === 'route') {
+      const profile = routeProfileForElement(selectedRoute);
+      html = routeHudHtml(
+        'Selected Route',
+        selectedRoute.parameters?.from_ref,
+        selectedRoute.parameters?.to_ref,
+        profile,
+        selectedRoute.parameters?.guide_point_count ?? null,
+      );
+    }
+  }
+  ehtRouteHud.innerHTML = html;
+  ehtRouteHud.classList.toggle('p3d-hidden', !html);
+}
+
 function serializePoint(point) {
   return point instanceof THREE.Vector3 ? [point.x, point.y, point.z] : point;
 }
@@ -1168,7 +1271,7 @@ function routeMetadataPatch(startAnchor, endAnchor) {
   return {
     from_ref: draftAnchorLabel(startAnchor),
     to_ref: draftAnchorLabel(endAnchor),
-    route_method: 'manhattan_guide',
+    route_method: routeOrthogonalEdit ? 'manhattan_guide' : 'direct_guide',
     guide_point_count: pendingRouteGuidePoints.length,
     route_guide_points: pendingRouteGuidePoints.map(serializePoint),
     route_diagnostics: validation.diagnostics,
@@ -1398,6 +1501,20 @@ function routeGuidePointFromDragEvent(event) {
   return pointFromViewerEvent(event);
 }
 
+function orthogonalGuideDragPoint(point, event) {
+  if (!point || !routeOrthogonalEdit || event.shiftKey || !routeGuideDragStartPoint) return point;
+  const constrained = point.clone();
+  const dx = Math.abs(constrained.x - routeGuideDragStartPoint.x);
+  const dz = Math.abs(constrained.z - routeGuideDragStartPoint.z);
+  if (dx >= dz) {
+    constrained.z = routeGuideDragStartPoint.z;
+  } else {
+    constrained.x = routeGuideDragStartPoint.x;
+  }
+  constrained.y = routeGuideDragStartPoint.y;
+  return constrained;
+}
+
 function beginRouteGuideDrag(event) {
   const guideIndex = pickPendingRouteGuideHandle(event);
   if (guideIndex === null) return false;
@@ -1405,11 +1522,12 @@ function beginRouteGuideDrag(event) {
   draggingRouteGuideIndex = guideIndex;
   selectedRouteGuideIndex = guideIndex;
   const guidePoint = pendingRouteGuidePoints[guideIndex];
+  routeGuideDragStartPoint = guidePoint.clone();
   routeGuideDragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -guidePoint.y);
   suppressNextViewerClick = true;
   controls.enabled = false;
   renderer.domElement.style.cursor = 'grabbing';
-  setEhtStatus(`Dragging guide G${guideIndex}. Release to keep the route preview.`);
+  setEhtStatus(`Dragging guide G${guideIndex}. ${routeOrthogonalEdit ? 'Ortho Assist is on; hold Shift for temporary free planar drag.' : 'Centerline mode is on; drag freely on the current elevation plane.'} Release to keep the route preview.`);
   event.preventDefault();
   event.stopPropagation();
   return true;
@@ -1417,7 +1535,7 @@ function beginRouteGuideDrag(event) {
 
 function updateRouteGuideDrag(event) {
   if (draggingRouteGuideIndex < 0) return false;
-  const nextPoint = routeGuidePointFromDragEvent(event);
+  const nextPoint = orthogonalGuideDragPoint(routeGuidePointFromDragEvent(event), event);
   if (nextPoint) {
     pendingRouteGuidePoints[draggingRouteGuideIndex] = nextPoint.clone();
     refreshPendingRouteFromGuidePoints();
@@ -1435,6 +1553,7 @@ function finishRouteGuideDrag() {
   draggingRouteGuideIndex = -1;
   selectedRouteGuideIndex = guideIndex;
   routeGuideDragPlane = null;
+  routeGuideDragStartPoint = null;
   controls.enabled = true;
   renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
   setEhtStatus(`Guide G${guideIndex} moved. ${routeWorkflowStatus()}`);
@@ -2348,8 +2467,16 @@ function manhattanRouteThroughGuides(guides) {
     .map(point => new THREE.Vector3(point.x, point.y, point.z));
 }
 
+function directRouteThroughGuides(guides) {
+  return (guides || [])
+    .filter(point => point instanceof THREE.Vector3)
+    .map(point => point.clone());
+}
+
 function refreshPendingRouteFromGuidePoints() {
-  pendingRoutePoints = manhattanRouteThroughGuides(pendingRouteGuidePoints);
+  pendingRoutePoints = routeOrthogonalEdit
+    ? manhattanRouteThroughGuides(pendingRouteGuidePoints)
+    : directRouteThroughGuides(pendingRouteGuidePoints);
 }
 
 function routeGuideHandle(point, index, total) {
@@ -2433,12 +2560,14 @@ function updatePendingRoutePreview() {
   clearPendingRoutePreview();
   if (!activeEhtTool || pendingRoutePoints.length === 0) {
     refreshRouteNodeLabelVisibility();
+    renderRouteHud();
     return;
   }
   const def = ehtDef(activeEhtTool);
   replaceRouteVisualChildren(pendingRouteGroup, pendingRoutePoints, def, true, activeEhtTool);
   renderPendingRouteGuideHandles();
   refreshRouteNodeLabelVisibility();
+  renderRouteHud();
 }
 
 function draftLabel(element) {
@@ -2745,6 +2874,7 @@ function setRouteDestinationAnchor(anchor) {
   }
   routeDestinationAnchor = anchor;
   routeWorkflowState = 'edit_route';
+  routeOrthogonalEdit = false;
   pendingRouteGuidePoints = [routeSourceAnchor.point.clone(), anchor.point.clone()];
   selectedRouteGuideIndex = -1;
   refreshPendingRouteFromGuidePoints();
@@ -2753,12 +2883,50 @@ function setRouteDestinationAnchor(anchor) {
   setEhtStatus(routeWorkflowStatus());
 }
 
+function centerlineGuideInsertIndex() {
+  if (pendingRouteGuidePoints.length <= 1) return pendingRouteGuidePoints.length;
+  if (selectedRouteGuideIndex > 0 && selectedRouteGuideIndex < pendingRouteGuidePoints.length - 1) {
+    return selectedRouteGuideIndex + 1;
+  }
+  return pendingRouteGuidePoints.length - 1;
+}
+
+function distancePointToSegmentSquared(point, start, end) {
+  const segment = end.clone().sub(start);
+  const lengthSq = segment.lengthSq();
+  if (lengthSq <= 0.000001) return point.distanceToSquared(start);
+  const t = THREE.MathUtils.clamp(point.clone().sub(start).dot(segment) / lengthSq, 0, 1);
+  const projection = start.clone().add(segment.multiplyScalar(t));
+  return point.distanceToSquared(projection);
+}
+
+function routeGuideInsertIndex(point) {
+  if (pendingRouteGuidePoints.length <= 2) return Math.max(pendingRouteGuidePoints.length - 1, 1);
+  let bestIndex = Math.max(pendingRouteGuidePoints.length - 1, 1);
+  let bestDistance = Infinity;
+  for (let index = 1; index < pendingRouteGuidePoints.length; index += 1) {
+    const segmentPoints = manhattanSegmentPoints(pendingRouteGuidePoints[index - 1], pendingRouteGuidePoints[index], { axisOrder: ['x', 'z', 'y'] });
+    for (let segmentIndex = 1; segmentIndex < segmentPoints.length; segmentIndex += 1) {
+      const distance = distancePointToSegmentSquared(
+        point,
+        new THREE.Vector3(segmentPoints[segmentIndex - 1].x, segmentPoints[segmentIndex - 1].y, segmentPoints[segmentIndex - 1].z),
+        new THREE.Vector3(segmentPoints[segmentIndex].x, segmentPoints[segmentIndex].y, segmentPoints[segmentIndex].z),
+      );
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    }
+  }
+  return bestIndex;
+}
+
 function addRouteGuidePoint(point) {
   if (!routeSourceAnchor || !routeDestinationAnchor) {
     setEhtStatus(routeWorkflowStatus());
     return;
   }
-  const insertAt = Math.max(pendingRouteGuidePoints.length - 1, 1);
+  const insertAt = routeOrthogonalEdit ? routeGuideInsertIndex(point) : centerlineGuideInsertIndex();
   pushRouteHistory();
   pendingRouteGuidePoints.splice(insertAt, 0, point.clone());
   pendingRouteAnchors.splice(insertAt, 0, null);
@@ -2793,7 +2961,9 @@ function resetRouteGuidePath() {
   selectedRouteGuideIndex = -1;
   refreshPendingRouteFromGuidePoints();
   updatePendingRoutePreview();
-  setEhtStatus('Guide path reset to direct orthogonal route.');
+  setEhtStatus(routeOrthogonalEdit
+    ? 'Guide path reset to direct Ortho Assist route.'
+    : 'Centerline reset. Click path points in order, then Finish Route.');
 }
 
 function editDraftRoute(element = selectedDraftElement()) {
@@ -2814,6 +2984,7 @@ function editDraftRoute(element = selectedDraftElement()) {
   routeWorkflowState = 'edit_route';
   routeSourceAnchor = sourceAnchor;
   routeDestinationAnchor = destinationAnchor;
+  routeOrthogonalEdit = element.parameters?.route_method !== 'direct_guide';
   pendingRouteGuidePoints = guides.map(point => point.clone());
   pendingRouteGuidePoints[0] = sourceAnchor.point.clone();
   pendingRouteGuidePoints[pendingRouteGuidePoints.length - 1] = destinationAnchor.point.clone();
@@ -2902,6 +3073,20 @@ function bindEhtTools() {
   if (ehtUndoGuideBtn) ehtUndoGuideBtn.addEventListener('click', undoLastRouteGuidePoint);
   if (ehtDeleteGuideBtn) ehtDeleteGuideBtn.addEventListener('click', deleteSelectedRouteGuide);
   if (ehtResetRouteBtn) ehtResetRouteBtn.addEventListener('click', resetRouteGuidePath);
+  if (ehtOrthogonalRouteBtn) {
+    ehtOrthogonalRouteBtn.addEventListener('click', () => {
+      if (routeWorkflowState === 'edit_route') pushRouteHistory();
+      routeOrthogonalEdit = !routeOrthogonalEdit;
+      if (routeWorkflowState === 'edit_route') {
+        refreshPendingRouteFromGuidePoints();
+        updatePendingRoutePreview();
+      }
+      updateOrthogonalRouteButton();
+      setEhtStatus(routeWorkflowState === 'edit_route'
+        ? routeWorkflowStatus()
+        : `Route drafting mode set to ${routeOrthogonalEdit ? 'Ortho Assist' : 'Centerline'}.`);
+    });
+  }
   if (ehtCancelRouteBtn) ehtCancelRouteBtn.addEventListener('click', cancelEhtRoute);
   if (ehtEditSelectedRouteBtn) ehtEditSelectedRouteBtn.addEventListener('click', () => editDraftRoute());
   if (ehtUndoBtn) ehtUndoBtn.addEventListener('click', () => {
@@ -2913,7 +3098,15 @@ function bindEhtTools() {
   if (ehtSaveLayerBtn) {
     ehtSaveLayerBtn.addEventListener('click', saveDraftLayerToLocalStorage);
   }
+  if (ehtRouteHud) {
+    ehtRouteHud.addEventListener('click', event => {
+      if (!event.target.closest?.('#ehtRouteHudToggle')) return;
+      routeHudCollapsed = !routeHudCollapsed;
+      renderRouteHud();
+    });
+  }
   renderDraftList();
+  updateOrthogonalRouteButton();
 }
 
 if (selectionEl) {

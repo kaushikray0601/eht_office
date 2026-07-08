@@ -141,3 +141,95 @@ export function validateRoute(points, options = {}) {
     warnings,
   };
 }
+
+export function routeProfile(points, options = {}) {
+  const validation = validateRoute(points, options);
+  const warnings = validation.warnings || [];
+  const blockCount = warnings.filter(warning => warning.severity === 'block').length;
+  const warnCount = warnings.filter(warning => warning.severity === 'warn').length;
+  const infoCount = warnings.filter(warning => warning.severity === 'info').length;
+  return {
+    route_mode: options.routeMode || 'manual_manhattan',
+    substrate: options.substrate || 'free_space',
+    valid: validation.valid,
+    diagnostics: validation.diagnostics,
+    warnings,
+    warning_counts: {
+      block: blockCount,
+      warn: warnCount,
+      info: infoCount,
+      total: warnings.length,
+    },
+    next_action: blockCount
+      ? 'Resolve blocking route issue before save.'
+      : warnCount
+        ? 'Review route warnings before issuing.'
+        : 'Route is ready for review.',
+  };
+}
+
+function normalizeGraphNode(node) {
+  if (!node?.id) return null;
+  return {
+    id: String(node.id),
+    point: normalizePoint(node.point),
+    kind: node.kind || 'route_node',
+    label: node.label || String(node.id),
+    metadata: node.metadata || {},
+  };
+}
+
+function edgeLength(edge, nodeById) {
+  const explicit = Number(edge.length_m ?? edge.length);
+  if (Number.isFinite(explicit) && explicit >= 0) return explicit;
+  const from = nodeById.get(String(edge.from))?.point;
+  const to = nodeById.get(String(edge.to))?.point;
+  return from && to ? routeLength([from, to]) : 0;
+}
+
+function normalizeGraphEdge(edge, nodeById) {
+  if (!edge?.from || !edge?.to) return null;
+  const from = String(edge.from);
+  const to = String(edge.to);
+  if (!nodeById.has(from) || !nodeById.has(to)) return null;
+  const length = edgeLength(edge, nodeById);
+  const cost = Number(edge.cost ?? length);
+  return {
+    id: edge.id ? String(edge.id) : `${from}->${to}`,
+    from,
+    to,
+    length_m: length,
+    cost: Number.isFinite(cost) && cost >= 0 ? cost : length,
+    bidirectional: edge.bidirectional !== false,
+    kind: edge.kind || 'raceway_edge',
+    capacity: edge.capacity || null,
+    metadata: edge.metadata || {},
+  };
+}
+
+export function createRouteGraph(nodes = [], edges = []) {
+  const graphNodes = nodes.map(normalizeGraphNode).filter(Boolean);
+  const nodeById = new Map(graphNodes.map(node => [node.id, node]));
+  const graphEdges = edges.map(edge => normalizeGraphEdge(edge, nodeById)).filter(Boolean);
+  const adjacency = {};
+  for (const node of graphNodes) adjacency[node.id] = [];
+  for (const edge of graphEdges) {
+    adjacency[edge.from].push({ edge_id: edge.id, to: edge.to, cost: edge.cost, length_m: edge.length_m });
+    if (edge.bidirectional) {
+      adjacency[edge.to].push({ edge_id: edge.id, to: edge.from, cost: edge.cost, length_m: edge.length_m });
+    }
+  }
+  return { nodes: graphNodes, edges: graphEdges, adjacency };
+}
+
+export function summarizeRouteGraph(graph) {
+  const nodes = Array.isArray(graph?.nodes) ? graph.nodes : [];
+  const edges = Array.isArray(graph?.edges) ? graph.edges : [];
+  const totalLength = edges.reduce((sum, edge) => sum + (Number(edge.length_m) || 0), 0);
+  return {
+    node_count: nodes.length,
+    edge_count: edges.length,
+    total_length_m: totalLength,
+    has_capacity_data: edges.some(edge => edge.capacity),
+  };
+}

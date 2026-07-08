@@ -160,6 +160,7 @@ def source_upload_view(request):
 def source_detail_view(request, source_id):
     source = get_object_or_404(source_models_for_user(request.user), pk=source_id)
     packages = source.render_packages.order_by("-created_at")
+    latest_package = packages.first()
     jobs = list(source.conversion_jobs.order_by("-created_at"))
     for job in jobs:
         job.timing_summary = timing_summary_from_metrics(job.metrics)
@@ -169,6 +170,7 @@ def source_detail_view(request, source_id):
         {
             "source": source,
             "packages": packages,
+            "latest_package": latest_package,
             "jobs": jobs,
             "worker_command": PLANT3D_WORKER_COMMAND,
         },

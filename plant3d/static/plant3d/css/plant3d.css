@@ -280,6 +280,27 @@ button:disabled {
   margin-top: 10px;
 }
 
+.p3d-admin-note {
+  opacity: 0.78;
+}
+
+.p3d-source-admin-card {
+  overflow: hidden;
+}
+
+.p3d-source-admin-card > summary {
+  cursor: pointer;
+  list-style: none;
+}
+
+.p3d-source-admin-card > summary::-webkit-details-marker {
+  display: none;
+}
+
+.p3d-compact-job-list .p3d-list-item {
+  background: #fbfdff;
+}
+
 .p3d-code {
   display: inline-block;
   max-width: 100%;
@@ -325,6 +346,44 @@ button:disabled {
 .p3d-form .helptext {
   color: var(--p3d-muted);
   font-size: 12px;
+}
+
+.p3d-form-errors {
+  padding: 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fff1f2;
+  color: #9f1239;
+  font-size: 12px;
+}
+
+.p3d-upload-dropzone {
+  display: grid;
+  gap: 7px;
+  padding: 18px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fbff;
+  cursor: pointer;
+}
+
+.p3d-upload-dropzone:hover {
+  border-color: var(--p3d-accent);
+  background: #f3f8ff;
+}
+
+.p3d-upload-title {
+  color: var(--p3d-text);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.p3d-upload-help {
+  color: var(--p3d-muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .p3d-search {
@@ -940,6 +999,64 @@ button:disabled {
   border-color: #93c5fd;
   background: #eff6ff;
   color: #1d4ed8;
+}
+
+.p3d-route-hud {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 13;
+  display: grid;
+  gap: 7px;
+  width: min(360px, calc(100% - 24px));
+  padding: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  background: rgba(248, 250, 252, 0.78);
+  box-shadow: 0 14px 32px rgba(31, 42, 55, 0.14);
+  backdrop-filter: blur(16px);
+}
+
+.p3d-route-hud-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.p3d-route-hud-title-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.p3d-route-hud-title-actions button {
+  min-height: 22px;
+  width: 24px;
+  padding: 0;
+  border-radius: 999px;
+  font-size: 12px;
+}
+
+.p3d-route-hud-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.p3d-route-hud .kv {
+  margin: 0;
+}
+
+.p3d-route-hud-note {
+  margin: 0;
+  color: var(--p3d-muted);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .p3d-metric {
