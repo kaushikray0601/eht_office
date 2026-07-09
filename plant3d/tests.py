@@ -2009,6 +2009,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "sidepanel-toggle")
         self.assertContains(response, "sidepanel-reopen")
         self.assertContains(response, "20260707_centerline1")
+        self.assertContains(response, "20260709_raceway_runtime1")
         self.assertContains(response, "ehtDeleteGuideBtn")
         self.assertContains(response, "ehtOrthogonalRouteBtn")
         self.assertContains(response, "ehtRouteHud")
@@ -2018,7 +2019,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "plant3dViewerExtensionsConfig")
         self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-overlay\"")
         self.assertContains(response, "data-owner=\"raceway\"")
-        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260709_raceway1")
+        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260709_raceway3")
 
     def test_package_viewer_static_js_exposes_generic_layer_registry(self):
         script_path = os.path.join(
@@ -2039,6 +2040,12 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("setVisible: setViewerLayerVisible", content)
         self.assertIn("config.createGroup ? new THREE.Group() : null", content)
         self.assertIn("plant3dviewer:layers-ready", content)
+        self.assertIn("window.plant3dViewerRuntime", content)
+        self.assertIn("plant3dviewer:runtime-ready", content)
+        self.assertIn("function registerViewerInteraction", content)
+        self.assertIn("dispatchViewerInteractionClick(event)", content)
+        self.assertIn("function sourcePointToRenderPoint", content)
+        self.assertIn("function pointOnSourceElevationFromViewerEvent", content)
         self.assertIn("function setViewerLayerVisible", content)
         self.assertIn("function renderViewerLayerControls", content)
         self.assertIn("function showAllViewerLayers", content)

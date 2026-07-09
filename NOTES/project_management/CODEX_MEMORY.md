@@ -42,8 +42,8 @@ KR alignment from Claude discussion on 2026-07-08:
 
 Immediate active plan:
 
-1. Redo Stage 6 centerline authoring after designing the viewer-extension
-   interaction contract and browser-smoke-testing real canvas clicks.
+1. Move into Stage 7 simple tray geometry preview, derived from the Stage 6
+   centerline draft data.
 2. Keep raceway drawing/persistence in `raceway`; use Plant3D only as the
    viewer host and coordinate/package contract provider.
 3. Use the generic viewer extension seam for all raceway viewer code.
@@ -71,10 +71,28 @@ Code facts verified on 2026-07-09:
   `plant3dviewer:layers-ready`. Raceway owns
   `raceway/static/raceway/js/raceway_overlay.js`, which registers
   `raceway-overlay` as owner `raceway`.
-- Stage 6 authoring attempt on 2026-07-09 was reverted after KR manual testing:
-  Start produced a draft row, but canvas clicks/node commands did not work.
-  Do not mark authoring complete without a browser smoke test that actually
-  clicks the viewer and verifies nodes are created/moved/deleted.
+- Stage 6 authoring was rebuilt after the failed attempt. `package_viewer.js`
+  now exposes `window.plant3dViewerRuntime`, `plant3dviewer:runtime-ready`,
+  source/render coordinate conversion, source-elevation plane picking, and
+  `registerInteraction`. `raceway_overlay.js` owns the RaceWay Draft panel and
+  supports family/size/service/elevation, start/finish/cancel/undo,
+  click-to-place nodes, node list selection, move/delete, and numeric edits.
+- `raceway/browser_tests.py` is the opt-in smoke test proving the raceway script
+  registers its layer and handles canvas click/create/undo/move/delete against
+  a stubbed viewer host. Run it before asking KR to manually check authoring.
+- Static cache note: raceway overlay script version is `20260709_raceway3`;
+  bump this whenever changing `raceway_overlay.js`.
+- Root-cause correction after KR reported missing 3D view/only Raceway layer:
+  do not dispatch `plant3dviewer:*` extension host events before core viewer
+  setup is complete. `publishViewerExtensionHost()` now publishes runtime and
+  dispatches events near the bottom of `package_viewer.js`, after built-in
+  layer registration and viewer setup. Host script cache is
+  `20260709_raceway_runtime1`; raceway overlay script cache is
+  `20260709_raceway3`.
+- Geometry principle: initial tray/ladder visuals are parametric engineering
+  proxies derived from centerline plus catalogue dimensions. Vendor meshes may
+  be attached later as catalogue visualization assets, but are not durable
+  design truth.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

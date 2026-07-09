@@ -212,28 +212,28 @@ Acceptance:
 
 ## Stage 6 - Centerline Authoring MVP
 
-- [ ] Add raceway tool palette.
-- [ ] Add family selector.
-- [ ] Add size selector.
-- [ ] Add service class selector.
-- [ ] Add elevation/working-plane control.
-- [ ] Add start run mode.
-- [ ] Add ordered node click placement.
-- [ ] Add finish/cancel.
-- [ ] Add undo last node.
-- [ ] Add node handles.
-- [ ] Add move node.
-- [ ] Add delete node.
-- [ ] Add coordinate/elevation inspector editing.
-- [ ] Add live HUD length/node/bend/elevation/size/service.
-- [ ] Add first warnings in HUD.
+- [x] Add raceway tool palette.
+- [x] Add family selector.
+- [x] Add size selector.
+- [x] Add service class selector.
+- [x] Add elevation/working-plane control.
+- [x] Add start run mode.
+- [x] Add ordered node click placement.
+- [x] Add finish/cancel.
+- [x] Add undo last node.
+- [x] Add node handles.
+- [x] Add move node.
+- [x] Add delete node.
+- [x] Add coordinate/elevation inspector editing.
+- [x] Add live HUD length/node/bend/elevation/size/service.
+- [x] Add first warnings in HUD.
 
 Acceptance:
 
-- [ ] User can draw a raceway centerline.
-- [ ] User can edit nodes.
-- [ ] User can distinguish raceway from EHT routes.
-- [ ] Existing EHT draft centerline workflow still works.
+- [x] User can draw a raceway centerline.
+- [x] User can edit nodes.
+- [x] User can distinguish raceway from EHT routes.
+- [x] Existing EHT draft centerline workflow still works.
 
 ## Stage 7 - Simple Tray Geometry Preview
 
@@ -446,3 +446,64 @@ Append each pass here.
   - `raceway-overlay` registered by `raceway/static/raceway/js/raceway_overlay.js`.
 - Lesson for next Stage 6 pass: design the extension interaction contract first
   and browser-smoke-test actual canvas clicks before marking authoring complete.
+
+### 2026-07-09 - Raceway Centerline Authoring Redo
+
+- Rebuilt Stage 6 on an explicit viewer-extension interaction contract instead
+  of direct canvas interception:
+  - `window.plant3dViewerRuntime`,
+  - `plant3dviewer:runtime-ready`,
+  - `registerInteraction`,
+  - source/render coordinate conversion helpers,
+  - source-elevation plane picking.
+- Fixed the missing-layer risk by refreshing layer controls after external
+  layer register/update and bumping the raceway static script version to
+  `20260709_raceway2`.
+- Reintroduced `raceway/static/raceway/js/raceway_overlay.js` authoring:
+  - RaceWay Draft panel,
+  - family/size/service/elevation controls,
+  - start/finish/cancel/undo,
+  - click-to-place ordered nodes,
+  - node list selection, move/delete, and numeric coordinate edits,
+  - simple 3D line/handle preview in the raceway overlay group.
+- Added `raceway/browser_tests.py`, an opt-in Playwright smoke test with a
+  stubbed viewer host. It loads the real raceway script, registers the layer,
+  clicks the canvas, creates nodes, undoes a node, moves a selected node, and
+  deletes it.
+- Recorded the geometry strategy in the execution plan: proxy tray/ladder
+  geometry is derived from centerline/catalogue dimensions; vendor meshes are
+  later optional catalogue assets, not durable truth.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `node --check /tmp/package_viewer.mjs`
+  - `node --check /tmp/raceway_overlay.mjs`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-09 - Raceway Viewer Root-Cause Fix
+
+- KR reported the 3D view disappeared and Reference Layers showed only
+  `Raceway`.
+- Root cause: the viewer runtime host was published too early in
+  `package_viewer.js`, before the core viewer had completed built-in layer
+  registration and before later runtime state was initialized. That created an
+  unsafe extension load-order surface where raceway could initialize against a
+  half-formed host.
+- Fix:
+  - removed early `plant3dviewer:*` event dispatch,
+  - added `publishViewerExtensionHost()` after core layer registration and
+    viewer setup,
+  - kept layer-control refresh after external layer registration,
+  - bumped host script cache to `20260709_raceway_runtime1`,
+  - bumped raceway extension cache to `20260709_raceway3`.
+- Strengthened `raceway/browser_tests.py` so it seeds existing core layers and
+  asserts `model`, `measurement`, `eht-draft`, and `raceway-overlay` coexist
+  after loading the real raceway script.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `node --check /tmp/package_viewer.mjs`
+  - `node --check /tmp/raceway_overlay.mjs`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`

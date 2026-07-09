@@ -103,7 +103,21 @@ scene.add(keyLight);
 const root = new THREE.Group();
 scene.add(root);
 
+let packageBounds = new THREE.Box3();
+let glbPackageOrigin = [0, 0, 0];
 const viewerLayers = new Map();
+const viewerInteractions = new Map();
+let activeViewerInteractionId = '';
+let viewerLayerControlRenderQueued = false;
+
+function queueViewerLayerControlRender() {
+  if (viewerLayerControlRenderQueued) return;
+  viewerLayerControlRenderQueued = true;
+  window.setTimeout(() => {
+    viewerLayerControlRenderQueued = false;
+    renderViewerLayerControls();
+  }, 0);
+}
 
 function registerViewerLayer(config) {
   const group = config.group || (config.createGroup ? new THREE.Group() : null);
@@ -125,6 +139,7 @@ function registerViewerLayer(config) {
     layer.group.visible = layer.visible;
     if (!layer.group.parent) scene.add(layer.group);
   }
+  queueViewerLayerControlRender();
   return layer;
 }
 
@@ -132,6 +147,7 @@ function updateViewerLayer(id, patch) {
   const layer = viewerLayers.get(id);
   if (!layer) return null;
   Object.assign(layer, patch);
+  queueViewerLayerControlRender();
   return layer;
 }
 
@@ -146,6 +162,128 @@ function isViewerLayerVisible(layer) {
 
 function isViewerLayerIdVisible(id) {
   return isViewerLayerVisible(viewerLayers.get(id));
+}
+
+function activeCoordinateTransform() {
+  const pkg = runtimeStats?.package || {};
+  return pkg.coordinate_transform || pkg.metadata?.coordinate_transform || {};
+}
+
+function activeRenderOrigin() {
+  const transform = activeCoordinateTransform();
+  return Array.isArray(transform.rtc_origin_render_xyz)
+    ? transform.rtc_origin_render_xyz
+    : glbPackageOrigin;
+}
+
+function activeCoordinateScaleToM() {
+  const transform = activeCoordinateTransform();
+  const metadata = runtimeStats?.package?.metadata || {};
+  return Number(transform.scale_to_m || metadata.render_coordinate_scale_to_m || metadata.unit_metadata?.render_coordinate_scale_to_m || 1) || 1;
+}
+
+function sourcePointToRenderPoint(sourcePoint) {
+  const origin = activeRenderOrigin();
+  const scaleToM = activeCoordinateScaleToM();
+  return new THREE.Vector3(
+    Number(sourcePoint.x || 0) * scaleToM - Number(origin[0] || 0),
+    Number(sourcePoint.z || 0) * scaleToM - Number(origin[1] || 0),
+    Number(sourcePoint.y || 0) * scaleToM - Number(origin[2] || 0),
+  );
+}
+
+function renderPointToSourcePoint(renderPoint) {
+  const origin = activeRenderOrigin();
+  const scaleToM = activeCoordinateScaleToM();
+  const renderWorldX = Number(renderPoint.x || 0) + Number(origin[0] || 0);
+  const renderWorldY = Number(renderPoint.y || 0) + Number(origin[1] || 0);
+  const renderWorldZ = Number(renderPoint.z || 0) + Number(origin[2] || 0);
+  return {
+    x: renderWorldX / scaleToM,
+    y: renderWorldZ / scaleToM,
+    z: renderWorldY / scaleToM,
+    coordinate_frame: 'source_xyz_m',
+  };
+}
+
+function rayFromViewerEvent(event) {
+  updatePointerFromViewerEvent(event);
+  return raycaster.ray.clone();
+}
+
+function pointOnSourceElevationFromViewerEvent(event, sourceElevationM) {
+  const origin = activeRenderOrigin();
+  const scaleToM = activeCoordinateScaleToM();
+  const renderElevation = Number(sourceElevationM || 0) * scaleToM - Number(origin[1] || 0);
+  const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -renderElevation);
+  const point = new THREE.Vector3();
+  const ray = rayFromViewerEvent(event);
+  return ray.intersectPlane(plane, point) ? point : null;
+}
+
+function currentSourceElevationM() {
+  return renderPointToSourcePoint(controls.target).z;
+}
+
+function registerViewerInteraction(config) {
+  if (!config?.id) return null;
+  viewerInteractions.set(config.id, config);
+  return {
+    activate: () => {
+      activeViewerInteractionId = config.id;
+      renderer.domElement.style.cursor = config.cursor || 'crosshair';
+    },
+    deactivate: () => {
+      if (activeViewerInteractionId === config.id) {
+        activeViewerInteractionId = '';
+        renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+      }
+    },
+    isActive: () => activeViewerInteractionId === config.id,
+  };
+}
+
+function dispatchViewerInteractionClick(event) {
+  const interaction = viewerInteractions.get(activeViewerInteractionId);
+  if (!interaction?.onCanvasClick) return false;
+  return interaction.onCanvasClick(event) !== false;
+}
+
+function cancelActiveViewerInteraction() {
+  const interaction = viewerInteractions.get(activeViewerInteractionId);
+  if (!interaction) return false;
+  if (interaction.onCancel) interaction.onCancel();
+  activeViewerInteractionId = '';
+  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+  return true;
+}
+
+function publishViewerExtensionHost() {
+  window.plant3dViewerRuntime = {
+    THREE,
+    scene,
+    camera,
+    controls,
+    renderer,
+    canvas: renderer.domElement,
+    raycaster,
+    getPackage: () => runtimeStats.package,
+    getPackageBounds: () => packageBounds.clone(),
+    currentSourceElevationM,
+    renderNow: () => renderer.render(scene, camera),
+    worldUnitsForScreenPixels,
+    sourcePointToRenderPoint,
+    renderPointToSourcePoint,
+    pointOnSourceElevationFromViewerEvent,
+    rayFromViewerEvent,
+    registerInteraction: registerViewerInteraction,
+  };
+  window.dispatchEvent(new CustomEvent('plant3dviewer:layers-ready', {
+    detail: window.plant3dViewerLayers,
+  }));
+  window.dispatchEvent(new CustomEvent('plant3dviewer:runtime-ready', {
+    detail: window.plant3dViewerRuntime,
+  }));
 }
 
 function syncViewerLayerVisibility(id, visible) {
@@ -207,9 +345,6 @@ window.plant3dViewerLayers = {
   setVisible: setViewerLayerVisible,
   isVisible: isViewerLayerIdVisible,
 };
-window.dispatchEvent(new CustomEvent('plant3dviewer:layers-ready', {
-  detail: window.plant3dViewerLayers,
-}));
 
 const ehtDraftGroup = new THREE.Group();
 scene.add(ehtDraftGroup);
@@ -293,7 +428,6 @@ registerViewerLayer({
   hiddenInControls: true,
 });
 
-let packageBounds = new THREE.Box3();
 let objectIndex = new Map();
 let objectById = new Map();
 let featureIndex = new Map();
@@ -382,7 +516,6 @@ let lowFpsSamples = 0;
 let highFpsSamples = 0;
 let restoreQualityTimer = null;
 let glbTileStates = [];
-let glbPackageOrigin = [0, 0, 0];
 let isStreamingUpdateRunning = false;
 let lastStreamingUpdateAt = 0;
 
@@ -4218,6 +4351,9 @@ async function selectItemFromViewerEvent(event, { clearOnMiss = true } = {}) {
 
 function pick(event) {
   hideContextMenu();
+  if (dispatchViewerInteractionClick(event)) {
+    return;
+  }
   if (measureModeActive) {
     if (suppressNextViewerClick) {
       suppressNextViewerClick = false;
@@ -4499,11 +4635,14 @@ refreshRouteNodeLabelVisibility();
 setGridScaleVisible(showGridScale);
 setVertexSnapEnabled(vertexSnapEnabled);
 setNavigationMode('orbit');
+publishViewerExtensionHost();
 window.addEventListener('keydown', event => {
   if (handleViewerShortcut(event)) return;
   if (event.key === 'Escape') {
     hideContextMenu();
-    if (activeEhtTool || movingDraftId || pendingRoutePoints.length) {
+    if (cancelActiveViewerInteraction()) {
+      return;
+    } else if (activeEhtTool || movingDraftId || pendingRoutePoints.length) {
       resetRouteWorkflow();
       movingDraftId = '';
       setActiveEhtTool('');

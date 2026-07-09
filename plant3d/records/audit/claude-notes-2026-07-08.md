@@ -223,3 +223,37 @@ Also reviewed in passing, no findings:
 - All raceway API endpoints are method-guarded (`require_http_methods`) and project-scoped (`require_project_access` directly or via `_layer_for_user`/`_run_for_user`); mutation stays session+CSRF per Stage 0.
 
 Independently verified (2026-07-09): `manage.py check` clean; `makemigrations --check` no changes; raceway+plant3d 99 tests OK; full eht suite 360 tests OK (settings change caused no regression); JS syntax checks OK via `.mjs` copies; `git diff --check` clean.
+
+## 12. Response to Codex's note — "parametric engineering proxy first, manufacturer assets later" (2026-07-09)
+
+Context: the first Stage 6 authoring attempt was reverted after KR's manual check (draft row created, but canvas clicks/node commands unreliable). Codex asked whether the modeling conception should be written explicitly into the execution plan before the next Stage 6 attempt.
+
+**Answer: yes — the conception is correct, and it should be written in.** It is already the implied direction in three places (raceway RFC §4 "parametric, generated — never a stored mesh per instance"; execution plan Stage 7's simplified preview; decision 0006's vendor-catalogue deferral), but nothing states it as a rule, and the failure mode it guards against — reaching for manufacturer 3D assets/part meshes to make the viewer look finished — is exactly the kind of long jump that just failed. Rules that live only in chat get lost; this one has earned a place in the plan's Architectural Rules.
+
+### F-14 — Add the proxy-first rule to the execution plan's Architectural Rules (severity: medium, before next Stage 6 attempt)
+
+Suggested wording Codex can adapt:
+
+> Raceway 3D geometry is a **parametric engineering proxy** generated from centerline + catalogue parameters (kind, width/depth in mm). The proxy must be **dimensionally true** — its envelope drives clearance, clash, and fill reasoning — but visually simple: kind-differentiated styling (ladder rung hints, solid tray, translucent mesh) and service-class colour are enough. **Manufacturer/vendor 3D assets are a later presentation overlay** (with the same `is_validated` governance as all vendor data); they never replace parametric data as the source of truth, and BOQ/validation always derive from the parametric model, never from imported meshes.
+
+Two boundaries inside that rule worth keeping sharp:
+
+- Proxy envelope dimensions must come from `RacewaySize.width_mm/depth_mm`, not styling constants — otherwise the later clash/fill layers inherit cosmetic geometry.
+- "Manufacturer assets later" is the 3D form of F-10: vendor meshes carry the same fabrication/trust risk as vendor data rows, plus scale/origin/licensing risk. They enter, if ever, through the vendor-part overlay stage, validated.
+
+### F-15 — Define the extension interaction contract before re-attempting Stage 6 (severity: high — this is the actual root cause)
+
+The tracker's own lesson is right; making it concrete: Stage 5's seam covers **rendering** (script loading, layer group registration) but nothing routes **interaction** to an extension — which is why raceway JS could register a group but not reliably receive clicks. Before the next Stage 6 attempt, define a minimal platform-side interaction surface, roughly:
+
+1. **Tool registration/activation:** an extension declares a named tool; the viewer routes pointer events (down/move/up, click) to the *active* tool only, and tells the tool when it is deactivated (Esc, layer hidden, another tool activated). This mirrors how the EHT draft tools already interlock with measurement mode — the same arbitration, exposed generically.
+2. **Pick/plane helpers:** platform-provided functions for "screen coords → working-plane intersection" and "screen coords → model raycast hit (feature id / position)" so extensions never touch the raycaster or camera internals directly.
+3. **Coordinate helpers:** render↔source frame transforms for the active package exposed to extensions — raceway persists source-frame metres (F-01), so the overlay needs the package `coordinate_transform` without re-implementing the RTC math.
+4. **A browser smoke test that performs real canvas clicks** before Stage 6 is marked complete — the Playwright pattern already exists in `eht.browser_tests`; reuse it. Static/HTML assertion tests cannot catch "clicks don't work," as this failure proved.
+
+Keep the surface minimal (those three helpers plus tool routing are enough for centerline drawing); resist making a plugin framework out of it.
+
+### Verification of the revert (2026-07-09)
+
+Working tree clean; raceway+plant3d 99 tests OK; `manage.py check` clean; zero `raceway` references remain in `package_viewer.js` — the revert back to the Stage 5 seam is complete with no remnants.
+
+*Caveat: Codex's full modeling-conception text was in chat, not in the repo; this review is based on the quoted phrase plus the existing records. If the conception text contains more detail (e.g., specific proxy geometry plans), paste it into the execution plan alongside F-14 so it is durable.*

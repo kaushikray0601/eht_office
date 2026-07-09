@@ -56,6 +56,10 @@ Therefore the MVP should prove:
   persist raw screen/canvas coordinates as durable truth.
 - Route centerline is truth. Tray segments, fittings, supports, and GLB overlay
   caches are derived/regenerable.
+- Initial tray/ladder/sleeve visuals are parametric engineering proxies derived
+  from centerline plus catalogue dimensions. Manufacturer meshes/assets may be
+  attached to catalogue parts later for visualization/detail, but they do not
+  become the durable design truth.
 - Suggestions are explicit and user-accepted. The software must not silently
   become the design authority.
 
