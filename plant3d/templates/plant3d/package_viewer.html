@@ -282,5 +282,15 @@
     })();
   </script>
   <script type="module" src="{% static 'plant3d/js/package_viewer.js' %}?v=20260707_centerline1"></script>
+  {{ viewer_extensions|json_script:"plant3dViewerExtensionsConfig" }}
+  {% for extension in viewer_extensions %}
+  <script
+    type="module"
+    src="{{ extension.script_url }}{% if extension.version %}?v={{ extension.version }}{% endif %}"
+    data-plant3d-viewer-extension="{{ extension.id }}"
+    data-owner="{{ extension.owner }}"
+    data-kind="{{ extension.kind }}"
+  ></script>
+  {% endfor %}
 </body>
 </html>

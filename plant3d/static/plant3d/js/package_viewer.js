@@ -106,20 +106,25 @@ scene.add(root);
 const viewerLayers = new Map();
 
 function registerViewerLayer(config) {
+  const group = config.group || (config.createGroup ? new THREE.Group() : null);
   const layer = {
     id: config.id,
     owner: config.owner || 'plant3d',
     kind: config.kind || 'overlay',
     label: config.label || config.id,
-    group: config.group || null,
-    getObjects: config.getObjects || (() => (config.group ? [config.group] : [])),
+    group,
+    getObjects: config.getObjects || (() => (group ? [group] : [])),
     getElements: config.getElements || (() => []),
     setVisible: config.setVisible || null,
     hiddenInControls: Boolean(config.hiddenInControls),
     visible: config.visible !== false,
   };
   viewerLayers.set(layer.id, layer);
-  if (layer.group) layer.group.userData.plant3dLayerId = layer.id;
+  if (layer.group) {
+    layer.group.userData.plant3dLayerId = layer.id;
+    layer.group.visible = layer.visible;
+    if (!layer.group.parent) scene.add(layer.group);
+  }
   return layer;
 }
 
@@ -202,6 +207,9 @@ window.plant3dViewerLayers = {
   setVisible: setViewerLayerVisible,
   isVisible: isViewerLayerIdVisible,
 };
+window.dispatchEvent(new CustomEvent('plant3dviewer:layers-ready', {
+  detail: window.plant3dViewerLayers,
+}));
 
 const ehtDraftGroup = new THREE.Group();
 scene.add(ehtDraftGroup);

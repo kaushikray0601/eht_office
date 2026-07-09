@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-07-08
+Last updated: 2026-07-09
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -26,23 +26,55 @@ routing is shared raceway/tray/trunk first, then cable assignment. Existing EHT
 cable centerline tools remain draft/manual exception tooling and a useful
 editing prototype, not the product architecture.
 
+KR alignment from Claude discussion on 2026-07-08:
+
+- MVP standard direction is IEC-first for Middle East, Asia, and Europe target
+  markets. NEMA/ANSI comes later.
+- MVP raceway scope is aboveground first: tray, ladder, sleeve/trunking style
+  work. Underground trench/duct-bank work is deferred until the MVP integration
+  shape is proven.
+- EHT must remain a consumer of `plant3d`, not tied into `plant3d`. Future
+  modules such as lighting design should follow the same peer-consumer pattern.
+- Durable raceway geometry should not be package-RTC render coordinates as the
+  only truth. Prefer source/world coordinates or model-object stable anchors
+  with source/package context; derive render-frame positions through the
+  `plant3d` coordinate/RTC contract for the viewer.
+
 Immediate active plan:
 
-1. Record `raceway` as a peer app, not an EHT submodule.
-2. Scaffold minimal `raceway` Django app only after KR approves coding.
-3. Register app/URL safely.
-4. Add import-boundary tests: `plant3d` must not import `raceway`; `raceway`
-   may consume `plant3d` contracts.
-5. Keep schema narrow: `RacewayLayer`, `RacewayRun`, `RacewayNode`,
-   `RacewayFamily`, `RacewaySize` are candidates. Supports/fittings/vendor
-   catalogue/cable assignment are later.
-6. Update `plant3d/records/tracking/platform-ecosystem-reset-tracker-2026-07-08.md`
+1. Redo Stage 6 centerline authoring after designing the viewer-extension
+   interaction contract and browser-smoke-testing real canvas clicks.
+2. Keep raceway drawing/persistence in `raceway`; use Plant3D only as the
+   viewer host and coordinate/package contract provider.
+3. Use the generic viewer extension seam for all raceway viewer code.
+4. Keep schema narrow. Supports/fittings/vendor catalogue/cable assignment are
+   later after raceway graph shape is proven.
+5. Update `plant3d/records/tracking/raceway-mvp-progress-tracker-2026-07-08.md`
    after each pass.
 
-Code facts verified on 2026-07-08:
+Code facts verified on 2026-07-09:
 
-- No `raceway` app exists yet; `ELECSENSE/settings.py` still lists `eht`,
-  `idfviewer`, and `plant3d`.
+- Minimal `raceway` app now exists and is registered in `ELECSENSE/settings.py`
+  and `ELECSENSE/urls.py`, with an authenticated JSON home endpoint and
+  boundary tests. `raceway/access.py` wraps `plant3d.project_gateway` for Stage
+  0 project scoping without direct EHT runtime imports. Minimal schema exists:
+  `RacewayFamily`, `RacewaySize`, `RacewayLayer`, `RacewayRun`, and
+  `RacewayNode`, with loose plant3d ids, source/world metre node coordinates,
+  and UUID stable keys on runs/nodes.
+- Raceway JSON API slice exists for layers, runs, and ordered node replacement.
+  It validates project access, source/package access, family/size consistency,
+  coordinate frame, finite node coordinates, and payload shape server-side.
+- Plant3D viewer extensions are settings-driven through
+  `PLANT3D_VIEWER_EXTENSIONS`; `plant3d` knows only generic extension script
+  descriptors, not peer-app details. `package_viewer.js` can create an
+  extension-owned overlay group through `createGroup: true` and emits
+  `plant3dviewer:layers-ready`. Raceway owns
+  `raceway/static/raceway/js/raceway_overlay.js`, which registers
+  `raceway-overlay` as owner `raceway`.
+- Stage 6 authoring attempt on 2026-07-09 was reverted after KR manual testing:
+  Start produced a draft row, but canvas clicks/node commands did not work.
+  Do not mark authoring complete without a browser smoke test that actually
+  clicks the viewer and verifies nodes are created/moved/deleted.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.
@@ -76,6 +108,12 @@ Guardrails:
 Claude/Fable role: architecture advisor, auditor, reviewer, and independent
 researcher. Treat Claude output as valuable review input, not automatic coding
 instruction. Major pivots go back to KR before implementation.
+
+Collaboration habit: Claude should write durable findings into a short
+date-stamped record under `plant3d/records/audit/` or `plant3d/records/planning/`
+with stable section headings. KR can then cite file path plus line/section to
+Codex. Codex should either implement accepted items or fold them into the active
+plan/tracker with a note, rather than relying on long pasted chat transcripts.
 
 ## Current Objective
 

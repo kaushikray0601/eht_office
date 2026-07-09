@@ -2015,6 +2015,10 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "ehtSelectedRouteControls")
         self.assertContains(response, "ehtEditSelectedRouteBtn")
         self.assertContains(response, "eht-redo-btn")
+        self.assertContains(response, "plant3dViewerExtensionsConfig")
+        self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-overlay\"")
+        self.assertContains(response, "data-owner=\"raceway\"")
+        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260709_raceway1")
 
     def test_package_viewer_static_js_exposes_generic_layer_registry(self):
         script_path = os.path.join(
@@ -2033,6 +2037,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("window.plant3dViewerLayers", content)
         self.assertIn("register: registerViewerLayer", content)
         self.assertIn("setVisible: setViewerLayerVisible", content)
+        self.assertIn("config.createGroup ? new THREE.Group() : null", content)
+        self.assertIn("plant3dviewer:layers-ready", content)
         self.assertIn("function setViewerLayerVisible", content)
         self.assertIn("function renderViewerLayerControls", content)
         self.assertIn("function showAllViewerLayers", content)

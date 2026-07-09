@@ -117,6 +117,7 @@ INSTALLED_APPS = [
     "crispy_bootstrap4",
     "idfviewer",
     "plant3d",
+    "raceway",
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"
@@ -263,6 +264,16 @@ STATIC_URL = '/static/'
 STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles') # for production (to serve static files), where 'collectstatic' commd gathers all satic files
 STATICFILES_DIRS = [os.path.join(BASE_DIR, "static"),
                     ] # for development 
+
+PLANT3D_VIEWER_EXTENSIONS = [
+    {
+        "id": "raceway-overlay",
+        "owner": "raceway",
+        "kind": "consumer-overlay",
+        "script": "raceway/js/raceway_overlay.js",
+        "version": "20260709_raceway1",
+    },
+]
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media') 

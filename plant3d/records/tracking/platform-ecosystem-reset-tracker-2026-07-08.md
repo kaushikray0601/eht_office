@@ -29,10 +29,10 @@ Build a strong foundation for a full EPC electrical ecosystem:
 - [x] Keep `plant3d` co-located in current Django project for now.
 - [x] Reject always-on individual cable Manhattan routing as primary UX.
 - [x] Keep cable centerline drafting only as baseline/manual exception.
-- [ ] Record raceway as peer app, not EHT submodule.
-- [ ] Confirm app name: `raceway`.
+- [x] Record raceway as peer app, not EHT submodule.
+- [x] Confirm app name: `raceway`.
 - [ ] Confirm default catalogue seed strategy: generic curated seed first.
-- [ ] Confirm first standard/default: IEC 61537 or NEMA VE-1/VE-2.
+- [x] Confirm first standard/default: IEC-first; NEMA/ANSI later.
 
 ## Phase 0 — Reset Documentation
 
@@ -42,8 +42,8 @@ Build a strong foundation for a full EPC electrical ecosystem:
 - [x] Create Codex restart prompt.
 - [x] Create Claude restart prompt.
 - [x] Mark Claude cable-routing RFC as historical where always-on Manhattan is discussed.
-- [ ] Update `plant3d/records/README.md`.
-- [ ] Ask Claude to review reset records.
+- [x] Update `plant3d/records/README.md`.
+- [x] Ask Claude to review reset records.
 
 ## Phase 1 — Boundary Stabilization
 
@@ -53,33 +53,33 @@ Build a strong foundation for a full EPC electrical ecosystem:
 - [x] Public API boundary contract exists.
 - [x] Viewer layer registry exists.
 - [ ] Reconfirm exported/usable layer registration contract before raceway overlay coding.
-- [ ] Add/confirm tests that `plant3d` imports no raceway module.
-- [ ] Keep route/draft persistence out of `plant3d`.
+- [x] Add/confirm tests that `plant3d` imports no raceway module.
+- [x] Keep route/draft persistence out of `plant3d`.
 
 ## Phase 2 — Raceway App Foundation
 
-- [ ] Add decision record for `raceway` peer app.
-- [ ] Create `raceway` Django app.
-- [ ] Register app.
-- [ ] Add URL namespace.
+- [x] Add decision record for `raceway` peer app.
+- [x] Create `raceway` Django app.
+- [x] Register app.
+- [x] Add URL namespace.
 - [ ] Add app-level records folder or link to `plant3d/records` as appropriate.
-- [ ] Add project access helper using existing gateway/access pattern.
-- [ ] Add minimal tests.
+- [x] Add project access helper using existing gateway/access pattern.
+- [x] Add minimal tests.
 
 Minimal schema candidates:
 
-- [ ] `RacewayLayer`
-- [ ] `RacewayRun`
-- [ ] `RacewayNode`
-- [ ] `RacewayFamily`
-- [ ] `RacewaySize`
+- [x] `RacewayLayer`
+- [x] `RacewayRun`
+- [x] `RacewayNode`
+- [x] `RacewayFamily`
+- [x] `RacewaySize`
 
 Schema rules:
 
-- [ ] Store route centerline as truth.
-- [ ] Store coordinates in plant3d render frame with explicit transform/package context.
-- [ ] Reference `plant3d` package/source/object anchors loosely.
-- [ ] Do not FK from `plant3d` back to `raceway`.
+- [x] Store route centerline as truth.
+- [x] Resolve durable coordinate stance: store source/world coordinates or stable anchors; derive render-frame positions for viewer use.
+- [x] Reference `plant3d` package/source/object anchors loosely.
+- [x] Do not FK from `plant3d` back to `raceway`.
 
 ## Phase 3 — Raceway Viewer MVP
 

@@ -25,7 +25,9 @@ experiments.
 ## Operating Thesis
 
 The first commercially meaningful 3D electrical authoring object is not an
-individual cable route. It is a shared raceway/tray/trunk/duct network.
+individual cable route. It is a shared aboveground raceway/tray/ladder/sleeve
+network. Underground trench/duct-bank work is strategically important, but it
+is deferred until the aboveground MVP and integration shape are proven.
 
 Therefore the MVP should prove:
 
@@ -44,10 +46,14 @@ Therefore the MVP should prove:
 - `raceway` owns raceway domain persistence: layers, runs, nodes, catalogue,
   derived parts, validation, and BOQ.
 - `eht` owns heat tracing calculations and EHT-specific deliverables.
+- Future consumers such as lighting design must be treated the same way as EHT:
+  they consume `plant3d`; they do not become part of `plant3d`.
 - `plant3d` must not import `raceway`.
 - `raceway` may consume `plant3d` public APIs, helpers, and stable anchors.
-- Store durable raceway coordinates with explicit package/source/render-frame
-  context. Do not persist raw screen/canvas coordinates.
+- Store durable raceway coordinates as source/world coordinates or explicit
+  model-object anchors, with source/package context. Render-frame positions are
+  derived for the viewer through the `plant3d` coordinate/RTC contract. Do not
+  persist raw screen/canvas coordinates as durable truth.
 - Route centerline is truth. Tray segments, fittings, supports, and GLB overlay
   caches are derived/regenerable.
 - Suggestions are explicit and user-accepted. The software must not silently
@@ -74,8 +80,10 @@ Tasks:
 - Add decision record: `raceway` is a peer app consuming `plant3d`.
 - Confirm app name: `raceway`.
 - Confirm catalogue seed direction: generic curated seed first.
-- Record default standards strategy: standards are configurable; initial default
-  can be selected later if KR has not yet decided IEC 61537 vs NEMA VE-1/VE-2.
+- Record default standards strategy: IEC-first for target markets in the Middle
+  East, Asia, and Europe. NEMA/ANSI is a later configurable path.
+- Record MVP containment scope: aboveground tray/ladder/sleeve first;
+  underground trench/duct-bank later.
 - Update records README to include this detailed plan and tracker.
 - Ask Claude/Fable for architecture review of the reset and MVP plan.
 
@@ -166,7 +174,7 @@ Initial models:
   - source/package context fields as loose ids
   - created/updated metadata
 - `RacewayFamily`
-  - kind: ladder, perforated, solid, mesh, trunking, duct, trench placeholder
+  - kind: ladder, perforated tray, solid tray, mesh tray, trunking, sleeve
   - material
   - standard length
   - generic profile parameters JSON
@@ -178,6 +186,7 @@ Initial models:
   - load/span table JSON placeholder
 - `RacewayRun`
   - layer relation
+  - stable UUID key
   - family/size relation
   - service class
   - tag/status
@@ -186,13 +195,15 @@ Initial models:
   - validation summary JSON
 - `RacewayNode`
   - run relation
+  - stable UUID key
   - ordered index
-  - render-frame XYZ
+  - source/world XYZ or explicit model-object anchor
   - optional anchor owner/package/stable id
   - node kind: endpoint, bend, branch, riser placeholder
 
 Explicitly deferred:
 
+- underground trench and duct-bank modelling,
 - support records,
 - detailed fitting records,
 - vendor part mapping,
@@ -205,6 +216,8 @@ Acceptance:
 - Schema is narrow and additive.
 - Runs can store centerline nodes in order.
 - Nodes can represent both free positions and future plant-object anchors.
+- Durable coordinates survive package reconversion because render-frame
+  positions are derived, not treated as source of truth.
 - No reverse persistence into `plant3d`.
 
 Verification:
@@ -233,6 +246,7 @@ Tasks:
   - package/source access where provided,
   - coordinate frame present,
   - finite XYZ coordinates,
+  - source/world or anchor payload present for durable nodes,
   - valid service/family/size references,
   - ordered node indices.
 - Keep POST/PUT/PATCH/DELETE CSRF/session-authenticated for Stage 0.
@@ -261,8 +275,9 @@ Tasks:
 
 - Confirm `window.plant3dViewerLayers.register` is enough for raceway overlay
   group registration.
-- If needed, add a tiny external module hook for consumer scripts.
-- Add a raceway script include only when raceway is installed/enabled.
+- Add a settings-driven viewer extension list so `plant3d` knows only that
+  extension scripts exist, not which peer app owns them.
+- Add a raceway script include only through the configured extension list.
 - Register `raceway-overlay` layer with owner `raceway`.
 - Keep EHT draft overlay behavior unchanged.
 - Do not add raceway database calls to `plant3d` views unless routed through a
@@ -450,6 +465,7 @@ git diff --check
 - Full vendor catalogue.
 - Auto-support anchoring to beams.
 - Detailed fittings and reducer/riser library.
+- Underground trench and duct-bank modelling.
 - Server-baked GLB overlay cache.
 - BVH/narrow-phase collision.
 - Cable assignment to raceway graph.
@@ -498,8 +514,7 @@ Ask Claude to review after Stage 0 and again after Stage 3:
 These require KR direction before implementation hardens around them:
 
 - Final app name if not `raceway`.
-- Default standards basis: IEC 61537, NEMA VE-1/VE-2, or configurable without
-  default in MVP.
+- Detailed IEC-first seed basis and when NEMA/ANSI should enter.
 - Generic catalogue seed contents.
 - Whether BOQ-first is enough before drawings.
 - When server-baked GLB overlay cache becomes necessary.

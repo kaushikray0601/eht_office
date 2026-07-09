@@ -1,0 +1,15 @@
+from django.urls import path
+
+from . import views
+
+
+app_name = "raceway"
+
+urlpatterns = [
+    path("", views.raceway_home_view, name="home"),
+    path("projects/<str:project_id>/layers/", views.layer_collection_view, name="layer_collection"),
+    path("layers/<int:layer_id>/", views.layer_detail_view, name="layer_detail"),
+    path("layers/<int:layer_id>/runs/", views.run_collection_view, name="layer_runs"),
+    path("runs/<int:run_id>/", views.run_detail_view, name="run_detail"),
+    path("runs/<int:run_id>/nodes/", views.run_nodes_view, name="run_nodes"),
+]

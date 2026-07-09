@@ -1,8 +1,10 @@
 import json
 from hashlib import sha256
 
+from django.conf import settings
 from django.http import HttpResponse, HttpResponseNotModified, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.templatetags.static import static
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
@@ -40,6 +42,28 @@ TIMING_LABELS = [
     ("tileset_write_ms", "tileset write"),
     ("db_write_ms", "DB/index write"),
 ]
+
+
+def viewer_extension_context():
+    extensions = []
+    for raw_extension in getattr(settings, "PLANT3D_VIEWER_EXTENSIONS", []):
+        if not isinstance(raw_extension, dict):
+            continue
+        extension_id = str(raw_extension.get("id") or "").strip()
+        script_path = str(raw_extension.get("script") or "").strip()
+        script_url = str(raw_extension.get("script_url") or "").strip()
+        if not extension_id or not (script_path or script_url):
+            continue
+        extensions.append(
+            {
+                "id": extension_id,
+                "owner": str(raw_extension.get("owner") or "").strip(),
+                "kind": str(raw_extension.get("kind") or "overlay").strip(),
+                "script_url": script_url or static(script_path),
+                "version": str(raw_extension.get("version") or "").strip(),
+            }
+        )
+    return extensions
 
 
 def _quoted_etag(value):
@@ -371,6 +395,7 @@ def package_viewer_view(request, package_id):
             "package": package,
             "source": package.source_model,
             "package_api_url": reverse("plant3d_package_json", args=[package.pk]),
+            "viewer_extensions": viewer_extension_context(),
         },
     )
 
