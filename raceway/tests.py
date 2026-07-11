@@ -66,7 +66,7 @@ def assign_project(user, project):
     ManagedProject.objects.get(proj_id=project.proj_id).assigned_users.add(user)
 
 
-def create_family(code="LADDER-HDG"):
+def create_family(code="TEST-LADDER-HDG"):
     return RacewayFamily.objects.create(
         code=code,
         name=f"{code} family",
@@ -150,6 +150,25 @@ class RacewaySkeletonTests(TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertIn("/login/", response["Location"])
+
+
+class RacewayCatalogTests(TestCase):
+    def test_catalog_endpoint_returns_generic_vendor_free_seed(self):
+        user = get_user_model().objects.create_user(username="raceway-catalog-user", password="pw")
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("raceway:catalog"))
+
+        self.assertEqual(response.status_code, 200)
+        families = {family["code"]: family for family in response.json()["families"]}
+        self.assertIn("LADDER-HDG", families)
+        self.assertIn("PERF-HDG", families)
+        self.assertFalse(families["LADDER-HDG"]["is_validated"])
+        self.assertEqual(families["LADDER-HDG"]["standard_basis"], "IEC 61537")
+        self.assertEqual(
+            [(size["width_mm"], size["depth_mm"]) for size in families["LADDER-HDG"]["sizes"]],
+            [(300, 100), (450, 100), (600, 150)],
+        )
 
 
 class RacewayBoundaryTests(TestCase):
@@ -274,14 +293,14 @@ class RacewayModelTests(TestCase):
             source_x_m=1000.25,
             source_y_m=2000.5,
             source_z_m=106.5,
-            anchor={"owner_module": "raceway", "model_object_stable_id": "ifc:beam-001"},
+            anchor={"owner_module": "raceway", "anchor_kind": "model_object", "stable_id": "ifc:beam-001"},
         )
 
         self.assertEqual(run.coordinate_frame, SOURCE_COORDINATE_FRAME)
         self.assertTrue(run.key)
         self.assertTrue(node.key)
         self.assertEqual(node.source_x_m, 1000.25)
-        self.assertEqual(node.anchor["model_object_stable_id"], "ifc:beam-001")
+        self.assertEqual(node.anchor["stable_id"], "ifc:beam-001")
 
     def test_run_rejects_size_from_another_family(self):
         layer = create_layer()
@@ -421,6 +440,10 @@ class RacewayApiTests(TestCase):
         run_payload = run_response.json()["run"]
         self.assertEqual(run_payload["coordinate_frame"], SOURCE_COORDINATE_FRAME)
         self.assertTrue(run_payload["key"])
+        self.assertEqual(run_payload["family"]["code"], "API-LADDER")
+        self.assertEqual(run_payload["family"]["kind"], "ladder")
+        self.assertEqual(run_payload["size"]["width_mm"], 300)
+        self.assertEqual(run_payload["size"]["depth_mm"], 100)
         run_id = run_payload["id"]
 
         node_response = self.client.put(
@@ -434,7 +457,14 @@ class RacewayApiTests(TestCase):
                             "source_x_m": 1000.0,
                             "source_y_m": 2000.0,
                             "source_z_m": 106.5,
-                            "anchor": {"model_object_stable_id": "ifc:start"},
+                            "anchor": {
+                                "owner_module": "raceway",
+                                "anchor_kind": "model_object",
+                                "source_model_id": self.source.pk,
+                                "render_package_id": self.package.pk,
+                                "stable_id": "ifc:start",
+                                "label": "Start support",
+                            },
                         },
                         {
                             "sequence": 1,
@@ -454,10 +484,17 @@ class RacewayApiTests(TestCase):
         self.assertEqual(len(nodes), 2)
         self.assertEqual(nodes[0]["sequence"], 0)
         self.assertNotIn("render_cache", nodes[0])
+        self.assertEqual(nodes[0]["anchor"]["stable_id"], "ifc:start")
+        self.assertNotIn("feature_id", nodes[0]["anchor"])
 
         detail_response = self.client.get(reverse("raceway:run_detail", args=[run_id]))
         self.assertEqual(detail_response.status_code, 200)
         self.assertEqual(len(detail_response.json()["run"]["nodes"]), 2)
+
+        collection_response = self.client.get(f"{reverse('raceway:layer_runs', args=[layer.pk])}?include_nodes=1")
+        self.assertEqual(collection_response.status_code, 200)
+        self.assertEqual(len(collection_response.json()["runs"][0]["nodes"]), 2)
+        self.assertEqual(collection_response.json()["runs"][0]["size"]["width_mm"], 300)
 
         patch_response = self.client.patch(
             reverse("raceway:run_detail", args=[run_id]),
@@ -502,6 +539,65 @@ class RacewayApiTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(list(run.nodes.values_list("source_x_m", flat=True)), [1.0])
 
+    def test_node_replace_rejects_unstable_anchor_payload_without_deleting_existing_nodes(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        layer.source_model_id = self.source.pk
+        layer.render_package_id = self.package.pk
+        layer.save()
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.source_model_id = self.source.pk
+        run.render_package_id = self.package.pk
+        run.save()
+        RacewayNode.objects.create(run=run, sequence=0, source_x_m=1.0, source_y_m=2.0, source_z_m=3.0)
+
+        response = self.client.put(
+            reverse("raceway:run_nodes", args=[run.pk]),
+            data=json_body(
+                {
+                    "nodes": [
+                        {
+                            "sequence": 0,
+                            "source_x_m": 1.0,
+                            "source_y_m": 2.0,
+                            "source_z_m": 3.0,
+                            "anchor": {
+                                "owner_module": "raceway",
+                                "anchor_kind": "model_object",
+                                "source_model_id": self.source.pk,
+                                "stable_id": "ifc:beam-001",
+                                "feature_id": 77,
+                            },
+                        },
+                        {
+                            "sequence": 1,
+                            "source_x_m": 2.0,
+                            "source_y_m": 2.0,
+                            "source_z_m": 3.0,
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("anchor", response.json()["errors"])
+        self.assertEqual(list(run.nodes.values_list("source_x_m", flat=True)), [1.0])
+
+    def test_node_replace_requires_two_ordered_nodes_without_deleting_existing_nodes(self):
+        run = create_run(layer=create_layer(project_id=self.project.proj_id), family=self.family, size=self.size)
+        RacewayNode.objects.create(run=run, sequence=0, source_x_m=1.0, source_y_m=2.0, source_z_m=3.0)
+
+        response = self.client.put(
+            reverse("raceway:run_nodes", args=[run.pk]),
+            data=json_body({"nodes": [{"sequence": 0, "source_x_m": 2.0, "source_y_m": 3.0, "source_z_m": 4.0}]}),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("nodes", response.json()["errors"])
+        self.assertEqual(list(run.nodes.values_list("source_x_m", flat=True)), [1.0])
+
     def test_layer_delete_removes_owned_layer(self):
         layer = create_layer(project_id=self.project.proj_id)
 
@@ -536,6 +632,22 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("racewaySizeSelect", content)
         self.assertIn("racewayServiceSelect", content)
         self.assertIn("racewayElevationInput", content)
+        self.assertIn("CATALOG_URL = '/raceway/catalog/'", content)
+        self.assertIn("function loadCatalog", content)
+        self.assertIn("function loadSavedRaceways", content)
+        self.assertIn("function reloadSavedRaceways", content)
+        self.assertIn("function saveDrafts", content)
+        self.assertIn("function deleteActiveRun", content)
+        self.assertIn("function sanitizeAnchorForPersistence", content)
+        self.assertIn("function attachSelectedModelToNode", content)
+        self.assertIn("function clearSelectedNodeAnchor", content)
+        self.assertIn("function selectRacewayNodeFromEvent", content)
+        self.assertIn("data-raceway-action=\"select-node-mode\"", content)
+        self.assertIn("data-raceway-action=\"anchor-node\"", content)
+        self.assertIn("data-raceway-action=\"clear-anchor\"", content)
+        self.assertIn("data-raceway-action=\"save\"", content)
+        self.assertIn("data-raceway-action=\"reload\"", content)
+        self.assertIn("data-raceway-action=\"delete-run\"", content)
         self.assertIn("registerInteraction", content)
         self.assertIn("function beginRun", content)
         self.assertIn("function finishRun", content)
@@ -543,3 +655,10 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function moveSelectedNodeFromEvent", content)
         self.assertIn("function deleteSelectedNode", content)
         self.assertIn("pointOnSourceElevationFromViewerEvent", content)
+        self.assertIn("function renderTrayPreview", content)
+        self.assertIn("function addSegmentPreview", content)
+        self.assertIn("function addBendPlaceholder", content)
+        self.assertIn("'side-rail'", content)
+        self.assertIn("'rung'", content)
+        self.assertIn("'node-hit-target'", content)
+        self.assertIn("'bend-placeholder'", content)

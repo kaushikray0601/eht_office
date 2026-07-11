@@ -6,6 +6,7 @@ from django.http import HttpResponse, HttpResponseNotModified, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.templatetags.static import static
 from django.urls import reverse
+from django.views.decorators.csrf import ensure_csrf_cookie
 from django.views.decorators.http import require_http_methods
 
 from .access import (
@@ -383,6 +384,7 @@ def job_json_view(request, job_id):
     )
 
 
+@ensure_csrf_cookie
 def package_viewer_view(request, package_id):
     package = get_object_or_404(
         render_packages_for_user(request.user).select_related("source_model"),
@@ -467,6 +469,7 @@ def package_json_view(request, package_id):
     response = JsonResponse(
         {
             "id": package.pk,
+            "project_id": package.source_model.project_id,
             "source_model_id": package.source_model_id,
             "source_display_name": package.source_model.display_name,
             "package_format": package.package_format,

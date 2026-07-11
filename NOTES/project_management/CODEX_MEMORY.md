@@ -42,13 +42,14 @@ KR alignment from Claude discussion on 2026-07-08:
 
 Immediate active plan:
 
-1. Move into Stage 7 simple tray geometry preview, derived from the Stage 6
-   centerline draft data.
+1. Move into Stage 9 derived parts and BOQ v0: split saved raceway runs into
+   straight segment lengths, bend counts, simple support placeholders, and a
+   first schedule endpoint/view.
 2. Keep raceway drawing/persistence in `raceway`; use Plant3D only as the
    viewer host and coordinate/package contract provider.
 3. Use the generic viewer extension seam for all raceway viewer code.
-4. Keep schema narrow. Supports/fittings/vendor catalogue/cable assignment are
-   later after raceway graph shape is proven.
+4. Keep schema narrow. Derived supports/fittings/schedule are allowed in Stage
+   9; vendor catalogue assets and cable assignment remain later.
 5. Update `plant3d/records/tracking/raceway-mvp-progress-tracker-2026-07-08.md`
    after each pass.
 
@@ -80,19 +81,74 @@ Code facts verified on 2026-07-09:
 - `raceway/browser_tests.py` is the opt-in smoke test proving the raceway script
   registers its layer and handles canvas click/create/undo/move/delete against
   a stubbed viewer host. Run it before asking KR to manually check authoring.
-- Static cache note: raceway overlay script version is `20260709_raceway3`;
-  bump this whenever changing `raceway_overlay.js`.
+- Static cache note: Plant3D viewer host script version is
+  `20260710_raceway_runtime5`; raceway overlay script version is
+  `20260710_raceway9`. Bump the relevant cache key whenever changing either
+  browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
   setup is complete. `publishViewerExtensionHost()` now publishes runtime and
   dispatches events near the bottom of `package_viewer.js`, after built-in
   layer registration and viewer setup. Host script cache is
   `20260709_raceway_runtime1`; raceway overlay script cache is
-  `20260709_raceway3`.
+  `20260709_raceway4`.
 - Geometry principle: initial tray/ladder visuals are parametric engineering
   proxies derived from centerline plus catalogue dimensions. Vendor meshes may
   be attached later as catalogue visualization assets, but are not durable
   design truth.
+- Stage 7 preview is complete in `raceway_overlay.js`: rail/edge/depth/rung or
+  tray-cross-member line proxies are generated from `widthMm`, `depthMm`,
+  service class, and nodes. Bend placeholders are generated at intermediate
+  nodes. `raceway.browser_tests` verifies `side-rail`, `rung`,
+  `bend-placeholder`, and live size/service updates. Overlay script cache is
+  `20260709_raceway4`.
+- Stage 8 persistence is complete. `raceway.0002_seed_generic_catalog` seeds
+  generic vendor-free `LADDER-HDG` and `PERF-HDG` catalogue rows with
+  `is_validated=False`; `/raceway/catalog/` exposes active families/sizes.
+  `raceway_overlay.js` loads catalogue IDs from the server, saves finished
+  centreline runs/nodes through the Raceway JSON API, and reloads saved runs
+  on package viewer open/refresh. Plant3D package JSON now exposes
+  `project_id`, package viewer sets a CSRF cookie, and the viewer emits
+  `plant3dviewer:package-loaded`.
+- `package_viewer.js` now has a single-active-canvas-tool rule across Raceway
+  extension interactions, Measure, and EHT tools. Activating one deactivates
+  the others so armed Raceway draw mode cannot silently swallow Measure/EHT
+  clicks.
+- `raceway.browser_tests` now has two opt-in Playwright tests: a synthetic
+  extension-host smoke and a real live-server Plant3D viewer smoke that draws
+  on the real canvas, saves through Django, reloads, and confirms the saved
+  Raceway run returns.
+- First Plant3D model anchor bridge is in place. `package_viewer.js` exposes
+  `getSelectedModelAnchor()` on `plant3dViewerRuntime`; `raceway_overlay.js`
+  has `Anchor Node` / `Clear Anchor`. Anchoring stores Plant3D stable object
+  references in `RacewayNode.anchor` and places the node at the selected model
+  source point. For clicked model selections, Plant3D records the clicked source
+  point; hierarchy-only selections fall back to object source bounds center.
+  Raceway adopts the anchor source Z as the active run elevation. This is not
+  final collision/snapping; it is the first durable link between Raceway
+  centerline nodes and plant model objects.
+- Raceway run payloads now embed authoritative saved family/size fields
+  (`family.code`, `family.kind`, `size.width_mm`, `size.depth_mm`) so reloaded
+  proxy geometry does not silently guess dimensions from the active catalogue.
+- Raceway usability pass after KR's manual anchor test: run rows and summary
+  now show `unsaved`, `unsaved changes`, or `saved`; invalid actions are
+  disabled; `Reload Saved` asks before discarding local changes; `Delete Run`
+  calls the existing server delete API; save errors name the failing run tag.
+  The tray/ladder proxy now treats the authored/source elevation as the
+  bottom/reference plane and extends depth upward so the tray faces sky.
+- Anchor contract tightening: `plant3d/overlay.py` provides
+  `validate_overlay_anchor`; `raceway.views` validates node anchors while
+  saving. `raceway_overlay.js` sanitizes anchors before persistence, stores
+  `owner_module: raceway` plus durable `stable_id`/source/package snapshots,
+  and strips package-local `feature_id`.
+- Raceway interaction usability pass after KR's manual node-selection/navigation
+  findings: `package_viewer.js` now suppresses extension commit clicks after
+  navigation drags through `shouldIgnoreViewerCommitClick`, and exposes
+  `raycastObjectsFromViewerEvent` for extension-owned handles. Raceway now has
+  explicit `Select Node` mode, pickable `node-hit-target` spheres, a tolerant
+  fallback node pick against the source-elevation plane, and keeps finished or
+  selected runs in lightweight select mode where node hits are consumed but
+  misses fall through to normal Plant3D picking.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

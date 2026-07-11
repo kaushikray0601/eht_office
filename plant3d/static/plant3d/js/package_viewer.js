@@ -221,8 +221,109 @@ function pointOnSourceElevationFromViewerEvent(event, sourceElevationM) {
   return ray.intersectPlane(plane, point) ? point : null;
 }
 
+function raycastObjectsFromViewerEvent(event, objects, recursive = false) {
+  const ray = rayFromViewerEvent(event);
+  if (!ray || !Array.isArray(objects) || !objects.length) return [];
+  return raycaster.intersectObjects(objects, recursive);
+}
+
 function currentSourceElevationM() {
   return renderPointToSourcePoint(controls.target).z;
+}
+
+function sourcePointFromBounds(bounds) {
+  if (!bounds || Object.keys(bounds).length === 0) return null;
+  const minX = Number(bounds.min_x);
+  const maxX = Number(bounds.max_x);
+  const minY = Number(bounds.min_y);
+  const maxY = Number(bounds.max_y);
+  const minZ = Number(bounds.min_z);
+  const maxZ = Number(bounds.max_z);
+  if (![minX, maxX, minY, maxY, minZ, maxZ].every(Number.isFinite)) return null;
+  return {
+    x: (minX + maxX) / 2,
+    y: (minY + maxY) / 2,
+    z: (minZ + maxZ) / 2,
+    coordinate_frame: 'source_xyz_m',
+  };
+}
+
+function modelAnchorFromObjectSummary(obj, sourcePoint = null, featureId = null) {
+  if (!obj) return null;
+  const summary = obj.selection_summary || {};
+  return {
+    owner_module: 'plant3d',
+    anchor_kind: 'model_object',
+    render_package_id: runtimeStats.package?.id || null,
+    source_model_id: runtimeStats.package?.source_model_id || null,
+    model_object_id: obj.id || null,
+    stable_id: obj.stable_id || summary.stable_id || '',
+    source_object_id: obj.source_object_id || summary.source_object_id || '',
+    object_type: obj.object_type || summary.object_type || '',
+    label: objectDisplayLabel(obj),
+    bounds: obj.bounds || {},
+    source_point_m: sourcePoint || sourcePointFromBounds(obj.bounds),
+    feature_id: Number.isFinite(Number(featureId)) ? Number(featureId) : null,
+  };
+}
+
+function getSelectedModelAnchor() {
+  if (!isViewerLayerIdVisible('model')) return null;
+  if (Number.isFinite(selectedGlbFeatureId)) {
+    const feature = featureIndex.get(selectedGlbFeatureId);
+    if (feature?.objectSummary) {
+      return modelAnchorFromObjectSummary(
+        feature.objectSummary,
+        selectedModelAnchorSourcePoint || sourcePointFromBounds(feature.objectSummary.bounds),
+        selectedGlbFeatureId,
+      );
+    }
+  }
+  if (selectedMesh?.userData?.objectId) {
+    const obj = objectById.get(Number(selectedMesh.userData.objectId)) || objectById.get(String(selectedMesh.userData.objectId));
+    if (obj) return modelAnchorFromObjectSummary(obj, selectedModelAnchorSourcePoint || sourcePointFromBounds(obj.bounds));
+  }
+  if (hierarchySelectedObjectId !== null && hierarchySelectedObjectId !== undefined) {
+    const obj = objectById.get(Number(hierarchySelectedObjectId)) || objectById.get(String(hierarchySelectedObjectId));
+    if (obj) return modelAnchorFromObjectSummary(obj);
+  }
+  if (selectedHighlight) {
+    const bounds = new THREE.Box3().setFromObject(selectedHighlight);
+    if (!bounds.isEmpty()) {
+      const center = new THREE.Vector3();
+      bounds.getCenter(center);
+      const sourcePoint = renderPointToSourcePoint(center);
+      return {
+        owner_module: 'plant3d',
+        anchor_kind: 'model_selection_point',
+        render_package_id: runtimeStats.package?.id || null,
+        source_model_id: runtimeStats.package?.source_model_id || null,
+        model_object_id: null,
+        stable_id: selectedMesh?.userData?.stableId || '',
+        source_object_id: '',
+        object_type: selectedMesh?.userData?.ifcClass || '',
+        label: selectedMesh?.userData?.name || selectedMesh?.userData?.stableId || 'Selected model object',
+        bounds: {},
+        source_point_m: selectedModelAnchorSourcePoint || sourcePoint,
+        feature_id: Number.isFinite(Number(selectedGlbFeatureId)) ? Number(selectedGlbFeatureId) : null,
+      };
+    }
+  }
+  return null;
+}
+
+function resetCanvasCursor() {
+  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+}
+
+function deactivateActiveViewerInteraction(options = {}) {
+  const interactionId = activeViewerInteractionId;
+  if (!interactionId) return false;
+  const interaction = viewerInteractions.get(interactionId);
+  activeViewerInteractionId = '';
+  if (interaction?.onDeactivate) interaction.onDeactivate(options);
+  resetCanvasCursor();
+  return true;
 }
 
 function registerViewerInteraction(config) {
@@ -230,13 +331,18 @@ function registerViewerInteraction(config) {
   viewerInteractions.set(config.id, config);
   return {
     activate: () => {
+      if (activeViewerInteractionId && activeViewerInteractionId !== config.id) {
+        deactivateActiveViewerInteraction({ reason: 'replaced' });
+      }
+      if (measureModeActive) setMeasureMode(false);
+      if (activeEhtTool) setActiveEhtTool('');
+      movingDraftId = '';
       activeViewerInteractionId = config.id;
       renderer.domElement.style.cursor = config.cursor || 'crosshair';
     },
     deactivate: () => {
       if (activeViewerInteractionId === config.id) {
-        activeViewerInteractionId = '';
-        renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+        deactivateActiveViewerInteraction({ reason: 'extension' });
       }
     },
     isActive: () => activeViewerInteractionId === config.id,
@@ -246,6 +352,10 @@ function registerViewerInteraction(config) {
 function dispatchViewerInteractionClick(event) {
   const interaction = viewerInteractions.get(activeViewerInteractionId);
   if (!interaction?.onCanvasClick) return false;
+  if (shouldIgnoreViewerCommitClick()) {
+    if (interaction.onNavigationClick) interaction.onNavigationClick(event);
+    return true;
+  }
   return interaction.onCanvasClick(event) !== false;
 }
 
@@ -254,8 +364,18 @@ function cancelActiveViewerInteraction() {
   if (!interaction) return false;
   if (interaction.onCancel) interaction.onCancel();
   activeViewerInteractionId = '';
-  renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
+  resetCanvasCursor();
   return true;
+}
+
+function publishViewerPackageLoaded(pkg) {
+  if (!window.plant3dViewerRuntime) return;
+  window.dispatchEvent(new CustomEvent('plant3dviewer:package-loaded', {
+    detail: {
+      package: runtimeStats.package || pkg,
+      runtime: window.plant3dViewerRuntime,
+    },
+  }));
 }
 
 function publishViewerExtensionHost() {
@@ -274,9 +394,12 @@ function publishViewerExtensionHost() {
     worldUnitsForScreenPixels,
     sourcePointToRenderPoint,
     renderPointToSourcePoint,
+    getSelectedModelAnchor,
     pointOnSourceElevationFromViewerEvent,
     rayFromViewerEvent,
+    raycastObjectsFromViewerEvent,
     registerInteraction: registerViewerInteraction,
+    deactivateActiveInteraction: deactivateActiveViewerInteraction,
   };
   window.dispatchEvent(new CustomEvent('plant3dviewer:layers-ready', {
     detail: window.plant3dViewerLayers,
@@ -439,6 +562,7 @@ let hierarchySearchMatches = new Set();
 let selectedMesh = null;
 let selectedHighlight = null;
 let selectedGlbFeatureId = null;
+let selectedModelAnchorSourcePoint = null;
 let hierarchySelectedObjectId = null;
 let activeEhtTool = '';
 let pendingRoutePoints = [];
@@ -1134,6 +1258,7 @@ function beginRouteWorkflow(def) {
 
 function setActiveEhtTool(tool) {
   activeEhtTool = tool || '';
+  if (activeEhtTool) deactivateActiveViewerInteraction({ reason: 'eht-tool' });
   if (activeEhtTool && measureModeActive) setMeasureMode(false);
   if (activeEhtTool) movingDraftId = '';
   if (activeEhtTool) setViewerLayerVisible('eht-draft', true, { renderControls: false });
@@ -1608,9 +1733,14 @@ function forgetPointerDown() {
   pointerDownState = null;
 }
 
-function shouldIgnoreToolPlacementClick() {
+function shouldIgnoreViewerCommitClick() {
   if (!suppressNextViewerClick && !isInteracting) return false;
   suppressNextViewerClick = false;
+  return true;
+}
+
+function shouldIgnoreToolPlacementClick() {
+  if (!shouldIgnoreViewerCommitClick()) return false;
   setEhtStatus('Navigation gesture ignored for placement. Click without dragging to place the selected tool.');
   return true;
 }
@@ -2434,6 +2564,7 @@ function addMeasurementPoint(point) {
 function setMeasureMode(active) {
   measureModeActive = Boolean(active);
   if (measureModeActive) {
+    deactivateActiveViewerInteraction({ reason: 'measurement' });
     setActiveEhtTool('');
     movingDraftId = '';
     setViewerLayerVisible('measurement', true, { renderControls: false });
@@ -3287,6 +3418,7 @@ if (selectionEl) {
       const element = selectedDraftElement();
       if (!element) return;
       movingDraftId = movingDraftId === element.id ? '' : element.id;
+      if (movingDraftId) deactivateActiveViewerInteraction({ reason: 'eht-move' });
       setActiveEhtTool('');
       renderDraftSelectionPanel(element);
       setEhtStatus(movingDraftId ? `${draftLabel(element)} move mode: click a new model position.` : `${draftLabel(element)} move cancelled.`);
@@ -4055,9 +4187,10 @@ async function loadPackage() {
   const pkg = await response.json();
   if (pkg.package_format === 'GLB') {
     await loadGlbPackage(pkg, started);
-    return;
+  } else {
+    await loadJsonPackage(pkg, started);
   }
-  await loadJsonPackage(pkg, started);
+  publishViewerPackageLoaded(pkg);
 }
 
 async function loadJsonPackage(pkg, started) {
@@ -4138,6 +4271,7 @@ function clearSelection({ keepDraft = false } = {}) {
   }
   selectedMesh = null;
   selectedGlbFeatureId = null;
+  selectedModelAnchorSourcePoint = null;
   if (!keepDraft) {
     clearDraftSelectionVisual();
     selectedDraftId = '';
@@ -4148,9 +4282,10 @@ function clearSelection({ keepDraft = false } = {}) {
   setSelectionActionsEnabled(false);
 }
 
-async function showSelection(mesh) {
+async function showSelection(mesh, hit = null) {
   clearSelection();
   selectedMesh = mesh;
+  selectedModelAnchorSourcePoint = hit?.point ? renderPointToSourcePoint(hit.point) : null;
   selectedHighlight = new THREE.Mesh(mesh.geometry.clone(), highlightMaterial);
   selectedHighlight.userData.isSelectionHighlight = true;
   selectedHighlight.renderOrder = 10;
@@ -4277,6 +4412,7 @@ async function showGlbFeatureSelection(hit) {
   }
 
   selectedGlbFeatureId = featureId;
+  selectedModelAnchorSourcePoint = hit?.point ? renderPointToSourcePoint(hit.point) : null;
   showGlbFeatureHighlight(hit, featureId);
   const feature = featureIndex.get(featureId);
   const objectSummary = feature.objectSummary;
@@ -4345,7 +4481,7 @@ async function selectItemFromViewerEvent(event, { clearOnMiss = true } = {}) {
     await showGlbFeatureSelection(hit);
     return 'model';
   }
-  await showSelection(hit.object);
+  await showSelection(hit.object, hit);
   return 'model';
 }
 

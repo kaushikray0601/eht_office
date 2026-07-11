@@ -1,26 +1,9 @@
 const RACEWAY_LAYER_ID = 'raceway-overlay';
 const RACEWAY_INTERACTION_ID = 'raceway-centerline-authoring';
+const CATALOG_URL = '/raceway/catalog/';
+const SOURCE_COORDINATE_FRAME = 'source_xyz_m';
 
-const catalog = [
-  {
-    id: 'LADDER-HDG',
-    label: 'Ladder HDG',
-    sizes: [
-      { id: 'LADDER-HDG-300x100', label: '300 x 100 mm', widthMm: 300, depthMm: 100 },
-      { id: 'LADDER-HDG-450x100', label: '450 x 100 mm', widthMm: 450, depthMm: 100 },
-      { id: 'LADDER-HDG-600x150', label: '600 x 150 mm', widthMm: 600, depthMm: 150 },
-    ],
-  },
-  {
-    id: 'PERF-HDG',
-    label: 'Perforated HDG',
-    sizes: [
-      { id: 'PERF-HDG-150x50', label: '150 x 50 mm', widthMm: 150, depthMm: 50 },
-      { id: 'PERF-HDG-300x75', label: '300 x 75 mm', widthMm: 300, depthMm: 75 },
-      { id: 'PERF-HDG-450x100', label: '450 x 100 mm', widthMm: 450, depthMm: 100 },
-    ],
-  },
-];
+let catalog = [];
 
 const services = [
   { id: 'power', label: 'Power', color: 0x2563eb },
@@ -34,11 +17,19 @@ const state = {
   activeRunId: '',
   selectedNodeIndex: -1,
   mode: 'idle',
-  familyId: catalog[0].id,
-  sizeId: catalog[0].sizes[0].id,
+  familyId: '',
+  sizeId: '',
   serviceClass: services[0].id,
   elevationM: 0,
   elevationInitialized: false,
+  catalogLoaded: false,
+  persistenceLoaded: false,
+  persistenceLoading: false,
+  persistenceReady: false,
+  contextKey: '',
+  layerId: null,
+  layerUrl: '',
+  runsUrl: '',
 };
 
 let layer = null;
@@ -51,6 +42,8 @@ let runListEl = null;
 let nodeListEl = null;
 let inspectorEl = null;
 let bootstrapAttempts = 0;
+let persistenceBootstrapQueued = false;
+let catalogLoadPromise = null;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -66,13 +59,18 @@ function formatM(value) {
   return Number.isFinite(number) ? number.toFixed(3) : '0.000';
 }
 
+function sameId(left, right) {
+  return String(left ?? '') === String(right ?? '');
+}
+
 function activeFamily() {
-  return catalog.find(family => family.id === state.familyId) || catalog[0];
+  return catalog.find(family => sameId(family.id, state.familyId)) || catalog[0] || null;
 }
 
 function activeSize() {
   const family = activeFamily();
-  return family.sizes.find(size => size.id === state.sizeId) || family.sizes[0];
+  if (!family) return null;
+  return family.sizes.find(size => sameId(size.id, state.sizeId)) || family.sizes[0] || null;
 }
 
 function serviceFor(id = state.serviceClass) {
@@ -81,6 +79,65 @@ function serviceFor(id = state.serviceClass) {
 
 function activeRun() {
   return state.runs.find(run => run.id === state.activeRunId) || null;
+}
+
+function markRunDirty(run = activeRun()) {
+  if (run) run.dirty = true;
+}
+
+function hasUnsavedLocalChanges() {
+  return state.runs.some(run => !run.serverRunId || run.dirty);
+}
+
+function runPersistenceLabel(run) {
+  if (!run?.serverRunId) return 'unsaved';
+  return run.dirty ? 'unsaved changes' : 'saved';
+}
+
+function allSizes() {
+  return catalog.flatMap(family => family.sizes.map(size => ({ ...size, family })));
+}
+
+function catalogFamilyById(id) {
+  return catalog.find(family => sameId(family.id, id)) || null;
+}
+
+function catalogSizeById(id) {
+  const match = allSizes().find(item => sameId(item.id, id));
+  return match ? { ...match, family: match.family } : null;
+}
+
+function normalizeFamily(rawFamily) {
+  const sizes = Array.isArray(rawFamily.sizes) ? rawFamily.sizes : [];
+  return {
+    id: String(rawFamily.id || ''),
+    code: String(rawFamily.code || ''),
+    label: String(rawFamily.name || rawFamily.code || 'Raceway'),
+    kind: String(rawFamily.kind || ''),
+    material: String(rawFamily.material || ''),
+    standardBasis: String(rawFamily.standard_basis || ''),
+    isValidated: Boolean(rawFamily.is_validated),
+    sizes: sizes
+      .filter(size => size && size.is_active !== false)
+      .map(size => ({
+        id: String(size.id || ''),
+        code: String(size.code || ''),
+        label: String(size.label || `${size.width_mm} x ${size.depth_mm} mm`),
+        widthMm: Number(size.width_mm) || 0,
+        depthMm: Number(size.depth_mm) || 0,
+      }))
+      .filter(size => size.id && size.widthMm > 0 && size.depthMm > 0),
+  };
+}
+
+function initializeCatalogSelection() {
+  if (!catalog.length) {
+    state.familyId = '';
+    state.sizeId = '';
+    return;
+  }
+  if (!catalogFamilyById(state.familyId)) state.familyId = catalog[0].id;
+  if (!activeSize()) state.sizeId = activeFamily()?.sizes[0]?.id || '';
 }
 
 function selectedNode() {
@@ -125,6 +182,9 @@ function scheduleBootstrap() {
   bootstrapAttempts += 1;
   if (bootstrap()) return;
   if (bootstrapAttempts < 80) window.setTimeout(scheduleBootstrap, 100);
+  if (bootstrapAttempts === 80) {
+    console.warn('Raceway overlay could not attach to the Plant3D viewer host.');
+  }
 }
 
 function bootstrap() {
@@ -135,6 +195,7 @@ function bootstrap() {
   ensureInteraction();
   renderRaceway();
   renderPanel();
+  schedulePersistenceBootstrap();
   if (window.racewayViewerOverlay) window.racewayViewerOverlay.layer = layer;
   return true;
 }
@@ -146,19 +207,36 @@ function ensureInteraction() {
     cursor: 'crosshair',
     onCanvasClick: event => {
       if (state.mode === 'draw') {
+        if (selectRacewayNodeFromEvent(event)) return true;
         addNodeFromEvent(event);
         return true;
       }
       if (state.mode === 'move') {
+        if (selectRacewayNodeFromEvent(event)) return true;
         moveSelectedNodeFromEvent(event);
         return true;
       }
+      if (state.mode === 'select') {
+        return selectRacewayNodeFromEvent(event);
+      }
       return false;
+    },
+    onNavigationClick: () => {
+      if (state.mode !== 'idle') {
+        setStatus('Navigation gesture ignored. Click without dragging to place or select raceway nodes.');
+      }
     },
     onCancel: () => {
       state.mode = 'idle';
       setStatus('Raceway command cancelled.');
       renderPanel();
+    },
+    onDeactivate: () => {
+      if (state.mode !== 'idle') {
+        state.mode = 'idle';
+        setStatus('Raceway command paused by another viewer tool.');
+        renderPanel();
+      }
     },
   });
 }
@@ -173,22 +251,74 @@ function deactivateCanvasMode() {
   interaction?.deactivate?.();
 }
 
+function activateNodeSelectionMode(run = activeRun()) {
+  if (!run) {
+    deactivateCanvasMode();
+    return;
+  }
+  activateCanvasMode('select');
+}
+
 function makeRun() {
   const family = activeFamily();
   const size = activeSize();
+  if (!family || !size) return null;
   return {
     id: `raceway-draft-${Date.now()}-${state.runs.length + 1}`,
     tag: `RWY-${String(state.runs.length + 1).padStart(3, '0')}`,
     familyId: family.id,
+    familyCode: family.code,
+    familyKind: family.kind,
     familyLabel: family.label,
     sizeId: size.id,
+    sizeCode: size.code,
     sizeLabel: size.label,
     widthMm: size.widthMm,
     depthMm: size.depthMm,
     serviceClass: state.serviceClass,
     elevationM: Number(state.elevationM) || 0,
     nodes: [],
+    dirty: true,
   };
+}
+
+function applyPaletteToActiveRun(options = {}) {
+  const run = activeRun();
+  if (!run) return;
+  const family = activeFamily();
+  const size = activeSize();
+  if (!family || !size) return;
+  const nextElevation = Number(state.elevationM) || 0;
+  const previousElevation = Number(run.elevationM) || 0;
+  run.familyId = family.id;
+  run.familyCode = family.code;
+  run.familyKind = family.kind;
+  run.familyLabel = family.label;
+  run.sizeId = size.id;
+  run.sizeCode = size.code;
+  run.sizeLabel = size.label;
+  run.widthMm = size.widthMm;
+  run.depthMm = size.depthMm;
+  run.serviceClass = state.serviceClass;
+  if (options.shiftElevation) {
+    const delta = nextElevation - previousElevation;
+    run.nodes.forEach(node => {
+      node.z = Number(node.z || 0) + delta;
+    });
+  }
+  run.elevationM = nextElevation;
+  markRunDirty(run);
+}
+
+function syncPaletteFromRun(run) {
+  if (!run) return;
+  state.familyId = run.familyId || state.familyId;
+  if (!catalogFamilyById(state.familyId)) state.familyId = catalog[0]?.id || '';
+  state.sizeId = run.sizeId || state.sizeId;
+  if (!activeSize()) state.sizeId = activeFamily()?.sizes[0]?.id || '';
+  state.serviceClass = run.serviceClass || state.serviceClass;
+  state.elevationM = Number(run.elevationM) || 0;
+  state.elevationInitialized = true;
 }
 
 function sourcePointFromEvent(event) {
@@ -200,8 +330,118 @@ function sourcePointFromEvent(event) {
     x: Number(sourcePoint.x) || 0,
     y: Number(sourcePoint.y) || 0,
     z: Number(state.elevationM) || 0,
-    coordinate_frame: 'source_xyz_m',
+    coordinate_frame: SOURCE_COORDINATE_FRAME,
   };
+}
+
+function selectedModelAnchor() {
+  return runtime?.getSelectedModelAnchor?.() || null;
+}
+
+function anchorLabel(anchor) {
+  return anchor?.label || anchor?.stable_id || anchor?.source_object_id || '';
+}
+
+function compactObject(object) {
+  return Object.fromEntries(
+    Object.entries(object)
+      .filter(([_key, value]) => value !== null && value !== undefined && value !== ''),
+  );
+}
+
+function normalizedAnchorSourcePoint(sourcePoint) {
+  if (!sourcePoint || typeof sourcePoint !== 'object') return null;
+  const x = Number(sourcePoint.x);
+  const y = Number(sourcePoint.y);
+  const z = Number(sourcePoint.z);
+  if (![x, y, z].every(Number.isFinite)) return null;
+  return { x, y, z, coordinate_frame: SOURCE_COORDINATE_FRAME };
+}
+
+function sanitizeAnchorForPersistence(anchor) {
+  if (!anchor || typeof anchor !== 'object') return {};
+  if (!Object.keys(anchor).length) return {};
+  const sourcePoint = normalizedAnchorSourcePoint(anchor.source_point_m);
+  const cleaned = compactObject({
+    owner_module: 'raceway',
+    anchor_kind: anchor.anchor_kind || 'model_object',
+    render_package_id: anchor.render_package_id,
+    source_model_id: anchor.source_model_id,
+    model_object_id: anchor.model_object_id,
+    stable_id: anchor.stable_id || anchor.model_object_stable_id,
+    source_object_id: anchor.source_object_id,
+    object_type: anchor.object_type,
+    label: anchor.label,
+    bounds: anchor.bounds && typeof anchor.bounds === 'object' ? anchor.bounds : undefined,
+    source_point_m: sourcePoint || undefined,
+  });
+  return cleaned.anchor_kind ? cleaned : {};
+}
+
+function pointFromModelAnchor(anchor) {
+  const persistedAnchor = sanitizeAnchorForPersistence(anchor);
+  const sourcePoint = persistedAnchor.source_point_m || null;
+  if (!sourcePoint) return null;
+  const z = Number(sourcePoint.z);
+  return {
+    x: Number(sourcePoint.x) || 0,
+    y: Number(sourcePoint.y) || 0,
+    z: Number.isFinite(z) ? z : Number(state.elevationM) || 0,
+    coordinate_frame: SOURCE_COORDINATE_FRAME,
+    anchor: persistedAnchor,
+  };
+}
+
+function applyRunElevation(run, elevationM) {
+  const elevation = Number(elevationM);
+  if (!run || !Number.isFinite(elevation)) return;
+  state.elevationM = elevation;
+  state.elevationInitialized = true;
+  run.elevationM = elevation;
+  run.nodes.forEach(node => {
+    node.z = elevation;
+  });
+  markRunDirty(run);
+}
+
+function attachSelectedModelToNode() {
+  const run = activeRun();
+  if (!run) {
+    setStatus('Start or select a raceway run before anchoring to the plant model.');
+    return;
+  }
+  const anchor = selectedModelAnchor();
+  if (!anchor) {
+    setStatus('Select a Plant3D model object first, then anchor the raceway node.');
+    return;
+  }
+  const point = pointFromModelAnchor(anchor);
+  if (!point) {
+    setStatus('Selected model object has no usable source-coordinate anchor.');
+    return;
+  }
+  applyRunElevation(run, point.z);
+  if (state.selectedNodeIndex >= 0 && run.nodes[state.selectedNodeIndex]) {
+    run.nodes[state.selectedNodeIndex] = point;
+  } else {
+    run.nodes.push(point);
+    state.selectedNodeIndex = run.nodes.length - 1;
+  }
+  setStatus(`${run.tag}: node ${state.selectedNodeIndex + 1} anchored to ${anchorLabel(anchor)}.`);
+  renderRaceway();
+  renderPanel();
+}
+
+function clearSelectedNodeAnchor() {
+  const node = selectedNode();
+  if (!node?.anchor) {
+    setStatus('Selected node has no plant model anchor.');
+    return;
+  }
+  node.anchor = {};
+  markRunDirty();
+  setStatus('Plant model anchor cleared from selected node.');
+  renderPanel();
 }
 
 function nodeDistance(a, b) {
@@ -210,6 +450,10 @@ function nodeDistance(a, b) {
   const dy = Number(b.y || 0) - Number(a.y || 0);
   const dz = Number(b.z || 0) - Number(a.z || 0);
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+function bendCount(run) {
+  return Math.max((run?.nodes?.length || 0) - 2, 0);
 }
 
 function runLength(run) {
@@ -244,32 +488,239 @@ function renderSourcePoint(point) {
   return runtime?.sourcePointToRenderPoint?.(point) || null;
 }
 
+function isLadderRun(run) {
+  return run.familyKind === 'ladder' || String(run.familyCode || '').startsWith('LADDER');
+}
+
+function runWidthM(run) {
+  return Math.max((Number(run.widthMm) || 300) / 1000, 0.05);
+}
+
+function runDepthM(run) {
+  return Math.max((Number(run.depthMm) || 50) / 1000, 0.025);
+}
+
+function sourceOffsetPoint(point, normalX, normalY, lateralOffsetM, verticalOffsetM = 0) {
+  return {
+    x: Number(point.x || 0) + normalX * lateralOffsetM,
+    y: Number(point.y || 0) + normalY * lateralOffsetM,
+    z: Number(point.z || 0) + verticalOffsetM,
+  };
+}
+
+function addSourceLine(group, sourcePoints, material, previewKind) {
+  const renderPoints = sourcePoints.map(renderSourcePoint).filter(Boolean);
+  if (renderPoints.length < 2) return null;
+  const line = new runtime.THREE.Line(
+    new runtime.THREE.BufferGeometry().setFromPoints(renderPoints),
+    material,
+  );
+  line.userData.racewayPreviewKind = previewKind;
+  group.add(line);
+  return line;
+}
+
+function previewMaterial(color, opacity = 1) {
+  return new runtime.THREE.LineBasicMaterial({
+    color,
+    depthTest: false,
+    transparent: opacity < 1,
+    opacity,
+  });
+}
+
+function segmentPlanBasis(start, end) {
+  const dx = Number(end.x || 0) - Number(start.x || 0);
+  const dy = Number(end.y || 0) - Number(start.y || 0);
+  const planLength = Math.sqrt(dx * dx + dy * dy);
+  if (planLength < 0.001) {
+    return { length: nodeDistance(start, end), tx: 1, ty: 0, nx: 0, ny: 1 };
+  }
+  return {
+    length: planLength,
+    tx: dx / planLength,
+    ty: dy / planLength,
+    nx: -dy / planLength,
+    ny: dx / planLength,
+  };
+}
+
+function sourcePointAlongSegment(start, basis, distanceM) {
+  return {
+    x: Number(start.x || 0) + basis.tx * distanceM,
+    y: Number(start.y || 0) + basis.ty * distanceM,
+    z: Number(start.z || 0),
+  };
+}
+
+function addSegmentPreview(group, run, start, end, material, detailMaterial) {
+  const basis = segmentPlanBasis(start, end);
+  if (basis.length < 0.001) return;
+  const halfWidth = runWidthM(run) / 2;
+  const depth = runDepthM(run);
+  const leftStartBottom = sourceOffsetPoint(start, basis.nx, basis.ny, halfWidth);
+  const leftEndBottom = sourceOffsetPoint(end, basis.nx, basis.ny, halfWidth);
+  const rightStartBottom = sourceOffsetPoint(start, basis.nx, basis.ny, -halfWidth);
+  const rightEndBottom = sourceOffsetPoint(end, basis.nx, basis.ny, -halfWidth);
+  const leftStartTop = sourceOffsetPoint(leftStartBottom, 0, 0, 0, depth);
+  const leftEndTop = sourceOffsetPoint(leftEndBottom, 0, 0, 0, depth);
+  const rightStartTop = sourceOffsetPoint(rightStartBottom, 0, 0, 0, depth);
+  const rightEndTop = sourceOffsetPoint(rightEndBottom, 0, 0, 0, depth);
+
+  addSourceLine(group, [leftStartTop, leftEndTop], material, 'side-rail');
+  addSourceLine(group, [rightStartTop, rightEndTop], material, 'side-rail');
+  addSourceLine(group, [leftStartBottom, leftEndBottom], detailMaterial, 'lower-edge');
+  addSourceLine(group, [rightStartBottom, rightEndBottom], detailMaterial, 'lower-edge');
+  addSourceLine(group, [leftStartBottom, leftStartTop], detailMaterial, 'depth-tick');
+  addSourceLine(group, [rightStartBottom, rightStartTop], detailMaterial, 'depth-tick');
+  addSourceLine(group, [leftEndBottom, leftEndTop], detailMaterial, 'depth-tick');
+  addSourceLine(group, [rightEndBottom, rightEndTop], detailMaterial, 'depth-tick');
+
+  const spacing = isLadderRun(run) ? 0.75 : 1.2;
+  const maxCrossMembers = isLadderRun(run) ? 16 : 10;
+  const memberCount = Math.min(Math.max(Math.floor(basis.length / spacing), 1), maxCrossMembers);
+  for (let index = 0; index <= memberCount; index += 1) {
+    const distance = (basis.length * index) / memberCount;
+    const center = sourcePointAlongSegment(start, basis, distance);
+    const leftBottom = sourceOffsetPoint(center, basis.nx, basis.ny, halfWidth);
+    const rightBottom = sourceOffsetPoint(center, basis.nx, basis.ny, -halfWidth);
+    addSourceLine(group, [leftBottom, rightBottom], detailMaterial, isLadderRun(run) ? 'rung' : 'tray-cross-member');
+  }
+}
+
+function addBendPlaceholder(group, run, node, material) {
+  const size = Math.max(Math.min(runWidthM(run) * 0.35, 0.35), 0.08);
+  const diamond = [
+    { x: node.x, y: Number(node.y || 0) + size, z: node.z },
+    { x: Number(node.x || 0) + size, y: node.y, z: node.z },
+    { x: node.x, y: Number(node.y || 0) - size, z: node.z },
+    { x: Number(node.x || 0) - size, y: node.y, z: node.z },
+    { x: node.x, y: Number(node.y || 0) + size, z: node.z },
+  ];
+  addSourceLine(group, diamond, material, 'bend-placeholder');
+}
+
+function addNodeHandle(group, run, node, index, color) {
+  const renderPoint = renderSourcePoint(node);
+  if (!renderPoint) return;
+  const selected = run.id === state.activeRunId && index === state.selectedNodeIndex;
+  const radius = runtime.worldUnitsForScreenPixels?.(renderPoint, 7, 0.04, 0.22) || 0.12;
+  const handle = new runtime.THREE.Mesh(
+    new runtime.THREE.SphereGeometry(radius, 16, 16),
+    new runtime.THREE.MeshBasicMaterial({ color: selected ? 0xf97316 : color, depthTest: false }),
+  );
+  handle.position.copy(renderPoint);
+  handle.userData.racewayPreviewKind = 'node-handle';
+  handle.userData.racewayRunId = run.id;
+  handle.userData.racewayNodeIndex = index;
+  group.add(handle);
+
+  const hitRadius = runtime.worldUnitsForScreenPixels?.(renderPoint, 18, 0.09, 0.45) || radius * 2.4;
+  const hitTarget = new runtime.THREE.Mesh(
+    new runtime.THREE.SphereGeometry(hitRadius, 12, 12),
+    new runtime.THREE.MeshBasicMaterial({
+      color,
+      depthTest: false,
+      depthWrite: false,
+      transparent: true,
+      opacity: 0,
+    }),
+  );
+  hitTarget.position.copy(renderPoint);
+  hitTarget.userData.racewayPreviewKind = 'node-hit-target';
+  hitTarget.userData.racewayRunId = run.id;
+  hitTarget.userData.racewayNodeIndex = index;
+  group.add(hitTarget);
+}
+
+function racewayNodeHitTargets() {
+  const targets = [];
+  layer?.group?.traverse?.(node => {
+    if (node.userData?.racewayPreviewKind === 'node-hit-target' || node.userData?.racewayPreviewKind === 'node-handle') {
+      targets.push(node);
+    }
+  });
+  return targets;
+}
+
+function pickRacewayNodeFromEvent(event) {
+  if (!runtime?.raycastObjectsFromViewerEvent) return nearestRacewayNodeFromEvent(event);
+  const hits = runtime.raycastObjectsFromViewerEvent(event, racewayNodeHitTargets(), false) || [];
+  const hit = hits.find(item => item.object?.userData?.racewayRunId && Number.isInteger(item.object.userData.racewayNodeIndex));
+  if (!hit) return nearestRacewayNodeFromEvent(event);
+  return {
+    runId: hit.object.userData.racewayRunId,
+    nodeIndex: hit.object.userData.racewayNodeIndex,
+  };
+}
+
+function nearestRacewayNodeFromEvent(event) {
+  if (!runtime?.pointOnSourceElevationFromViewerEvent) return null;
+  let best = null;
+  state.runs.forEach(run => {
+    run.nodes.forEach((node, nodeIndex) => {
+      const nodePoint = renderSourcePoint(node);
+      const eventPoint = runtime.pointOnSourceElevationFromViewerEvent(event, Number(node.z) || 0);
+      if (!nodePoint || !eventPoint) return;
+      const dx = Number(nodePoint.x || 0) - Number(eventPoint.x || 0);
+      const dy = Number(nodePoint.y || 0) - Number(eventPoint.y || 0);
+      const dz = Number(nodePoint.z || 0) - Number(eventPoint.z || 0);
+      const distanceSq = (dx * dx) + (dy * dy) + (dz * dz);
+      const radius = Math.max(runtime.worldUnitsForScreenPixels?.(nodePoint, 22, 0.1, 0.55) || 0, 0.3);
+      if (distanceSq <= radius * radius && (!best || distanceSq < best.distanceSq)) {
+        best = { runId: run.id, nodeIndex, distanceSq };
+      }
+    });
+  });
+  return best;
+}
+
+function selectRacewayNodeFromEvent(event) {
+  const picked = pickRacewayNodeFromEvent(event);
+  if (!picked) return false;
+  const run = state.runs.find(item => item.id === picked.runId);
+  if (!run || !run.nodes[picked.nodeIndex]) return false;
+  state.activeRunId = run.id;
+  state.selectedNodeIndex = picked.nodeIndex;
+  syncPaletteFromRun(run);
+  activateNodeSelectionMode(run);
+  setStatus(`${run.tag}: node ${picked.nodeIndex + 1} selected.`);
+  renderRaceway();
+  renderPanel();
+  return true;
+}
+
+function renderTrayPreview(group, run, color) {
+  const selected = run.id === state.activeRunId;
+  const material = previewMaterial(selected ? 0xf97316 : color, selected ? 1 : 0.92);
+  const detailMaterial = previewMaterial(color, 0.62);
+  const guideMaterial = previewMaterial(0x475569, selected ? 0.7 : 0.35);
+  const points = run.nodes.map(renderSourcePoint).filter(Boolean);
+  if (points.length > 1) {
+    const guide = new runtime.THREE.Line(
+      new runtime.THREE.BufferGeometry().setFromPoints(points),
+      guideMaterial,
+    );
+    guide.userData.racewayPreviewKind = 'centerline-guide';
+    group.add(guide);
+  }
+  for (let index = 1; index < run.nodes.length; index += 1) {
+    addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial);
+  }
+  for (let index = 1; index < run.nodes.length - 1; index += 1) {
+    addBendPlaceholder(group, run, run.nodes[index], previewMaterial(0xf97316, selected ? 0.95 : 0.65));
+  }
+}
+
 function renderRaceway() {
   if (!hostReady()) return;
   clearLayerGroup();
-  const THREE = runtime.THREE;
   state.runs.forEach(run => {
     const color = serviceFor(run.serviceClass).color;
-    const group = new THREE.Group();
-    const points = run.nodes.map(renderSourcePoint).filter(Boolean);
-    if (points.length > 1) {
-      group.add(new THREE.Line(
-        new THREE.BufferGeometry().setFromPoints(points),
-        new THREE.LineBasicMaterial({ color, depthTest: false }),
-      ));
-    }
-    run.nodes.forEach((node, index) => {
-      const renderPoint = renderSourcePoint(node);
-      if (!renderPoint) return;
-      const selected = run.id === state.activeRunId && index === state.selectedNodeIndex;
-      const radius = runtime.worldUnitsForScreenPixels?.(renderPoint, 7, 0.04, 0.22) || 0.12;
-      const handle = new THREE.Mesh(
-        new THREE.SphereGeometry(radius, 16, 16),
-        new THREE.MeshBasicMaterial({ color: selected ? 0xf97316 : color, depthTest: false }),
-      );
-      handle.position.copy(renderPoint);
-      group.add(handle);
-    });
+    const group = new runtime.THREE.Group();
+    group.userData.racewayPreviewKind = isLadderRun(run) ? 'ladder-proxy' : 'tray-proxy';
+    renderTrayPreview(group, run, color);
+    run.nodes.forEach((node, index) => addNodeHandle(group, run, node, index, color));
     layer.group.add(group);
   });
   window.plant3dViewerLayers?.update?.(RACEWAY_LAYER_ID, { getElements: () => state.runs });
@@ -283,6 +734,12 @@ function beginRun() {
   }
   ensureElevationDefault();
   const run = makeRun();
+  if (!run) {
+    setStatus(state.catalogLoaded ? 'No active raceway catalogue size is available.' : 'Raceway catalogue is still loading.');
+    schedulePersistenceBootstrap();
+    renderPanel();
+    return;
+  }
   state.runs.push(run);
   state.activeRunId = run.id;
   state.selectedNodeIndex = -1;
@@ -299,8 +756,8 @@ function finishRun() {
     setStatus('Add at least two nodes before finish.');
     return;
   }
-  deactivateCanvasMode();
-  setStatus(`${run.tag}: ${run.nodes.length} nodes, ${formatM(runLength(run))} m`);
+  activateNodeSelectionMode(run);
+  setStatus(`${run.tag}: ${run.nodes.length} nodes, ${formatM(runLength(run))} m. Click a node handle to select it.`);
   renderPanel();
 }
 
@@ -326,6 +783,7 @@ function addNodeFromEvent(event) {
   }
   run.nodes.push(point);
   state.selectedNodeIndex = run.nodes.length - 1;
+  markRunDirty(run);
   setStatus(`${run.tag}: node ${run.nodes.length} added.`);
   renderRaceway();
   renderPanel();
@@ -336,6 +794,7 @@ function undoNode() {
   if (!run?.nodes.length) return;
   run.nodes.pop();
   state.selectedNodeIndex = Math.min(state.selectedNodeIndex, run.nodes.length - 1);
+  markRunDirty(run);
   setStatus(`${run.tag}: last node removed.`);
   renderRaceway();
   renderPanel();
@@ -346,7 +805,12 @@ function deleteSelectedNode() {
   if (!run || state.selectedNodeIndex < 0) return;
   run.nodes.splice(state.selectedNodeIndex, 1);
   state.selectedNodeIndex = Math.min(state.selectedNodeIndex, run.nodes.length - 1);
-  deactivateCanvasMode();
+  markRunDirty(run);
+  if (run.nodes.length) {
+    activateNodeSelectionMode(run);
+  } else {
+    deactivateCanvasMode();
+  }
   setStatus(`${run.tag}: node deleted.`);
   renderRaceway();
   renderPanel();
@@ -357,10 +821,384 @@ function moveSelectedNodeFromEvent(event) {
   const point = sourcePointFromEvent(event);
   if (!run || state.selectedNodeIndex < 0 || !point) return;
   run.nodes[state.selectedNodeIndex] = point;
-  deactivateCanvasMode();
+  markRunDirty(run);
+  activateNodeSelectionMode(run);
   setStatus(`${run.tag}: node ${state.selectedNodeIndex + 1} moved.`);
   renderRaceway();
   renderPanel();
+}
+
+function csrfToken() {
+  try {
+    return document.cookie
+      .split(';')
+      .map(part => part.trim())
+      .find(part => part.startsWith('csrftoken='))
+      ?.slice('csrftoken='.length) || '';
+  } catch (_error) {
+    return '';
+  }
+}
+
+function apiHeaders(method) {
+  const headers = { Accept: 'application/json' };
+  if (method !== 'GET') {
+    headers['Content-Type'] = 'application/json';
+    headers['X-CSRFToken'] = csrfToken();
+  }
+  return headers;
+}
+
+async function apiFetch(url, options = {}) {
+  const method = options.method || 'GET';
+  const response = await fetch(url, {
+    credentials: 'same-origin',
+    ...options,
+    method,
+    headers: {
+      ...apiHeaders(method),
+      ...(options.headers || {}),
+    },
+    body: options.body && typeof options.body !== 'string' ? JSON.stringify(options.body) : options.body,
+  });
+  let payload = {};
+  try {
+    payload = await response.json();
+  } catch (_error) {
+    payload = {};
+  }
+  if (!response.ok) {
+    const message = payload.error || `Raceway request failed (${response.status}).`;
+    const details = payload.errors ? ` ${JSON.stringify(payload.errors)}` : '';
+    throw new Error(`${message}${details}`);
+  }
+  return payload;
+}
+
+function packageContext() {
+  const pkg = runtime?.getPackage?.() || null;
+  const projectId = String(pkg?.project_id || pkg?.metadata?.project_id || '').trim();
+  const sourceModelId = Number(pkg?.source_model_id);
+  const renderPackageId = Number(pkg?.id);
+  if (!projectId) return null;
+  return {
+    projectId,
+    sourceModelId: Number.isFinite(sourceModelId) && sourceModelId > 0 ? sourceModelId : null,
+    renderPackageId: Number.isFinite(renderPackageId) && renderPackageId > 0 ? renderPackageId : null,
+  };
+}
+
+function contextKey(context) {
+  return `${context.projectId}:${context.sourceModelId || ''}:${context.renderPackageId || ''}`;
+}
+
+function urlWithQuery(path, params) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== null && value !== undefined && value !== '') query.set(key, value);
+  });
+  const text = query.toString();
+  return text ? `${path}?${text}` : path;
+}
+
+async function loadCatalog() {
+  if (state.catalogLoaded) return;
+  if (catalogLoadPromise) {
+    await catalogLoadPromise;
+    return;
+  }
+  catalogLoadPromise = apiFetch(CATALOG_URL)
+    .then(payload => {
+      catalog = (Array.isArray(payload.families) ? payload.families : [])
+        .map(normalizeFamily)
+        .filter(family => family.id && family.sizes.length);
+      state.catalogLoaded = true;
+      initializeCatalogSelection();
+    })
+    .finally(() => {
+      catalogLoadPromise = null;
+    });
+  await catalogLoadPromise;
+}
+
+function layerCollectionUrl(context) {
+  return urlWithQuery(`/raceway/projects/${encodeURIComponent(context.projectId)}/layers/`, {
+    source_model_id: context.sourceModelId,
+    render_package_id: context.renderPackageId,
+  });
+}
+
+function runFromServer(payload) {
+  const serverFamily = payload.family || {};
+  const serverSize = payload.size || {};
+  const family = catalogFamilyById(payload.family_id);
+  const sizeMatch = catalogSizeById(payload.size_id);
+  const familyForSize = sizeMatch?.family || family;
+  const size = sizeMatch || {};
+  return {
+    id: `raceway-run-${payload.id}`,
+    serverRunId: payload.id,
+    key: payload.key || '',
+    tag: payload.tag || `RWY-${payload.id}`,
+    familyId: String(payload.family_id || ''),
+    familyCode: serverFamily.code || familyForSize?.code || family?.code || '',
+    familyKind: serverFamily.kind || familyForSize?.kind || family?.kind || '',
+    familyLabel: serverFamily.name || familyForSize?.label || family?.label || 'Raceway',
+    sizeId: String(payload.size_id || ''),
+    sizeCode: size.code || `${serverFamily.code || ''}-${serverSize.width_mm || ''}x${serverSize.depth_mm || ''}`,
+    sizeLabel: serverSize.label || size.label || 'Catalogue size',
+    widthMm: Number(serverSize.width_mm) || Number(size.widthMm) || 300,
+    depthMm: Number(serverSize.depth_mm) || Number(size.depthMm) || 100,
+    serviceClass: payload.service_class || services[0].id,
+    elevationM: Number(payload.elevation_m) || 0,
+    nodes: (Array.isArray(payload.nodes) ? payload.nodes : [])
+      .slice()
+      .sort((left, right) => Number(left.sequence) - Number(right.sequence))
+      .map(node => ({
+        serverNodeId: node.id,
+        key: node.key || '',
+        x: Number(node.source_x_m) || 0,
+        y: Number(node.source_y_m) || 0,
+        z: Number(node.source_z_m) || 0,
+        coordinate_frame: SOURCE_COORDINATE_FRAME,
+        anchor: sanitizeAnchorForPersistence(node.anchor || {}),
+      })),
+    dirty: false,
+  };
+}
+
+async function loadSavedRaceways({ force = false } = {}) {
+  const context = packageContext();
+  if (!context) {
+    setStatus('Raceway persistence is waiting for package context.');
+    return;
+  }
+  const key = contextKey(context);
+  if (state.persistenceLoaded && state.contextKey === key && !force) return;
+  state.persistenceLoading = true;
+  renderPanel();
+  try {
+    await loadCatalog();
+    const layerPayload = await apiFetch(layerCollectionUrl(context));
+    const layers = Array.isArray(layerPayload.layers) ? layerPayload.layers : [];
+    const layerMatch = layers.find(item => item.status === 'draft') || layers[0] || null;
+    state.contextKey = key;
+    state.layerId = layerMatch?.id || null;
+    state.layerUrl = layerMatch?.url || '';
+    state.runsUrl = layerMatch?.runs_url || '';
+    state.persistenceLoaded = true;
+    state.persistenceReady = true;
+    if (!layerMatch) {
+      if (force || !state.runs.length) {
+        state.runs = [];
+        state.activeRunId = '';
+        state.selectedNodeIndex = -1;
+        renderRaceway();
+      }
+      setStatus('No saved raceway runs for this package yet.');
+      return;
+    }
+    const runPayload = await apiFetch(urlWithQuery(layerMatch.runs_url, { include_nodes: 1 }));
+    state.runs = (Array.isArray(runPayload.runs) ? runPayload.runs : []).map(runFromServer);
+    state.activeRunId = state.runs[0]?.id || '';
+    state.selectedNodeIndex = -1;
+    syncPaletteFromRun(activeRun());
+    renderRaceway();
+    setStatus(state.runs.length ? `${state.runs.length} saved raceway run(s) loaded.` : 'Raceway layer loaded with no runs.');
+  } catch (error) {
+    state.persistenceReady = false;
+    setStatus(error.message || 'Unable to load saved raceway runs.');
+  } finally {
+    state.persistenceLoading = false;
+    renderPanel();
+  }
+}
+
+function confirmDiscardLocalChanges(actionLabel) {
+  if (!hasUnsavedLocalChanges()) return true;
+  const message = `${actionLabel} will discard unsaved local Raceway changes. Continue?`;
+  return window.confirm?.(message) !== false;
+}
+
+async function reloadSavedRaceways() {
+  if (!confirmDiscardLocalChanges('Reload Saved')) {
+    setStatus('Reload cancelled; unsaved raceway changes were kept.');
+    return;
+  }
+  await loadSavedRaceways({ force: true });
+}
+
+function removeRunFromState(run) {
+  const removedIndex = state.runs.findIndex(item => item.id === run.id);
+  state.runs = state.runs.filter(item => item.id !== run.id);
+  const nextRun = state.runs[Math.max(Math.min(removedIndex, state.runs.length - 1), 0)] || null;
+  state.activeRunId = nextRun?.id || '';
+  state.selectedNodeIndex = -1;
+  syncPaletteFromRun(nextRun);
+  if (nextRun) {
+    activateNodeSelectionMode(nextRun);
+  } else {
+    deactivateCanvasMode();
+  }
+  renderRaceway();
+  renderPanel();
+}
+
+async function deleteActiveRun() {
+  const run = activeRun();
+  if (!run) {
+    setStatus('Select a raceway run before deleting.');
+    return;
+  }
+  const label = run.tag || 'selected raceway run';
+  const message = run.serverRunId
+    ? `Delete ${label} from the server?`
+    : `Discard unsaved ${label}?`;
+  if (window.confirm?.(message) === false) {
+    setStatus('Delete cancelled.');
+    return;
+  }
+  if (!run.serverRunId) {
+    removeRunFromState(run);
+    setStatus(`${label} discarded.`);
+    return;
+  }
+  state.persistenceLoading = true;
+  renderPanel();
+  try {
+    await apiFetch(`/raceway/runs/${run.serverRunId}/`, { method: 'DELETE' });
+    removeRunFromState(run);
+    setStatus(`${label} deleted.`);
+  } catch (error) {
+    setStatus(error.message || `Unable to delete ${label}.`);
+  } finally {
+    state.persistenceLoading = false;
+    renderPanel();
+  }
+}
+
+function schedulePersistenceBootstrap() {
+  if (persistenceBootstrapQueued) return;
+  persistenceBootstrapQueued = true;
+  window.setTimeout(() => {
+    persistenceBootstrapQueued = false;
+    loadSavedRaceways();
+  }, 0);
+}
+
+async function ensureLayer(context) {
+  if (state.layerId && state.runsUrl) {
+    return { id: state.layerId, runs_url: state.runsUrl };
+  }
+  const payload = await apiFetch(`/raceway/projects/${encodeURIComponent(context.projectId)}/layers/`, {
+    method: 'POST',
+    body: {
+      name: 'Raceway Draft',
+      description: 'Aboveground raceway draft from Plant3D viewer.',
+      source_model_id: context.sourceModelId,
+      render_package_id: context.renderPackageId,
+      metadata: { owner_module: 'raceway', authoring_surface: 'plant3d_viewer' },
+    },
+  });
+  state.layerId = payload.layer.id;
+  state.layerUrl = payload.layer.url;
+  state.runsUrl = payload.layer.runs_url;
+  return payload.layer;
+}
+
+function runPayload(run, context) {
+  return {
+    tag: run.tag,
+    family_id: Number(run.familyId),
+    size_id: Number(run.sizeId),
+    service_class: run.serviceClass,
+    status: 'draft',
+    elevation_m: Number(run.elevationM) || 0,
+    source_model_id: context.sourceModelId,
+    render_package_id: context.renderPackageId,
+    metadata: {
+      proxy_kind: isLadderRun(run) ? 'ladder' : 'tray',
+      catalogue_family_code: run.familyCode || '',
+      catalogue_size_code: run.sizeCode || '',
+    },
+  };
+}
+
+function nodePayloads(run) {
+  return run.nodes.map((node, index) => ({
+    sequence: index,
+    node_kind: index === 0 || index === run.nodes.length - 1 ? 'endpoint' : 'bend',
+    source_x_m: Number(node.x) || 0,
+    source_y_m: Number(node.y) || 0,
+    source_z_m: Number(node.z) || 0,
+    anchor: sanitizeAnchorForPersistence(node.anchor || {}),
+    metadata: {},
+  }));
+}
+
+function applySavedRunPayload(localRun, payload) {
+  localRun.serverRunId = payload.id;
+  localRun.key = payload.key || localRun.key || '';
+  localRun.id = `raceway-run-${payload.id}`;
+  state.activeRunId = localRun.id;
+}
+
+async function saveDrafts() {
+  const context = packageContext();
+  if (!context) {
+    setStatus('Raceway save is waiting for package context.');
+    return;
+  }
+  state.persistenceLoading = true;
+  renderPanel();
+  try {
+    await loadCatalog();
+    const savableRuns = state.runs.filter(run => run.nodes.length >= 2);
+    if (!savableRuns.length) {
+      setStatus('Add at least two nodes before saving a raceway run.');
+      return;
+    }
+    const persistentLayer = await ensureLayer(context);
+    let savedCount = 0;
+    for (const run of savableRuns) {
+      try {
+        const method = run.serverRunId ? 'PATCH' : 'POST';
+        const url = run.serverRunId ? `/raceway/runs/${run.serverRunId}/` : persistentLayer.runs_url;
+        const savedRun = await apiFetch(url, {
+          method,
+          body: runPayload(run, context),
+        });
+        applySavedRunPayload(run, savedRun.run);
+        const savedNodes = await apiFetch(savedRun.run.nodes_url, {
+          method: 'PUT',
+          body: { nodes: nodePayloads(run) },
+        });
+        run.nodes = savedNodes.nodes.map(node => ({
+          serverNodeId: node.id,
+          key: node.key || '',
+          x: Number(node.source_x_m) || 0,
+          y: Number(node.source_y_m) || 0,
+          z: Number(node.source_z_m) || 0,
+          coordinate_frame: SOURCE_COORDINATE_FRAME,
+          anchor: sanitizeAnchorForPersistence(node.anchor || {}),
+        }));
+        run.dirty = false;
+        savedCount += 1;
+      } catch (error) {
+        throw new Error(`${run.tag || 'Raceway run'}: ${error.message || 'Unable to save this run.'}`);
+      }
+    }
+    state.persistenceLoaded = true;
+    state.persistenceReady = true;
+    state.contextKey = contextKey(context);
+    setStatus(`${savedCount} raceway run(s) saved to server.`);
+    renderRaceway();
+  } catch (error) {
+    setStatus(error.message || 'Unable to save raceway drafts.');
+  } finally {
+    state.persistenceLoading = false;
+    renderPanel();
+  }
 }
 
 function setStatus(message) {
@@ -376,20 +1214,25 @@ function injectStyles() {
     .raceway-tool-grid label, .raceway-node-editor label { display: grid; gap: 4px; color: #475569; font-size: 11px; font-weight: 700; }
     .raceway-tool-grid select, .raceway-tool-grid input, .raceway-node-editor input { width: 100%; min-width: 0; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 6px; color: #0f172a; font-size: 12px; }
     .raceway-status { margin: 8px 0; color: #475569; font-size: 12px; line-height: 1.35; }
+    .raceway-status-busy { color: #1d4ed8; }
     .raceway-run-list, .raceway-node-list { display: grid; gap: 6px; margin-top: 8px; }
     .raceway-row { width: 100%; justify-content: space-between; text-align: left; }
     .raceway-row-active { border-color: #2563eb; color: #1d4ed8; }
+    #racewayToolSection button:disabled { cursor: not-allowed; opacity: 0.55; }
     .raceway-node-editor { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
   `;
   document.head.appendChild(style);
 }
 
 function familyOptionsHtml() {
+  if (!catalog.length) return '<option value="">Loading...</option>';
   return catalog.map(family => `<option value="${escapeHtml(family.id)}"${family.id === state.familyId ? ' selected' : ''}>${escapeHtml(family.label)}</option>`).join('');
 }
 
 function sizeOptionsHtml() {
-  return activeFamily().sizes.map(size => `<option value="${escapeHtml(size.id)}"${size.id === state.sizeId ? ' selected' : ''}>${escapeHtml(size.label)}</option>`).join('');
+  const family = activeFamily();
+  if (!family?.sizes?.length) return '<option value="">Loading...</option>';
+  return family.sizes.map(size => `<option value="${escapeHtml(size.id)}"${size.id === state.sizeId ? ' selected' : ''}>${escapeHtml(size.label)}</option>`).join('');
 }
 
 function serviceOptionsHtml() {
@@ -402,7 +1245,8 @@ function runRowsHtml() {
     <button type="button" class="raceway-row ${run.id === state.activeRunId ? 'raceway-row-active' : ''}" data-raceway-action="select-run" data-run-id="${escapeHtml(run.id)}">
       <strong>${escapeHtml(run.tag)}</strong><br>
       ${escapeHtml(run.familyLabel)} ${escapeHtml(run.sizeLabel)}<br>
-      ${escapeHtml(serviceFor(run.serviceClass).label)} | ${run.nodes.length} nodes | ${formatM(runLength(run))} m
+      ${escapeHtml(serviceFor(run.serviceClass).label)} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'}<br>
+      ${run.nodes.length} nodes | ${bendCount(run)} bends | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)}
     </button>
   `).join('');
 }
@@ -413,6 +1257,7 @@ function nodeRowsHtml() {
   return run.nodes.map((node, index) => `
     <button type="button" class="raceway-row ${index === state.selectedNodeIndex ? 'raceway-row-active' : ''}" data-raceway-action="select-node" data-node-index="${index}">
       N${index + 1} X ${formatM(node.x)} Y ${formatM(node.y)} EL ${formatM(node.z)}
+      ${anchorLabel(node.anchor) ? `<br>Anchor: ${escapeHtml(anchorLabel(node.anchor))}` : ''}
     </button>
   `).join('');
 }
@@ -420,12 +1265,14 @@ function nodeRowsHtml() {
 function inspectorHtml() {
   const node = selectedNode();
   if (!node) return '<div class="meta">Select a node</div>';
+  const anchor = anchorLabel(node.anchor);
   return `
     <div class="raceway-node-editor">
       <label>X m<input type="number" step="0.001" value="${formatM(node.x)}" data-raceway-node-axis="x"></label>
       <label>Y m<input type="number" step="0.001" value="${formatM(node.y)}" data-raceway-node-axis="y"></label>
       <label>EL m<input type="number" step="0.001" value="${formatM(node.z)}" data-raceway-node-axis="z"></label>
     </div>
+    <div class="meta" style="margin-top: 6px;">${anchor ? `Anchor: ${escapeHtml(anchor)}` : 'No plant model anchor'}</div>
   `;
 }
 
@@ -454,8 +1301,18 @@ function ensurePanel() {
       <button type="button" data-raceway-action="cancel">Cancel</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 8px;">
+      <button type="button" data-raceway-action="select-node-mode">Select Node</button>
       <button type="button" data-raceway-action="move-node">Move Node</button>
       <button type="button" data-raceway-action="delete-node">Delete Node</button>
+    </div>
+    <div class="p3d-toolbar" style="margin-top: 8px;">
+      <button type="button" data-raceway-action="anchor-node">Anchor Node</button>
+      <button type="button" data-raceway-action="clear-anchor">Clear Anchor</button>
+    </div>
+    <div class="p3d-toolbar" style="margin-top: 8px;">
+      <button type="button" data-raceway-action="save">Save Draft</button>
+      <button type="button" data-raceway-action="reload">Reload Saved</button>
+      <button type="button" data-raceway-action="delete-run">Delete Run</button>
     </div>
     <div id="racewaySummary" class="meta" style="margin-top: 8px;"></div>
     <div id="racewayRunList" class="raceway-run-list"></div>
@@ -474,32 +1331,85 @@ function ensurePanel() {
   return panel;
 }
 
+function setActionState(action, disabled, title = '') {
+  panel?.querySelectorAll(`[data-raceway-action="${action}"]`).forEach(button => {
+    button.disabled = Boolean(disabled);
+    if (disabled && title) {
+      button.title = title;
+    } else {
+      button.removeAttribute('title');
+    }
+  });
+}
+
+function updateActionStates(run) {
+  const node = selectedNode();
+  const hasNodes = Boolean(run?.nodes?.length);
+  setActionState('start', !catalog.length, 'Raceway catalogue is still loading.');
+  setActionState('finish', !run || (run.nodes.length < 2), 'Add at least two nodes before finishing.');
+  setActionState('undo', !hasNodes, 'No nodes to undo.');
+  setActionState('cancel', !run && state.mode === 'idle', 'No active raceway command.');
+  setActionState('select-node-mode', !run, 'Select a run before selecting nodes on canvas.');
+  setActionState('move-node', !node, 'Select a node before moving it.');
+  setActionState('delete-node', !node, 'Select a node before deleting it.');
+  setActionState('anchor-node', !run, 'Start or select a run before anchoring.');
+  setActionState('clear-anchor', !node || !anchorLabel(node.anchor), 'Select an anchored node first.');
+  setActionState('save', state.persistenceLoading || !state.runs.some(item => item.nodes.length >= 2), 'Add at least one two-node run before saving.');
+  setActionState('reload', state.persistenceLoading, state.persistenceLoading ? 'Raceway persistence is busy.' : '');
+  setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
+}
+
 function renderPanel() {
   if (!panel) return;
   const run = activeRun();
+  const familySelect = panel.querySelector('#racewayFamilySelect');
+  const sizeSelect = panel.querySelector('#racewaySizeSelect');
+  const serviceSelect = panel.querySelector('#racewayServiceSelect');
+  if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
+  if (familySelect && familySelect !== document.activeElement) {
+    familySelect.innerHTML = familyOptionsHtml();
+    familySelect.value = state.familyId;
+  }
+  if (sizeSelect && sizeSelect !== document.activeElement) {
+    sizeSelect.innerHTML = sizeOptionsHtml();
+    sizeSelect.value = state.sizeId;
+  }
+  if (serviceSelect && serviceSelect !== document.activeElement) serviceSelect.value = state.serviceClass;
   if (panel.querySelector('#racewayElevationInput') !== document.activeElement) {
     panel.querySelector('#racewayElevationInput').value = formatM(state.elevationM);
   }
   if (summaryEl) {
     const warnings = run ? runWarnings(run).length : 0;
     summaryEl.textContent = run
-      ? `${run.tag} | EL +${formatM(run.elevationM)} | ${formatM(runLength(run))} m | ${warnings} warning(s)`
+      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} warning(s)`
       : 'No active run';
   }
   if (runListEl) runListEl.innerHTML = runRowsHtml();
   if (nodeListEl) nodeListEl.innerHTML = nodeRowsHtml();
   if (inspectorEl && !inspectorEl.contains(document.activeElement)) inspectorEl.innerHTML = inspectorHtml();
+  updateActionStates(run);
 }
 
 function handlePanelClick(event) {
   const button = event.target.closest?.('[data-raceway-action]');
   if (!button) return;
+  if (button.disabled) return;
   const action = button.dataset.racewayAction;
   if (action === 'start') beginRun();
   if (action === 'finish') finishRun();
   if (action === 'undo') undoNode();
   if (action === 'cancel') cancelRun();
   if (action === 'delete-node') deleteSelectedNode();
+  if (action === 'anchor-node') attachSelectedModelToNode();
+  if (action === 'clear-anchor') clearSelectedNodeAnchor();
+  if (action === 'save') saveDrafts();
+  if (action === 'reload') reloadSavedRaceways();
+  if (action === 'delete-run') deleteActiveRun();
+  if (action === 'select-node-mode') {
+    activateNodeSelectionMode(activeRun());
+    setStatus('Select Node: click a raceway node handle.');
+    renderPanel();
+  }
   if (action === 'move-node') {
     if (selectedNode()) {
       activateCanvasMode('move');
@@ -511,13 +1421,14 @@ function handlePanelClick(event) {
   if (action === 'select-run') {
     state.activeRunId = button.dataset.runId || '';
     state.selectedNodeIndex = -1;
-    deactivateCanvasMode();
+    syncPaletteFromRun(activeRun());
+    activateNodeSelectionMode(activeRun());
     renderRaceway();
     renderPanel();
   }
   if (action === 'select-node') {
     state.selectedNodeIndex = Number(button.dataset.nodeIndex);
-    deactivateCanvasMode();
+    activateNodeSelectionMode(activeRun());
     renderRaceway();
     renderPanel();
   }
@@ -527,15 +1438,25 @@ function handlePanelChange(event) {
   const target = event.target;
   if (target.id === 'racewayFamilySelect') {
     state.familyId = target.value;
-    state.sizeId = activeFamily().sizes[0].id;
+    state.sizeId = activeFamily()?.sizes[0]?.id || '';
     panel.querySelector('#racewaySizeSelect').innerHTML = sizeOptionsHtml();
+    applyPaletteToActiveRun();
   }
-  if (target.id === 'racewaySizeSelect') state.sizeId = target.value;
-  if (target.id === 'racewayServiceSelect') state.serviceClass = target.value;
+  if (target.id === 'racewaySizeSelect') {
+    state.sizeId = target.value;
+    applyPaletteToActiveRun();
+  }
+  if (target.id === 'racewayServiceSelect') {
+    state.serviceClass = target.value;
+    applyPaletteToActiveRun();
+  }
   if (target.id === 'racewayElevationInput') {
     state.elevationM = Number(target.value) || 0;
     state.elevationInitialized = true;
+    applyPaletteToActiveRun({ shiftElevation: true });
   }
+  renderRaceway();
+  renderPanel();
 }
 
 function handlePanelInput(event) {
@@ -545,16 +1466,21 @@ function handlePanelInput(event) {
   if (!node) return;
   const value = Number(event.target.value);
   if (!Number.isFinite(value)) return;
+  const run = activeRun();
   node[axis] = value;
   if (axis === 'z') {
-    const run = activeRun();
     if (run) run.elevationM = value;
+    state.elevationM = value;
+    state.elevationInitialized = true;
   }
+  markRunDirty(run);
   renderRaceway();
+  renderPanel();
 }
 
 window.addEventListener('plant3dviewer:layers-ready', scheduleBootstrap);
 window.addEventListener('plant3dviewer:runtime-ready', scheduleBootstrap);
+window.addEventListener('plant3dviewer:package-loaded', schedulePersistenceBootstrap);
 window.addEventListener('DOMContentLoaded', scheduleBootstrap);
 window.setTimeout(scheduleBootstrap, 0);
 

@@ -2,11 +2,13 @@ import json
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
+from django.db.models import Prefetch
 from django.http import JsonResponse
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
 from plant3d.access import render_packages_for_user, source_models_for_user
+from plant3d.overlay import validate_overlay_anchor
 
 from .access import require_project_access
 from .models import RacewayFamily, RacewayLayer, RacewayNode, RacewayRun, RacewaySize
@@ -21,6 +23,10 @@ def raceway_home_view(request):
             "platform": "plant3d",
         }
     )
+
+
+def _truthy_query(value):
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
 
 def _validation_payload(exc):
@@ -157,6 +163,63 @@ def _layer_payload(layer):
     }
 
 
+def _size_payload(size):
+    return {
+        "id": size.pk,
+        "family_id": size.family_id,
+        "code": f"{size.family.code}-{size.width_mm}x{size.depth_mm}",
+        "label": f"{size.width_mm} x {size.depth_mm} mm",
+        "width_mm": size.width_mm,
+        "depth_mm": size.depth_mm,
+        "weight_kg_per_m": size.weight_kg_per_m,
+        "load_span_table": size.load_span_table,
+        "metadata": size.metadata,
+        "is_active": size.is_active,
+    }
+
+
+def _family_payload(family):
+    return {
+        "id": family.pk,
+        "code": family.code,
+        "name": family.name,
+        "kind": family.kind,
+        "material": family.material,
+        "standard_length_mm": family.standard_length_mm,
+        "standard_basis": family.standard_basis,
+        "profile": family.profile,
+        "metadata": family.metadata,
+        "is_active": family.is_active,
+        "is_validated": family.is_validated,
+        "sizes": [_size_payload(size) for size in family.sizes.all()],
+    }
+
+
+def _run_family_payload(family):
+    return {
+        "id": family.pk,
+        "code": family.code,
+        "name": family.name,
+        "kind": family.kind,
+        "material": family.material,
+        "standard_basis": family.standard_basis,
+        "is_active": family.is_active,
+        "is_validated": family.is_validated,
+    }
+
+
+def _run_size_payload(size):
+    return {
+        "id": size.pk,
+        "family_id": size.family_id,
+        "label": f"{size.width_mm} x {size.depth_mm} mm",
+        "width_mm": size.width_mm,
+        "depth_mm": size.depth_mm,
+        "weight_kg_per_m": size.weight_kg_per_m,
+        "is_active": size.is_active,
+    }
+
+
 def _node_payload(node):
     return {
         "id": node.pk,
@@ -180,6 +243,8 @@ def _run_payload(run, *, include_nodes=False):
         "tag": run.tag,
         "family_id": run.family_id,
         "size_id": run.size_id,
+        "family": _run_family_payload(run.family),
+        "size": _run_size_payload(run.size),
         "service_class": run.service_class,
         "status": run.status,
         "coordinate_frame": run.coordinate_frame,
@@ -196,6 +261,17 @@ def _run_payload(run, *, include_nodes=False):
     if include_nodes:
         payload["nodes"] = [_node_payload(node) for node in run.nodes.order_by("sequence", "pk")]
     return payload
+
+
+@require_http_methods(["GET"])
+def catalog_view(request):
+    active_sizes = RacewaySize.objects.filter(is_active=True).select_related("family").order_by("width_mm", "depth_mm")
+    families = (
+        RacewayFamily.objects.filter(is_active=True)
+        .prefetch_related(Prefetch("sizes", queryset=active_sizes))
+        .order_by("code")
+    )
+    return JsonResponse({"families": [_family_payload(family) for family in families]})
 
 
 def _apply_layer_payload(layer, payload, user):
@@ -319,8 +395,11 @@ def run_collection_view(request, layer_id):
     if layer is None:
         return _error_response("Raceway layer was not found.", status=404)
     if request.method == "GET":
+        include_nodes = _truthy_query(request.GET.get("include_nodes"))
         runs = RacewayRun.objects.select_related("layer", "family", "size").filter(layer=layer).order_by("tag", "pk")
-        return JsonResponse({"runs": [_run_payload(run) for run in runs]})
+        if include_nodes:
+            runs = runs.prefetch_related("nodes")
+        return JsonResponse({"runs": [_run_payload(run, include_nodes=include_nodes) for run in runs]})
     try:
         payload = _json_body(request)
         run = RacewayRun(layer=layer)
@@ -363,7 +442,11 @@ def _node_from_payload(run, raw_node, index):
         source_x_m=raw_node.get("source_x_m"),
         source_y_m=raw_node.get("source_y_m"),
         source_z_m=raw_node.get("source_z_m"),
-        anchor=_metadata_value(raw_node, "anchor"),
+        anchor=validate_overlay_anchor(
+            _metadata_value(raw_node, "anchor"),
+            source_model_id=run.source_model_id,
+            owner_module="raceway",
+        ),
         metadata=_metadata_value(raw_node, "metadata"),
     )
     node.full_clean(exclude=["run"])
@@ -382,6 +465,8 @@ def run_nodes_view(request, run_id):
         raw_nodes = payload.get("nodes")
         if not isinstance(raw_nodes, list):
             raise ValidationError({"nodes": "Nodes must be provided as a list."})
+        if len(raw_nodes) < 2:
+            raise ValidationError({"nodes": "At least two ordered nodes are required to save a raceway run."})
         nodes = [_node_from_payload(run, raw_node, index) for index, raw_node in enumerate(raw_nodes)]
         sequences = [node.sequence for node in nodes]
         if len(sequences) != len(set(sequences)):

@@ -257,3 +257,141 @@ Keep the surface minimal (those three helpers plus tool routing are enough for c
 Working tree clean; raceway+plant3d 99 tests OK; `manage.py check` clean; zero `raceway` references remain in `package_viewer.js` — the revert back to the Stage 5 seam is complete with no remnants.
 
 *Caveat: Codex's full modeling-conception text was in chat, not in the repo; this review is based on the quoted phrase plus the existing records. If the conception text contains more detail (e.g., specific proxy geometry plans), paste it into the execution plan alongside F-14 so it is durable.*
+
+## 13. Stage 6 completion review (2026-07-09, commit `1aea7e4`)
+
+**Verdict: the Stage 6 rebuild is architecturally sound and closes F-14 and F-15 properly.** KR's manual test passing is consistent with what the code shows. Codex may proceed with Stage 7 on this foundation.
+
+Verified in code and by test:
+
+- **F-14 CLOSED:** proxy-first rule written into the execution plan's Architectural Rules; the implementation honors it — proxy envelope dimensions come from catalogue `widthMm/depthMm` (`runWidthM`/`runDepthM`), kind-differentiated visuals (ladder rungs vs tray cross-members), service-class colour.
+- **F-15 CLOSED, all four items:** (1) `registerViewerInteraction` with activate/deactivate/cancel, `pick()` routes clicks to the active interaction, Escape cancels the interaction before falling back to EHT tools; (2) `pointOnSourceElevationFromViewerEvent`/`rayFromViewerEvent` pick helpers; (3) `sourcePointToRenderPoint`/`renderPointToSourcePoint` — **RTC math checked against the documented contract (§3.4 of the boundary doc): axis swap, scale, origin all correct, and the two functions are exact inverses**; (4) `raceway/browser_tests.py` performs real Playwright canvas clicks (draw, undo, select, move-with-elevation-preserved, delete, console-error assertion).
+- Authoring stays in source-frame metres with the working-plane 2.5D discipline; overlay geometry is disposed on rebuild; panel HTML is escaped; all raceway JS remains in `raceway/static/`.
+- Independently verified: raceway+plant3d 99 tests OK across 9 consecutive runs; `raceway.browser_tests` 1 test OK; JS syntax OK; `manage.py check` clean; F-14 plan text present; tracker claims match code.
+
+New findings (none blocks Stage 7):
+
+### F-16 — Browser smoke tests a synthetic host, not the real viewer (severity: medium, due by Stage 8)
+
+`raceway/browser_tests.py` mocks `plant3dViewerRuntime`/`plant3dViewerLayers` in a bare page. That proves the **extension side** of the interaction contract, but not that the **real** `package_viewer.js` routes clicks correctly — which was exactly the Stage-6-v1 failure mode. Today the real-host half is covered only by KR's manual test. By Stage 8 (persistence), add one true end-to-end smoke: live server + real viewer page + small fixture package, the `eht.browser_tests` pattern. Until then, keep the manual canvas-click check in every Stage 6/7-touching pass.
+
+### F-17 — Cross-tool arbitration is one-directional (severity: low-medium, small follow-up pass)
+
+`pick()` checks the active extension interaction before measure/EHT handling, and Escape works — but activating Measure or an EHT tool does **not** deactivate an armed raceway interaction, so raceway draw mode silently swallows canvas clicks meant for the other tools (and vice-versa arrangements are ad hoc). Recommend a platform-level single-active-tool rule: activating any canvas tool (measure, EHT tool, extension interaction) deactivates the others. Small, contained change in the viewer.
+
+### F-18 — Hardcoded JS catalogue placeholder must be replaced before Stage 8 (severity: low now, blocking at Stage 8)
+
+`raceway_overlay.js` embeds a two-family catalogue (`LADDER-HDG`, `PERF-HDG` + sizes). Acceptable Stage 6 staging — but Stage 8 saves need server-side `RacewayFamily`/`RacewaySize` rows, so before then: seed the DB catalogue, expose a catalogue JSON endpoint, fetch it in the overlay, and make the JS ids equal the seeded `RacewayFamily.code` values. **This makes KR's still-open catalogue-seed confirmation a Stage 8 gate** — the JS placeholder is effectively a seed proposal (ladder 300/450/600, perforated 150/300/450); KR should confirm or amend it now so DB seed and UI don't drift.
+
+### F-19 — One unreproduced test failure observed (severity: low, watch)
+
+My first `raceway plant3d` suite run returned `FAILED (failures=1)`; nine subsequent runs were green and the failure did not reproduce, so I could not name the test. Likely a timing-sensitive plant3d worker/job test. Not a blocker, but a flake erodes trust in the verification baseline — Codex should watch for it and identify it when it next appears (capture `-v 2` output on failure).
+
+### Housekeeping (no IDs)
+
+- `plant3d/records/audit/eht_office.code-workspace` (IDE workspace file) was committed into records/audit — move it out or gitignore it.
+- `scheduleBootstrap` gives up silently after 80 attempts; add a `console.warn` so future template drift doesn't invisibly remove the raceway panel.
+- `window.plant3dViewerRuntime` exposes wide internals (scene, camera, raycaster, controls) alongside the helpers. Fine for Stage 0, but treat the raw internals as PROVISIONAL; extensions should prefer the helpers and their own layer group. Do not freeze this surface yet.
+- Raceway drafts are in-memory only (lost on refresh) until Stage 8 — known, correct staging; noted so nobody mistakes it for a bug report later.
+
+## 14. Stage 7 + Stage 8 review (2026-07-09, working tree; for Codex)
+
+**Verdict: strong pass.** Stage 7 (parametric proxy preview) and Stage 8 (persistence) both land cleanly, and every open finding that was due by this point is now closed. Independently verified: `manage.py check` and `makemigrations --check` clean; raceway+plant3d **101 tests OK twice**; `raceway.browser_tests` **2 tests OK including the real-viewer end-to-end**; full **eht suite 360 OK**; JS syntax OK; `git diff --check` clean; migrations `0001`+`0002` confirmed applied on live PostgreSQL (read-only `showmigrations`).
+
+### Closure status of prior findings
+
+- **F-16 CLOSED (exceeds ask):** `RacewayRealViewerBrowserSmokeTests` is a genuine end-to-end smoke — live server, real `package_viewer` page, real canvas clicks, draw 3 nodes → finish → save → **page reload → runs restored from the DB**, asserting `serverRunId` and zero console errors. This closes the exact gap that caused the Stage-6-v1 failure. The synthetic-host test remains as a fast unit-level check — good layering.
+- **F-17 CLOSED (bidirectional):** interaction `activate()` now deactivates other interactions, measure mode, EHT tool, and draft-move; conversely `setActiveEhtTool`/`setMeasureMode` deactivate the extension interaction, with an `onDeactivate` callback so raceway pauses its mode and tells the user. This is the single-active-tool arbiter as recommended.
+- **F-18 CLOSED:** hardcoded JS catalogue removed; migration `0002_seed_generic_catalog` seeds the generic vendor-free IEC 61537 families (matching §5 Q7's proposal, `is_validated=False`, additive `get_or_create`, safe under the DB protocol); `/raceway/catalog/` endpoint added; overlay fetches, normalizes, and uses server PKs, with family/size codes carried in run metadata.
+- **F-19 remains WATCH:** the flake did not reappear in 11 subsequent suite runs; keep capturing `-v 2` on any future failure.
+- Housekeeping: `console.warn` on bootstrap give-up — done. **`eht_office.code-workspace` is still tracked in `records/audit/`** — still open, please remove/ignore it. `project_id` added to the package JSON is a correct additive contract change (it is already in the allowed-anchors list); note it as STABLE in the next boundary-doc revision.
+
+### New findings (none blocking; smallest-first)
+
+#### N-01 — "Reload Saved" silently discards unsaved local drafts (severity: low-medium)
+
+`loadSavedRaceways({force: true})` replaces `state.runs` wholesale. A user who drew two runs, saved one, then clicks Reload Saved loses the unsaved run without warning. Cheap guard: if any run lacks `serverRunId` (or differs from its saved shape), ask for confirmation before replacing.
+
+#### N-02 — No UI path to delete a saved run (severity: low)
+
+The server supports `DELETE /raceway/runs/<id>/`, but the panel has no Delete Run action, so a saved-then-unwanted run is immovable from the UI. One button + confirm; natural companion to N-01.
+
+#### N-03 — Partial-save reporting (severity: low)
+
+`saveDrafts()` saves runs sequentially (run POST/PATCH, then nodes PUT). A mid-loop failure leaves earlier runs saved and later ones not, and the error status doesn't say which run failed. Include the failing run's tag in the status message. (A combined atomic run+nodes save endpoint is the deeper fix, but not worth building until something actually demands it.)
+
+#### N-04 — Proxy envelope should come from the server run payload, not a client catalogue join (severity: medium — one small server change)
+
+`runFromServer` resolves width/depth by joining `size_id` against the fetched catalogue, and silently falls back to **300×100** when the lookup fails. That lookup *will* fail in a real scenario: `/raceway/catalog/` filters `is_active=True`, so if an admin deactivates a size, every saved run referencing it silently renders with a wrong default envelope — a dimensionally-false proxy, which violates the F-14 rule that the envelope is engineering truth. Fix: `_run_payload` should embed the authoritative dimensions from the FK'd rows (`size.width_mm`, `size.depth_mm`, plus `family.kind`/`family.code`/labels), and the overlay should use those, keeping the catalogue join only for the palette. Server knows the truth; the client should never guess it.
+
+### KR action
+
+The seeded catalogue now exists in the live DB and matches the §5 Q7 proposal (ladder 300/450/600, perforated 150/300/450, HDG, IEC 61537, no mesh family). Please formally confirm this as the accepted MVP seed so the tracker's open "confirm generic curated catalogue seed" decision can be checked — or name amendments now, while changing it is still one small migration.
+
+## 15. Anchor bridge pass review (2026-07-10; for Codex)
+
+Scope: the two tracker entries after my §14 — "Plant Model Anchor Bridge" (N-04 fix + node-to-model anchoring) and "Raceway Anchor Elevation Fix."
+
+**Verdict: good pass; N-04 is closed correctly and the anchor bridge is the right first plant3d↔raceway link.** Independently verified: `manage.py check`, `makemigrations --check`, JS syntax, `git diff --check` all clean; raceway+plant3d **101 tests OK twice**; browser tests **2/2 OK** (incl. real-viewer e2e); full **eht suite 360 OK**.
+
+### Closures verified
+
+- **N-04 CLOSED:** `_run_payload` now embeds authoritative `family` and `size` sub-payloads straight from the FK rows (`_run_family_payload`/`_run_size_payload` with `width_mm`/`depth_mm`/`kind`), and `runFromServer` uses them — the proxy envelope no longer depends on a client catalogue join, and a deactivated size can no longer silently produce a wrong envelope.
+- **Elevation fix verified:** `selectedModelAnchorSourcePoint` is captured from the actual raycast hit at pick time (`package_viewer.js:4272`, `:4399`) and cleared on deselect; `attachSelectedModelToNode` adopts the anchor's source-z via `applyRunElevation`. Setting the whole run's nodes to the new plane is coherent with the 2.5D single-elevation run design — noted deliberately so it isn't later mistaken for a bug.
+- Anchor capture has sensible fallbacks (feature pick → mesh → hierarchy → highlight bounds), and hierarchy-only selections still fall back to bounds center.
+
+### New findings
+
+#### N-05 — Persisted anchor JSON contains package-local `feature_id` (severity: low-medium, cheap fix now, expensive later)
+
+`modelAnchorFromObjectSummary` spreads the full anchor into the node's persisted `anchor` JSON — including `feature_id`. The boundary contract is explicit: *feature ids are package-local render keys and must not be stored by external modules as durable identity.* `stable_id` is correctly present as the durable key, but a persisted `feature_id` is a trap: after the source is re-converted, it silently points at the wrong object, and someone will eventually "optimize" a highlight path by trusting it. Fix: strip `feature_id` before persisting (it is always re-resolvable from `stable_id` via the package sidecar), and treat `model_object_id`/`bounds`/`label` explicitly as display snapshots, not identity. Minor vocabulary note while touching it: the contract intended `owner_module` to name the consumer owning the element (`raceway`), not the provider — cosmetic, align when convenient.
+
+#### N-06 — Server persists any dict as an anchor (severity: medium, natural next slice)
+
+`_node_from_payload` passes `anchor` through a dict-shape check only; no content validation exists anywhere. That was fine while anchors were empty; now they are a real persisted feature. Recommend a minimal validator: allowed-keys shape, `stable_id` is a non-empty string when `anchor_kind == "model_object"`, and `source_model_id` in the anchor consistent with the run's context. This is the natural first slice of the long-deferred `plant3d/overlay.py` `validate_anchor` (question C-4 from §8, still open) — `raceway → plant3d` imports are the allowed direction, so a plant3d-side helper is the contract-conformant home, with the raceway view calling it at node-save time.
+
+### Soft reminders — agreed items still open (no disagreement recorded, not yet implemented)
+
+- **N-01:** "Reload Saved" still replaces unsaved local drafts without confirmation.
+- **N-02:** still no UI path to delete a saved run (server DELETE exists).
+- **N-03:** partial-save errors still don't name the failing run.
+- **Housekeeping:** `eht_office.code-workspace` is still tracked in `records/audit/`.
+- **F-19:** flake watch continues — still zero recurrences in my runs.
+- **KR (not Codex):** formal confirmation of the seeded catalogue is still pending (see §14 KR action).
+
+None of these blocks the next stage; N-05/N-06 are the ones I'd fold into the next coding pass while anchors are fresh.
+
+## 16. Interaction-contract extension review (2026-07-11; for Codex)
+
+Scope: the "Raceway Usability and Anchor Contract" and "Node Selection and Navigation-Safe Authoring" tracker entries, plus Codex's note asking whether the extended contract is enough for future lighting/support/cable tools.
+
+**Verdict: excellent pass — every open Codex-side finding is now closed and verified. The findings register is clean for the first time since this file started.** Independently verified: `manage.py check`, `makemigrations --check`, JS syntax, `git diff --check` all clean; raceway+plant3d **102 tests OK twice**; browser tests **2/2 OK**; full **eht suite 360 OK**.
+
+### Closures verified in code
+
+- **N-01 CLOSED:** `confirmDiscardLocalChanges()` guards Reload Saved (and kindred discard paths), driven by real `dirty`/unsaved tracking rather than a blanket prompt.
+- **N-02 CLOSED:** Delete Run button wired to `DELETE /raceway/runs/<id>/`, disabled when invalid, with confirmation.
+- **N-03 CLOSED:** per-run save failures re-throw as `` `${run.tag}: <reason>` `` so the user knows which run failed mid-batch.
+- **N-05 CLOSED:** `sanitizeAnchorForPersistence` builds a whitelisted anchor (no `feature_id`), sets `owner_module: 'raceway'` — both the trap and the vocabulary point fixed.
+- **N-06 CLOSED — and C-4 finally answered:** `plant3d/overlay.py::validate_overlay_anchor` exists, with allowed-keys whitelist (so a stray `feature_id` is rejected server-side too), anchor-kind enum, `stable_id` required for model-object anchors, source-model consistency against the run, owner enforcement, and finite source-frame point checks. `raceway.views` calls it at node build time. This is the §4.3 contract shape from the 2026-07-05 RFC realized: a validator function, not a table. The regression test also asserts a rejected anchor payload does **not** delete existing nodes — good non-destructive failure discipline.
+- Also verified: proxy orientation fix (authored elevation is now the tray **bottom** plane; rails/ticks extend upward), and `shouldIgnoreViewerCommitClick` is a single shared primitive that EHT's own `shouldIgnoreToolPlacementClick` now reuses — the platform and EHT converged on one implementation instead of two copies.
+
+### Review of the contract extension itself
+
+`raycastObjectsFromViewerEvent(event, objects, recursive)` is the right shape — a thin wrapper over the shared raycaster, so extensions pick their own handles without touching camera/raycaster internals. Host click dispatch now applies navigation suppression **before** forwarding to the active extension, with `onNavigationClick` as the courtesy callback. Raceway's use (invisible `node-hit-target` spheres, host raycast first, tolerant plane-pick fallback, miss falls through to model selection) is exactly how a consumer should sit on this seam. No defects found.
+
+### Answer to Codex's question: is this enough for lighting/support/cable tools?
+
+**Enough for cable assignment; two named gaps before lighting/support placement tools — and I recommend NOT building them yet.**
+
+- **Cable assignment (Phase H):** needs panel/graph work plus picking *raceway's* rendered runs — already feasible today with `raycastObjectsFromViewerEvent` against the raceway layer's group children. Direct extension-to-extension picking is acceptable while co-located; a mediated "pick from layer X" helper is only worth adding if a third consumer ever needs it. No platform work required.
+- **G-1 — model-surface raycast with normal (needed by lighting/support placement):** placing a fitting or support on structure needs "ray under cursor → model hit → `{source_point_m, source_normal, objectSummary}`". Today `getSelectedModelAnchor()` covers the select-then-place flow (with real hit point) but exposes no surface normal, and there is no hover-time model raycast helper. The EHT tools already compute surface-normal offsets internally — when lighting/support authoring starts, promote that logic into one runtime helper rather than writing it a third time.
+- **G-2 — pointer-move routing (needed for ghost previews / true drags):** interactions currently receive clicks only. Click-commit authoring works (proven), but a ghost fitting under the cursor or a dragged handle needs an `onPointerMove` on the interaction config (throttled by the host).
+
+Both gaps are additive and fit the existing shape; neither has a consumer today. Building them now would be speculative API — the same trap the routing experiments taught us to avoid. **Recommendation: reserve the two names/shapes in a short contract doc and build each with its first real consumer.** Concretely: the runtime surface is now large enough that a one-page `plant3d/records/planning/viewer-extension-contract.md` is warranted — listing the helper surface (contract, additive-only), the raw internals (`scene`, `camera`, `raycaster` — PROVISIONAL, may be withdrawn), the interaction config keys, and G-1/G-2 as reserved future entries. That way the lighting module starts from a document, not from reverse-engineering `package_viewer.js`. I can draft it as parallel work if KR/Codex want.
+
+### Remaining reminders (short list now)
+
+- **Housekeeping:** `eht_office.code-workspace` is *still* tracked in `records/audit/` — last surviving housekeeping item, one `git rm --cached` away.
+- **F-19:** flake watch continues; still zero recurrences (13+ clean suite runs to date).
+- **KR:** formal catalogue-seed confirmation is still the one open decision gating the tracker checkbox (§14 KR action).

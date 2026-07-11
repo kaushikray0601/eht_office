@@ -51,7 +51,8 @@ that foundation.
   of `plant3d` core.
 - [x] Record `raceway` as peer app in decisions folder.
 - [x] Confirm app name: `raceway`.
-- [ ] Confirm generic curated catalogue seed first.
+- [x] Implement initial generic curated catalogue seed first; keep rows
+  vendor-free and `is_validated=False` until KR-reviewed source data exists.
 - [x] Choose initial standards/default stance: IEC-first; NEMA/ANSI later.
 - [ ] Confirm BOQ-first before DXF/fabrication drawings.
 - [x] Resolve coordinate-frame contract stance: durable source/world metres or
@@ -237,36 +238,36 @@ Acceptance:
 
 ## Stage 7 - Simple Tray Geometry Preview
 
-- [ ] Generate preview geometry from centerline.
-- [ ] Apply width.
-- [ ] Apply depth.
-- [ ] Apply service color.
-- [ ] Show bend placeholders.
-- [ ] Update preview on node edit.
-- [ ] Update preview on family/size edit.
-- [ ] Add selected run highlight.
-- [ ] Keep geometry lightweight.
+- [x] Generate preview geometry from centerline.
+- [x] Apply width.
+- [x] Apply depth.
+- [x] Apply service color.
+- [x] Show bend placeholders.
+- [x] Update preview on node edit.
+- [x] Update preview on family/size edit.
+- [x] Add selected run highlight.
+- [x] Keep geometry lightweight.
 
 Acceptance:
 
-- [ ] Preview reads visually as tray/raceway.
-- [ ] Preview is derived from route data, not independently edited parts.
+- [x] Preview reads visually as tray/raceway.
+- [x] Preview is derived from route data, not independently edited parts.
 
 ## Stage 8 - Persistence Integration
 
-- [ ] Save run from viewer to `raceway`.
-- [ ] Save ordered nodes from viewer to `raceway`.
-- [ ] Load saved layers/runs on viewer open.
-- [ ] Handle save errors visibly.
-- [ ] Preserve run after page refresh.
-- [ ] Revalidate server-side on every save.
-- [ ] Add browser/manual test checklist.
+- [x] Save run from viewer to `raceway`.
+- [x] Save ordered nodes from viewer to `raceway`.
+- [x] Load saved layers/runs on viewer open.
+- [x] Handle save errors visibly.
+- [x] Preserve run after page refresh.
+- [x] Revalidate server-side on every save.
+- [x] Add browser/manual test checklist.
 
 Acceptance:
 
-- [ ] Draw, save, refresh, reload works.
-- [ ] Unauthorized users cannot load/mutate raceway data.
-- [ ] Failed save does not pretend to persist.
+- [x] Draw, save, refresh, reload works.
+- [x] Unauthorized users cannot load/mutate raceway data.
+- [x] Failed save does not pretend to persist.
 
 ## Stage 9 - Derived Parts And BOQ v0
 
@@ -507,3 +508,193 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-09 - Simple Tray Geometry Preview
+
+- Completed Stage 7 as a derived proxy, not persisted mesh:
+  - side rails from `widthMm`,
+  - lower edges/depth ticks from `depthMm`,
+  - ladder rungs for `LADDER-HDG`,
+  - tray cross-members for `PERF-HDG`,
+  - bend placeholders at intermediate nodes,
+  - service-class color,
+  - selected-run centerline highlight and node handles.
+- Active run preview updates on:
+  - node add/move/delete/coordinate edit,
+  - family change,
+  - size change,
+  - service change,
+  - elevation-plane shift.
+- Bumped raceway extension cache to `20260709_raceway4`.
+- Strengthened `raceway.browser_tests` to verify generated preview kinds
+  (`side-rail`, `rung`, `bend-placeholder`, `node-handle`) and live size/service
+  updates.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `node --check /tmp/package_viewer.mjs`
+  - `node --check /tmp/raceway_overlay.mjs`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-09 - Raceway Persistence Integration
+
+- Completed Stage 8 persistence integration:
+  - added generic IEC-flavored, vendor-free catalogue seed migration
+    `raceway.0002_seed_generic_catalog` for `LADDER-HDG` and `PERF-HDG`
+    sizes already used by the Stage 7 proxy UI,
+  - added `GET /raceway/catalog/`,
+  - made the viewer fetch catalogue rows from the server instead of trusting
+    hardcoded JavaScript IDs,
+  - exposed package `project_id` in Plant3D package JSON,
+  - ensured the Plant3D package viewer sets a CSRF cookie for Raceway AJAX
+    saves,
+  - added `plant3dviewer:package-loaded`,
+  - added single-active-canvas-tool arbitration so Measure/EHT/Raceway do not
+    silently steal each other's clicks,
+  - added `Save Draft` and `Reload Saved` controls to the Raceway panel,
+  - saved runs and ordered source-frame nodes through the `raceway` JSON API,
+  - loaded saved runs/nodes on viewer open and after refresh,
+  - kept persisted geometry as source-frame centreline nodes; tray/ladder proxy
+    geometry remains derived/regenerable.
+- Added browser coverage for both sides of Stage 8:
+  - synthetic extension-host smoke still checks layer coexistence, draw/edit,
+    generated proxy kinds, and mocked save payloads,
+  - real live-server smoke opens the actual Plant3D viewer, draws on the real
+    canvas, saves through Django, reloads the page, and confirms the saved
+    Raceway run returns.
+- Applied local development migrations:
+  - `venv/bin/python manage.py migrate raceway`
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check /tmp/package_viewer_stage8.mjs`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-09 - Plant Model Anchor Bridge
+
+- Addressed Claude N-04 before deeper 3D/collision work:
+  - `raceway` run payloads now embed authoritative family and size details
+    (`family.code`, `family.kind`, `size.width_mm`, `size.depth_mm`) from the
+    saved FK rows,
+  - the viewer uses those saved dimensions when reloading runs, instead of
+    guessing from the currently-active catalogue palette.
+- Added the first practical link from Raceway nodes to Plant3D model geometry:
+  - `package_viewer.js` exposes `getSelectedModelAnchor()` through the generic
+    viewer runtime,
+  - Raceway panel adds `Anchor Node` and `Clear Anchor`,
+  - anchoring uses the currently selected Plant3D object, stores its stable
+    object references in the node `anchor`, and places the Raceway node at the
+    object's source XY center while preserving the active tray elevation,
+  - saved nodes persist/reload anchor metadata through the existing Raceway
+    node API.
+- Bumped browser cache keys:
+  - Plant3D viewer host: `20260709_raceway_runtime3`,
+  - Raceway overlay: `20260709_raceway6`.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check /tmp/package_viewer_anchor.mjs`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-09 - Raceway Anchor Elevation Fix
+
+- KR found `Anchor Node` preserved the Raceway elevation field, so anchored
+  nodes could remain at `0.000 m` even when the selected Plant3D model point was
+  higher.
+- Corrected anchor behavior:
+  - Plant3D runtime now records the actual selected model hit point in
+    source-frame metres where available,
+  - hierarchy-only model selections still fall back to source bounds center,
+  - Raceway anchoring now adopts the anchor source `z` and shifts the active
+    run's working elevation to that value,
+  - the selected node is moved to the selected model source point instead of
+    only its XY at the previous Raceway elevation.
+- Bumped browser cache keys:
+  - Plant3D viewer host: `20260709_raceway_runtime4`,
+  - Raceway overlay: `20260709_raceway7`.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check /tmp/package_viewer_anchor_fix.mjs`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-10 - Raceway Usability and Anchor Contract Pass
+
+- Addressed the next usability slice after KR confirmed node anchoring works:
+  - run rows and the active-run summary now show `unsaved`, `unsaved changes`,
+    or `saved`,
+  - invalid actions are disabled instead of appearing clickable with no effect,
+  - `Reload Saved` asks for confirmation before discarding local unsaved runs
+    or dirty saved runs,
+  - `Delete Run` is exposed in the Raceway panel and calls the existing
+    `DELETE /raceway/runs/<id>/` API for saved runs,
+  - multi-run save failures now report the failing run tag.
+- Fixed the visual proxy orientation noted by KR:
+  - the authored source elevation is now treated as the tray/ladder bottom
+    reference plane,
+  - depth ticks and side rails extend upward from that plane, so the raceway
+    reads as open/facing sky instead of inverted toward ground.
+- Folded in Claude §15 anchor findings while the anchor code was fresh:
+  - added `plant3d/overlay.py::validate_overlay_anchor`,
+  - `raceway.views` validates persisted node anchors against allowed keys,
+    `stable_id`, source-model consistency, and source-frame point shape,
+  - `raceway_overlay.js` sanitizes anchors before save and strips package-local
+    `feature_id`,
+  - persisted anchors now use `owner_module: raceway`; Plant3D remains the
+    provider of the selected anchor snapshot.
+- Bumped raceway overlay cache to `20260710_raceway8`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-10 - Raceway Node Selection and Navigation-Safe Authoring
+
+- Addressed KR's manual observations from the Raceway UI pass:
+  - canvas node selection was not active/reliable, so users could not choose
+    the intended node before moving it,
+  - orbit/pan-style scene movement could still end as a Raceway click commit.
+- Strengthened the generic Plant3D extension interaction contract:
+  - added `raycastObjectsFromViewerEvent(event, objects, recursive)` to the
+    runtime helper surface so extensions can pick their own handles without
+    touching raw raycaster/camera internals,
+  - added `shouldIgnoreViewerCommitClick()` in the host click dispatch path so
+    active extensions do not receive commit clicks after navigation drags,
+  - extensions can now receive `onNavigationClick` to show a tool-specific
+    status message when a drag was intentionally ignored.
+- Improved Raceway node interaction:
+  - added `Select Node` command,
+  - finished/selected runs now stay in lightweight selection mode,
+  - node handles have invisible pick targets (`node-hit-target`) around the
+    visible spheres,
+  - Raceway first tries host raycasting, then falls back to a tolerant
+    screen-sized source-elevation plane pick,
+  - clicks on node handles select the exact run/node and keep misses falling
+    through to normal Plant3D model selection.
+- Bumped browser cache keys:
+  - Plant3D viewer host: `20260710_raceway_runtime5`,
+  - Raceway overlay: `20260710_raceway9`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check /tmp/package_viewer_interaction.mjs`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
