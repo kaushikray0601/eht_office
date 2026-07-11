@@ -76,14 +76,17 @@ Code facts verified on 2026-07-09:
   now exposes `window.plant3dViewerRuntime`, `plant3dviewer:runtime-ready`,
   source/render coordinate conversion, source-elevation plane picking, and
   `registerInteraction`. `raceway_overlay.js` owns the RaceWay Draft panel and
-  supports family/size/service/elevation, start/finish/cancel/undo,
-  click-to-place nodes, node list selection, move/delete, and numeric edits.
+  supports family/size/service/elevation, start/finish/cancel, local
+  undo/redo, click-to-place nodes, node list selection, move/delete, keyboard
+  shortcuts, numeric edits, optional ortho drawing assist, and typed segment
+  entry.
 - `raceway/browser_tests.py` is the opt-in smoke test proving the raceway script
-  registers its layer and handles canvas click/create/undo/move/delete against
-  a stubbed viewer host. Run it before asking KR to manually check authoring.
+  registers its layer and handles canvas click/create/ortho/typed-segment/
+  keyboard undo-redo/move/delete against a stubbed viewer host. Run it before
+  asking KR to manually check authoring.
 - Static cache note: Plant3D viewer host script version is
   `20260711_raceway_runtime6`; raceway overlay script version is
-  `20260711_raceway10`. Bump the relevant cache key whenever changing either
+  `20260711_raceway12`. Bump the relevant cache key whenever changing either
   browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
@@ -159,6 +162,22 @@ Code facts verified on 2026-07-09:
   riser segments get simple `riser-placeholder` proxy markers. The viewer
   helper surface is recorded in
   `plant3d/records/planning/viewer-extension-contract-2026-07-11.md`.
+- Raceway productivity pass after KR confirmed multi-elevation authoring:
+  `raceway_overlay.js` now keeps bounded local undo/redo history for draft
+  mutations, exposes toolbar `Undo`/`Redo`, and wires `Ctrl+Z`,
+  `Ctrl+Shift+Z`, `Ctrl+Y`, and `Ctrl+S` plus scoped single-key shortcuts
+  (`S/C/F/N/M/A/R/Delete/Esc`) with tooltip hints. Coordinate editing moved
+  directly below the Raceway command buttons. History is intentionally cleared
+  after successful server save/reload or external `setRuns()` so local undo
+  does not pretend to undo database commits/deletes.
+- Raceway methodology/AI strategy pass: Claude's
+  `plant3d/records/planning/raceway-methodology-and-ai-strategy-2026-07-11.md`
+  now has a Codex addendum emphasizing evidence-grounded AI, an `ai_gateway`
+  seam, suggestion telemetry, and clean graph-authoring data as the real moat.
+  The first M-1/M-2 authoring slice is in `raceway_overlay.js`: optional
+  Ortho locks free working-plane clicks to one plan axis without falsifying
+  model anchors, and typed segment entry appends +X/-X/+Y/-Y/+EL/-EL segments
+  from the last node with undo support.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

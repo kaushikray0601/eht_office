@@ -2022,7 +2022,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "plant3dViewerExtensionsConfig")
         self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-overlay\"")
         self.assertContains(response, "data-owner=\"raceway\"")
-        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260711_raceway10")
+        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260711_raceway12")
 
     def test_package_viewer_static_js_exposes_generic_layer_registry(self):
         script_path = os.path.join(

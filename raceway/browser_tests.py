@@ -184,7 +184,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                             source_point_m: { x: 45, y: 57, z: 1.5, coordinate_frame: 'source_xyz_m' },
                             feature_id: null,
                           }),
-                          modelAnchorFromViewerEvent: event => ({
+                          modelAnchorFromViewerEvent: event => window.__racewayUseModelAnchor ? ({
                             owner_module: 'plant3d',
                             anchor_kind: 'model_object',
                             render_package_id: 77,
@@ -202,7 +202,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                               coordinate_frame: 'source_xyz_m',
                             },
                             feature_id: 88,
-                          }),
+                          }) : null,
                           currentSourceElevationM: () => 1.0,
                           pointOnSourceElevationFromViewerEvent: (event, elevation) => new Vector3(event.clientX / 10, elevation, event.clientY / 10),
                           renderPointToSourcePoint: point => ({ x: point.x, y: point.z, z: point.y, coordinate_frame: 'source_xyz_m' }),
@@ -227,6 +227,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                         };
                         let pointerStart = null;
                         let suppressNextInteractionClick = false;
+                        window.__racewayUseModelAnchor = true;
                         window.__racewayCanvasClickCount = 0;
                         canvas.addEventListener('pointerdown', event => {
                           pointerStart = { x: event.clientX, y: event.clientY };
@@ -266,10 +267,57 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("raceway-overlay", layer_ids)
                 self.assertTrue(page.eval_on_selector('[data-raceway-action="finish"]', "el => el.disabled"))
                 self.assertTrue(page.eval_on_selector('[data-raceway-action="save"]', "el => el.disabled"))
+                self.assertIn("Ctrl+Z", page.get_attribute('[data-raceway-action="undo"]', "title"))
+                self.assertIn("Ctrl+Shift+Z", page.get_attribute('[data-raceway-action="redo"]', "title"))
+                self.assertIn("Ctrl+S", page.get_attribute('[data-raceway-action="save"]', "title"))
+                self.assertTrue(
+                    page.evaluate(
+                        """() => {
+                          const children = Array.from(document.querySelector('#racewayToolSection').children);
+                          return children.indexOf(document.querySelector('#racewayInspector'))
+                            < children.indexOf(document.querySelector('#racewaySummary'));
+                        }"""
+                    )
+                )
+                self.assertIn("O", page.get_attribute("#racewayOrthoInput", "title"))
+                self.assertIn("Enter", page.get_attribute('[data-raceway-action="add-segment"]', "title"))
+
+                page.evaluate("() => { window.__racewayUseModelAnchor = false; }")
+                page.click('[data-raceway-action="start"]')
+                page.check("#racewayOrthoInput")
+                page.click("#viewerCanvas", position={"x": 100, "y": 100})
+                page.click("#viewerCanvas", position={"x": 180, "y": 130})
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 2")
+                ortho_nodes = page.evaluate(
+                    """() => window.racewayViewerOverlay.getRuns()[0].nodes.map(node => ({
+                      x: node.x,
+                      y: node.y,
+                      z: node.z,
+                      anchor: node.anchor?.stable_id || '',
+                    }))"""
+                )
+                self.assertEqual([node["anchor"] for node in ortho_nodes], ["", ""])
+                same_x = round(ortho_nodes[1]["x"], 3) == round(ortho_nodes[0]["x"], 3)
+                same_y = round(ortho_nodes[1]["y"], 3) == round(ortho_nodes[0]["y"], 3)
+                self.assertTrue(same_x or same_y, ortho_nodes)
+                self.assertFalse(same_x and same_y, ortho_nodes)
+                page.select_option("#racewaySegmentDirectionSelect", "plus_y")
+                page.fill("#racewaySegmentLengthInput", "4")
+                page.press("#racewaySegmentLengthInput", "Enter")
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
+                typed_nodes = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0].nodes")
+                self.assertEqual(round(typed_nodes[2]["x"], 3), round(typed_nodes[1]["x"], 3))
+                self.assertEqual(round(typed_nodes[2]["y"] - typed_nodes[1]["y"], 3), 4)
+                page.evaluate("() => { window.racewayViewerOverlay.setRuns([]); window.__racewayUseModelAnchor = true; }")
+
                 page.click('[data-raceway-action="start"]')
                 page.click("#viewerCanvas", position={"x": 120, "y": 90})
                 page.click("#viewerCanvas", position={"x": 220, "y": 130})
                 page.click("#viewerCanvas", position={"x": 320, "y": 90})
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
+                page.keyboard.press("Control+Z")
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 2")
+                page.keyboard.press("Control+Shift+Z")
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes[1]?.anchor?.stable_id === 'ifc:steel-001'")
                 auto_anchored_nodes = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0].nodes.map(node => ({ z: node.z, anchor: node.anchor?.stable_id || '' }))")
@@ -332,9 +380,6 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 )
                 page.wait_for_function("() => document.querySelector('#racewaySummary')?.textContent.includes('unsaved changes')")
 
-                page.click('[data-raceway-action="undo"]')
-                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 2")
-
                 node_before_move = page.evaluate("() => ({ ...window.racewayViewerOverlay.getRuns()[0].nodes[0] })")
                 page.click('[data-raceway-action="select-node-mode"]')
                 page.dispatch_event(
@@ -361,7 +406,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertGreater(round(moved_node["z"], 3), round(node_before_move["z"], 3))
 
                 page.click('[data-raceway-action="delete-node"]')
-                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 1")
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 2")
                 page.on("dialog", lambda dialog: dialog.accept())
                 page.click('[data-raceway-action="delete-run"]')
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns().length === 0")

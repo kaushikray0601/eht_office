@@ -745,3 +745,72 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-11 - Raceway Undo/Redo and Shortcut Productivity Pass
+
+- Addressed KR's manual feedback after the multi-elevation pass:
+  - Raceway now has bounded local undo/redo history for draft mutations,
+  - `Undo Node` became general `Undo`, and a `Redo` command was added,
+  - keyboard shortcuts were added for fast testing and day-to-day authoring,
+  - each Raceway command button now carries its shortcut in the tooltip,
+  - the selected-node coordinate editor moved directly below the command
+    buttons, above the summary/run/node lists.
+- Undo/redo scope:
+  - draft mutations such as start run, add/move/delete node, anchor/clear
+    anchor, palette changes, elevation shifts, unsaved run delete, and numeric
+    coordinate edits push history,
+  - `Ctrl+Z` undoes and `Ctrl+Shift+Z` / `Ctrl+Y` redoes,
+  - successful server save/reload and external `setRuns()` clear local history
+    so the UI does not imply that database commits/deletes can be undone by the
+    local drafting stack.
+- Shortcut scope:
+  - Ctrl shortcuts are available from Raceway context including the coordinate
+    editor,
+  - single-key shortcuts are scoped to Raceway activity/panel focus so they do
+    not casually steal Plant3D's broader viewer shortcuts,
+  - current hints: `S` Start, `C` Continue, `F` Finish, `N` Select Node, `M`
+    Move Node, `A` Anchor, `Shift+A` Clear Anchor, `Del` Delete Node,
+    `Shift+Del` Delete Run, `R` Reload, `Esc` Cancel, `Ctrl+S` Save.
+- Bumped browser cache key:
+  - Raceway overlay: `20260711_raceway11`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-11 - Raceway Methodology/AI Addendum and Drawing-Aids Pass
+
+- Read Claude's independent methodology/AI strategy RFC and appended a Codex
+  addendum to
+  `plant3d/records/planning/raceway-methodology-and-ai-strategy-2026-07-11.md`.
+- Codex addendum position:
+  - the long-term moat is the engineering chain from evidence-backed sizing to
+    BOQ, 3D raceway graph, cable assignment, pull cards, and change impact,
+    not the viewer alone,
+  - AI should enter through an `ai_gateway`, suggestion telemetry, and
+    deterministic evidence bundles rather than early model training,
+  - clean manual graph-authoring data is AI-readiness work, not just UX polish.
+- Implemented the first M-1/M-2 drawing-feel slice:
+  - added optional `Ortho` drawing assist with shortcut `O`,
+  - free working-plane clicks now lock to one plan axis from the previous node
+    when Ortho is on,
+  - model-surface anchors are deliberately not coordinate-modified by Ortho so
+    persisted anchors do not claim a false clicked point,
+  - added typed segment entry: direction `+X/-X/+Y/-Y/+EL/-EL`, length in
+    metres, and `Add Segment`,
+  - `Enter` in the segment direction/length fields appends the typed segment,
+  - typed segments are undoable and keep the active run in draw mode.
+- Bumped browser cache key:
+  - Raceway overlay: `20260711_raceway12`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`

@@ -2,6 +2,7 @@ const RACEWAY_LAYER_ID = 'raceway-overlay';
 const RACEWAY_INTERACTION_ID = 'raceway-centerline-authoring';
 const CATALOG_URL = '/raceway/catalog/';
 const SOURCE_COORDINATE_FRAME = 'source_xyz_m';
+const HISTORY_LIMIT = 80;
 
 let catalog = [];
 
@@ -10,6 +11,15 @@ const services = [
   { id: 'control', label: 'Control', color: 0x0f766e },
   { id: 'instrument', label: 'Instrument', color: 0xca8a04 },
   { id: 'telecom', label: 'Telecom', color: 0x7c3aed },
+];
+
+const segmentDirections = [
+  { id: 'plus_x', label: '+X East', dx: 1, dy: 0, dz: 0 },
+  { id: 'minus_x', label: '-X West', dx: -1, dy: 0, dz: 0 },
+  { id: 'plus_y', label: '+Y North', dx: 0, dy: 1, dz: 0 },
+  { id: 'minus_y', label: '-Y South', dx: 0, dy: -1, dz: 0 },
+  { id: 'plus_z', label: '+EL Up', dx: 0, dy: 0, dz: 1 },
+  { id: 'minus_z', label: '-EL Down', dx: 0, dy: 0, dz: -1 },
 ];
 
 const state = {
@@ -30,6 +40,49 @@ const state = {
   layerId: null,
   layerUrl: '',
   runsUrl: '',
+  undoStack: [],
+  redoStack: [],
+  orthoMode: false,
+  segmentDirection: segmentDirections[0].id,
+  segmentLengthM: 6,
+};
+
+const actionLabels = {
+  start: 'Start raceway draw',
+  'continue-run': 'Continue active run',
+  finish: 'Finish active run',
+  undo: 'Undo last raceway edit',
+  redo: 'Redo last undone raceway edit',
+  cancel: 'Cancel active raceway command',
+  'select-node-mode': 'Select node on canvas',
+  'move-node': 'Move selected node',
+  'delete-node': 'Delete selected node',
+  'anchor-node': 'Anchor selected node to selected plant object',
+  'clear-anchor': 'Clear selected node anchor',
+  save: 'Save draft raceways',
+  reload: 'Reload saved raceways',
+  'delete-run': 'Delete active run',
+  'add-segment': 'Add typed segment from the last node',
+  'toggle-ortho': 'Toggle orthogonal drawing assist',
+};
+
+const actionShortcuts = {
+  start: 'S',
+  'continue-run': 'C',
+  finish: 'F',
+  undo: 'Ctrl+Z',
+  redo: 'Ctrl+Shift+Z / Ctrl+Y',
+  cancel: 'Esc',
+  'select-node-mode': 'N',
+  'move-node': 'M',
+  'delete-node': 'Del',
+  'anchor-node': 'A',
+  'clear-anchor': 'Shift+A',
+  save: 'Ctrl+S',
+  reload: 'R',
+  'delete-run': 'Shift+Del',
+  'add-segment': 'Enter in segment fields',
+  'toggle-ortho': 'O',
 };
 
 let layer = null;
@@ -92,6 +145,100 @@ function hasUnsavedLocalChanges() {
 function runPersistenceLabel(run) {
   if (!run?.serverRunId) return 'unsaved';
   return run.dirty ? 'unsaved changes' : 'saved';
+}
+
+function clonePlain(value) {
+  if (typeof structuredClone === 'function') return structuredClone(value);
+  return JSON.parse(JSON.stringify(value));
+}
+
+function captureHistorySnapshot() {
+  return {
+    runs: clonePlain(state.runs),
+    activeRunId: state.activeRunId,
+    selectedNodeIndex: state.selectedNodeIndex,
+    mode: state.mode,
+    familyId: state.familyId,
+    sizeId: state.sizeId,
+    serviceClass: state.serviceClass,
+    elevationM: state.elevationM,
+    elevationInitialized: state.elevationInitialized,
+  };
+}
+
+function restoreHistorySnapshot(snapshot) {
+  state.runs = clonePlain(snapshot.runs || []);
+  state.activeRunId = snapshot.activeRunId || state.runs[0]?.id || '';
+  if (!state.runs.some(run => run.id === state.activeRunId)) {
+    state.activeRunId = state.runs[0]?.id || '';
+  }
+  state.selectedNodeIndex = Number(snapshot.selectedNodeIndex);
+  if (!Number.isInteger(state.selectedNodeIndex)) state.selectedNodeIndex = -1;
+  const run = activeRun();
+  if (!run || state.selectedNodeIndex >= run.nodes.length) {
+    state.selectedNodeIndex = run?.nodes.length ? run.nodes.length - 1 : -1;
+  }
+  state.familyId = snapshot.familyId || state.familyId;
+  state.sizeId = snapshot.sizeId || state.sizeId;
+  state.serviceClass = snapshot.serviceClass || state.serviceClass;
+  state.elevationM = Number(snapshot.elevationM) || 0;
+  state.elevationInitialized = Boolean(snapshot.elevationInitialized);
+  state.mode = snapshot.mode || 'idle';
+  if (!run || state.mode === 'idle') {
+    state.mode = 'idle';
+    interaction?.deactivate?.();
+  } else {
+    interaction?.activate?.();
+  }
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+}
+
+function pushUndo(label = 'Raceway edit') {
+  state.undoStack.push({ label, snapshot: captureHistorySnapshot() });
+  if (state.undoStack.length > HISTORY_LIMIT) state.undoStack.shift();
+  state.redoStack = [];
+}
+
+function clearHistory() {
+  state.undoStack = [];
+  state.redoStack = [];
+}
+
+function undoRacewayEdit() {
+  const entry = state.undoStack.pop();
+  if (!entry) {
+    setStatus('Nothing to undo.');
+    renderPanel();
+    return;
+  }
+  state.redoStack.push({ label: entry.label, snapshot: captureHistorySnapshot() });
+  restoreHistorySnapshot(entry.snapshot);
+  setStatus(`${entry.label} undone.`);
+  renderPanel({ forceInspector: true });
+}
+
+function redoRacewayEdit() {
+  const entry = state.redoStack.pop();
+  if (!entry) {
+    setStatus('Nothing to redo.');
+    renderPanel();
+    return;
+  }
+  state.undoStack.push({ label: entry.label, snapshot: captureHistorySnapshot() });
+  restoreHistorySnapshot(entry.snapshot);
+  setStatus(`${entry.label} redone.`);
+  renderPanel({ forceInspector: true });
+}
+
+function actionTooltip(action, disabledReason = '') {
+  const label = disabledReason || actionLabels[action] || 'Raceway command';
+  const shortcut = actionShortcuts[action];
+  return shortcut ? `${label}. Shortcut: ${shortcut}.` : label;
+}
+
+function segmentDirectionById(id = state.segmentDirection) {
+  return segmentDirections.find(direction => direction.id === id) || segmentDirections[0];
 }
 
 function allSizes() {
@@ -342,6 +489,28 @@ function sourcePointFromEvent(event) {
   };
 }
 
+function orthoAdjustedPoint(run, point) {
+  if (!state.orthoMode || !run?.nodes?.length || !point) {
+    return { point, adjusted: false };
+  }
+  if (point.anchor && Object.keys(point.anchor).length) {
+    return { point, adjusted: false };
+  }
+  const previous = run.nodes[run.nodes.length - 1];
+  const dx = Number(point.x || 0) - Number(previous.x || 0);
+  const dy = Number(point.y || 0) - Number(previous.y || 0);
+  if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
+    return { point, adjusted: false };
+  }
+  const adjusted = { ...point };
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    adjusted.y = Number(previous.y) || 0;
+  } else {
+    adjusted.x = Number(previous.x) || 0;
+  }
+  return { point: adjusted, adjusted: true };
+}
+
 function adoptWorkingElevationFromPoint(run, point) {
   const elevation = Number(point?.z);
   if (!Number.isFinite(elevation)) return;
@@ -436,6 +605,7 @@ function attachSelectedModelToNode() {
     setStatus('Selected model object has no usable source-coordinate anchor.');
     return;
   }
+  pushUndo('Anchor node');
   adoptWorkingElevationFromPoint(run, point);
   if (state.selectedNodeIndex >= 0 && run.nodes[state.selectedNodeIndex]) {
     run.nodes[state.selectedNodeIndex] = point;
@@ -455,6 +625,7 @@ function clearSelectedNodeAnchor() {
     setStatus('Selected node has no plant model anchor.');
     return;
   }
+  pushUndo('Clear node anchor');
   node.anchor = {};
   markRunDirty();
   setStatus('Plant model anchor cleared from selected node.');
@@ -805,6 +976,7 @@ function beginRun() {
     renderPanel();
     return;
   }
+  pushUndo('Start raceway run');
   state.runs.push(run);
   state.activeRunId = run.id;
   state.selectedNodeIndex = -1;
@@ -839,9 +1011,41 @@ function continueRun() {
   renderPanel();
 }
 
+function addTypedSegment() {
+  const run = activeRun();
+  const start = run?.nodes?.at(-1) || null;
+  const length = Number(state.segmentLengthM);
+  const direction = segmentDirectionById();
+  if (!run || !start) {
+    setStatus('Add or select a raceway run with at least one node before typed segment entry.');
+    return;
+  }
+  if (!Number.isFinite(length) || length <= 0) {
+    setStatus('Enter a positive segment length.');
+    renderPanel();
+    return;
+  }
+  const point = {
+    x: Number(start.x || 0) + direction.dx * length,
+    y: Number(start.y || 0) + direction.dy * length,
+    z: Number(start.z || 0) + direction.dz * length,
+    coordinate_frame: SOURCE_COORDINATE_FRAME,
+  };
+  pushUndo('Add typed segment');
+  run.nodes.push(point);
+  state.selectedNodeIndex = run.nodes.length - 1;
+  adoptWorkingElevationFromPoint(run, point);
+  markRunDirty(run);
+  activateCanvasMode('draw');
+  setStatus(`${run.tag}: ${formatM(length)} m typed segment added ${direction.label}.`);
+  renderRaceway();
+  renderPanel();
+}
+
 function cancelRun() {
   const run = activeRun();
   if (run && state.mode === 'draw' && run.nodes.length === 0) {
+    pushUndo('Cancel empty raceway run');
     state.runs = state.runs.filter(item => item.id !== run.id);
     state.activeRunId = state.runs.at(-1)?.id || '';
   }
@@ -854,11 +1058,13 @@ function cancelRun() {
 
 function addNodeFromEvent(event) {
   const run = activeRun();
-  const point = sourcePointFromEvent(event);
+  const rawPoint = sourcePointFromEvent(event);
+  const { point, adjusted } = orthoAdjustedPoint(run, rawPoint);
   if (!run || !point) {
     setStatus('No point found on the active elevation.');
     return;
   }
+  pushUndo('Add node');
   run.nodes.push(point);
   state.selectedNodeIndex = run.nodes.length - 1;
   adoptWorkingElevationFromPoint(run, point);
@@ -866,18 +1072,7 @@ function addNodeFromEvent(event) {
   const anchor = anchorLabel(point.anchor);
   setStatus(anchor
     ? `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)} and anchored to ${anchor}.`
-    : `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)}.`);
-  renderRaceway();
-  renderPanel();
-}
-
-function undoNode() {
-  const run = activeRun();
-  if (!run?.nodes.length) return;
-  run.nodes.pop();
-  state.selectedNodeIndex = Math.min(state.selectedNodeIndex, run.nodes.length - 1);
-  markRunDirty(run);
-  setStatus(`${run.tag}: last node removed.`);
+    : `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)}${adjusted ? ' with ortho lock.' : '.'}`);
   renderRaceway();
   renderPanel();
 }
@@ -885,6 +1080,7 @@ function undoNode() {
 function deleteSelectedNode() {
   const run = activeRun();
   if (!run || state.selectedNodeIndex < 0) return;
+  pushUndo('Delete node');
   run.nodes.splice(state.selectedNodeIndex, 1);
   state.selectedNodeIndex = Math.min(state.selectedNodeIndex, run.nodes.length - 1);
   markRunDirty(run);
@@ -902,6 +1098,7 @@ function moveSelectedNodeFromEvent(event) {
   const run = activeRun();
   const point = sourcePointFromEvent(event);
   if (!run || state.selectedNodeIndex < 0 || !point) return;
+  pushUndo('Move node');
   run.nodes[state.selectedNodeIndex] = point;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
@@ -1079,6 +1276,7 @@ async function loadSavedRaceways({ force = false } = {}) {
         state.runs = [];
         state.activeRunId = '';
         state.selectedNodeIndex = -1;
+        clearHistory();
         renderRaceway();
       }
       setStatus('No saved raceway runs for this package yet.');
@@ -1088,6 +1286,7 @@ async function loadSavedRaceways({ force = false } = {}) {
     state.runs = (Array.isArray(runPayload.runs) ? runPayload.runs : []).map(runFromServer);
     state.activeRunId = state.runs[0]?.id || '';
     state.selectedNodeIndex = -1;
+    clearHistory();
     syncPaletteFromRun(activeRun());
     renderRaceway();
     setStatus(state.runs.length ? `${state.runs.length} saved raceway run(s) loaded.` : 'Raceway layer loaded with no runs.');
@@ -1145,6 +1344,7 @@ async function deleteActiveRun() {
     return;
   }
   if (!run.serverRunId) {
+    pushUndo('Delete run');
     removeRunFromState(run);
     setStatus(`${label} discarded.`);
     return;
@@ -1277,6 +1477,7 @@ async function saveDrafts() {
     state.persistenceLoaded = true;
     state.persistenceReady = true;
     state.contextKey = contextKey(context);
+    clearHistory();
     setStatus(`${savedCount} raceway run(s) saved to server.`);
     renderRaceway();
   } catch (error) {
@@ -1296,9 +1497,12 @@ function injectStyles() {
   const style = document.createElement('style');
   style.id = 'racewayViewerStyles';
   style.textContent = `
-    .raceway-tool-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    .raceway-tool-grid label, .raceway-node-editor label { display: grid; gap: 4px; color: #475569; font-size: 11px; font-weight: 700; }
-    .raceway-tool-grid select, .raceway-tool-grid input, .raceway-node-editor input { width: 100%; min-width: 0; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 6px; color: #0f172a; font-size: 12px; }
+    .raceway-tool-grid, .raceway-aid-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .raceway-tool-grid label, .raceway-aid-grid label, .raceway-node-editor label { display: grid; gap: 4px; color: #475569; font-size: 11px; font-weight: 700; }
+    .raceway-tool-grid select, .raceway-tool-grid input, .raceway-aid-grid select, .raceway-aid-grid input, .raceway-node-editor input { width: 100%; min-width: 0; border: 1px solid #cbd5e1; border-radius: 6px; padding: 5px 6px; color: #0f172a; font-size: 12px; }
+    .raceway-aid-grid { align-items: end; margin-top: 8px; }
+    .raceway-check { align-self: end; min-height: 28px; display: flex !important; align-items: center; gap: 6px !important; }
+    .raceway-check input { width: auto !important; }
     .raceway-status { margin: 8px 0; color: #475569; font-size: 12px; line-height: 1.35; }
     .raceway-status-busy { color: #1d4ed8; }
     .raceway-run-list, .raceway-node-list { display: grid; gap: 6px; margin-top: 8px; }
@@ -1325,10 +1529,14 @@ function serviceOptionsHtml() {
   return services.map(service => `<option value="${escapeHtml(service.id)}"${service.id === state.serviceClass ? ' selected' : ''}>${escapeHtml(service.label)}</option>`).join('');
 }
 
+function segmentDirectionOptionsHtml() {
+  return segmentDirections.map(direction => `<option value="${escapeHtml(direction.id)}"${direction.id === state.segmentDirection ? ' selected' : ''}>${escapeHtml(direction.label)}</option>`).join('');
+}
+
 function runRowsHtml() {
   if (!state.runs.length) return '<div class="meta">No raceway drafts</div>';
   return state.runs.map(run => `
-    <button type="button" class="raceway-row ${run.id === state.activeRunId ? 'raceway-row-active' : ''}" data-raceway-action="select-run" data-run-id="${escapeHtml(run.id)}">
+    <button type="button" class="raceway-row ${run.id === state.activeRunId ? 'raceway-row-active' : ''}" data-raceway-action="select-run" data-run-id="${escapeHtml(run.id)}" title="Select raceway run">
       <strong>${escapeHtml(run.tag)}</strong><br>
       ${escapeHtml(run.familyLabel)} ${escapeHtml(run.sizeLabel)}<br>
       ${escapeHtml(serviceFor(run.serviceClass).label)} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'}<br>
@@ -1341,7 +1549,7 @@ function nodeRowsHtml() {
   const run = activeRun();
   if (!run?.nodes.length) return '<div class="meta">No nodes</div>';
   return run.nodes.map((node, index) => `
-    <button type="button" class="raceway-row ${index === state.selectedNodeIndex ? 'raceway-row-active' : ''}" data-raceway-action="select-node" data-node-index="${index}">
+    <button type="button" class="raceway-row ${index === state.selectedNodeIndex ? 'raceway-row-active' : ''}" data-raceway-action="select-node" data-node-index="${index}" title="Select node ${index + 1}">
       N${index + 1} X ${formatM(node.x)} Y ${formatM(node.y)} EL ${formatM(node.z)}
       ${anchorLabel(node.anchor) ? `<br>Anchor: ${escapeHtml(anchorLabel(node.anchor))}` : ''}
     </button>
@@ -1380,31 +1588,38 @@ function ensurePanel() {
       <label>Service<select id="racewayServiceSelect">${serviceOptionsHtml()}</select></label>
       <label>EL m<input id="racewayElevationInput" type="number" step="0.001" value="${formatM(state.elevationM)}"></label>
     </div>
+    <div class="raceway-aid-grid">
+      <label class="raceway-check" title="${escapeHtml(actionTooltip('toggle-ortho'))}"><input id="racewayOrthoInput" type="checkbox" title="${escapeHtml(actionTooltip('toggle-ortho'))}"${state.orthoMode ? ' checked' : ''}> Ortho</label>
+      <label>Direction<select id="racewaySegmentDirectionSelect">${segmentDirectionOptionsHtml()}</select></label>
+      <label>Length m<input id="racewaySegmentLengthInput" type="number" min="0.001" step="0.001" value="${formatM(state.segmentLengthM)}"></label>
+      <button type="button" data-raceway-action="add-segment" title="${escapeHtml(actionTooltip('add-segment'))}">Add Segment</button>
+    </div>
     <div class="p3d-toolbar" style="margin-top: 10px;">
-      <button type="button" class="p3d-button-primary" data-raceway-action="start">Start</button>
-      <button type="button" data-raceway-action="continue-run">Continue</button>
-      <button type="button" data-raceway-action="finish">Finish</button>
-      <button type="button" data-raceway-action="undo">Undo Node</button>
-      <button type="button" data-raceway-action="cancel">Cancel</button>
+      <button type="button" class="p3d-button-primary" data-raceway-action="start" title="${escapeHtml(actionTooltip('start'))}">Start</button>
+      <button type="button" data-raceway-action="continue-run" title="${escapeHtml(actionTooltip('continue-run'))}">Continue</button>
+      <button type="button" data-raceway-action="finish" title="${escapeHtml(actionTooltip('finish'))}">Finish</button>
+      <button type="button" data-raceway-action="undo" title="${escapeHtml(actionTooltip('undo'))}">Undo</button>
+      <button type="button" data-raceway-action="redo" title="${escapeHtml(actionTooltip('redo'))}">Redo</button>
+      <button type="button" data-raceway-action="cancel" title="${escapeHtml(actionTooltip('cancel'))}">Cancel</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 8px;">
-      <button type="button" data-raceway-action="select-node-mode">Select Node</button>
-      <button type="button" data-raceway-action="move-node">Move Node</button>
-      <button type="button" data-raceway-action="delete-node">Delete Node</button>
+      <button type="button" data-raceway-action="select-node-mode" title="${escapeHtml(actionTooltip('select-node-mode'))}">Select Node</button>
+      <button type="button" data-raceway-action="move-node" title="${escapeHtml(actionTooltip('move-node'))}">Move Node</button>
+      <button type="button" data-raceway-action="delete-node" title="${escapeHtml(actionTooltip('delete-node'))}">Delete Node</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 8px;">
-      <button type="button" data-raceway-action="anchor-node">Anchor Node</button>
-      <button type="button" data-raceway-action="clear-anchor">Clear Anchor</button>
+      <button type="button" data-raceway-action="anchor-node" title="${escapeHtml(actionTooltip('anchor-node'))}">Anchor Node</button>
+      <button type="button" data-raceway-action="clear-anchor" title="${escapeHtml(actionTooltip('clear-anchor'))}">Clear Anchor</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 8px;">
-      <button type="button" data-raceway-action="save">Save Draft</button>
-      <button type="button" data-raceway-action="reload">Reload Saved</button>
-      <button type="button" data-raceway-action="delete-run">Delete Run</button>
+      <button type="button" data-raceway-action="save" title="${escapeHtml(actionTooltip('save'))}">Save Draft</button>
+      <button type="button" data-raceway-action="reload" title="${escapeHtml(actionTooltip('reload'))}">Reload Saved</button>
+      <button type="button" data-raceway-action="delete-run" title="${escapeHtml(actionTooltip('delete-run'))}">Delete Run</button>
     </div>
+    <div id="racewayInspector"></div>
     <div id="racewaySummary" class="meta" style="margin-top: 8px;"></div>
     <div id="racewayRunList" class="raceway-run-list"></div>
     <div id="racewayNodeList" class="raceway-node-list"></div>
-    <div id="racewayInspector"></div>
   `;
   layerPanel.parentNode.insertBefore(panel, layerPanel);
   statusEl = panel.querySelector('#racewayToolStatus');
@@ -1415,27 +1630,24 @@ function ensurePanel() {
   panel.addEventListener('click', handlePanelClick);
   panel.addEventListener('change', handlePanelChange);
   panel.addEventListener('input', handlePanelInput);
+  panel.addEventListener('focusout', handlePanelFocusOut);
   return panel;
 }
 
 function setActionState(action, disabled, title = '') {
   panel?.querySelectorAll(`[data-raceway-action="${action}"]`).forEach(button => {
     button.disabled = Boolean(disabled);
-    if (disabled && title) {
-      button.title = title;
-    } else {
-      button.removeAttribute('title');
-    }
+    button.title = actionTooltip(action, disabled ? title : '');
   });
 }
 
 function updateActionStates(run) {
   const node = selectedNode();
-  const hasNodes = Boolean(run?.nodes?.length);
   setActionState('start', !catalog.length, 'Raceway catalogue is still loading.');
   setActionState('continue-run', !run, 'Select a run before continuing it.');
   setActionState('finish', !run || (run.nodes.length < 2), 'Add at least two nodes before finishing.');
-  setActionState('undo', !hasNodes, 'No nodes to undo.');
+  setActionState('undo', !state.undoStack.length, 'Nothing to undo.');
+  setActionState('redo', !state.redoStack.length, 'Nothing to redo.');
   setActionState('cancel', !run && state.mode === 'idle', 'No active raceway command.');
   setActionState('select-node-mode', !run, 'Select a run before selecting nodes on canvas.');
   setActionState('move-node', !node, 'Select a node before moving it.');
@@ -1445,14 +1657,18 @@ function updateActionStates(run) {
   setActionState('save', state.persistenceLoading || !state.runs.some(item => item.nodes.length >= 2), 'Add at least one two-node run before saving.');
   setActionState('reload', state.persistenceLoading, state.persistenceLoading ? 'Raceway persistence is busy.' : '');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
+  setActionState('add-segment', !run?.nodes?.length || !(Number(state.segmentLengthM) > 0), 'Add at least one node and enter a positive segment length.');
 }
 
-function renderPanel() {
+function renderPanel(options = {}) {
   if (!panel) return;
   const run = activeRun();
   const familySelect = panel.querySelector('#racewayFamilySelect');
   const sizeSelect = panel.querySelector('#racewaySizeSelect');
   const serviceSelect = panel.querySelector('#racewayServiceSelect');
+  const orthoInput = panel.querySelector('#racewayOrthoInput');
+  const segmentDirectionSelect = panel.querySelector('#racewaySegmentDirectionSelect');
+  const segmentLengthInput = panel.querySelector('#racewaySegmentLengthInput');
   if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
   if (familySelect && familySelect !== document.activeElement) {
     familySelect.innerHTML = familyOptionsHtml();
@@ -1463,6 +1679,9 @@ function renderPanel() {
     sizeSelect.value = state.sizeId;
   }
   if (serviceSelect && serviceSelect !== document.activeElement) serviceSelect.value = state.serviceClass;
+  if (orthoInput && orthoInput !== document.activeElement) orthoInput.checked = Boolean(state.orthoMode);
+  if (segmentDirectionSelect && segmentDirectionSelect !== document.activeElement) segmentDirectionSelect.value = state.segmentDirection;
+  if (segmentLengthInput && segmentLengthInput !== document.activeElement) segmentLengthInput.value = formatM(state.segmentLengthM);
   if (panel.querySelector('#racewayElevationInput') !== document.activeElement) {
     panel.querySelector('#racewayElevationInput').value = formatM(state.elevationM);
   }
@@ -1474,19 +1693,16 @@ function renderPanel() {
   }
   if (runListEl) runListEl.innerHTML = runRowsHtml();
   if (nodeListEl) nodeListEl.innerHTML = nodeRowsHtml();
-  if (inspectorEl && !inspectorEl.contains(document.activeElement)) inspectorEl.innerHTML = inspectorHtml();
+  if (inspectorEl && (options.forceInspector || !inspectorEl.contains(document.activeElement))) inspectorEl.innerHTML = inspectorHtml();
   updateActionStates(run);
 }
 
-function handlePanelClick(event) {
-  const button = event.target.closest?.('[data-raceway-action]');
-  if (!button) return;
-  if (button.disabled) return;
-  const action = button.dataset.racewayAction;
+function runPanelAction(action, button = null) {
   if (action === 'start') beginRun();
   if (action === 'continue-run') continueRun();
   if (action === 'finish') finishRun();
-  if (action === 'undo') undoNode();
+  if (action === 'undo') undoRacewayEdit();
+  if (action === 'redo') redoRacewayEdit();
   if (action === 'cancel') cancelRun();
   if (action === 'delete-node') deleteSelectedNode();
   if (action === 'anchor-node') attachSelectedModelToNode();
@@ -1494,6 +1710,12 @@ function handlePanelClick(event) {
   if (action === 'save') saveDrafts();
   if (action === 'reload') reloadSavedRaceways();
   if (action === 'delete-run') deleteActiveRun();
+  if (action === 'add-segment') addTypedSegment();
+  if (action === 'toggle-ortho') {
+    state.orthoMode = !state.orthoMode;
+    setStatus(`Ortho drawing assist ${state.orthoMode ? 'on' : 'off'}.`);
+    renderPanel();
+  }
   if (action === 'select-node-mode') {
     activateNodeSelectionMode(activeRun());
     setStatus('Select Node: click a raceway node handle.');
@@ -1508,7 +1730,7 @@ function handlePanelClick(event) {
     }
   }
   if (action === 'select-run') {
-    state.activeRunId = button.dataset.runId || '';
+    state.activeRunId = button?.dataset.runId || '';
     state.selectedNodeIndex = -1;
     syncPaletteFromRun(activeRun());
     activateNodeSelectionMode(activeRun());
@@ -1516,39 +1738,80 @@ function handlePanelClick(event) {
     renderPanel();
   }
   if (action === 'select-node') {
-    state.selectedNodeIndex = Number(button.dataset.nodeIndex);
+    state.selectedNodeIndex = Number(button?.dataset.nodeIndex);
     activateNodeSelectionMode(activeRun());
     renderRaceway();
     renderPanel();
   }
+  return true;
+}
+
+function triggerRacewayAction(action) {
+  ensurePanel();
+  updateActionStates(activeRun());
+  const button = panel?.querySelector(`[data-raceway-action="${action}"]`);
+  if (button?.disabled) {
+    setStatus(button.title || 'Raceway command unavailable.');
+    return false;
+  }
+  return runPanelAction(action, button);
+}
+
+function handlePanelClick(event) {
+  const button = event.target.closest?.('[data-raceway-action]');
+  if (!button) return;
+  if (button.disabled) return;
+  runPanelAction(button.dataset.racewayAction, button);
 }
 
 function handlePanelChange(event) {
   const target = event.target;
+  const run = activeRun();
   if (target.id === 'racewayFamilySelect') {
+    if (run) pushUndo('Change raceway family');
     state.familyId = target.value;
     state.sizeId = activeFamily()?.sizes[0]?.id || '';
     panel.querySelector('#racewaySizeSelect').innerHTML = sizeOptionsHtml();
     applyPaletteToActiveRun();
   }
   if (target.id === 'racewaySizeSelect') {
+    if (run) pushUndo('Change raceway size');
     state.sizeId = target.value;
     applyPaletteToActiveRun();
   }
   if (target.id === 'racewayServiceSelect') {
+    if (run) pushUndo('Change raceway service');
     state.serviceClass = target.value;
     applyPaletteToActiveRun();
   }
   if (target.id === 'racewayElevationInput') {
+    if (run) pushUndo('Change raceway elevation');
     state.elevationM = Number(target.value) || 0;
     state.elevationInitialized = true;
     applyPaletteToActiveRun({ shiftElevation: true });
+  }
+  if (target.id === 'racewayOrthoInput') {
+    state.orthoMode = Boolean(target.checked);
+    setStatus(`Ortho drawing assist ${state.orthoMode ? 'on' : 'off'}.`);
+  }
+  if (target.id === 'racewaySegmentDirectionSelect') {
+    state.segmentDirection = target.value;
+  }
+  if (target.id === 'racewaySegmentLengthInput') {
+    const length = Number(target.value);
+    if (Number.isFinite(length) && length > 0) state.segmentLengthM = length;
   }
   renderRaceway();
   renderPanel();
 }
 
 function handlePanelInput(event) {
+  if (event.target.id === 'racewaySegmentLengthInput') {
+    const length = Number(event.target.value);
+    if (Number.isFinite(length) && length > 0) state.segmentLengthM = length;
+    renderPanel();
+    return;
+  }
   const axis = event.target.dataset?.racewayNodeAxis;
   if (!axis) return;
   const node = selectedNode();
@@ -1556,6 +1819,10 @@ function handlePanelInput(event) {
   const value = Number(event.target.value);
   if (!Number.isFinite(value)) return;
   const run = activeRun();
+  if (run && event.target.dataset.racewayHistoryArmed !== '1') {
+    pushUndo('Edit node coordinate');
+    event.target.dataset.racewayHistoryArmed = '1';
+  }
   node[axis] = value;
   if (axis === 'z') {
     if (run) run.elevationM = value;
@@ -1567,10 +1834,80 @@ function handlePanelInput(event) {
   renderPanel();
 }
 
+function handlePanelFocusOut(event) {
+  if (event.target.dataset?.racewayNodeAxis) {
+    delete event.target.dataset.racewayHistoryArmed;
+  }
+}
+
+function isTypingTarget(target) {
+  return Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
+}
+
+function racewayShortcutContextActive(key, options = {}) {
+  if (!panel?.open) return false;
+  if (panel.contains(document.activeElement)) return true;
+  if (state.mode !== 'idle') return true;
+  return Boolean(options.allowIdleStart && key === 's');
+}
+
+function handleRacewayKeyboardShortcut(event) {
+  if (event.defaultPrevented) return;
+  const key = String(event.key || '').toLowerCase();
+  const ctrlLike = event.ctrlKey || event.metaKey;
+  const typingOutsideRaceway = isTypingTarget(event.target) && !panel?.contains(event.target);
+  if (ctrlLike && !event.altKey && key === 'z') {
+    if (typingOutsideRaceway) return;
+    if (!racewayShortcutContextActive(key)) return;
+    event.preventDefault();
+    triggerRacewayAction(event.shiftKey ? 'redo' : 'undo');
+    return;
+  }
+  if (ctrlLike && !event.altKey && key === 'y') {
+    if (typingOutsideRaceway) return;
+    if (!racewayShortcutContextActive(key)) return;
+    event.preventDefault();
+    triggerRacewayAction('redo');
+    return;
+  }
+  if (ctrlLike && !event.altKey && key === 's') {
+    if (typingOutsideRaceway) return;
+    if (!racewayShortcutContextActive(key)) return;
+    event.preventDefault();
+    triggerRacewayAction('save');
+    return;
+  }
+  if (!ctrlLike && !event.altKey && key === 'enter' && panel?.contains(event.target)) {
+    if (event.target.closest?.('#racewaySegmentLengthInput, #racewaySegmentDirectionSelect')) {
+      event.preventDefault();
+      triggerRacewayAction('add-segment');
+      return;
+    }
+  }
+  if (isTypingTarget(event.target)) return;
+  if (ctrlLike || event.altKey) return;
+  if (!racewayShortcutContextActive(key, { allowIdleStart: true })) return;
+  let action = '';
+  if (key === 'escape') action = 'cancel';
+  if (key === 'delete' || key === 'backspace') action = event.shiftKey ? 'delete-run' : 'delete-node';
+  if (key === 's' && !event.shiftKey) action = 'start';
+  if (key === 'c' && !event.shiftKey) action = 'continue-run';
+  if (key === 'f' && !event.shiftKey) action = 'finish';
+  if (key === 'n' && !event.shiftKey) action = 'select-node-mode';
+  if (key === 'm' && !event.shiftKey) action = 'move-node';
+  if (key === 'o' && !event.shiftKey) action = 'toggle-ortho';
+  if (key === 'a') action = event.shiftKey ? 'clear-anchor' : 'anchor-node';
+  if (key === 'r' && !event.shiftKey) action = 'reload';
+  if (!action) return;
+  event.preventDefault();
+  triggerRacewayAction(action);
+}
+
 window.addEventListener('plant3dviewer:layers-ready', scheduleBootstrap);
 window.addEventListener('plant3dviewer:runtime-ready', scheduleBootstrap);
 window.addEventListener('plant3dviewer:package-loaded', schedulePersistenceBootstrap);
 window.addEventListener('DOMContentLoaded', scheduleBootstrap);
+document.addEventListener('keydown', handleRacewayKeyboardShortcut);
 window.setTimeout(scheduleBootstrap, 0);
 
 window.racewayViewerOverlay = {
@@ -1583,6 +1920,7 @@ window.racewayViewerOverlay = {
       : [];
     state.activeRunId = state.runs[0]?.id || '';
     state.selectedNodeIndex = -1;
+    clearHistory();
     deactivateCanvasMode();
     renderRaceway();
     renderPanel();
