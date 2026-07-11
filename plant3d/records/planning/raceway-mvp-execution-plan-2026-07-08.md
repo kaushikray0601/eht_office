@@ -407,6 +407,87 @@ USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1
 git diff --check
 ```
 
+## Stage 8A - Raceway Network Junction Semantics
+
+Goal: move from isolated saved polylines toward a routable raceway network
+without prematurely building cable autorouting.
+
+Reason for inserting this stage:
+
+- Manual Raceway authoring is now usable enough for real user feedback.
+- The next strategic step is not "smarter AI" yet; it is clean graph intent.
+- Cable assignment, fill checking, pull cards, route search, and future AI
+  suggestions all need a network made of runs, segments, endpoints, junctions,
+  bends, and risers.
+- BOQ v0 remains valuable, but a graph projection/junction vocabulary before
+  BOQ makes the quantities traceable to future routing semantics.
+
+Stage 8A constants and semantic policy:
+
+- Initial coincident-node tolerance is **10 mm source-frame distance**
+  (`GRAPH_NODE_TOLERANCE_M = 0.01`). Any future change must be explicit and
+  test-backed; silent tolerance changes become hidden design authority.
+- Initial near-miss endpoint advisory radius is **250 mm source-frame distance**
+  (`NEAR_MISS_ENDPOINT_RADIUS_M = 0.25`). This radius governs warnings only;
+  it does not create graph connectivity.
+- Graph node/edge presentation keys (`N001`, `E001`) are deterministic within a
+  projection but not durable identity. Anything persisted or used for
+  cross-feature traceability must reference stable `run_key` / `node_key`
+  UUIDs.
+- Graph kind is derived from geometry first:
+  - endpoint from first/last node positions,
+  - riser from adjacent elevation deltas,
+  - bend from plan-direction change,
+  - branch/junction from graph degree and shared nodes.
+- Persisted `RacewayNode.node_kind` remains a display/input hint until the
+  graph policy is mature; it must not be trusted as authoritative fitting or
+  routing semantics.
+- Crossings are not connections. Same-elevation segment crossings without a
+  graph node become warnings until the user explicitly connects them.
+- Endpoints that are visually close to another run but not coincident become
+  near-miss warnings; they are not silently connected.
+
+Tasks:
+
+- Define a minimal graph projection over saved `RacewayRun` and `RacewayNode`
+  data:
+  - graph node identity,
+  - run segment identity,
+  - endpoint/bend/riser/branch semantics,
+  - coincident-node tolerance,
+  - anchored-node handling,
+  - warnings for crossings that are not connected.
+- Add authoring support for a first junction workflow:
+  - snap/attach a run endpoint to an existing run node,
+  - distinguish "touching/crossing" from "connected",
+  - keep user acceptance explicit.
+- Keep any schema addition narrow:
+  - do not replace ordered centerline nodes as truth,
+  - do not introduce cable assignment yet,
+  - do not hard-code routing/pathfinding costs yet.
+- Add tests proving graph projection is deterministic and project-scoped.
+- Add viewer feedback for candidate/confirmed junctions if it can be done
+  without destabilizing current drawing.
+- Add near-miss endpoint warnings for likely accidental disconnects.
+
+Acceptance:
+
+- The system can derive a simple raceway graph from authored runs.
+- A user can intentionally create at least one connected branch/junction.
+- Unconnected crossings are visible as warnings, not silently treated as tees.
+- Existing draw/save/reload behavior remains intact.
+
+Verification:
+
+```bash
+venv/bin/python manage.py check
+venv/bin/python manage.py makemigrations raceway --check --dry-run
+USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1
+USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1
+USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1
+git diff --check
+```
+
 ## Stage 9 - Derived Parts And BOQ v0
 
 Goal: convert route intent into first useful engineering quantities.
@@ -417,14 +498,24 @@ Tasks:
 - Count bend nodes.
 - Compute total length by family/size/service.
 - Add placeholder fitting count by bend angle category.
-- Add placeholder support count using simple max-span rule from size data.
-- Add JSON/HTML/CSV schedule endpoint.
+- Add placeholder support count using an explicit simple span assumption.
+- Add standard-length piece estimates and offcut estimate from
+  `RacewayFamily.standard_length_mm`.
+- Add generation context (`generated_at`, project, layer, source/render package)
+  into the schedule payload.
+- Add graph-warning summary counts so BOQ/schedule consumers can see network
+  quality without fetching the full graph endpoint.
+- Add schedule JSON endpoint first.
+- Add compact viewer schedule summary and server-side CSV output from the same
+  canonical schedule payload.
 
 Acceptance:
 
 - A user can get a simple raceway schedule from saved runs.
-- Quantity output is traceable back to run ids and segment lengths.
+- Quantity output is traceable back to durable run/node UUID keys and segment
+  lengths.
 - Placeholder assumptions are explicit.
+- CSV and viewer summary do not diverge from the JSON schedule payload.
 
 Verification:
 
@@ -478,6 +569,13 @@ git diff --check
 - Drum/cut optimization.
 - Drafting-grade DXF/fabrication drawings.
 - Multi-user live collaboration.
+- Solid 3-plane tray/ladder proxy visual pass using one merged geometry per
+  run.
+- Project/admin-level connection tolerance and near-miss warning settings when
+  project variation demands it.
+- `suggestion_event` telemetry schema design note before first suggestion-like
+  feature.
+- AI gateway decision record before the first Tier-1 read-only AI feature.
 
 ## Verification Baseline
 

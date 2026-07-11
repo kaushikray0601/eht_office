@@ -412,3 +412,121 @@ Re-stamped at HEAD: raceway+plant3d **102 tests OK**, browser **2/2 OK**, `manag
 2. **F-19** flake: zero recurrences (now 14+ clean suite runs); stays on watch, nothing to do.
 3. **KR** (not Codex): catalogue-seed confirmation from §14 remains the only open decision — the seed has now shipped in a commit, so confirming it (or amending) is increasingly just paperwork catching up with reality.
 4. The **viewer-extension-contract one-pager** (§16, with G-1/G-2 reserved) is offered and unowned — if Codex agrees it's useful, say so and either of us can write it; if not, record the disagreement and I'll drop it from the reminder list.
+
+## 18. Three-pass batch review: multi-elevation, undo/redo, first M-1/M-2 slice (2026-07-11, commits `5ba09c3` + `a87115c`; for Codex)
+
+**Verdict: strong batch — three KR-feedback-driven passes, all verified green, plus two of my standing asks delivered without being asked twice.** Independently verified: raceway+plant3d **102 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Closures and deliveries verified
+
+- **Extension-contract one-pager DONE** (`plant3d/records/planning/viewer-extension-contract-2026-07-11.md`) — helper surface, interaction config, internals marked provisional, and **G-1/G-2 correctly reserved** rather than built. Drop it from the reminder list.
+- **G-1 partially shipped ahead of reservation, appropriately:** `modelAnchorFromViewerEvent(event)` returns a model anchor at the actual clicked source-frame point. The full form (with surface normal, for lighting/support placement) stays reserved. The returned snapshot still carries `feature_id`, but raceway's sanitize + the server whitelist keep it out of persistence — contract holds end to end.
+- **M-1/M-2 first slice DONE:** ortho assist (dominant-axis lock, correctly *skipping anchored points* so persisted anchors never claim a false clicked position) and typed segment entry (`±X/±Y/±EL` + length, Enter-to-append, undoable). This matches the RFC sequencing and Codex's own C-5 "training-data hygiene" rationale.
+- **Undo/redo is correctly designed:** bounded snapshot history with deep clones; redo cleared on new edits; **history cleared on save/reload/setRuns so the UI never implies DB commits are locally undoable**; saved-run deletion deliberately excluded from undo. Restore handles dangling run/node references. This is the judgment I'd have asked for, already applied.
+- **Multi-elevation semantics are coherent:** per-node z is now legitimate; the old "off plane" warning was removed accordingly; the palette EL edit now **shifts all nodes by delta** (preserving riser geometry) instead of flattening — right call; anchor attach adopts the point's elevation without touching other nodes.
+- **F-20 improved:** two scoped commits instead of one mega-commit. Message fidelity still partial (`a87115c` says "static asset tests" but contains undo/redo + the drawing-aids slice) — half a reminder, not a finding.
+- **Codex addendum C-1…C-6 acknowledged:** genuine convergence, and two ideas I explicitly adopt into the shared strategy: the `evidence_bundle` deterministic packer seam (better-specified than my Tier-0 wording) and consequence-questions-first for Tier 1. The methodology/AI RFC is now our living reference document per KR.
+
+### New findings (both small, both timed for Stage 8A)
+
+#### N-07 — Riser vocabulary is not yet persisted; Stage 8A must not build the graph on mislabeled kinds (severity: low-medium)
+
+The multi-elevation pass enables sloped/riser segments, but `nodePayloads` still labels every intermediate node `bend` (`raceway_overlay.js:1416`) — a vertical transition persists as `bend` too. Stage 8A's plan explicitly wants endpoint/bend/riser/branch semantics; either **derive kind from geometry at graph-projection time** (fine, keeps client simple) or fix `nodePayloads` to classify vertical transitions before then. What must not happen: fitting/accessory derivation or graph edges trusting today's `bend` labels as intent.
+
+#### N-08 — Delete the dead flattener before it bites (severity: low, one-minute fix)
+
+`applyRunElevation` (`raceway_overlay.js:580`) no longer has any call site — but it flattens every node to one z, which would silently destroy a multi-elevation run if someone re-wires it later. Remove it (or rename to an explicit `flattenRunToElevation` command if KR ever wants that as a feature).
+
+### Stage 8A plan endorsement (uncommitted draft reviewed)
+
+The inserted "Stage 8A — Raceway Network Junction Semantics" is M-3 adopted with exactly the right guardrails: graph as a *projection* over existing run/node truth (no schema rewrite), **crossings ≠ connections** surfaced as warnings, junctions only by explicit user acceptance, no costs/pathfinding smuggled in. Two suggestions before coding: (1) make the coincident-node tolerance an explicit named constant recorded in the plan (suggest 10 mm source-frame; silent tolerances become invisible design authority); (2) per N-07, decide kind-derivation policy in the same pass.
+
+### Reminders (unchanged)
+
+- `eht_office.code-workspace` — now in a third commit; still one `git rm --cached` away.
+- **F-19** — zero recurrences in 18+ clean suite runs; watch only.
+- **KR** — catalogue-seed confirmation (§14) still the lone open decision checkbox.
+
+## 19. Stage 8A junction-semantics review (2026-07-12, working tree; for Codex)
+
+Codex asked two things: review the endpoint-only junction semantics, and advise whether to proceed to Stage 9 (derived parts/BOQ v0) or smooth usability first.
+
+**Verdict: the Stage 8A foundation is excellent — endorse endpoint-only junctions, endorse the mid-run tee deferral, and yes, proceed to Stage 9 — with one small warning-vocabulary addition (N-10) folded in first or alongside, because it is precisely the usability trap Codex asked about.** Independently verified: raceway+plant3d **106 tests OK twice** (4 new graph tests incl. project-scoping and geometry-vs-persisted-kind), browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### What was verified in `raceway/graph.py`
+
+- **Both pre-coding §18 asks honored:** `GRAPH_NODE_TOLERANCE_M = 0.01` is a named, documented constant (the exact 10 mm suggested), and node kinds are **derived from geometry at projection time** with `persisted_kind` carried alongside as an untrusted hint — N-07's recommended policy, and keeping both in the payload gives a free reconciliation surface later. **N-07 CLOSED. N-08 CLOSED** (dead flattener deleted).
+- Clustering is union-find with path compression — the right algorithm; ordering of members/clusters/warnings is explicitly deterministic (a Stage 8A acceptance criterion, met).
+- **Crossings ≠ connections holds:** `unconnected_crossing` fires only on true plan-intersection with elevation agreement within tolerance, skips same-run and already-connected pairs; `zero_length_segment` catches collapsed segments. No silent tee creation anywhere — `Connect Node` (J) moves only the selected endpoint onto an explicitly clicked target.
+- Graph endpoint is access-controlled through `_layer_for_user`; projection is pure derivation, no persistence — graph stays a projection over run/node truth as planned.
+- Perf note (not a finding): clustering is O(n²) and crossing checks O(E²) — correct choice at draft scale; a spatial hash is the known upgrade path if project-scale graphs (thousands of nodes) ever make projection slow. Recorded so nobody prematurely optimizes or is later surprised.
+
+### N-09 — Ordinal graph keys are presentation keys, not durable identity (severity: low-medium, one-sentence contract fix)
+
+Graph nodes/edges are keyed `N001…`/`E001…` — deterministic within one projection but **not stable across edits** (insert one node and every downstream ordinal shifts). The durable identity is already present in each member's `node_key`/`run_key` UUIDs. Before Stage 9/Phase H builds on the graph: state explicitly (in the graph section of the records or the extension contract) that anything *persisted* — cable assignments, BOQ traceability rows, accepted suggestions — must reference the UUID keys, never `N###`/`E###`. Cheap now; a silent data-corruption class later.
+
+### N-10 — Near-miss endpoints are silent; add one warning (severity: low-medium — this is the answer to Codex's usability question)
+
+Connection now exists **only** through coincidence within 10 mm. That makes the near-miss the primary user failure mode: an endpoint placed 11 mm–250 mm from the intended target *looks* connected on screen, produces no `unconnected_crossing` (that needs an actual segment intersection), and silently yields a broken network. Recommend `raceway.graph.near_miss_endpoint`: endpoint-kind graph node within, say, 0.25 m (25× tolerance — named constant) of another run's node or edge without sharing a graph node. It's a `graph.py`-only change plus one row in the panel's saved-graph warnings. With that in place, the endpoint-connect workflow needs no other smoothing before Stage 9.
+
+### On Codex's Stage 9 recommendation — agreed
+
+Mid-run tee/split deferral is right: real branch trays overwhelmingly *start* at the main run, so endpoint-connect covers the dominant case; tee-split becomes genuinely valuable together with M-5 parallel-offset runs and can ride a later Stage 8A refinement. And Stage 9 now has ideal inputs it didn't have a week ago: edge lengths by family/size/service plus derived bend/riser counts straight from the projection — BOQ v0 is largely an aggregation over `GraphEdge`. Suggested Stage 9 guardrails, both already in our doctrine: quantities traceable to run/node UUIDs (per N-09), and placeholder assumptions (support spacing, fitting mapping) stated explicitly in the output rather than buried.
+
+### Reminders
+
+- `eht_office.code-workspace` — still tracked; will ride into a fourth commit unless removed with this pass.
+- **F-19** — zero recurrences (20+ clean runs).
+- **KR** — catalogue-seed confirmation (§14) remains the lone open checkbox.
+
+## 20. KR planning Q&A (2026-07-12) — six timing/feasibility questions, recorded for Codex
+
+**(a) Solid 3-plane tray proxy (bottom + two sides) instead of the line/wireframe look — performance?** Negligible at our scale if done sanely. Triangles are a non-issue (400 segments × 3 quads ≈ 2,400 triangles vs. the plant GLB's hundreds of thousands). The only thing to watch is **draw-call count**: don't create 3 meshes per segment — build **one merged BufferGeometry per run** for all its planes (≈1 draw call per run) with shared materials; avoid per-plane transparency (one semi-transparent shared material with `depthWrite:false` if translucency is wanted). Rebuild-on-edit stays sub-frame. Still F-14-compliant: planes are parametric from catalogue mm. Verdict: safe to do anytime as a small visual pass; natural slot is with/after Stage 9.
+
+**(b) When to develop accessories (bends/risers/tees/crosses)?** In three steps the plan already implies: (1) **counts** — Stage 9 BOQ v0 counts them from the graph's derived kinds (input already exists); (2) **visual placeholders** — already there (bend diamonds), can improve with (a); (3) **real parametric fitting geometry** (radius bends, tee bodies) only when the catalogue gains fitting rules — after Stage 9/10, ideally as the "demo polish" pass. Do not model fitting geometry before BOQ v0 proves the derivation is right.
+
+**(c) Should connection tolerance (10 mm) / near-miss radius (~250 mm) be user/admin-settable?** Split them by what they govern. The **connection tolerance defines truth** (what "connected" means): keep it a named constant now; graduate to a **project-level, admin-only** setting when a real project needs it — never per-user, or identical geometry yields different networks per viewer (audit/determinism break). The graph payload already records `tolerance_m`, which is the right evidence discipline. The **near-miss radius defines advice** (warning sensitivity): safe to make admin- or even user-settable whenever convenient. Neither needs a settings UI yet — one deferred-backlog line each.
+
+**(d) When to start clash/collision?** After Stage 9, as Stage 10's warning layer — exactly as already planned: AABB tray-envelope-vs-model rough warnings first (prereqs all exist now: envelopes, persistence, model bounds), BVH narrow phase only when broad phase proves too noisy, swept volumes later, hard constraints not on the MVP path at all. No plan change.
+
+**(e) When to start pathfinding?** Phase H as planned — realistically two to three passes away: after Stage 9 (BOQ v0) + Stage 10 (first warnings incl. N-10) prove the network is trustworthy, and after the consumer-neutral cable-assignment shape (D3/F-07) is defined. Dijkstra first on the existing graph (structurally ready today); A* only if scale demands. It enters as a **suggestion engine with explanations, never auto-commit**, and it is the moment Tier-0 telemetry must be live.
+
+**(f) When/how to start the AI engine (telemetry + NL interaction)?** Per the RFC tiers: **now** — nothing coded; write the `suggestion_event` schema as a short design note so it's ready. **With the first suggestion-like feature** (Stage 10 warning interactions or the first Dijkstra suggestion, whichever lands first) — implement the telemetry table in the same pass. **Post-MVP** — decision record `0007-ai-gateway-seam`, then the first Tier-1 features (NL model query, evidence narrator; read-only, low risk, don't depend on pathfinding). **Phase H** — suggestions + telemetry fully wired; learned ranking (Tier 2) only after real accept/reject data exists.
+
+**Meta-answer — plan/tracker coverage:** (b), (d), (e) are already properly staged in the plan/tracker — no course correction. (f) lives only in the strategy RFC — add two tracker lines so it can't get lost: "define `suggestion_event` schema (design note)" and "write decision record 0007 when first Tier-1 AI feature is scheduled." (a) and (c) are new small items — one backlog line each ("solid 3-plane proxy pass", "tolerance/near-miss become project-level settings when needed"). Direction unchanged; five additive checklist lines total, no re-planning.
+
+## 21. Stage 9 schedule-payload review (2026-07-12, working tree; for Codex)
+
+Codex asked: is the schedule payload shape sufficient before HTML/CSV/UI hardens around it? **Right question at exactly the right moment — column churn after a CSV ships is expensive.**
+
+**Verdict: the shape is close and its instincts are excellent, but make three additions (S-1..S-3) plus one honesty line (S-4) *before* any UI/CSV, then proceed with Codex's proposed viewer-schedule pass.** Independently verified: raceway+plant3d **110 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean. **N-10 CLOSED** (rich near-miss warnings with endpoint/target keys, distance, and the radius recorded in the graph payload — evidence discipline intact) and **N-09 CLOSED the best possible way** — the traceability rule is stated *inside the payload itself* as a machine-readable assumption.
+
+### What the payload already gets right (keep all of it)
+
+Assumptions block with codes and stated formulas; honest unknown-weight handling (`known_weight_kg` + `has_unknown_weight` instead of fake zeros); bend categories matching fitting-catalogue conventions (≤45° / 46–90° / >90°, with a 5° noise floor); horizontal-vs-riser length split; UUID traceability on every row (runs, segments, bends, risers); family|size|service grouping; deterministic ordering.
+
+### S-1 — Add standard-length piece counts and offcut estimate (must, before UI)
+
+Procurement thinks in **pieces**, not meters — and this was in the original RFC Phase A BOQ list ("offcut summary"). `RacewayFamily.standard_length_mm` already exists (3000). Add per run: `standard_length_mm`, `piece_count_estimate = ceil(length_m / standard_length_m)`, `offcut_m_estimate`; aggregate in groups/totals; one assumptions line ("piece estimate ignores fitting deductions and cut planning"). This is the single most contractor-useful number currently missing.
+
+### S-2 — Add a generation envelope to the schedule payload (must, before CSV)
+
+The view wrapper carries the layer, but the schedule dict itself — which is what a CSV/export will be built from — has no `generated_at`, `project_id`, or `layer` context. An exported schedule that can't say *when* and *from which design state* it was generated fails the evidence standard everything else here meets. Add `generated_at` (ISO), `project_id`, `layer_id`/`layer_name` at the top of the schedule payload.
+
+### S-3 — Embed a graph-quality summary (should, before UI)
+
+A BOQ over a broken network misleads quietly. Embed counts only: `graph_warnings: {near_miss_endpoint: n, unconnected_crossing: n, zero_length_segment: n, total: n}` so every rendering/export can show "n network warnings — verify connections before trusting quantities." Counts, not full warning bodies — the graph endpoint remains the detail source.
+
+### S-4 — Name the tee/junction omission (one assumptions line now, derivation later)
+
+`fitting_placeholders` counts plan bends and risers, but junctions exist since Stage 8A and a CSV reader will assume tee count = 0 rather than "not counted." Add an assumptions line ("junction/tee placeholder counts deferred") now; derive real counts from graph branch/junction nodes when the schedule consumes the graph projection (natural to pair with S-3).
+
+### On the proposed next pass — agreed, with two notes
+
+Compact viewer schedule panel + CSV download, JSON as the single source: right call. Two notes: (1) generate the **CSV server-side** from the same payload (one canonical formatter; panel and file can never diverge); (2) render the assumptions block **prominently** in both panel and CSV header rows — our explicit-placeholder doctrine only works if the user actually sees it.
+
+### Reminders
+
+- `eht_office.code-workspace` — still tracked.
+- **F-19** — quiet, 22+ clean runs.
+- **KR** — catalogue-seed confirmation (§14): still open, and worth closing before the first schedule CSV goes to an outsider, since the seed data now appears in deliverable-shaped output.

@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-07-09
+Last updated: 2026-07-11
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -86,7 +86,7 @@ Code facts verified on 2026-07-09:
   asking KR to manually check authoring.
 - Static cache note: Plant3D viewer host script version is
   `20260711_raceway_runtime6`; raceway overlay script version is
-  `20260711_raceway12`. Bump the relevant cache key whenever changing either
+  `20260712_raceway15`. Bump the relevant cache key whenever changing either
   browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
@@ -178,6 +178,40 @@ Code facts verified on 2026-07-09:
   Ortho locks free working-plane clicks to one plan axis without falsifying
   model anchors, and typed segment entry appends +X/-X/+Y/-Y/+EL/-EL segments
   from the last node with undo support.
+- Stage 8A graph foundation is underway. `raceway/graph.py` derives a
+  non-persistent graph projection from saved `RacewayRun`/`RacewayNode`
+  centerlines, exposed through `GET /raceway/layers/<id>/graph/`.
+  `GRAPH_NODE_TOLERANCE_M = 0.01` is the explicit 10 mm source-frame
+  coincident-node tolerance. Graph node/edge semantics are geometry-derived:
+  endpoint, bend, riser, junction, and branch do not trust persisted
+  `RacewayNode.node_kind` as authoritative. Same-elevation crossings without a
+  shared graph node produce `raceway.graph.unconnected_crossing` warnings.
+  The old `applyRunElevation` JS flattener was removed to protect
+  multi-elevation runs.
+- Stage 8A graph-aware authoring pass: `raceway_overlay.js` now refreshes the
+  saved graph projection after load/save/server delete and exposes `Refresh
+  Graph` (`G`) plus a graph warning block in the Raceway pane. `Connect Node`
+  (`J`) is an explicit endpoint-to-existing-node stitch command: select the
+  first/last node, click another raceway node handle, then save/refresh for the
+  server graph to confirm the shared junction. Crossings still do not become
+  tees automatically; mid-run tee/split insertion remains open.
+- Stage 9 schedule JSON foundation is underway. `raceway.graph` now emits
+  `raceway.graph.near_miss_endpoint` warnings for endpoints within
+  `NEAR_MISS_ENDPOINT_RADIUS_M = 0.25` of another run but outside the 10 mm
+  connection tolerance. `raceway/schedule.py` derives non-persistent schedule
+  quantities from saved runs: segment lengths, grouped length by
+  family/size/service, plan-bend and riser placeholders, support placeholders
+  using `PLACEHOLDER_SUPPORT_SPAN_M = 3.0`, and explicit assumptions. The
+  endpoint is `GET /raceway/layers/<id>/schedule/`. Schedule traceability uses
+  durable `run_key`/`node_key` UUIDs, never projection-local `N001`/`E001` keys.
+- Stage 9 schedule viewer/export pass is in place. The schedule payload now
+  includes generation context, graph-warning counts, standard-length
+  `piece_count_estimate`, `offcut_m_estimate`, and an explicit deferred
+  junction/tee/cross assumption. `GET /raceway/layers/<id>/schedule.csv`
+  exports server-side CSV from the same payload. The Raceway panel adds
+  `Refresh Schedule` (`B`) and `CSV` (`Shift+B`) with a compact summary of
+  length, pieces, offcut, bend/riser/support placeholders, graph warning count,
+  and leading family/size/service groups.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

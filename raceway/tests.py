@@ -20,6 +20,7 @@ from .access import (
     user_can_access_project,
     validate_project_id,
 )
+from .graph import GRAPH_NODE_TOLERANCE_M, NEAR_MISS_ENDPOINT_RADIUS_M, build_layer_graph, build_project_graph
 from .models import (
     SOURCE_COORDINATE_FRAME,
     RacewayFamily,
@@ -28,6 +29,7 @@ from .models import (
     RacewayRun,
     RacewaySize,
 )
+from .schedule import PLACEHOLDER_SUPPORT_SPAN_M, build_layer_schedule
 
 
 def create_project(proj_id):
@@ -121,6 +123,21 @@ def create_source_and_package(project_id):
         storage_prefix="render/raceway/",
     )
     return source, package
+
+
+def create_nodes(run, points, *, kinds=None):
+    kinds = kinds or []
+    return [
+        RacewayNode.objects.create(
+            run=run,
+            sequence=index,
+            node_kind=kinds[index] if index < len(kinds) else "intermediate",
+            source_x_m=point[0],
+            source_y_m=point[1],
+            source_z_m=point[2],
+        )
+        for index, point in enumerate(points)
+    ]
 
 
 def json_body(payload):
@@ -350,6 +367,187 @@ class RacewayModelTests(TestCase):
         self.assertEqual(offenders, [])
 
 
+class RacewayGraphProjectionTests(TestCase):
+    def test_graph_projection_derives_branch_and_warns_for_unconnected_crossing(self):
+        layer = create_layer(project_id="RWY-GRAPH")
+        family = create_family("GRAPH-LADDER")
+        size = create_size(family=family)
+        trunk = create_run(layer=layer, family=family, size=size)
+        trunk.tag = "RWY-TRUNK"
+        trunk.save()
+        create_nodes(
+            trunk,
+            [(0.0, 0.0, 0.0), (5.0, 0.0, 0.0), (10.0, 0.0, 0.0)],
+            kinds=["endpoint", "bend", "endpoint"],
+        )
+        branch = create_run(layer=layer, family=family, size=size)
+        branch.tag = "RWY-BRANCH"
+        branch.save()
+        create_nodes(branch, [(5.0, 0.0, 0.0), (5.0, 5.0, 0.0)])
+        crossing = create_run(layer=layer, family=family, size=size)
+        crossing.tag = "RWY-CROSS"
+        crossing.save()
+        create_nodes(crossing, [(2.0, -2.0, 0.0), (2.0, 2.0, 0.0)])
+
+        graph = build_layer_graph(layer)
+        payload = graph.to_payload()
+
+        self.assertEqual(payload["tolerance_m"], GRAPH_NODE_TOLERANCE_M)
+        branch_nodes = [node for node in payload["nodes"] if node["derived_kind"] == "branch"]
+        self.assertEqual(len(branch_nodes), 1)
+        self.assertEqual(branch_nodes[0]["degree"], 3)
+        self.assertEqual(set(branch_nodes[0]["run_ids"]), {trunk.pk, branch.pk})
+        warnings = [warning for warning in payload["warnings"] if warning["code"] == "raceway.graph.unconnected_crossing"]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(set(warnings[0]["run_ids"]), {trunk.pk, crossing.pk})
+        self.assertAlmostEqual(warnings[0]["source_point_m"]["x"], 2.0)
+        self.assertAlmostEqual(warnings[0]["source_point_m"]["y"], 0.0)
+
+    def test_graph_projection_derives_riser_from_geometry_not_persisted_kind(self):
+        layer = create_layer(project_id="RWY-RISER")
+        family = create_family("GRAPH-RISER-LADDER")
+        size = create_size(family=family)
+        run = create_run(layer=layer, family=family, size=size)
+        create_nodes(
+            run,
+            [(0.0, 0.0, 0.0), (5.0, 0.0, 0.0), (5.0, 0.0, 2.0), (10.0, 0.0, 2.0)],
+            kinds=["endpoint", "bend", "bend", "endpoint"],
+        )
+
+        graph = build_layer_graph(layer)
+        payload = graph.to_payload()
+
+        riser_edges = [edge for edge in payload["edges"] if edge["is_riser"]]
+        self.assertEqual(len(riser_edges), 1)
+        riser_members = [
+            member
+            for node in payload["nodes"]
+            for member in node["members"]
+            if member["sequence"] in {1, 2}
+        ]
+        self.assertEqual({member["persisted_kind"] for member in riser_members}, {"bend"})
+        self.assertEqual({member["derived_kind"] for member in riser_members}, {"riser"})
+        self.assertIn("riser", {node["derived_kind"] for node in payload["nodes"]})
+
+    def test_project_graph_projection_is_project_scoped(self):
+        family = create_family("GRAPH-SCOPE-LADDER")
+        size = create_size(family=family)
+        included_layer = create_layer(project_id="RWY-GRAPH-IN")
+        excluded_layer = create_layer(project_id="RWY-GRAPH-OUT")
+        included_run = create_run(layer=included_layer, family=family, size=size)
+        excluded_run = create_run(layer=excluded_layer, family=family, size=size)
+        create_nodes(included_run, [(0.0, 0.0, 0.0), (1.0, 0.0, 0.0)])
+        create_nodes(excluded_run, [(10.0, 0.0, 0.0), (11.0, 0.0, 0.0)])
+
+        graph = build_project_graph("RWY-GRAPH-IN")
+        run_ids = {
+            edge["run_id"]
+            for edge in graph.to_payload()["edges"]
+        }
+
+        self.assertEqual(run_ids, {included_run.pk})
+
+    def test_graph_projection_warns_when_endpoint_nearly_misses_another_run(self):
+        layer = create_layer(project_id="RWY-NEAR-MISS")
+        family = create_family("GRAPH-NEAR-LADDER")
+        size = create_size(family=family)
+        trunk = create_run(layer=layer, family=family, size=size)
+        trunk.tag = "RWY-TRUNK"
+        trunk.save()
+        create_nodes(trunk, [(0.0, 0.0, 0.0), (10.0, 0.0, 0.0)])
+        branch = create_run(layer=layer, family=family, size=size)
+        branch.tag = "RWY-BRANCH"
+        branch.save()
+        create_nodes(branch, [(5.0, 0.12, 0.0), (5.0, 3.0, 0.0)])
+
+        payload = build_layer_graph(layer).to_payload()
+        warnings = [warning for warning in payload["warnings"] if warning["code"] == "raceway.graph.near_miss_endpoint"]
+
+        self.assertEqual(payload["near_miss_endpoint_radius_m"], NEAR_MISS_ENDPOINT_RADIUS_M)
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["endpoint_run_id"], branch.pk)
+        self.assertEqual(warnings[0]["target_run_id"], trunk.pk)
+        self.assertEqual(warnings[0]["target_kind"], "edge")
+        self.assertAlmostEqual(warnings[0]["distance_m"], 0.12)
+        self.assertLess(GRAPH_NODE_TOLERANCE_M, warnings[0]["distance_m"])
+        self.assertLess(warnings[0]["distance_m"], NEAR_MISS_ENDPOINT_RADIUS_M)
+
+
+class RacewayScheduleProjectionTests(TestCase):
+    def test_layer_schedule_splits_segments_and_counts_placeholders(self):
+        layer = create_layer(project_id="RWY-SCHEDULE")
+        family = create_family("SCHED-LADDER")
+        size = create_size(family=family, width_mm=450, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        run.tag = "RWY-SCHED-1"
+        run.save()
+        create_nodes(run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 4.0, 0.0), (3.0, 4.0, 2.0)])
+
+        schedule = build_layer_schedule(layer)
+
+        self.assertEqual(len(schedule["segments"]), 3)
+        self.assertAlmostEqual(schedule["totals"]["length_m"], 9.0)
+        self.assertAlmostEqual(schedule["totals"]["horizontal_length_m"], 7.0)
+        self.assertAlmostEqual(schedule["totals"]["riser_length_m"], 2.0)
+        self.assertEqual(schedule["totals"]["support_placeholders"], 4)
+        self.assertEqual(schedule["totals"]["piece_count_estimate"], 3)
+        self.assertAlmostEqual(schedule["totals"]["offcut_m_estimate"], 0.0)
+        self.assertEqual(schedule["totals"]["plan_bend_count"], 1)
+        self.assertEqual(schedule["totals"]["riser_count"], 1)
+        self.assertEqual(schedule["fitting_placeholders"]["counts"]["plan_bends"], {"plan_bend_46_90": 1})
+        self.assertEqual(schedule["fitting_placeholders"]["counts"]["risers"], {"riser_up": 1})
+        run_summary = schedule["runs"][0]
+        self.assertEqual(run_summary["run_key"], str(run.key))
+        self.assertEqual(run_summary["family_code"], "SCHED-LADDER")
+        self.assertEqual(run_summary["size_label"], "450 x 100 mm")
+        self.assertEqual(run_summary["standard_length_mm"], 3000)
+        self.assertEqual(run_summary["piece_count_estimate"], 3)
+        self.assertAlmostEqual(run_summary["offcut_m_estimate"], 0.0)
+        self.assertEqual(run_summary["support_span_m"], PLACEHOLDER_SUPPORT_SPAN_M)
+        self.assertEqual(run_summary["support_placeholders"], 4)
+        bend = schedule["fitting_placeholders"]["plan_bends"][0]
+        self.assertEqual(bend["node_key"], str(run.nodes.order_by("sequence")[1].key))
+        self.assertEqual(bend["category"], "plan_bend_46_90")
+        self.assertAlmostEqual(bend["angle_deg"], 90.0)
+        assumption_codes = {assumption["code"] for assumption in schedule["assumptions"]}
+        self.assertIn("raceway.schedule.traceability", assumption_codes)
+        self.assertIn("raceway.schedule.support_placeholder", assumption_codes)
+        self.assertIn("raceway.schedule.standard_length_piece_estimate", assumption_codes)
+        self.assertIn("raceway.schedule.junction_placeholder_deferred", assumption_codes)
+        self.assertEqual(schedule["project_id"], "RWY-SCHEDULE")
+        self.assertEqual(schedule["layer_id"], layer.pk)
+        self.assertTrue(schedule["generated_at"])
+        self.assertEqual(schedule["graph_warnings"]["total"], 0)
+
+    def test_layer_schedule_groups_by_family_size_and_service(self):
+        layer = create_layer(project_id="RWY-SCHEDULE-GROUP")
+        family = create_family("SCHED-GROUP-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        power_run = create_run(layer=layer, family=family, size=size)
+        power_run.tag = "RWY-PWR"
+        power_run.service_class = "power"
+        power_run.save()
+        control_run = create_run(layer=layer, family=family, size=size)
+        control_run.tag = "RWY-CTL"
+        control_run.service_class = "control"
+        control_run.save()
+        create_nodes(power_run, [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0)])
+        create_nodes(control_run, [(0.0, 1.0, 0.0), (2.0, 1.0, 0.0)])
+
+        schedule = build_layer_schedule(layer)
+        groups = {group["service_class"]: group for group in schedule["groups"]}
+
+        self.assertEqual(set(groups), {"power", "control"})
+        self.assertAlmostEqual(groups["power"]["length_m"], 4.0)
+        self.assertAlmostEqual(groups["control"]["length_m"], 2.0)
+        self.assertEqual(groups["power"]["support_placeholders"], 3)
+        self.assertEqual(groups["control"]["support_placeholders"], 2)
+        self.assertEqual(groups["power"]["piece_count_estimate"], 2)
+        self.assertAlmostEqual(groups["power"]["offcut_m_estimate"], 2.0)
+        self.assertEqual(groups["control"]["piece_count_estimate"], 1)
+        self.assertAlmostEqual(groups["control"]["offcut_m_estimate"], 1.0)
+
+
 class RacewayApiTests(TestCase):
     def setUp(self):
         self.user = get_user_model().objects.create_user(username="raceway-api-user", password="pw")
@@ -414,6 +612,71 @@ class RacewayApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("source_model_id", response.json()["errors"])
+
+    def test_layer_graph_endpoint_returns_project_scoped_projection(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        create_nodes(run, [(0.0, 0.0, 0.0), (5.0, 0.0, 0.0), (5.0, 3.0, 0.0)])
+
+        response = self.client.get(reverse("raceway:layer_graph", args=[layer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["layer"]["project_id"], self.project.proj_id)
+        self.assertEqual(payload["graph"]["tolerance_m"], GRAPH_NODE_TOLERANCE_M)
+        self.assertEqual(len(payload["graph"]["edges"]), 2)
+        self.assertIn("bend", {node["derived_kind"] for node in payload["graph"]["nodes"]})
+
+        other_user = get_user_model().objects.create_user(username="raceway-graph-blocked", password="pw")
+        self.client.force_login(other_user)
+        blocked_response = self.client.get(reverse("raceway:layer_graph", args=[layer.pk]))
+
+        self.assertEqual(blocked_response.status_code, 403)
+
+    def test_layer_schedule_endpoint_returns_project_scoped_quantities(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.tag = "RWY-API-SCHED"
+        run.save()
+        create_nodes(run, [(0.0, 0.0, 0.0), (6.0, 0.0, 0.0), (6.0, 2.0, 0.0)])
+
+        response = self.client.get(reverse("raceway:layer_schedule", args=[layer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["layer"]["project_id"], self.project.proj_id)
+        self.assertAlmostEqual(payload["schedule"]["totals"]["length_m"], 8.0)
+        self.assertEqual(payload["schedule"]["totals"]["plan_bend_count"], 1)
+        self.assertEqual(payload["schedule"]["totals"]["piece_count_estimate"], 3)
+        self.assertAlmostEqual(payload["schedule"]["totals"]["offcut_m_estimate"], 1.0)
+        self.assertEqual(payload["schedule"]["groups"][0]["family_code"], "API-LADDER")
+        self.assertEqual(payload["schedule"]["project_id"], self.project.proj_id)
+        self.assertIn("raceway.schedule.support_placeholder", {item["code"] for item in payload["schedule"]["assumptions"]})
+
+        other_user = get_user_model().objects.create_user(username="raceway-schedule-blocked", password="pw")
+        self.client.force_login(other_user)
+        blocked_response = self.client.get(reverse("raceway:layer_schedule", args=[layer.pk]))
+
+        self.assertEqual(blocked_response.status_code, 403)
+
+    def test_layer_schedule_csv_endpoint_uses_same_schedule_payload_shape(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.tag = "RWY-CSV"
+        run.save()
+        create_nodes(run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 3.0, 0.0)])
+
+        response = self.client.get(reverse("raceway:layer_schedule_csv", args=[layer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "text/csv")
+        self.assertIn("raceway-layer-", response["Content-Disposition"])
+        csv_text = response.content.decode("utf-8")
+        self.assertIn("Raceway Schedule", csv_text)
+        self.assertIn("Assumptions", csv_text)
+        self.assertIn("Grouped Quantities", csv_text)
+        self.assertIn("RWY-CSV", csv_text)
+        self.assertIn("Piece Estimate", csv_text)
 
     def test_run_create_update_delete_and_node_replace_workflow(self):
         layer = create_layer(project_id=self.project.proj_id)
@@ -641,10 +904,17 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function reloadSavedRaceways", content)
         self.assertIn("function saveDrafts", content)
         self.assertIn("function deleteActiveRun", content)
+        self.assertIn("function loadGraphProjection", content)
+        self.assertIn("function graphWarningsHtml", content)
+        self.assertIn("function loadScheduleProjection", content)
+        self.assertIn("function scheduleSummaryHtml", content)
+        self.assertIn("function openScheduleCsv", content)
         self.assertIn("function sanitizeAnchorForPersistence", content)
         self.assertIn("function attachSelectedModelToNode", content)
         self.assertIn("function clearSelectedNodeAnchor", content)
         self.assertIn("function selectRacewayNodeFromEvent", content)
+        self.assertIn("function connectSelectedNodeFromEvent", content)
+        self.assertIn("function beginConnectNode", content)
         self.assertIn("function continueRun", content)
         self.assertIn("function undoRacewayEdit", content)
         self.assertIn("function redoRacewayEdit", content)
@@ -658,11 +928,17 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("data-raceway-action=\"redo\"", content)
         self.assertIn("data-raceway-action=\"add-segment\"", content)
         self.assertIn("data-raceway-action=\"select-node-mode\"", content)
+        self.assertIn("data-raceway-action=\"connect-node\"", content)
         self.assertIn("data-raceway-action=\"anchor-node\"", content)
         self.assertIn("data-raceway-action=\"clear-anchor\"", content)
         self.assertIn("data-raceway-action=\"save\"", content)
         self.assertIn("data-raceway-action=\"reload\"", content)
+        self.assertIn("data-raceway-action=\"refresh-graph\"", content)
+        self.assertIn("data-raceway-action=\"refresh-schedule\"", content)
+        self.assertIn("data-raceway-action=\"open-schedule-csv\"", content)
         self.assertIn("data-raceway-action=\"delete-run\"", content)
+        self.assertIn("racewayGraphWarnings", content)
+        self.assertIn("racewayScheduleSummary", content)
         self.assertIn("registerInteraction", content)
         self.assertIn("function beginRun", content)
         self.assertIn("function finishRun", content)
@@ -672,12 +948,16 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("document.addEventListener('keydown', handleRacewayKeyboardShortcut)", content)
         self.assertIn("Ctrl+Z", content)
         self.assertIn("Ctrl+Shift+Z", content)
+        self.assertIn("Connect Node", content)
+        self.assertIn("Refresh Graph", content)
+        self.assertIn("Refresh Schedule", content)
         self.assertIn("toggle-ortho", content)
         self.assertIn("Ortho drawing assist", content)
         self.assertIn("pointOnSourceElevationFromViewerEvent", content)
         self.assertIn("function renderTrayPreview", content)
         self.assertIn("function addSegmentPreview", content)
         self.assertIn("function addBendPlaceholder", content)
+        self.assertNotIn("function applyRunElevation", content)
         self.assertIn("'side-rail'", content)
         self.assertIn("'rung'", content)
         self.assertIn("'node-hit-target'", content)

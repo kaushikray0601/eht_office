@@ -1,9 +1,10 @@
+import csv
 import json
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Prefetch
-from django.http import JsonResponse
+from django.http import HttpResponse, JsonResponse
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
@@ -11,7 +12,9 @@ from plant3d.access import render_packages_for_user, source_models_for_user
 from plant3d.overlay import validate_overlay_anchor
 
 from .access import require_project_access
+from .graph import build_layer_graph
 from .models import RacewayFamily, RacewayLayer, RacewayNode, RacewayRun, RacewaySize
+from .schedule import build_layer_schedule
 
 
 def raceway_home_view(request):
@@ -387,6 +390,153 @@ def layer_detail_view(request, layer_id):
     except ValidationError as exc:
         return _error_response("Invalid raceway layer payload.", errors=_validation_payload(exc))
     return JsonResponse({"layer": _layer_payload(layer)})
+
+
+@require_http_methods(["GET"])
+def layer_graph_view(request, layer_id):
+    layer = _layer_for_user(request.user, layer_id)
+    if layer is None:
+        return _error_response("Raceway layer was not found.", status=404)
+    return JsonResponse({"layer": _layer_payload(layer), "graph": build_layer_graph(layer).to_payload()})
+
+
+@require_http_methods(["GET"])
+def layer_schedule_view(request, layer_id):
+    layer = _layer_for_user(request.user, layer_id)
+    if layer is None:
+        return _error_response("Raceway layer was not found.", status=404)
+    return JsonResponse({"layer": _layer_payload(layer), "schedule": build_layer_schedule(layer)})
+
+
+@require_http_methods(["GET"])
+def layer_schedule_csv_view(request, layer_id):
+    layer = _layer_for_user(request.user, layer_id)
+    if layer is None:
+        return _error_response("Raceway layer was not found.", status=404)
+    schedule = build_layer_schedule(layer)
+    response = HttpResponse(content_type="text/csv")
+    response["Content-Disposition"] = f'attachment; filename="raceway-layer-{layer.pk}-schedule.csv"'
+    _write_schedule_csv(response, layer, schedule)
+    return response
+
+
+def _write_schedule_csv(response, layer, schedule):
+    writer = csv.writer(response)
+    writer.writerow(["Raceway Schedule"])
+    writer.writerow(["Project", schedule.get("project_id", layer.project_id)])
+    writer.writerow(["Layer ID", schedule.get("layer_id", layer.pk)])
+    writer.writerow(["Layer Name", schedule.get("layer_name", layer.name)])
+    writer.writerow(["Generated At", schedule.get("generated_at", "")])
+    writer.writerow(["Graph Warning Total", schedule.get("graph_warnings", {}).get("total", 0)])
+    writer.writerow([])
+    writer.writerow(["Assumptions"])
+    writer.writerow(["Code", "Message"])
+    for assumption in schedule.get("assumptions", []):
+        writer.writerow([assumption.get("code", ""), assumption.get("message", "")])
+    writer.writerow([])
+    writer.writerow(["Grouped Quantities"])
+    writer.writerow([
+        "Family",
+        "Size",
+        "Service",
+        "Runs",
+        "Segments",
+        "Length m",
+        "Horizontal m",
+        "Riser m",
+        "Plan Bends",
+        "Risers",
+        "Support Placeholders",
+        "Standard Length mm",
+        "Piece Estimate",
+        "Offcut Estimate m",
+        "Known Weight kg",
+        "Has Unknown Weight",
+    ])
+    for group in schedule.get("groups", []):
+        writer.writerow([
+            group.get("family_code", ""),
+            group.get("size_label", ""),
+            group.get("service_class", ""),
+            group.get("run_count", 0),
+            group.get("segment_count", 0),
+            _csv_number(group.get("length_m")),
+            _csv_number(group.get("horizontal_length_m")),
+            _csv_number(group.get("riser_length_m")),
+            group.get("plan_bend_count", 0),
+            group.get("riser_count", 0),
+            group.get("support_placeholders", 0),
+            group.get("standard_length_mm", ""),
+            group.get("piece_count_estimate", 0),
+            _csv_number(group.get("offcut_m_estimate")),
+            _csv_number(group.get("known_weight_kg")),
+            "yes" if group.get("has_unknown_weight") else "no",
+        ])
+    writer.writerow([])
+    writer.writerow(["Runs"])
+    writer.writerow([
+        "Run Tag",
+        "Run Key",
+        "Family",
+        "Size",
+        "Service",
+        "Nodes",
+        "Segments",
+        "Length m",
+        "Plan Bends",
+        "Risers",
+        "Support Placeholders",
+        "Piece Estimate",
+        "Offcut Estimate m",
+    ])
+    for run in schedule.get("runs", []):
+        writer.writerow([
+            run.get("run_tag", ""),
+            run.get("run_key", ""),
+            run.get("family_code", ""),
+            run.get("size_label", ""),
+            run.get("service_class", ""),
+            run.get("node_count", 0),
+            run.get("segment_count", 0),
+            _csv_number(run.get("length_m")),
+            run.get("plan_bend_count", 0),
+            run.get("riser_count", 0),
+            run.get("support_placeholders", 0),
+            run.get("piece_count_estimate", 0),
+            _csv_number(run.get("offcut_m_estimate")),
+        ])
+    writer.writerow([])
+    writer.writerow(["Segments"])
+    writer.writerow([
+        "Run Tag",
+        "Segment",
+        "Start Node Key",
+        "End Node Key",
+        "Length m",
+        "Horizontal m",
+        "dZ m",
+        "Is Riser",
+    ])
+    for segment in schedule.get("segments", []):
+        writer.writerow([
+            segment.get("run_tag", ""),
+            segment.get("segment_index", ""),
+            segment.get("start_node_key", ""),
+            segment.get("end_node_key", ""),
+            _csv_number(segment.get("length_m")),
+            _csv_number(segment.get("horizontal_length_m")),
+            _csv_number(segment.get("dz_m")),
+            "yes" if segment.get("is_riser") else "no",
+        ])
+
+
+def _csv_number(value):
+    if value is None:
+        return ""
+    try:
+        return f"{float(value):.3f}"
+    except (TypeError, ValueError):
+        return value
 
 
 @require_http_methods(["GET", "POST"])

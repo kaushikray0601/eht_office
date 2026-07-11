@@ -269,23 +269,47 @@ Acceptance:
 - [x] Unauthorized users cannot load/mutate raceway data.
 - [x] Failed save does not pretend to persist.
 
-## Stage 9 - Derived Parts And BOQ v0
+## Stage 8A - Raceway Network Junction Semantics
 
-- [ ] Split run into straight segment lengths.
-- [ ] Detect bend nodes.
-- [ ] Count route length by family/size/service.
-- [ ] Add placeholder fitting count.
-- [ ] Add placeholder support count using simple span rule.
-- [ ] Add schedule JSON endpoint.
-- [ ] Add schedule HTML or CSV output.
-- [ ] Add tests for length and counts.
-- [ ] Document placeholder assumptions.
+- [x] Define graph projection over saved raceway runs/nodes.
+- [x] Add project-scoped layer graph JSON endpoint.
+- [x] Use explicit 10 mm source-frame graph-node tolerance.
+- [x] Derive endpoint/bend/riser/junction/branch semantics from geometry.
+- [x] Keep persisted `node_kind` as a hint, not routing/fitting authority.
+- [x] Warn for same-elevation crossings that do not share a graph node.
+- [x] Warn for near-miss endpoints that look connected but are outside graph
+  tolerance.
+- [x] Add viewer graph warning display for saved raceways.
+- [x] Add explicit endpoint-to-existing-node connect workflow.
+- [ ] Add mid-run tee/split workflow for connecting into segment interiors.
+- [ ] Add richer graph/junction visualization if manual testing shows it helps.
 
 Acceptance:
 
-- [ ] User can produce a simple raceway schedule.
-- [ ] Quantities are traceable to run/node ids.
-- [ ] Placeholder basis is visible.
+- [x] The system can derive a simple raceway graph from authored runs.
+- [x] A user can intentionally create a connected branch/junction.
+- [x] Unconnected crossings are visible as warnings, not silent tees.
+- [x] Existing draw/save/reload behavior remains intact.
+
+## Stage 9 - Derived Parts And BOQ v0
+
+- [x] Split run into straight segment lengths.
+- [x] Detect bend nodes.
+- [x] Count route length by family/size/service.
+- [x] Add placeholder fitting count.
+- [x] Add placeholder support count using simple span rule.
+- [x] Add schedule JSON endpoint.
+- [x] Add schedule HTML or CSV output.
+- [x] Add tests for length and counts.
+- [x] Document placeholder assumptions.
+
+Acceptance:
+
+- [x] User can produce a simple raceway schedule JSON payload.
+- [x] User can refresh a compact schedule summary from the viewer.
+- [x] User can download a schedule CSV from the viewer.
+- [x] Quantities are traceable to durable run/node UUID keys.
+- [x] Placeholder basis is visible in the payload assumptions.
 
 ## Stage 10 - Warning Layer
 
@@ -325,6 +349,12 @@ Acceptance:
 - [ ] DXF layout drawings.
 - [ ] Support fabrication sheets.
 - [ ] Multi-user collaboration.
+- [ ] Solid 3-plane tray/ladder proxy visual pass.
+- [ ] Project/admin-level connection tolerance setting when needed.
+- [ ] Project/admin or user-level near-miss warning sensitivity setting when
+  needed.
+- [ ] Define `suggestion_event` telemetry schema in a design note.
+- [ ] Decision record `0007-ai-gateway-seam` before first Tier-1 AI feature.
 
 ## Open Questions
 
@@ -806,6 +836,138 @@ Append each pass here.
   - typed segments are undoable and keep the active run in draw mode.
 - Bumped browser cache key:
   - Raceway overlay: `20260711_raceway12`.
+- Manual verification:
+  - KR confirmed the user can now confidently draw raceway on the 3D plant.
+- Planning refinement:
+  - inserted execution-plan Stage 8A, "Raceway Network Junction Semantics",
+    before Stage 9 BOQ v0 so the next development step creates clean graph
+    intent before we derive quantities and later route cables through it.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-11 - Stage 8A Graph Projection Foundation
+
+- Started Stage 8A with a server-side derived graph projection, not new
+  persistence:
+  - added `raceway/graph.py`,
+  - added `GET /raceway/layers/<id>/graph/`,
+  - graph nodes are clustered with explicit
+    `GRAPH_NODE_TOLERANCE_M = 0.01` (10 mm source-frame distance),
+  - graph edges are derived from ordered saved run nodes,
+  - project graph projection is project-scoped.
+- Implemented geometry-derived semantics per Claude N-07:
+  - endpoint from first/last node position,
+  - riser from adjacent elevation deltas,
+  - bend from plan-direction change,
+  - junction/branch from shared graph nodes and graph degree,
+  - persisted `RacewayNode.node_kind` remains a hint and is not trusted as
+    authoritative graph/fitting semantics.
+- Added first warning vocabulary for graph quality:
+  - `raceway.graph.unconnected_crossing` when segments cross at the same
+    elevation but do not share a graph node,
+  - `raceway.graph.zero_length_segment` when segment endpoints collapse within
+    graph tolerance.
+- Addressed Claude N-08:
+  - removed the dead `applyRunElevation` JavaScript helper so future code
+    cannot accidentally flatten multi-elevation runs.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-11 - Stage 8A Graph-Aware Authoring Pass
+
+- Made the graph projection visible in the Raceway authoring pane:
+  - added `Refresh Graph` with shortcut `G`,
+  - graph projection refreshes after saved load, save, and server delete,
+  - the panel now shows saved-graph warnings separately from local draft
+    warnings.
+- Added the first explicit junction workflow:
+  - `Connect Node` with shortcut `J`,
+  - selected first/last node can be stitched to an existing raceway node by
+    clicking that target node handle,
+  - the command moves only the selected endpoint; mid-run tee/split insertion
+    remains a later Stage 8A/9 refinement,
+  - unconnected geometric crossings remain warnings unless the user explicitly
+    creates a shared graph node.
+- Bumped browser cache key:
+  - Raceway overlay: `20260711_raceway13`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Stage 9 Schedule JSON Foundation
+
+- Folded Claude N-10 into the graph projection before BOQ work:
+  - added `NEAR_MISS_ENDPOINT_RADIUS_M = 0.25`,
+  - added `raceway.graph.near_miss_endpoint` warnings for endpoints that look
+    close to another run's node/edge but are outside the 10 mm graph
+    connection tolerance,
+  - updated the Raceway panel warning text for near-miss endpoints.
+- Added the first non-persistent derived schedule/BOQ payload:
+  - added `raceway/schedule.py`,
+  - added `GET /raceway/layers/<id>/schedule/`,
+  - split saved runs into segment lengths with durable run/node UUID trace,
+  - counted length by family/size/service,
+  - counted plan-bend and riser placeholders,
+  - counted support placeholders using explicit
+    `PLACEHOLDER_SUPPORT_SPAN_M = 3.0`,
+  - exposed assumptions in the payload, including that `N001`/`E001` graph
+    keys are presentation keys only and UUID keys are durable traceability.
+- Added backlog lines from Claude/KR planning Q&A:
+  - solid 3-plane proxy visual pass,
+  - project/admin tolerance settings when needed,
+  - near-miss warning sensitivity setting when needed,
+  - `suggestion_event` telemetry design note,
+  - future `0007-ai-gateway-seam` decision.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway14`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Stage 9 Schedule Payload and Viewer Export Pass
+
+- Addressed Claude S-1 through S-4 before hardening schedule UI/export:
+  - added standard-length piece estimates from
+    `RacewayFamily.standard_length_mm`,
+  - added offcut estimate per run/group/total,
+  - added `generated_at`, project, layer, source-model, and render-package
+    context into the schedule payload,
+  - embedded graph-warning counts in the schedule payload,
+  - added an explicit assumption that junction/tee/cross placeholder counts
+    are deferred.
+- Added server-side CSV export from the same schedule payload:
+  - `GET /raceway/layers/<id>/schedule.csv`,
+  - CSV includes generation context, graph warning total, assumptions, grouped
+    quantities, run rows, and segment rows.
+- Made the schedule usable from the viewer:
+  - `Refresh Schedule` button with shortcut `B`,
+  - `CSV` button with shortcut `Shift+B`,
+  - compact schedule summary shows total length, piece estimate, offcut,
+    bend/riser/support placeholders, graph-warning count, assumptions count,
+    and leading family/size/service groups.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway15`.
 - Verification passed:
   - `node --check raceway/static/raceway/js/raceway_overlay.js`
   - `venv/bin/python manage.py check`

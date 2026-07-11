@@ -116,6 +116,11 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                           ],
                         };
                         window.__racewayFetchLog = [];
+                        window.__racewayOpenedUrls = [];
+                        window.open = (url) => {
+                          window.__racewayOpenedUrls.push(String(url));
+                          return null;
+                        };
                         window.fetch = async (url, options = {}) => {
                           const method = options.method || 'GET';
                           const body = options.body ? JSON.parse(options.body) : null;
@@ -157,6 +162,82 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                                   metadata: {},
                                   anchor: node.anchor || {},
                                 })),
+                              }),
+                            };
+                          }
+                          if (String(url).startsWith('/raceway/layers/91/graph/') && method === 'GET') {
+                            return {
+                              ok: true,
+                              status: 200,
+                              json: async () => ({
+                                layer: { id: 91, project_id: 'RWY-BROWSER' },
+                                graph: {
+                                  tolerance_m: 0.01,
+                                  nodes: [],
+                                  edges: [],
+                                  warnings: [],
+                                },
+                              }),
+                            };
+                          }
+                          if (String(url).startsWith('/raceway/layers/91/schedule/') && method === 'GET') {
+                            return {
+                              ok: true,
+                              status: 200,
+                              json: async () => ({
+                                layer: { id: 91, project_id: 'RWY-BROWSER' },
+                                schedule: {
+                                  generated_at: '2026-07-12T00:00:00+00:00',
+                                  project_id: 'RWY-BROWSER',
+                                  layer_id: 91,
+                                  layer_name: 'Raceway Draft',
+                                  graph_warnings: { total: 0, by_code: {}, near_miss_endpoint: 0, unconnected_crossing: 0, zero_length_segment: 0 },
+                                  assumptions: [
+                                    { code: 'raceway.schedule.traceability', message: 'Use durable UUID keys.' },
+                                    { code: 'raceway.schedule.standard_length_piece_estimate', message: 'Piece estimate assumption.' },
+                                  ],
+                                  runs: [],
+                                  segments: [],
+                                  fitting_placeholders: {
+                                    plan_bends: [],
+                                    risers: [],
+                                    counts: { plan_bend_total: 2, riser_total: 1, plan_bends: {}, risers: {} },
+                                  },
+                                  groups: [
+                                    {
+                                      family_code: 'LADDER-HDG',
+                                      size_label: '300 x 100 mm',
+                                      service_class: 'power',
+                                      run_count: 1,
+                                      segment_count: 3,
+                                      length_m: 12.5,
+                                      horizontal_length_m: 10.5,
+                                      riser_length_m: 2,
+                                      plan_bend_count: 2,
+                                      riser_count: 1,
+                                      support_placeholders: 6,
+                                      standard_length_mm: 3000,
+                                      piece_count_estimate: 5,
+                                      offcut_m_estimate: 2.5,
+                                      known_weight_kg: 0,
+                                      has_unknown_weight: true,
+                                    },
+                                  ],
+                                  totals: {
+                                    run_count: 1,
+                                    segment_count: 3,
+                                    length_m: 12.5,
+                                    horizontal_length_m: 10.5,
+                                    riser_length_m: 2,
+                                    plan_bend_count: 2,
+                                    riser_count: 1,
+                                    support_placeholders: 6,
+                                    piece_count_estimate: 5,
+                                    offcut_m_estimate: 2.5,
+                                    known_weight_kg: 0,
+                                    has_unknown_weight: true,
+                                  },
+                                },
                               }),
                             };
                           }
@@ -270,6 +351,10 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("Ctrl+Z", page.get_attribute('[data-raceway-action="undo"]', "title"))
                 self.assertIn("Ctrl+Shift+Z", page.get_attribute('[data-raceway-action="redo"]', "title"))
                 self.assertIn("Ctrl+S", page.get_attribute('[data-raceway-action="save"]', "title"))
+                self.assertIn("J", page.get_attribute('[data-raceway-action="connect-node"]', "title"))
+                self.assertIn("G", page.get_attribute('[data-raceway-action="refresh-graph"]', "title"))
+                self.assertIn("B", page.get_attribute('[data-raceway-action="refresh-schedule"]', "title"))
+                self.assertIn("Shift+B", page.get_attribute('[data-raceway-action="open-schedule-csv"]', "title"))
                 self.assertTrue(
                     page.evaluate(
                         """() => {
@@ -308,6 +393,24 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 typed_nodes = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0].nodes")
                 self.assertEqual(round(typed_nodes[2]["x"], 3), round(typed_nodes[1]["x"], 3))
                 self.assertEqual(round(typed_nodes[2]["y"] - typed_nodes[1]["y"], 3), 4)
+                page.click('[data-raceway-action="select-node"][data-node-index="2"]')
+                self.assertFalse(page.eval_on_selector('[data-raceway-action="connect-node"]', "el => el.disabled"))
+                page.click('[data-raceway-action="connect-node"]')
+                page.dispatch_event(
+                    "#viewerCanvas",
+                    "click",
+                    {"clientX": typed_nodes[0]["x"] * 10, "clientY": typed_nodes[0]["y"] * 10},
+                )
+                page.wait_for_function(
+                    """() => {
+                      const nodes = window.racewayViewerOverlay.getRuns()[0]?.nodes || [];
+                      if (nodes.length !== 3) return false;
+                      return Math.round(nodes[2].x * 1000) === Math.round(nodes[0].x * 1000)
+                        && Math.round(nodes[2].y * 1000) === Math.round(nodes[0].y * 1000)
+                        && Math.round(nodes[2].z * 1000) === Math.round(nodes[0].z * 1000);
+                    }"""
+                )
+                self.assertIn("connected", page.text_content("#racewayToolStatus"))
                 page.evaluate("() => { window.racewayViewerOverlay.setRuns([]); window.__racewayUseModelAnchor = true; }")
 
                 page.click('[data-raceway-action="start"]')
@@ -361,6 +464,24 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 page.click('[data-raceway-action="save"]')
                 page.wait_for_function(
                     "() => window.__racewayFetchLog.some((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT')"
+                )
+                page.wait_for_function(
+                    "() => window.__racewayFetchLog.some((entry) => entry.url.includes('/graph/') && entry.method === 'GET')"
+                )
+                self.assertIn("Graph: no warnings", page.text_content("#racewayGraphWarnings"))
+                page.click('[data-raceway-action="refresh-schedule"]')
+                page.wait_for_function(
+                    "() => window.__racewayFetchLog.some((entry) => entry.url.includes('/schedule/') && entry.method === 'GET')"
+                )
+                schedule_summary = page.text_content("#racewayScheduleSummary")
+                self.assertIn("Schedule", schedule_summary)
+                self.assertIn("12.500 m", schedule_summary)
+                self.assertIn("5 piece", schedule_summary)
+                self.assertIn("2.500 m offcut", schedule_summary)
+                page.click('[data-raceway-action="open-schedule-csv"]')
+                self.assertEqual(
+                    page.evaluate("() => window.__racewayOpenedUrls.at(-1)"),
+                    "/raceway/layers/91/schedule.csv",
                 )
                 saved_nodes = page.evaluate(
                     "() => window.__racewayFetchLog.find((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT').body.nodes"

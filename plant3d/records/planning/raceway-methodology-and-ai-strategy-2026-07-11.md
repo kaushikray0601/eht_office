@@ -236,3 +236,19 @@ create the graph an AI can safely learn from later.
 - [Augmenta Electrical](https://www.augmenta.ai/electrical)
 - [AVEVA Industrial AI for engineering](https://www.aveva.com/en/solutions/digital-transformation/artificial-intelligence/industrial-ai-for-engineering/)
 - [Bentley Copilot docs](https://docs.bentley.com/LiveContent/web/OpenSite+-vlatest/Help/en/topics/bentley_ai_copilot.html)
+
+---
+
+## Status log (living document — append as items move)
+
+| Date | Item | Status |
+|---|---|---|
+| 2026-07-11 | Codex addendum C-1…C-6 appended | Converged; `evidence_bundle` seam and consequence-questions-first adopted into shared strategy (claude-notes §18) |
+| 2026-07-11 | M-1 ortho assist + M-2 typed segment entry (first slice) | **Shipped** (`a87115c`); ortho deliberately skips anchored points (training-data hygiene per C-5) |
+| 2026-07-11 | M-3 junctions | Adopted as **Stage 8A** in the execution plan (graph projection, crossings ≠ connections, explicit acceptance); pre-coding notes in claude-notes §18 (tolerance constant, riser-kind policy) |
+| 2026-07-11 | Viewer extension contract one-pager | **Written** (`viewer-extension-contract-2026-07-11.md`); G-1 partially shipped as `modelAnchorFromViewerEvent`; full G-1 (surface normal) + G-2 (pointer-move) reserved |
+| 2026-07-12 | M-3 junctions — first slice | **Shipped**: `raceway/graph.py` projection (10 mm named tolerance, geometry-derived kinds, deterministic), `Connect Node` endpoint-join workflow, crossing/zero-length warnings; mid-run tee/split deferred deliberately; Claude review in claude-notes §19 (N-09 durable-key rule, N-10 near-miss warning) |
+| 2026-07-12 | Stage 9 BOQ v0 — schedule payload | **Shipped** (`raceway/schedule.py` + `/layers/<id>/schedule/`): runs/segments/fitting-placeholders/groups/totals with UUID traceability and machine-readable assumptions; N-09/N-10 closed. Claude payload-shape review in claude-notes §21: add piece/offcut counts (S-1), generation envelope (S-2), graph-quality summary (S-3), tee-omission line (S-4) **before** HTML/CSV UI |
+| — | M-4 riser command / M-5 parallel offset / M-6 plan view | Open; M-4 partially superseded by multi-elevation authoring (typed `±EL` segments) |
+| — | Tier-0 telemetry schema (`suggestion_event`) | Open — adopt with the first suggestion feature (ortho keep/undo signals may qualify) |
+| — | `ai_gateway` decision record (0007) | Open — write when first Tier-1 feature is scheduled |
