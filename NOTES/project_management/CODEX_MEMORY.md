@@ -82,8 +82,8 @@ Code facts verified on 2026-07-09:
   registers its layer and handles canvas click/create/undo/move/delete against
   a stubbed viewer host. Run it before asking KR to manually check authoring.
 - Static cache note: Plant3D viewer host script version is
-  `20260710_raceway_runtime5`; raceway overlay script version is
-  `20260710_raceway9`. Bump the relevant cache key whenever changing either
+  `20260711_raceway_runtime6`; raceway overlay script version is
+  `20260711_raceway10`. Bump the relevant cache key whenever changing either
   browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
@@ -149,6 +149,16 @@ Code facts verified on 2026-07-09:
   fallback node pick against the source-elevation plane, and keeps finished or
   selected runs in lightweight select mode where node hits are consumed but
   misses fall through to normal Plant3D picking.
+- Raceway surface-click authoring pass after KR's continuation/elevation notes:
+  `package_viewer.js` now exposes `modelAnchorFromViewerEvent(event)`.
+  Raceway draw/move clicks auto-anchor to the clicked Plant3D model source
+  point when available, so nodes can be created at different elevations without
+  pressing `Anchor Node`. `Continue` re-enters append mode for a selected run,
+  and navigation gestures leave draw mode armed for the next clean click.
+  Summary rows now distinguish horizontal `bends` from elevation `risers`, and
+  riser segments get simple `riser-placeholder` proxy markers. The viewer
+  helper surface is recorded in
+  `plant3d/records/planning/viewer-extension-contract-2026-07-11.md`.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

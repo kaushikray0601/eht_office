@@ -574,6 +574,7 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
   - `git diff --check`
+  - `git diff --check`
 
 ### 2026-07-09 - Plant Model Anchor Bridge
 
@@ -698,3 +699,49 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
   - `git diff --check`
+
+### 2026-07-11 - Raceway Surface-Click and Multi-Elevation Authoring
+
+- Addressed KR's next manual observations:
+  - continuing a run after navigating the plant should feel like continuation,
+    not a select-and-move workaround,
+  - Raceway nodes need to be placeable at the actual clicked structure
+    elevation, not only the starting horizontal plane,
+  - a structure click should auto-anchor the node instead of requiring a
+    separate `Anchor Node` button click,
+  - horizontal bends and elevation risers need explicit vocabulary for later
+    fitting/accessory generation.
+- Extended the Plant3D runtime helper surface:
+  - added `modelAnchorFromViewerEvent(event)` to return a model anchor at the
+    actual clicked source-frame model point when visible model geometry is hit.
+- Improved Raceway authoring:
+  - draw/move clicks now try model-surface anchoring first and fall back to the
+    current working elevation plane only on miss,
+  - nodes may now keep distinct `z` values, enabling sloped/riser segments,
+  - the `Anchor Node` button remains available, but normal structure clicks no
+    longer require it,
+  - added `Continue` to re-enter append mode on the active run after finishing
+    or selecting,
+  - navigation gestures in draw mode show a continuation status and keep the
+    command armed for the next clean click.
+- Added bend/riser classification:
+  - summary/run rows now distinguish horizontal `bends` from elevation
+    `risers`,
+  - riser segments get a simple `riser-placeholder` proxy marker,
+  - the old "off plane" warning was removed because multi-elevation runs are
+    now intentional.
+- Added `plant3d/records/planning/viewer-extension-contract-2026-07-11.md`
+  documenting current helpers, interaction callbacks, provisional raw
+  internals, and reserved future additions for surface normals and pointer
+  move routing.
+- Bumped browser cache keys:
+  - Plant3D viewer host: `20260711_raceway_runtime6`,
+  - Raceway overlay: `20260711_raceway10`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check /tmp/package_viewer_surface_anchor.mjs`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`

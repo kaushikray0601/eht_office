@@ -184,7 +184,26 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                             source_point_m: { x: 45, y: 57, z: 1.5, coordinate_frame: 'source_xyz_m' },
                             feature_id: null,
                           }),
-                          currentSourceElevationM: () => 106.5,
+                          modelAnchorFromViewerEvent: event => ({
+                            owner_module: 'plant3d',
+                            anchor_kind: 'model_object',
+                            render_package_id: 77,
+                            source_model_id: 55,
+                            model_object_id: 44,
+                            stable_id: 'ifc:steel-001',
+                            source_object_id: 'Steel-001',
+                            object_type: 'IfcBeam',
+                            label: 'ST-001',
+                            bounds: { min_x: 10, max_x: 40, min_y: 8, max_y: 20, min_z: 1, max_z: 3 },
+                            source_point_m: {
+                              x: event.clientX / 10,
+                              y: event.clientY / 10,
+                              z: event.clientX >= 300 ? 2.5 : event.clientX >= 200 ? 1.5 : 1.0,
+                              coordinate_frame: 'source_xyz_m',
+                            },
+                            feature_id: 88,
+                          }),
+                          currentSourceElevationM: () => 1.0,
                           pointOnSourceElevationFromViewerEvent: (event, elevation) => new Vector3(event.clientX / 10, elevation, event.clientY / 10),
                           renderPointToSourcePoint: point => ({ x: point.x, y: point.z, z: point.y, coordinate_frame: 'source_xyz_m' }),
                           sourcePointToRenderPoint: point => new Vector3(point.x, point.z, point.y),
@@ -252,12 +271,16 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 page.click("#viewerCanvas", position={"x": 220, "y": 130})
                 page.click("#viewerCanvas", position={"x": 320, "y": 90})
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes[1]?.anchor?.stable_id === 'ifc:steel-001'")
+                auto_anchored_nodes = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0].nodes.map(node => ({ z: node.z, anchor: node.anchor?.stable_id || '' }))")
+                self.assertEqual([node["anchor"] for node in auto_anchored_nodes], ["ifc:steel-001", "ifc:steel-001", "ifc:steel-001"])
+                self.assertGreater(round(auto_anchored_nodes[2]["z"], 3), round(auto_anchored_nodes[0]["z"], 3))
                 page.dispatch_event("#viewerCanvas", "pointerdown", {"clientX": 160, "clientY": 120})
                 page.dispatch_event("#viewerCanvas", "pointermove", {"clientX": 260, "clientY": 180})
                 page.dispatch_event("#viewerCanvas", "pointerup", {"clientX": 260, "clientY": 180})
                 page.dispatch_event("#viewerCanvas", "click", {"clientX": 260, "clientY": 180})
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
-                self.assertIn("Navigation gesture ignored", page.text_content("#racewayToolStatus"))
+                self.assertIn("navigation gesture ignored", page.text_content("#racewayToolStatus"))
                 preview_kinds = page.evaluate(
                     """() => window.racewayViewerOverlay.layer.group.children
                         .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))
@@ -269,6 +292,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("bend-placeholder", preview_kinds)
                 self.assertIn("node-handle", preview_kinds)
                 self.assertIn("node-hit-target", preview_kinds)
+                self.assertIn("riser-placeholder", preview_kinds)
                 depth_tick_points = page.evaluate(
                     """() => {
                         const tick = window.racewayViewerOverlay.layer.group.children
@@ -334,7 +358,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 page.click("#viewerCanvas", position={"x": 320, "y": 170})
                 moved_node = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0].nodes[0]")
                 self.assertNotEqual(round(moved_node["x"], 3), round(node_before_move["x"], 3))
-                self.assertEqual(round(moved_node["z"], 3), 1.5)
+                self.assertGreater(round(moved_node["z"], 3), round(node_before_move["z"], 3))
 
                 page.click('[data-raceway-action="delete-node"]')
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 1")

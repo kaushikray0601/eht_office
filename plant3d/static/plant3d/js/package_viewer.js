@@ -312,6 +312,38 @@ function getSelectedModelAnchor() {
   return null;
 }
 
+function modelAnchorFromViewerEvent(event) {
+  if (!isViewerLayerIdVisible('model') || !selectableMeshes.length) return null;
+  updatePointerFromViewerEvent(event);
+  const hit = firstVisibleGlbHit(raycaster.intersectObjects(selectableMeshes, false));
+  if (!hit) return null;
+  const sourcePoint = renderPointToSourcePoint(hit.point);
+  const featureId = featureIdFromHit(hit);
+  if (hit.object?.userData?.packageFormat === 'GLB' && Number.isFinite(featureId)) {
+    const feature = featureIndex.get(featureId);
+    if (feature?.objectSummary) return modelAnchorFromObjectSummary(feature.objectSummary, sourcePoint, featureId);
+  }
+  const objectId = hit.object?.userData?.objectId;
+  const objectSummary = objectId !== null && objectId !== undefined
+    ? objectById.get(Number(objectId)) || objectById.get(String(objectId))
+    : null;
+  if (objectSummary) return modelAnchorFromObjectSummary(objectSummary, sourcePoint, featureId);
+  return {
+    owner_module: 'plant3d',
+    anchor_kind: 'model_selection_point',
+    render_package_id: runtimeStats.package?.id || null,
+    source_model_id: runtimeStats.package?.source_model_id || null,
+    model_object_id: null,
+    stable_id: hit.object?.userData?.stableId || '',
+    source_object_id: '',
+    object_type: hit.object?.userData?.ifcClass || '',
+    label: hit.object?.userData?.name || hit.object?.userData?.stableId || 'Selected model point',
+    bounds: {},
+    source_point_m: sourcePoint,
+    feature_id: Number.isFinite(Number(featureId)) ? Number(featureId) : null,
+  };
+}
+
 function resetCanvasCursor() {
   renderer.domElement.style.cursor = measureModeActive ? 'crosshair' : navigationMode === 'pan' ? 'grab' : '';
 }
@@ -395,6 +427,7 @@ function publishViewerExtensionHost() {
     sourcePointToRenderPoint,
     renderPointToSourcePoint,
     getSelectedModelAnchor,
+    modelAnchorFromViewerEvent,
     pointOnSourceElevationFromViewerEvent,
     rayFromViewerEvent,
     raycastObjectsFromViewerEvent,

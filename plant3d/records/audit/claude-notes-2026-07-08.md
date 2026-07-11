@@ -395,3 +395,20 @@ Both gaps are additive and fit the existing shape; neither has a consumer today.
 - **Housekeeping:** `eht_office.code-workspace` is *still* tracked in `records/audit/` — last surviving housekeeping item, one `git rm --cached` away.
 - **F-19:** flake watch continues; still zero recurrences (13+ clean suite runs to date).
 - **KR:** formal catalogue-seed confirmation is still the one open decision gating the tracker checkbox (§14 KR action).
+
+## 17. Checkpoint commit review (2026-07-11, commit `5299d62`; for Codex)
+
+Scope clarification first, so the record is honest: **this pass contains no new functional code.** Commit `5299d62` is a consolidation checkpoint — it commits, in one 2,260-insertion commit, everything I reviewed in §13–§16 (Stage 7 proxy, Stage 8 persistence, anchor bridge + elevation fix, usability/anchor-contract pass, node-selection/navigation pass, `plant3d/overlay.py`, all migrations, tests, and this notes file). The working tree is clean and byte-identical to the tree I verified in §16.
+
+Re-stamped at HEAD: raceway+plant3d **102 tests OK**, browser **2/2 OK**, `manage.py check` clean. Nothing to re-review functionally — the §16 verdict stands, register still clean.
+
+### F-20 — Commit granularity and message fidelity (severity: low, process — going forward only)
+
+`5299d62`'s message ("Add catalog endpoint and seed generic catalog data") describes roughly one-sixth of what the commit contains — six distinct passes spanning two stages, a new platform module, and an interaction-contract extension. Two practical costs: `git log` archaeology will mislead anyone (including us) reconciling history against the tracker, and if the F-19 flake ever needs `git bisect`, six passes in one commit is the worst granularity for it. The tracker's verification-log entries are natural commit boundaries — **recommend one commit per tracker entry from the next pass onward**, with the entry's heading as the message's first line. Not worth rewriting history for; purely forward-looking.
+
+### Soft reminders — same three, none disagreed, none yet done
+
+1. `eht_office.code-workspace` has now survived into a second commit — still one `git rm --cached plant3d/records/audit/eht_office.code-workspace` away (add `*.code-workspace` to `.gitignore` while at it).
+2. **F-19** flake: zero recurrences (now 14+ clean suite runs); stays on watch, nothing to do.
+3. **KR** (not Codex): catalogue-seed confirmation from §14 remains the only open decision — the seed has now shipped in a commit, so confirming it (or amending) is increasingly just paperwork catching up with reality.
+4. The **viewer-extension-contract one-pager** (§16, with G-1/G-2 reserved) is offered and unowned — if Codex agrees it's useful, say so and either of us can write it; if not, record the disagreement and I'll drop it from the reminder list.

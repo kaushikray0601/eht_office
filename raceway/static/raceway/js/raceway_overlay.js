@@ -223,7 +223,12 @@ function ensureInteraction() {
     },
     onNavigationClick: () => {
       if (state.mode !== 'idle') {
-        setStatus('Navigation gesture ignored. Click without dragging to place or select raceway nodes.');
+        const run = activeRun();
+        if (state.mode === 'draw' && run) {
+          setStatus(`${run.tag}: navigation gesture ignored; continue with a clean click from node ${run.nodes.length || 1}.`);
+        } else {
+          setStatus('Navigation gesture ignored. Click without dragging to place or select raceway nodes.');
+        }
       }
     },
     onCancel: () => {
@@ -322,6 +327,9 @@ function syncPaletteFromRun(run) {
 }
 
 function sourcePointFromEvent(event) {
+  const anchor = runtime?.modelAnchorFromViewerEvent?.(event) || null;
+  const modelPoint = pointFromModelAnchor(anchor);
+  if (modelPoint) return modelPoint;
   if (!runtime?.pointOnSourceElevationFromViewerEvent) return null;
   const renderPoint = runtime.pointOnSourceElevationFromViewerEvent(event, Number(state.elevationM) || 0);
   if (!renderPoint) return null;
@@ -332,6 +340,14 @@ function sourcePointFromEvent(event) {
     z: Number(state.elevationM) || 0,
     coordinate_frame: SOURCE_COORDINATE_FRAME,
   };
+}
+
+function adoptWorkingElevationFromPoint(run, point) {
+  const elevation = Number(point?.z);
+  if (!Number.isFinite(elevation)) return;
+  state.elevationM = elevation;
+  state.elevationInitialized = true;
+  if (run) run.elevationM = elevation;
 }
 
 function selectedModelAnchor() {
@@ -420,13 +436,14 @@ function attachSelectedModelToNode() {
     setStatus('Selected model object has no usable source-coordinate anchor.');
     return;
   }
-  applyRunElevation(run, point.z);
+  adoptWorkingElevationFromPoint(run, point);
   if (state.selectedNodeIndex >= 0 && run.nodes[state.selectedNodeIndex]) {
     run.nodes[state.selectedNodeIndex] = point;
   } else {
     run.nodes.push(point);
     state.selectedNodeIndex = run.nodes.length - 1;
   }
+  markRunDirty(run);
   setStatus(`${run.tag}: node ${state.selectedNodeIndex + 1} anchored to ${anchorLabel(anchor)}.`);
   renderRaceway();
   renderPanel();
@@ -452,8 +469,37 @@ function nodeDistance(a, b) {
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
+function routeTurnStats(run) {
+  const stats = { bends: 0, risers: 0 };
+  const nodes = run?.nodes || [];
+  for (let index = 1; index < nodes.length; index += 1) {
+    const previous = nodes[index - 1];
+    const node = nodes[index];
+    if (Math.abs(Number(node.z || 0) - Number(previous.z || 0)) > 0.001) stats.risers += 1;
+  }
+  for (let index = 1; index < nodes.length - 1; index += 1) {
+    const a = nodes[index - 1];
+    const b = nodes[index];
+    const c = nodes[index + 1];
+    const inX = Number(b.x || 0) - Number(a.x || 0);
+    const inY = Number(b.y || 0) - Number(a.y || 0);
+    const outX = Number(c.x || 0) - Number(b.x || 0);
+    const outY = Number(c.y || 0) - Number(b.y || 0);
+    const inPlan = Math.sqrt((inX * inX) + (inY * inY));
+    const outPlan = Math.sqrt((outX * outX) + (outY * outY));
+    if (inPlan < 0.05 || outPlan < 0.05) continue;
+    const cosine = ((inX * outX) + (inY * outY)) / (inPlan * outPlan);
+    if (cosine < 0.996) stats.bends += 1;
+  }
+  return stats;
+}
+
 function bendCount(run) {
-  return Math.max((run?.nodes?.length || 0) - 2, 0);
+  return routeTurnStats(run).bends;
+}
+
+function riserCount(run) {
+  return routeTurnStats(run).risers;
 }
 
 function runLength(run) {
@@ -464,7 +510,6 @@ function runWarnings(run) {
   const warnings = [];
   run.nodes.forEach((node, index) => {
     if (index > 0 && nodeDistance(run.nodes[index - 1], node) < 0.05) warnings.push(`Short segment ${index}`);
-    if (Math.abs(Number(node.z || 0) - Number(run.elevationM || 0)) > 0.001) warnings.push(`Node ${index + 1} off plane`);
   });
   return warnings;
 }
@@ -600,6 +645,25 @@ function addBendPlaceholder(group, run, node, material) {
   addSourceLine(group, diamond, material, 'bend-placeholder');
 }
 
+function addRiserPlaceholder(group, run, start, end, material) {
+  const dz = Number(end.z || 0) - Number(start.z || 0);
+  if (Math.abs(dz) < 0.001) return;
+  const midpoint = {
+    x: (Number(start.x || 0) + Number(end.x || 0)) / 2,
+    y: (Number(start.y || 0) + Number(end.y || 0)) / 2,
+    z: (Number(start.z || 0) + Number(end.z || 0)) / 2,
+  };
+  const markerHalf = Math.max(Math.min(runWidthM(run) * 0.25, 0.25), 0.06);
+  addSourceLine(group, [
+    { x: midpoint.x - markerHalf, y: midpoint.y, z: midpoint.z },
+    { x: midpoint.x + markerHalf, y: midpoint.y, z: midpoint.z },
+  ], material, 'riser-placeholder');
+  addSourceLine(group, [
+    { x: midpoint.x, y: midpoint.y - markerHalf, z: midpoint.z },
+    { x: midpoint.x, y: midpoint.y + markerHalf, z: midpoint.z },
+  ], material, 'riser-placeholder');
+}
+
 function addNodeHandle(group, run, node, index, color) {
   const renderPoint = renderSourcePoint(node);
   if (!renderPoint) return;
@@ -706,6 +770,7 @@ function renderTrayPreview(group, run, color) {
   }
   for (let index = 1; index < run.nodes.length; index += 1) {
     addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial);
+    addRiserPlaceholder(group, run, run.nodes[index - 1], run.nodes[index], previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
   }
   for (let index = 1; index < run.nodes.length - 1; index += 1) {
     addBendPlaceholder(group, run, run.nodes[index], previewMaterial(0xf97316, selected ? 0.95 : 0.65));
@@ -761,6 +826,19 @@ function finishRun() {
   renderPanel();
 }
 
+function continueRun() {
+  const run = activeRun();
+  if (!run) {
+    setStatus('Select a raceway run before continuing.');
+    return;
+  }
+  state.selectedNodeIndex = run.nodes.length - 1;
+  activateCanvasMode('draw');
+  setStatus(`${run.tag}: continue from node ${run.nodes.length || 1}. Click structure or the working plane to append.`);
+  renderRaceway();
+  renderPanel();
+}
+
 function cancelRun() {
   const run = activeRun();
   if (run && state.mode === 'draw' && run.nodes.length === 0) {
@@ -783,8 +861,12 @@ function addNodeFromEvent(event) {
   }
   run.nodes.push(point);
   state.selectedNodeIndex = run.nodes.length - 1;
+  adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
-  setStatus(`${run.tag}: node ${run.nodes.length} added.`);
+  const anchor = anchorLabel(point.anchor);
+  setStatus(anchor
+    ? `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)} and anchored to ${anchor}.`
+    : `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)}.`);
   renderRaceway();
   renderPanel();
 }
@@ -821,9 +903,13 @@ function moveSelectedNodeFromEvent(event) {
   const point = sourcePointFromEvent(event);
   if (!run || state.selectedNodeIndex < 0 || !point) return;
   run.nodes[state.selectedNodeIndex] = point;
+  adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
   activateNodeSelectionMode(run);
-  setStatus(`${run.tag}: node ${state.selectedNodeIndex + 1} moved.`);
+  const anchor = anchorLabel(point.anchor);
+  setStatus(anchor
+    ? `${run.tag}: node ${state.selectedNodeIndex + 1} moved to EL +${formatM(point.z)} and anchored to ${anchor}.`
+    : `${run.tag}: node ${state.selectedNodeIndex + 1} moved to EL +${formatM(point.z)}.`);
   renderRaceway();
   renderPanel();
 }
@@ -1246,7 +1332,7 @@ function runRowsHtml() {
       <strong>${escapeHtml(run.tag)}</strong><br>
       ${escapeHtml(run.familyLabel)} ${escapeHtml(run.sizeLabel)}<br>
       ${escapeHtml(serviceFor(run.serviceClass).label)} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'}<br>
-      ${run.nodes.length} nodes | ${bendCount(run)} bends | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)}
+      ${run.nodes.length} nodes | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)}
     </button>
   `).join('');
 }
@@ -1296,6 +1382,7 @@ function ensurePanel() {
     </div>
     <div class="p3d-toolbar" style="margin-top: 10px;">
       <button type="button" class="p3d-button-primary" data-raceway-action="start">Start</button>
+      <button type="button" data-raceway-action="continue-run">Continue</button>
       <button type="button" data-raceway-action="finish">Finish</button>
       <button type="button" data-raceway-action="undo">Undo Node</button>
       <button type="button" data-raceway-action="cancel">Cancel</button>
@@ -1346,6 +1433,7 @@ function updateActionStates(run) {
   const node = selectedNode();
   const hasNodes = Boolean(run?.nodes?.length);
   setActionState('start', !catalog.length, 'Raceway catalogue is still loading.');
+  setActionState('continue-run', !run, 'Select a run before continuing it.');
   setActionState('finish', !run || (run.nodes.length < 2), 'Add at least two nodes before finishing.');
   setActionState('undo', !hasNodes, 'No nodes to undo.');
   setActionState('cancel', !run && state.mode === 'idle', 'No active raceway command.');
@@ -1381,7 +1469,7 @@ function renderPanel() {
   if (summaryEl) {
     const warnings = run ? runWarnings(run).length : 0;
     summaryEl.textContent = run
-      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} warning(s)`
+      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | work EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} warning(s)`
       : 'No active run';
   }
   if (runListEl) runListEl.innerHTML = runRowsHtml();
@@ -1396,6 +1484,7 @@ function handlePanelClick(event) {
   if (button.disabled) return;
   const action = button.dataset.racewayAction;
   if (action === 'start') beginRun();
+  if (action === 'continue-run') continueRun();
   if (action === 'finish') finishRun();
   if (action === 'undo') undoNode();
   if (action === 'cancel') cancelRun();
