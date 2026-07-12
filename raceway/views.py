@@ -1,5 +1,6 @@
 import csv
 import json
+import uuid
 
 from django.core.exceptions import ValidationError
 from django.db import transaction
@@ -16,6 +17,14 @@ from .fittings import build_layer_fitting_projection
 from .graph import build_layer_graph
 from .models import RacewayFamily, RacewayLayer, RacewayNode, RacewayRun, RacewaySize
 from .schedule import build_layer_schedule
+
+RUN_ORIENTATION_PRESETS = {
+    "open_up": {"label": "Open Up", "quarter_turns": 0},
+    "roll_right": {"label": "Roll Right", "quarter_turns": 1},
+    "open_down": {"label": "Open Down", "quarter_turns": 2},
+    "roll_left": {"label": "Roll Left", "quarter_turns": 3},
+}
+RUN_ORIENTATION_SCHEMA = "raceway.orientation.v0"
 
 
 def raceway_home_view(request):
@@ -101,6 +110,40 @@ def _metadata_value(payload, field_name):
     if not isinstance(value, dict):
         raise ValidationError({field_name: "Value must be an object."})
     return value
+
+
+def _run_metadata_value(payload, field_name):
+    metadata = dict(_metadata_value(payload, field_name))
+    orientation = metadata.get("orientation")
+    if orientation in (None, ""):
+        return metadata
+    if not isinstance(orientation, dict):
+        raise ValidationError({"metadata.orientation": "Orientation must be an object."})
+    preset = str(orientation.get("preset") or "").strip()
+    if preset not in RUN_ORIENTATION_PRESETS:
+        raise ValidationError({"metadata.orientation.preset": "Unsupported orientation preset."})
+    preset_config = RUN_ORIENTATION_PRESETS[preset]
+    metadata["orientation"] = {
+        "schema": RUN_ORIENTATION_SCHEMA,
+        "preset": preset,
+        "quarter_turns": preset_config["quarter_turns"],
+        "label": preset_config["label"],
+    }
+    return metadata
+
+
+def _node_key_from_payload(raw_node, index, existing_node_keys):
+    raw_key = raw_node.get("key")
+    if raw_key in (None, ""):
+        return None
+    try:
+        parsed_key = uuid.UUID(str(raw_key))
+    except (TypeError, ValueError, AttributeError):
+        raise ValidationError({"nodes": f"Node {index + 1} key must be a UUID."})
+    existing_key = existing_node_keys.get(str(parsed_key))
+    if existing_key is None:
+        raise ValidationError({"nodes": f"Node {index + 1} key does not belong to this raceway run."})
+    return existing_key
 
 
 def _validated_context(user, project_id, payload, *, default_source_model_id=None, default_render_package_id=None):
@@ -337,7 +380,7 @@ def _apply_run_payload(run, payload, user):
     if "validation_summary" in payload:
         run.validation_summary = _metadata_value(payload, "validation_summary")
     if "metadata" in payload:
-        run.metadata = _metadata_value(payload, "metadata")
+        run.metadata = _run_metadata_value(payload, "metadata")
     source_model_id, render_package_id = _validated_context(
         user,
         run.layer.project_id,
@@ -669,12 +712,13 @@ def run_detail_view(request, run_id):
     return JsonResponse({"run": _run_payload(run)})
 
 
-def _node_from_payload(run, raw_node, index):
+def _node_from_payload(run, raw_node, index, existing_node_keys):
     if not isinstance(raw_node, dict):
         raise ValidationError({"nodes": f"Node {index + 1} must be an object."})
     sequence = _optional_non_negative_int(raw_node.get("sequence", index), "sequence")
     if sequence is None:
         sequence = index
+    preserved_key = _node_key_from_payload(raw_node, index, existing_node_keys)
     node = RacewayNode(
         run=run,
         sequence=sequence,
@@ -689,7 +733,9 @@ def _node_from_payload(run, raw_node, index):
         ),
         metadata=_metadata_value(raw_node, "metadata"),
     )
-    node.full_clean(exclude=["run"])
+    if preserved_key is not None:
+        node.key = preserved_key
+    node.full_clean(exclude=["run", "key"])
     return node
 
 
@@ -707,10 +753,14 @@ def run_nodes_view(request, run_id):
             raise ValidationError({"nodes": "Nodes must be provided as a list."})
         if len(raw_nodes) < 2:
             raise ValidationError({"nodes": "At least two ordered nodes are required to save a raceway run."})
-        nodes = [_node_from_payload(run, raw_node, index) for index, raw_node in enumerate(raw_nodes)]
+        existing_node_keys = {str(key): key for key in run.nodes.values_list("key", flat=True)}
+        nodes = [_node_from_payload(run, raw_node, index, existing_node_keys) for index, raw_node in enumerate(raw_nodes)]
         sequences = [node.sequence for node in nodes]
         if len(sequences) != len(set(sequences)):
             raise ValidationError({"nodes": "Node sequences must be unique within a run."})
+        node_keys = [node.key for node in nodes]
+        if len(node_keys) != len(set(node_keys)):
+            raise ValidationError({"nodes": "Node keys must be unique within a run payload."})
         with transaction.atomic():
             run.nodes.all().delete()
             RacewayNode.objects.bulk_create(nodes)

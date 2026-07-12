@@ -20,6 +20,14 @@ const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
   'rung',
   'tray-cross-member',
 ]);
+const ORIENTATION_SCHEMA = 'raceway.orientation.v0';
+const orientationPresets = [
+  { id: 'open_up', label: 'Open Up', quarterTurns: 0 },
+  { id: 'roll_right', label: 'Roll Right', quarterTurns: 1 },
+  { id: 'open_down', label: 'Open Down', quarterTurns: 2 },
+  { id: 'roll_left', label: 'Roll Left', quarterTurns: 3 },
+];
+const DEFAULT_ORIENTATION_PRESET = orientationPresets[0].id;
 const TELEMETRY_FORBIDDEN_ID_KEYS = new Set([
   'id',
   'pk',
@@ -95,6 +103,7 @@ const state = {
   redoStack: [],
   orthoMode: false,
   showProxyFaces: true,
+  orientationPreset: DEFAULT_ORIENTATION_PRESET,
   segmentDirection: segmentDirections[0].id,
   segmentLengthM: 6,
   connectSource: null,
@@ -204,6 +213,28 @@ function serviceFor(id = state.serviceClass) {
   return services.find(service => service.id === id) || services[0];
 }
 
+function orientationPresetFor(id) {
+  return orientationPresets.find(preset => preset.id === id) || orientationPresets[0];
+}
+
+function normalizedOrientation(value = DEFAULT_ORIENTATION_PRESET) {
+  const preset = orientationPresetFor(typeof value === 'object' ? value?.preset : value);
+  return {
+    schema: ORIENTATION_SCHEMA,
+    preset: preset.id,
+    quarter_turns: preset.quarterTurns,
+    label: preset.label,
+  };
+}
+
+function runOrientation(run) {
+  return normalizedOrientation(run?.orientation || run?.metadata?.orientation || state.orientationPreset);
+}
+
+function orientationLabel(run) {
+  return runOrientation(run).label;
+}
+
 function activeRun() {
   return state.runs.find(run => run.id === state.activeRunId) || null;
 }
@@ -237,6 +268,7 @@ function captureHistorySnapshot() {
     serviceClass: state.serviceClass,
     elevationM: state.elevationM,
     elevationInitialized: state.elevationInitialized,
+    orientationPreset: state.orientationPreset,
   };
 }
 
@@ -258,6 +290,7 @@ function restoreHistorySnapshot(snapshot) {
   state.serviceClass = snapshot.serviceClass || state.serviceClass;
   state.elevationM = Number(snapshot.elevationM) || 0;
   state.elevationInitialized = Boolean(snapshot.elevationInitialized);
+  state.orientationPreset = orientationPresetFor(snapshot.orientationPreset).id;
   state.mode = snapshot.mode || 'idle';
   if (!run || state.mode === 'idle') {
     state.mode = 'idle';
@@ -638,6 +671,7 @@ function makeRun() {
     depthMm: size.depthMm,
     serviceClass: state.serviceClass,
     elevationM: Number(state.elevationM) || 0,
+    orientation: normalizedOrientation(state.orientationPreset),
     nodes: [],
     dirty: true,
   };
@@ -680,6 +714,7 @@ function syncPaletteFromRun(run) {
   state.serviceClass = run.serviceClass || state.serviceClass;
   state.elevationM = Number(run.elevationM) || 0;
   state.elevationInitialized = true;
+  state.orientationPreset = runOrientation(run).preset;
 }
 
 function sourcePointFromEvent(event) {
@@ -1183,6 +1218,28 @@ function segmentPlanBasis(start, end) {
   };
 }
 
+function rollBasisAroundTangent(basis, quarterTurns = 0) {
+  const turns = ((Number(quarterTurns) || 0) % 4 + 4) % 4;
+  if (!turns) return basis;
+  const angle = turns * Math.PI / 2;
+  const cos = Math.round(Math.cos(angle));
+  const sin = Math.round(Math.sin(angle));
+  return {
+    ...basis,
+    nx: (basis.nx * cos) + (basis.dx * sin),
+    ny: (basis.ny * cos) + (basis.dy * sin),
+    nz: (basis.nz * cos) + (basis.dz * sin),
+    dx: (basis.dx * cos) - (basis.nx * sin),
+    dy: (basis.dy * cos) - (basis.ny * sin),
+    dz: (basis.dz * cos) - (basis.nz * sin),
+  };
+}
+
+function orientedSegmentBasis(run, start, end) {
+  const basis = segmentPlanBasis(start, end);
+  return rollBasisAroundTangent(basis, runOrientation(run).quarter_turns);
+}
+
 function sourcePointAlongSegment(start, basis, distanceM) {
   return {
     x: Number(start.x || 0) + basis.tx * distanceM,
@@ -1200,7 +1257,7 @@ function sourceFrameOffsetPoint(point, basis, lateralOffsetM = 0, depthOffsetM =
 }
 
 function segmentCornerPoints(run, start, end) {
-  const basis = segmentPlanBasis(start, end);
+  const basis = orientedSegmentBasis(run, start, end);
   if (basis.length < 0.001) return null;
   const halfWidth = runWidthM(run) / 2;
   const depth = runDepthM(run);
@@ -2003,6 +2060,7 @@ function openScheduleCsv() {
 function runFromServer(payload) {
   const serverFamily = payload.family || {};
   const serverSize = payload.size || {};
+  const metadata = payload.metadata || {};
   const family = catalogFamilyById(payload.family_id);
   const sizeMatch = catalogSizeById(payload.size_id);
   const familyForSize = sizeMatch?.family || family;
@@ -2023,6 +2081,8 @@ function runFromServer(payload) {
     depthMm: Number(serverSize.depth_mm) || Number(size.depthMm) || 100,
     serviceClass: payload.service_class || services[0].id,
     elevationM: Number(payload.elevation_m) || 0,
+    metadata,
+    orientation: normalizedOrientation(metadata.orientation),
     nodes: (Array.isArray(payload.nodes) ? payload.nodes : [])
       .slice()
       .sort((left, right) => Number(left.sequence) - Number(right.sequence))
@@ -2204,20 +2264,25 @@ function runPayload(run, context) {
       proxy_kind: isLadderRun(run) ? 'ladder' : 'tray',
       catalogue_family_code: run.familyCode || '',
       catalogue_size_code: run.sizeCode || '',
+      orientation: runOrientation(run),
     },
   };
 }
 
 function nodePayloads(run) {
-  return run.nodes.map((node, index) => ({
-    sequence: index,
-    node_kind: index === 0 || index === run.nodes.length - 1 ? 'endpoint' : 'bend',
-    source_x_m: Number(node.x) || 0,
-    source_y_m: Number(node.y) || 0,
-    source_z_m: Number(node.z) || 0,
-    anchor: sanitizeAnchorForPersistence(node.anchor || {}),
-    metadata: {},
-  }));
+  return run.nodes.map((node, index) => {
+    const payload = {
+      sequence: index,
+      node_kind: index === 0 || index === run.nodes.length - 1 ? 'endpoint' : 'bend',
+      source_x_m: Number(node.x) || 0,
+      source_y_m: Number(node.y) || 0,
+      source_z_m: Number(node.z) || 0,
+      anchor: sanitizeAnchorForPersistence(node.anchor || {}),
+      metadata: {},
+    };
+    if (node.key) payload.key = node.key;
+    return payload;
+  });
 }
 
 function applySavedRunPayload(localRun, payload) {
@@ -2349,6 +2414,10 @@ function serviceOptionsHtml() {
   return services.map(service => `<option value="${escapeHtml(service.id)}"${service.id === state.serviceClass ? ' selected' : ''}>${escapeHtml(service.label)}</option>`).join('');
 }
 
+function orientationOptionsHtml() {
+  return orientationPresets.map(preset => `<option value="${escapeHtml(preset.id)}"${preset.id === state.orientationPreset ? ' selected' : ''}>${escapeHtml(preset.label)}</option>`).join('');
+}
+
 function segmentDirectionOptionsHtml() {
   return segmentDirections.map(direction => `<option value="${escapeHtml(direction.id)}"${direction.id === state.segmentDirection ? ' selected' : ''}>${escapeHtml(direction.label)}</option>`).join('');
 }
@@ -2359,7 +2428,7 @@ function runRowsHtml() {
     <button type="button" class="raceway-row ${run.id === state.activeRunId ? 'raceway-row-active' : ''}" data-raceway-action="select-run" data-run-id="${escapeHtml(run.id)}" title="Select raceway run">
       <strong>${escapeHtml(run.tag)}</strong><br>
       ${escapeHtml(run.familyLabel)} ${escapeHtml(run.sizeLabel)}<br>
-      ${escapeHtml(serviceFor(run.serviceClass).label)} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'}<br>
+      ${escapeHtml(serviceFor(run.serviceClass).label)} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | ${escapeHtml(orientationLabel(run))}<br>
       ${run.nodes.length} nodes | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)}
     </button>
   `).join('');
@@ -2590,6 +2659,7 @@ function ensurePanel() {
       <label>Family<select id="racewayFamilySelect">${familyOptionsHtml()}</select></label>
       <label>Size<select id="racewaySizeSelect">${sizeOptionsHtml()}</select></label>
       <label>Service<select id="racewayServiceSelect">${serviceOptionsHtml()}</select></label>
+      <label>Orientation<select id="racewayOrientationSelect">${orientationOptionsHtml()}</select></label>
       <label>EL m<input id="racewayElevationInput" type="number" step="0.001" value="${formatM(state.elevationM)}"></label>
     </div>
     <div class="raceway-aid-grid">
@@ -2689,6 +2759,7 @@ function renderPanel(options = {}) {
   const familySelect = panel.querySelector('#racewayFamilySelect');
   const sizeSelect = panel.querySelector('#racewaySizeSelect');
   const serviceSelect = panel.querySelector('#racewayServiceSelect');
+  const orientationSelect = panel.querySelector('#racewayOrientationSelect');
   const orthoInput = panel.querySelector('#racewayOrthoInput');
   const surfaceToggleBtn = panel.querySelector('#racewaySurfaceToggleBtn');
   const segmentDirectionSelect = panel.querySelector('#racewaySegmentDirectionSelect');
@@ -2703,6 +2774,10 @@ function renderPanel(options = {}) {
     sizeSelect.value = state.sizeId;
   }
   if (serviceSelect && serviceSelect !== document.activeElement) serviceSelect.value = state.serviceClass;
+  if (orientationSelect && orientationSelect !== document.activeElement) {
+    orientationSelect.innerHTML = orientationOptionsHtml();
+    orientationSelect.value = state.orientationPreset;
+  }
   if (orthoInput && orthoInput !== document.activeElement) orthoInput.checked = Boolean(state.orthoMode);
   if (surfaceToggleBtn) {
     surfaceToggleBtn.textContent = state.showProxyFaces ? 'Surface On' : 'Wire Only';
@@ -2718,7 +2793,7 @@ function renderPanel(options = {}) {
     const graphWarningCount = graphWarnings().length;
     const visualMode = state.showProxyFaces ? 'surface view' : 'wire view';
     summaryEl.textContent = run
-      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | ${visualMode} | work EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} local warning(s) | ${graphWarningCount} graph warning(s)`
+      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | ${visualMode} | ${orientationLabel(run)} | work EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} local warning(s) | ${graphWarningCount} graph warning(s)`
       : 'No active run';
   }
   if (graphWarningsEl) graphWarningsEl.innerHTML = graphWarningsHtml();
@@ -2865,6 +2940,18 @@ function handlePanelChange(event) {
     if (run) pushUndo('Change raceway service');
     state.serviceClass = target.value;
     applyPaletteToActiveRun();
+  }
+  if (target.id === 'racewayOrientationSelect') {
+    const preset = orientationPresetFor(target.value);
+    if (run) {
+      pushUndo('Change raceway orientation');
+      run.orientation = normalizedOrientation(preset.id);
+      markRunDirty(run);
+      setStatus(`${run.tag}: orientation set to ${preset.label}. Save Draft to persist.`);
+    } else {
+      setStatus(`Default raceway orientation set to ${preset.label}.`);
+    }
+    state.orientationPreset = preset.id;
   }
   if (target.id === 'racewayElevationInput') {
     if (run) pushUndo('Change raceway elevation');
@@ -3020,6 +3107,7 @@ window.racewayViewerOverlay = {
       : [];
     state.activeRunId = state.runs[0]?.id || '';
     state.selectedNodeIndex = -1;
+    syncPaletteFromRun(activeRun());
     clearHistory();
     clearGraphProjection();
     clearScheduleProjection();

@@ -60,6 +60,9 @@ that foundation.
 - [x] Expose Raceway tray/ladder edges as Measure Snap Vertex targets.
 - [x] Fix Raceway edge snap reliability by using closest screen-space edge
   selection before mesh snap fallback.
+- [x] Add first run-level Raceway orientation preset controls with save-flow
+  persistence.
+- [x] Preserve stable Raceway node UUID keys during node replacement.
 
 ## Default Pass Ritual
 
@@ -389,7 +392,7 @@ Acceptance:
   riser face-legibility polish.
 - [ ] Tray/riser cross-section orientation controls:
   - inherit riser orientation from adjacent horizontal tray by default,
-  - add cheap orthogonal rotate presets first,
+  - [x] add cheap run-level orthogonal rotate presets first,
   - defer arbitrary numeric roll angle until field usage proves it is needed.
 - [x] Face/orientation foundation design note:
   - `../planning/raceway-face-orientation-foundation-2026-07-12.md`,
@@ -397,7 +400,7 @@ Acceptance:
   - orientation/handedness/face-offset are authoring intent,
   - fitting/accessory persistence remains deferred,
   - node-key preservation is a prerequisite before segment-level overrides.
-- [ ] Preserve stable node UUID keys during node replacement before any
+- [x] Preserve stable node UUID keys during node replacement before any
   segment-level orientation/face-offset override is persisted.
 - [x] Extend Measure `Snap Vertex On` to Raceway tray/ladder edges:
   - add a viewer-layer snap-provider contract,
@@ -1433,6 +1436,35 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
   - `git diff --check`
 
+### 2026-07-13 - Stable Node Key Preservation
+
+- Read Claude/Fable §31 before coding; no blocker found.
+- Closed the identity prerequisite before segment-level orientation/face-offset
+  overrides:
+  - saved nodes resend their durable `node.key` values in the replacement
+    payload,
+  - `PUT /raceway/runs/<id>/nodes/` still replaces rows as one ordered set,
+    but reuses keys that already belong to the same run,
+  - new nodes receive fresh UUID keys,
+  - foreign, malformed, or duplicate node keys are rejected before any existing
+    node rows are deleted.
+- Browser smoke now verifies the second save sends saved node keys back.
+- API tests now verify:
+  - same-run node keys are preserved across replacement and reorder,
+  - a key from another run is rejected without deleting existing nodes.
+- Bumped browser cache key:
+  - Raceway overlay: `20260713_raceway28`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`
+
 ### 2026-07-12 - Warning Camera Framing and Header Badge
 
 - Read Claude/Fable §28 and KR's pasted review before coding.
@@ -1574,3 +1606,36 @@ Append each pass here.
     defect,
   - endpoint-priority snapping and explicit snap geometry should be deferred
     until before accessory geometry becomes selectable.
+
+### 2026-07-13 - Run-Level Orientation Presets
+
+- Read Claude/Fable §31 before coding; no blocker found.
+- Implemented first Raceway orientation-control slice:
+  - active run dropdown with `Open Up`, `Roll Right`, `Open Down`, `Roll Left`,
+  - run-level orientation rotates proxy width/depth axes around each segment
+    centreline,
+  - new runs inherit the current preset,
+  - run rows and summary show the selected orientation.
+- Save behavior:
+  - orientation edits are draft-local while editing,
+  - undo/redo works through the existing Raceway history stack,
+  - orientation persists only through the normal `Save Draft` flow,
+  - server validates and canonicalizes `RacewayRun.metadata["orientation"]`
+    without adding a migration.
+- Still deferred:
+  - vertical riser inheritance from adjacent non-vertical segment,
+  - stable node-key preservation before segment-level overrides,
+  - segment/face-offset authoring,
+  - reducer handedness and one-edge reducer materialization.
+- Bumped browser cache key:
+  - Raceway overlay: `20260713_raceway27`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`

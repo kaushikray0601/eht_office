@@ -356,8 +356,20 @@ Code facts verified on 2026-07-09:
   Follow-up reliability fix: provider edge objects are selected by closest
   screen-space line segment within a tight pixel threshold before selected mesh
   vertex snapping, so nearby structures/trays do not win by raycaster depth
-  order. Cache keys: package viewer `20260713_snap_provider2`, Raceway overlay
-  `20260712_raceway26`.
+  order.
+- First Raceway orientation-control slice is implemented. Active runs have a
+  run-level orientation preset (`Open Up`, `Roll Right`, `Open Down`,
+  `Roll Left`), applied to proxy geometry, undo/redo aware, and persisted only
+  through the normal Save Draft flow under validated
+  `RacewayRun.metadata["orientation"]`. Still deferred: stable node-key
+  preservation before segment overrides, segment/face-offset authoring, reducer
+  handedness, and explicit accessory snap geometry.
+- Raceway node-key preservation is implemented. Saved nodes resend `node.key`;
+  the server preserves keys only when they already belong to the same run,
+  rejects foreign/invalid keys without deleting existing nodes, and gives new
+  nodes fresh UUID keys. This closes the identity prerequisite before
+  segment-level orientation/face-offset overrides. Cache keys: package viewer
+  `20260713_snap_provider2`, Raceway overlay `20260713_raceway28`.
 - Deferred stock reviewed against Claude §28 on 2026-07-12. Keep open:
   `.code-workspace` tracked-file cleanup decision, KR generic catalogue seed
   confirmation, F-19/F-20 commit hygiene notes, blocked-telemetry browser

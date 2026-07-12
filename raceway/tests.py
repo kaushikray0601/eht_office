@@ -1016,7 +1016,10 @@ class RacewayApiTests(TestCase):
                     "size_id": self.size.pk,
                     "service_class": "power",
                     "elevation_m": 106.5,
-                    "metadata": {"route_basis": "manual"},
+                    "metadata": {
+                        "route_basis": "manual",
+                        "orientation": {"preset": "roll_right"},
+                    },
                 }
             ),
             content_type="application/json",
@@ -1030,6 +1033,9 @@ class RacewayApiTests(TestCase):
         self.assertEqual(run_payload["family"]["kind"], "ladder")
         self.assertEqual(run_payload["size"]["width_mm"], 300)
         self.assertEqual(run_payload["size"]["depth_mm"], 100)
+        self.assertEqual(run_payload["metadata"]["orientation"]["schema"], "raceway.orientation.v0")
+        self.assertEqual(run_payload["metadata"]["orientation"]["preset"], "roll_right")
+        self.assertEqual(run_payload["metadata"]["orientation"]["quarter_turns"], 1)
         run_id = run_payload["id"]
 
         node_response = self.client.put(
@@ -1094,6 +1100,25 @@ class RacewayApiTests(TestCase):
         delete_response = self.client.delete(reverse("raceway:run_detail", args=[run_id]))
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(RacewayRun.objects.filter(pk=run_id).exists())
+
+    def test_run_rejects_unsupported_orientation_preset(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        response = self.client.post(
+            reverse("raceway:layer_runs", args=[layer.pk]),
+            data=json_body(
+                {
+                    "tag": "RWY-BAD-ORIENT",
+                    "family_id": self.family.pk,
+                    "size_id": self.size.pk,
+                    "service_class": "power",
+                    "metadata": {"orientation": {"preset": "diagonal_magic"}},
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("metadata.orientation.preset", response.json()["errors"])
 
     def test_run_create_rejects_family_size_mismatch(self):
         layer = create_layer(project_id=self.project.proj_id)
@@ -1170,6 +1195,85 @@ class RacewayApiTests(TestCase):
         self.assertIn("anchor", response.json()["errors"])
         self.assertEqual(list(run.nodes.values_list("source_x_m", flat=True)), [1.0])
 
+    def test_node_replace_preserves_existing_node_keys_when_client_sends_them(self):
+        run = create_run(layer=create_layer(project_id=self.project.proj_id), family=self.family, size=self.size)
+        first = RacewayNode.objects.create(run=run, sequence=0, source_x_m=1.0, source_y_m=0.0, source_z_m=0.0)
+        second = RacewayNode.objects.create(run=run, sequence=1, source_x_m=2.0, source_y_m=0.0, source_z_m=0.0)
+
+        response = self.client.put(
+            reverse("raceway:run_nodes", args=[run.pk]),
+            data=json_body(
+                {
+                    "nodes": [
+                        {
+                            "key": str(second.key),
+                            "sequence": 0,
+                            "source_x_m": 2.0,
+                            "source_y_m": 1.0,
+                            "source_z_m": 0.0,
+                        },
+                        {
+                            "key": str(first.key),
+                            "sequence": 1,
+                            "source_x_m": 1.0,
+                            "source_y_m": 1.0,
+                            "source_z_m": 0.0,
+                        },
+                        {
+                            "sequence": 2,
+                            "source_x_m": 3.0,
+                            "source_y_m": 1.0,
+                            "source_z_m": 0.0,
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        returned_keys = [node["key"] for node in response.json()["nodes"]]
+        self.assertEqual(returned_keys[:2], [str(second.key), str(first.key)])
+        self.assertNotIn(returned_keys[2], {str(first.key), str(second.key)})
+        self.assertEqual(
+            list(run.nodes.order_by("sequence").values_list("key", flat=True))[:2],
+            [second.key, first.key],
+        )
+
+    def test_node_replace_rejects_node_key_from_another_run_without_deleting_existing_nodes(self):
+        run = create_run(layer=create_layer(project_id=self.project.proj_id), family=self.family, size=self.size)
+        existing = RacewayNode.objects.create(run=run, sequence=0, source_x_m=1.0, source_y_m=0.0, source_z_m=0.0)
+        other_run = create_run(layer=run.layer, family=self.family, size=self.size)
+        foreign = RacewayNode.objects.create(run=other_run, sequence=0, source_x_m=9.0, source_y_m=0.0, source_z_m=0.0)
+
+        response = self.client.put(
+            reverse("raceway:run_nodes", args=[run.pk]),
+            data=json_body(
+                {
+                    "nodes": [
+                        {
+                            "key": str(foreign.key),
+                            "sequence": 0,
+                            "source_x_m": 2.0,
+                            "source_y_m": 0.0,
+                            "source_z_m": 0.0,
+                        },
+                        {
+                            "sequence": 1,
+                            "source_x_m": 3.0,
+                            "source_y_m": 0.0,
+                            "source_z_m": 0.0,
+                        },
+                    ],
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("nodes", response.json()["errors"])
+        self.assertEqual(list(run.nodes.values_list("key", flat=True)), [existing.key])
+
     def test_node_replace_requires_two_ordered_nodes_without_deleting_existing_nodes(self):
         run = create_run(layer=create_layer(project_id=self.project.proj_id), family=self.family, size=self.size)
         RacewayNode.objects.create(run=run, sequence=0, source_x_m=1.0, source_y_m=2.0, source_z_m=3.0)
@@ -1217,8 +1321,14 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("racewayFamilySelect", content)
         self.assertIn("racewaySizeSelect", content)
         self.assertIn("racewayServiceSelect", content)
+        self.assertIn("racewayOrientationSelect", content)
         self.assertIn("racewayElevationInput", content)
         self.assertIn("racewayOrthoInput", content)
+        self.assertIn("const ORIENTATION_SCHEMA = 'raceway.orientation.v0'", content)
+        self.assertIn("function normalizedOrientation", content)
+        self.assertIn("function rollBasisAroundTangent", content)
+        self.assertIn("orientation: runOrientation(run)", content)
+        self.assertIn("if (node.key) payload.key = node.key", content)
         self.assertIn("racewaySegmentDirectionSelect", content)
         self.assertIn("racewaySegmentLengthInput", content)
         self.assertIn("CATALOG_URL = '/raceway/catalog/'", content)

@@ -162,7 +162,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                               json: async () => ({
                                 nodes: body.nodes.map((node, index) => ({
                                   id: 900 + index,
-                                  key: `node-${index}`,
+                                  key: node.key || `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
                                   sequence: node.sequence,
                                   source_x_m: node.source_x_m,
                                   source_y_m: node.source_y_m,
@@ -645,6 +645,19 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     arg=fitting_fetches_before,
                 )
                 self.assertIn("Raceway fittings refreshed", page.text_content("#racewayToolStatus"))
+                page.select_option("#racewayOrientationSelect", "roll_right")
+                page.wait_for_function(
+                    "() => window.racewayViewerOverlay.getRuns()[0]?.orientation?.preset === 'roll_right'"
+                )
+                self.assertIn("orientation set to Roll Right", page.text_content("#racewayToolStatus"))
+                page.keyboard.press("Control+Z")
+                page.wait_for_function(
+                    "() => window.racewayViewerOverlay.getRuns()[0]?.orientation?.preset === 'open_up'"
+                )
+                page.keyboard.press("Control+Shift+Z")
+                page.wait_for_function(
+                    "() => window.racewayViewerOverlay.getRuns()[0]?.orientation?.preset === 'roll_right'"
+                )
                 node_puts_before = page.evaluate(
                     "() => window.__racewayFetchLog.filter((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT').length"
                 )
@@ -655,6 +668,29 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     arg=node_puts_before,
                 )
                 self.assertIn("saved to server", page.text_content("#racewayToolStatus"))
+                saved_run = page.evaluate(
+                    """() => [...window.__racewayFetchLog]
+                        .reverse()
+                        .find((entry) => entry.url.includes('/raceway/runs/501/') && entry.method === 'PATCH').body
+                    """
+                )
+                self.assertEqual(saved_run["metadata"]["orientation"]["schema"], "raceway.orientation.v0")
+                self.assertEqual(saved_run["metadata"]["orientation"]["preset"], "roll_right")
+                self.assertEqual(saved_run["metadata"]["orientation"]["quarter_turns"], 1)
+                latest_saved_nodes = page.evaluate(
+                    """() => [...window.__racewayFetchLog]
+                        .reverse()
+                        .find((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT').body.nodes
+                    """
+                )
+                self.assertEqual(
+                    [node.get("key") for node in latest_saved_nodes],
+                    [
+                        "00000000-0000-4000-8000-000000000001",
+                        "00000000-0000-4000-8000-000000000002",
+                        "00000000-0000-4000-8000-000000000003",
+                    ],
+                )
                 page.click('[data-raceway-action="select-warning"][data-warning-index="0"]')
                 page.wait_for_function(
                     "() => document.querySelector('[data-raceway-action=\"select-node\"][data-node-index=\"1\"]')?.classList.contains('raceway-row-active')"

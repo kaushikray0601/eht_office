@@ -93,11 +93,11 @@ For the first coded orientation slice, prefer:
 
 Before persisting segment-level orientation, one prerequisite must be handled:
 
-- `PUT /raceway/runs/<id>/nodes/` currently deletes/recreates nodes,
-- recreated nodes receive new UUID keys,
-- segment overrides keyed by node UUIDs would become unstable,
-- therefore node replacement must preserve existing node keys where the client
-  sends them, or we need a dedicated stable segment-intent model.
+- `PUT /raceway/runs/<id>/nodes/` deletes/recreates node rows,
+- segment overrides keyed by node UUIDs would become unstable if recreated rows
+  silently received new UUID keys,
+- therefore node replacement preserves existing node keys where the client sends
+  keys already owned by that run.
 
 Possible later schema if metadata becomes too loose:
 
@@ -143,20 +143,19 @@ Initial behavior should be predictable:
 
 Smallest useful implementation after this note is reviewed:
 
-- add a viewer-only Orientation preset control:
-  - `Auto`,
-  - `Rotate 90`,
-  - `Rotate 180`,
-  - `Rotate 270`,
-  - later `Flip side`.
-- apply it to selected run preview geometry only,
+- add a run-level Orientation preset control:
+  - `Open Up`,
+  - `Roll Right`,
+  - `Open Down`,
+  - `Roll Left`,
+  - later segment-level face/handedness overrides.
+- apply it to selected run preview geometry,
 - use undo/redo,
 - no immediate autosave; persist orientation only when the user saves the
   Raceway layer/scene.
 
 Second slice:
 
-- persist a validated run-level orientation default,
 - preserve node UUID keys on node replacement before any segment-level override,
 - reflect orientation in schedule/fitting projection assumptions.
 
@@ -237,6 +236,18 @@ Schedule/CSV:
 - KR answered 2026-07-12: reducer/expander centerline matching is unusual.
   Default to matching one edge and smoothing the other edge unless a project
   reason proves center alignment is needed.
+- Codex implemented first run-level orientation slice on 2026-07-13:
+  - four orthogonal presets are draft-local while editing,
+  - undo/redo aware,
+  - persisted only through the existing Save Draft flow under validated
+    `RacewayRun.metadata["orientation"]`,
+  - no segment-level override, face-offset, or reducer handedness authority yet.
+- Codex implemented node-key preservation on 2026-07-13:
+  - saved Raceway nodes resend their durable UUID keys on replacement,
+  - the server reuses keys only when they already belong to the same run,
+  - new nodes still receive fresh UUID keys,
+  - segment-level overrides remain deferred, but their identity prerequisite is
+    now closed.
 - Claude/Fable: is run metadata acceptable for a first saved orientation schema,
   or should we require node-key preservation first and then add a segment-intent
   model?
