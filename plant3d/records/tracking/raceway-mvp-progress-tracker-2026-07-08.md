@@ -38,6 +38,16 @@ that foundation.
 - [x] Add Stage 4 API tests.
 - [x] Run Stage 4 verification commands.
 
+## Default Pass Ritual
+
+- [x] Read Claude/Fable notes before coding.
+- [x] Do quick housekeeping/status check and preserve unrelated dirty files.
+- [x] Answer KR clarification/advice questions before implementation.
+- [x] Report what KR should manually verify after each pass.
+- [x] Add note to Claude when review/research/architecture input is useful.
+- [x] End with ordered next-pass recommendations, with a short reason if the
+  order differs from the tracker.
+
 ## Decisions
 
 - [x] Keep `plant3d` as neutral co-located platform during Stage 0.
@@ -313,22 +323,22 @@ Acceptance:
 
 ## Stage 10 - Warning Layer
 
-- [ ] Define warning payload shape.
-- [ ] Add too-few-nodes warning.
-- [ ] Add short-segment warning.
-- [ ] Add excessive-bend warning.
-- [ ] Add unsupported-span placeholder warning.
-- [ ] Add missing family/size/service warning.
-- [ ] Add unknown coordinate context warning.
-- [ ] Add inspector warning display.
-- [ ] Add schedule/export warning evidence.
+- [x] Define warning payload shape.
+- [x] Add too-few-nodes warning.
+- [x] Add short-segment warning.
+- [x] Add excessive-bend warning.
+- [x] Add unsupported-span placeholder warning.
+- [x] Add missing/inactive family/size/service warning.
+- [x] Add unknown coordinate context warning.
+- [x] Add inspector warning display.
+- [x] Add schedule/export warning evidence.
 - [ ] Defer hard clash constraints.
 
 Acceptance:
 
 - [ ] Warnings appear before save and after reload.
 - [ ] Only invalid payload/access blocks persistence.
-- [ ] Warning vocabulary can grow to fill/segregation/clash.
+- [x] Warning vocabulary can grow to fill/segregation/clash.
 
 ## Deferred Backlog
 
@@ -349,7 +359,16 @@ Acceptance:
 - [ ] DXF layout drawings.
 - [ ] Support fabrication sheets.
 - [ ] Multi-user collaboration.
-- [ ] Solid 3-plane tray/ladder proxy visual pass.
+- [x] Solid 3-plane tray/ladder proxy visual pass.
+- [x] Surface/wire visual toggle, shaded bottom/side faces, and vertical
+  riser face-legibility polish.
+- [ ] Screen-scaled consumer overlay handles as a platform pattern beyond
+  Raceway.
+- [ ] Reducer fitting/accessory between unequal tray widths.
+- [ ] Segment/face-offset edit workflow for riser/bend fitting alignment where
+  connected tray faces must align rather than only centreline nodes.
+- [ ] Parametric bend/riser/tee fitting geometry after placeholder counts are
+  stable; cross fittings can follow later if project usage demands it.
 - [ ] Project/admin-level connection tolerance setting when needed.
 - [ ] Project/admin or user-level near-miss warning sensitivity setting when
   needed.
@@ -511,6 +530,7 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
 
 ### 2026-07-09 - Raceway Viewer Root-Cause Fix
 
@@ -975,4 +995,123 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Stage 10 Warning Layer Foundation
+
+- Added canonical derived warning projection in `raceway/warnings.py`:
+  - normalizes graph warnings into the shared warning shape,
+  - adds too-few-nodes, short-segment, excessive-bends, inactive catalogue
+    reference, unknown service, unknown coordinate context, and support-span
+    placeholder-basis notices,
+  - summarizes warnings by code and severity.
+- Integrated warnings into the schedule payload:
+  - added `warnings` and `warning_summary`,
+  - kept existing `graph_warnings` for compatibility.
+- Rounded out CSV completeness from Claude S-5:
+  - added graph warning counts by code,
+  - added warning summary and warning detail rows,
+  - added totals section,
+  - added fitting placeholder category rows for plan bends and risers.
+- Updated viewer schedule summary to show validation notices from the new
+  warning summary and bumped the Raceway overlay cache key:
+  - Raceway overlay: `20260712_raceway16`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Stage 10 Inspector Warnings and Screen-Scaled Handles
+
+- Made Stage 10 warnings visible inside the authoring pane:
+  - local draft warnings now use structured warning objects,
+  - inspector shows selected-node/run warnings before save,
+  - schedule summary shows validation warning details after refresh,
+  - reloading saved raceways refreshes the schedule projection if the user had
+    already opened it.
+- Added an opt-in Plant3D viewer screen-scale hook for consumer overlay
+  objects:
+  - viewer layers may set `screenScaledObjects`,
+  - only opted-in layer groups are traversed in the animation loop,
+  - Raceway node handles and invisible hit targets now stay visually small
+    while remaining selectable.
+- Captured KR architecture refinements in the backlog:
+  - reducer fitting/accessory between unequal tray widths,
+  - segment/face-offset editing for riser/bend fitting alignment,
+  - parametric bend/riser/tee fitting geometry after placeholder counts are
+    stable,
+  - cross fittings deferred until project usage demands it.
+- Bumped browser cache keys:
+  - Plant3D package viewer: `20260712_screen_scale1`,
+  - Raceway overlay: `20260712_raceway17`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+- Note:
+  - Plain `node --check plant3d/static/plant3d/js/package_viewer.js` is not a
+    valid check in the current Node mode because that file is an ES module with
+    top-level `import`; plant3d static tests cover the updated viewer contract.
+
+### 2026-07-12 - Solid 3-Plane Proxy Visual Pass
+
+- Added a merged parametric proxy mesh per Raceway run:
+  - one `solid-3-plane-proxy` mesh per run,
+  - bottom face plus two side faces generated from centreline nodes and
+    catalogue width/depth,
+  - existing side rails, lower edges, rungs/cross-members, bend placeholders,
+    riser placeholders, and node handles remain as legibility overlays.
+- Kept the proxy derived and non-persistent:
+  - saved geometry remains source-frame centreline nodes,
+  - the mesh is rebuilt on render from current run data,
+  - manufacturer/vendor assets remain later presentation overlays, not
+    engineering truth.
+- Kept draw-call control in line with Claude's guidance:
+  - direct triangle positions are merged into one `BufferGeometry` per run,
+  - no per-face/per-segment mesh objects are created.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway18`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Raceway Surface/Wire Toggle and Riser Visual Polish
+
+- Kept the solid proxy as one merged mesh per Raceway run while adding shaded
+  bottom/side differentiation:
+  - bottom and side faces now use per-vertex colour shades,
+  - one transparent material/draw-call profile is preserved,
+  - the change remains a visual proxy only; persistence stays centreline based.
+- Added a lightweight view toggle:
+  - Raceway aid strip has a `Surface On` / `Wire Only` button,
+  - `Shift+V` toggles the same view mode,
+  - wire-only mode removes only the shaded face mesh and keeps rails, rungs,
+    node handles, bend/riser placeholders, graph/schedule data, and save
+    behavior intact.
+- Polished vertical/riser geometry:
+  - segment frame basis now follows the 3D source segment,
+  - horizontal trays still grow upward from bottom elevation,
+  - vertical risers push tray depth sideways so side faces/rails do not collapse
+    into a single laminar plane.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway19`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `git diff --check`

@@ -10,6 +10,7 @@ from .graph import (
     build_layer_graph,
 )
 from .models import RacewayLayer, RacewayRun
+from .warnings import build_layer_warnings, summarize_warnings
 
 
 PLACEHOLDER_SUPPORT_SPAN_M = 3.0
@@ -26,15 +27,24 @@ def build_layer_schedule(layer, *, support_span_m=PLACEHOLDER_SUPPORT_SPAN_M):
         .order_by("tag", "pk")
     )
     graph = build_layer_graph(layer_obj).to_payload()
+    warnings = build_layer_warnings(layer_obj, graph_payload=graph, support_span_m=support_span_m)
     return build_schedule_for_runs(
         runs,
         layer=layer_obj,
         graph_warnings=graph.get("warnings", []),
+        warnings=warnings,
         support_span_m=support_span_m,
     )
 
 
-def build_schedule_for_runs(runs, *, layer=None, graph_warnings=None, support_span_m=PLACEHOLDER_SUPPORT_SPAN_M):
+def build_schedule_for_runs(
+    runs,
+    *,
+    layer=None,
+    graph_warnings=None,
+    warnings=None,
+    support_span_m=PLACEHOLDER_SUPPORT_SPAN_M,
+):
     run_payloads = []
     segment_payloads = []
     plan_bends = []
@@ -73,6 +83,8 @@ def build_schedule_for_runs(runs, *, layer=None, graph_warnings=None, support_sp
         **_generation_envelope(layer),
         "assumptions": _schedule_assumptions(support_span_m),
         "graph_warnings": _graph_warning_summary(graph_warnings or []),
+        "warning_summary": summarize_warnings(warnings or []),
+        "warnings": warnings or [],
         "runs": run_payloads,
         "segments": segment_payloads,
         "fitting_placeholders": {

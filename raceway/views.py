@@ -428,11 +428,89 @@ def _write_schedule_csv(response, layer, schedule):
     writer.writerow(["Layer Name", schedule.get("layer_name", layer.name)])
     writer.writerow(["Generated At", schedule.get("generated_at", "")])
     writer.writerow(["Graph Warning Total", schedule.get("graph_warnings", {}).get("total", 0)])
+    graph_counts = {
+        "raceway.graph.near_miss_endpoint": 0,
+        "raceway.graph.unconnected_crossing": 0,
+        "raceway.graph.zero_length_segment": 0,
+        **schedule.get("graph_warnings", {}).get("by_code", {}),
+    }
+    writer.writerow(["Graph Warning Counts"])
+    writer.writerow(["Code", "Count"])
+    for code, count in sorted(graph_counts.items()):
+        writer.writerow([code, count])
+    writer.writerow([])
+    writer.writerow(["Warning Summary"])
+    warning_summary = schedule.get("warning_summary", {})
+    writer.writerow(["Total", warning_summary.get("total", 0)])
+    writer.writerow(["Warnings", warning_summary.get("warning", 0)])
+    writer.writerow(["Info", warning_summary.get("info", 0)])
+    writer.writerow(["Severity Counts"])
+    writer.writerow(["Severity", "Count"])
+    for severity, count in sorted(warning_summary.get("by_severity", {}).items()):
+        writer.writerow([severity, count])
+    writer.writerow(["Code Counts"])
+    writer.writerow(["Code", "Count"])
+    for code, count in sorted(warning_summary.get("by_code", {}).items()):
+        writer.writerow([code, count])
     writer.writerow([])
     writer.writerow(["Assumptions"])
     writer.writerow(["Code", "Message"])
     for assumption in schedule.get("assumptions", []):
         writer.writerow([assumption.get("code", ""), assumption.get("message", "")])
+    writer.writerow([])
+    writer.writerow(["Totals"])
+    writer.writerow([
+        "Runs",
+        "Segments",
+        "Length m",
+        "Horizontal m",
+        "Riser m",
+        "Plan Bends",
+        "Risers",
+        "Support Placeholders",
+        "Piece Estimate",
+        "Offcut Estimate m",
+        "Known Weight kg",
+        "Has Unknown Weight",
+    ])
+    totals = schedule.get("totals", {})
+    writer.writerow([
+        totals.get("run_count", 0),
+        totals.get("segment_count", 0),
+        _csv_number(totals.get("length_m")),
+        _csv_number(totals.get("horizontal_length_m")),
+        _csv_number(totals.get("riser_length_m")),
+        totals.get("plan_bend_count", 0),
+        totals.get("riser_count", 0),
+        totals.get("support_placeholders", 0),
+        totals.get("piece_count_estimate", 0),
+        _csv_number(totals.get("offcut_m_estimate")),
+        _csv_number(totals.get("known_weight_kg")),
+        "yes" if totals.get("has_unknown_weight") else "no",
+    ])
+    writer.writerow([])
+    writer.writerow(["Fitting Placeholders"])
+    writer.writerow(["Kind", "Category", "Count"])
+    fitting_counts = schedule.get("fitting_placeholders", {}).get("counts", {})
+    writer.writerow(["plan_bend", "total", fitting_counts.get("plan_bend_total", 0)])
+    for category, count in sorted(fitting_counts.get("plan_bends", {}).items()):
+        writer.writerow(["plan_bend", category, count])
+    writer.writerow(["riser", "total", fitting_counts.get("riser_total", 0)])
+    for category, count in sorted(fitting_counts.get("risers", {}).items()):
+        writer.writerow(["riser", category, count])
+    writer.writerow([])
+    writer.writerow(["Validation Warnings"])
+    writer.writerow(["Severity", "Code", "Source", "Object", "Run Tag", "Segment", "Message"])
+    for warning in schedule.get("warnings", []):
+        writer.writerow([
+            warning.get("severity", ""),
+            warning.get("code", ""),
+            warning.get("source", ""),
+            warning.get("object_type", ""),
+            warning.get("run_tag", ""),
+            warning.get("segment_index", ""),
+            warning.get("message", ""),
+        ])
     writer.writerow([])
     writer.writerow(["Grouped Quantities"])
     writer.writerow([

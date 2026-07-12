@@ -3,6 +3,13 @@ const RACEWAY_INTERACTION_ID = 'raceway-centerline-authoring';
 const CATALOG_URL = '/raceway/catalog/';
 const SOURCE_COORDINATE_FRAME = 'source_xyz_m';
 const HISTORY_LIMIT = 80;
+const NODE_HANDLE_SCREEN_PX = 5;
+const NODE_HANDLE_SELECTED_SCREEN_PX = 6;
+const NODE_HIT_TARGET_SCREEN_PX = 18;
+const PROXY_FACE_OPACITY = 0.14;
+const PROXY_FACE_SELECTED_OPACITY = 0.24;
+const PROXY_BOTTOM_SHADE = 1.12;
+const PROXY_SIDE_SHADE = 0.72;
 
 let catalog = [];
 
@@ -51,6 +58,7 @@ const state = {
   undoStack: [],
   redoStack: [],
   orthoMode: false,
+  showProxyFaces: true,
   segmentDirection: segmentDirections[0].id,
   segmentLengthM: 6,
   connectSource: null,
@@ -77,6 +85,7 @@ const actionLabels = {
   'delete-run': 'Delete active run',
   'add-segment': 'Add typed segment from the last node',
   'toggle-ortho': 'Toggle orthogonal drawing assist',
+  'toggle-surfaces': 'Toggle shaded raceway faces',
 };
 
 const actionShortcuts = {
@@ -100,6 +109,7 @@ const actionShortcuts = {
   'delete-run': 'Shift+Del',
   'add-segment': 'Enter in segment fields',
   'toggle-ortho': 'O',
+  'toggle-surfaces': 'Shift+V',
 };
 
 let layer = null;
@@ -356,6 +366,7 @@ function registerRacewayOverlay() {
   if (registry.ids?.().includes(RACEWAY_LAYER_ID)) {
     return registry.update?.(RACEWAY_LAYER_ID, {
       getElements: () => state.runs,
+      screenScaledObjects: true,
     });
   }
   return registry.register({
@@ -365,6 +376,7 @@ function registerRacewayOverlay() {
     label: 'Raceway',
     createGroup: true,
     getElements: () => state.runs,
+    screenScaledObjects: true,
   });
 }
 
@@ -722,8 +734,30 @@ function runLength(run) {
 
 function runWarnings(run) {
   const warnings = [];
+  if (!run) return warnings;
+  if (run.nodes.length > 0 && run.nodes.length < 2) {
+    warnings.push({
+      code: 'raceway.warning.too_few_nodes',
+      severity: 'warning',
+      message: 'Add at least two nodes before saving this raceway run.',
+    });
+  }
+  if (!run.familyId || !run.sizeId || !run.serviceClass) {
+    warnings.push({
+      code: 'raceway.warning.missing_catalog_or_service',
+      severity: 'warning',
+      message: 'Select family, size, and service before saving this raceway run.',
+    });
+  }
   run.nodes.forEach((node, index) => {
-    if (index > 0 && nodeDistance(run.nodes[index - 1], node) < 0.05) warnings.push(`Short segment ${index}`);
+    if (index > 0 && nodeDistance(run.nodes[index - 1], node) < 0.05) {
+      warnings.push({
+        code: 'raceway.warning.short_segment',
+        severity: 'warning',
+        message: `Segment ${index} is shorter than 0.050 m; review whether adjacent nodes should be merged.`,
+        nodeIndices: [index - 1, index],
+      });
+    }
   });
   return warnings;
 }
@@ -759,14 +793,6 @@ function runDepthM(run) {
   return Math.max((Number(run.depthMm) || 50) / 1000, 0.025);
 }
 
-function sourceOffsetPoint(point, normalX, normalY, lateralOffsetM, verticalOffsetM = 0) {
-  return {
-    x: Number(point.x || 0) + normalX * lateralOffsetM,
-    y: Number(point.y || 0) + normalY * lateralOffsetM,
-    z: Number(point.z || 0) + verticalOffsetM,
-  };
-}
-
 function addSourceLine(group, sourcePoints, material, previewKind) {
   const renderPoints = sourcePoints.map(renderSourcePoint).filter(Boolean);
   if (renderPoints.length < 2) return null;
@@ -788,19 +814,158 @@ function previewMaterial(color, opacity = 1) {
   });
 }
 
+function proxyFaceMaterial(color, selected) {
+  return new runtime.THREE.MeshBasicMaterial({
+    color: 0xffffff,
+    depthTest: true,
+    depthWrite: false,
+    transparent: true,
+    opacity: selected ? PROXY_FACE_SELECTED_OPACITY : PROXY_FACE_OPACITY,
+    side: runtime.THREE.DoubleSide,
+    vertexColors: true,
+  });
+}
+
+function updateRacewayScreenScale(object) {
+  const config = object?.userData?.screenScale;
+  if (!config || !runtime?.worldUnitsForScreenPixels) return;
+  const worldSize = runtime.worldUnitsForScreenPixels(
+    object.position,
+    config.pixels,
+    config.min,
+    config.max,
+  );
+  object.scale?.setScalar?.(worldSize);
+}
+
+function bufferAttribute(values, itemSize = 3) {
+  const array = new Float32Array(values);
+  if (runtime.THREE.Float32BufferAttribute) {
+    return new runtime.THREE.Float32BufferAttribute(array, itemSize);
+  }
+  if (runtime.THREE.BufferAttribute) {
+    return new runtime.THREE.BufferAttribute(array, itemSize);
+  }
+  return { array, itemSize, count: values.length / itemSize };
+}
+
+function positionAttribute(values) {
+  return bufferAttribute(values, 3);
+}
+
+function setGeometryPositions(geometry, positions, colors = []) {
+  const attribute = positionAttribute(positions);
+  if (geometry.setAttribute) {
+    geometry.setAttribute('position', attribute);
+  } else {
+    geometry.attributes = { ...(geometry.attributes || {}), position: attribute };
+  }
+  if (colors.length === positions.length) {
+    const colorAttribute = bufferAttribute(colors, 3);
+    if (geometry.setAttribute) {
+      geometry.setAttribute('color', colorAttribute);
+    } else {
+      geometry.attributes = { ...(geometry.attributes || {}), color: colorAttribute };
+    }
+  }
+  geometry.userData = { ...(geometry.userData || {}), positionCount: positions.length / 3 };
+  geometry.computeVertexNormals?.();
+  geometry.computeBoundingSphere?.();
+  return geometry;
+}
+
+function clampColorUnit(value) {
+  return Math.min(Math.max(Number(value) || 0, 0), 1);
+}
+
+function colorFloats(color, shade = 1) {
+  const base = Number(color) || 0;
+  return [
+    clampColorUnit(((base >> 16) & 255) / 255 * shade),
+    clampColorUnit(((base >> 8) & 255) / 255 * shade),
+    clampColorUnit((base & 255) / 255 * shade),
+  ];
+}
+
+function proxyFaceColors(color, selected) {
+  const baseColor = selected ? 0xf97316 : color;
+  return {
+    bottom: colorFloats(baseColor, PROXY_BOTTOM_SHADE),
+    side: colorFloats(baseColor, PROXY_SIDE_SHADE),
+  };
+}
+
+function pushRenderVertex(positions, colors, sourcePoint, vertexColor = null) {
+  const point = renderSourcePoint(sourcePoint);
+  if (!point) return false;
+  positions.push(Number(point.x) || 0, Number(point.y) || 0, Number(point.z) || 0);
+  if (vertexColor) colors.push(vertexColor[0], vertexColor[1], vertexColor[2]);
+  return true;
+}
+
+function addProxyQuad(positions, colors, a, b, c, d, vertexColor = null) {
+  const before = positions.length;
+  const colorBefore = colors.length;
+  if (
+    !pushRenderVertex(positions, colors, a, vertexColor)
+    || !pushRenderVertex(positions, colors, b, vertexColor)
+    || !pushRenderVertex(positions, colors, c, vertexColor)
+    || !pushRenderVertex(positions, colors, a, vertexColor)
+    || !pushRenderVertex(positions, colors, c, vertexColor)
+    || !pushRenderVertex(positions, colors, d, vertexColor)
+  ) {
+    positions.length = before;
+    colors.length = colorBefore;
+  }
+}
+
 function segmentPlanBasis(start, end) {
   const dx = Number(end.x || 0) - Number(start.x || 0);
   const dy = Number(end.y || 0) - Number(start.y || 0);
+  const dz = Number(end.z || 0) - Number(start.z || 0);
+  const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (length < 0.001) {
+    return { length: 0, tx: 1, ty: 0, tz: 0, nx: 0, ny: 1, nz: 0, dx: 0, dy: 0, dz: 1 };
+  }
   const planLength = Math.sqrt(dx * dx + dy * dy);
-  if (planLength < 0.001) {
-    return { length: nodeDistance(start, end), tx: 1, ty: 0, nx: 0, ny: 1 };
+  let nx = 0;
+  let ny = 1;
+  if (planLength >= 0.001) {
+    nx = -dy / planLength;
+    ny = dx / planLength;
+  }
+  const tx = dx / length;
+  const ty = dy / length;
+  const tz = dz / length;
+  let depthX = (ty * 0) - (tz * ny);
+  let depthY = (tz * nx) - (tx * 0);
+  let depthZ = (tx * ny) - (ty * nx);
+  let depthLength = Math.sqrt((depthX * depthX) + (depthY * depthY) + (depthZ * depthZ));
+  if (depthLength < 0.001) {
+    depthX = 0;
+    depthY = 0;
+    depthZ = 1;
+    depthLength = 1;
+  }
+  depthX /= depthLength;
+  depthY /= depthLength;
+  depthZ /= depthLength;
+  if (depthZ < -0.001) {
+    depthX *= -1;
+    depthY *= -1;
+    depthZ *= -1;
   }
   return {
-    length: planLength,
-    tx: dx / planLength,
-    ty: dy / planLength,
-    nx: -dy / planLength,
-    ny: dx / planLength,
+    length,
+    tx,
+    ty,
+    tz,
+    nx,
+    ny,
+    nz: 0,
+    dx: depthX,
+    dy: depthY,
+    dz: depthZ,
   };
 }
 
@@ -808,32 +973,84 @@ function sourcePointAlongSegment(start, basis, distanceM) {
   return {
     x: Number(start.x || 0) + basis.tx * distanceM,
     y: Number(start.y || 0) + basis.ty * distanceM,
-    z: Number(start.z || 0),
+    z: Number(start.z || 0) + basis.tz * distanceM,
   };
 }
 
-function addSegmentPreview(group, run, start, end, material, detailMaterial) {
+function sourceFrameOffsetPoint(point, basis, lateralOffsetM = 0, depthOffsetM = 0) {
+  return {
+    x: Number(point.x || 0) + (basis.nx * lateralOffsetM) + (basis.dx * depthOffsetM),
+    y: Number(point.y || 0) + (basis.ny * lateralOffsetM) + (basis.dy * depthOffsetM),
+    z: Number(point.z || 0) + (basis.nz * lateralOffsetM) + (basis.dz * depthOffsetM),
+  };
+}
+
+function segmentCornerPoints(run, start, end) {
   const basis = segmentPlanBasis(start, end);
-  if (basis.length < 0.001) return;
+  if (basis.length < 0.001) return null;
   const halfWidth = runWidthM(run) / 2;
   const depth = runDepthM(run);
-  const leftStartBottom = sourceOffsetPoint(start, basis.nx, basis.ny, halfWidth);
-  const leftEndBottom = sourceOffsetPoint(end, basis.nx, basis.ny, halfWidth);
-  const rightStartBottom = sourceOffsetPoint(start, basis.nx, basis.ny, -halfWidth);
-  const rightEndBottom = sourceOffsetPoint(end, basis.nx, basis.ny, -halfWidth);
-  const leftStartTop = sourceOffsetPoint(leftStartBottom, 0, 0, 0, depth);
-  const leftEndTop = sourceOffsetPoint(leftEndBottom, 0, 0, 0, depth);
-  const rightStartTop = sourceOffsetPoint(rightStartBottom, 0, 0, 0, depth);
-  const rightEndTop = sourceOffsetPoint(rightEndBottom, 0, 0, 0, depth);
+  const leftStartBottom = sourceFrameOffsetPoint(start, basis, halfWidth, 0);
+  const leftEndBottom = sourceFrameOffsetPoint(end, basis, halfWidth, 0);
+  const rightStartBottom = sourceFrameOffsetPoint(start, basis, -halfWidth, 0);
+  const rightEndBottom = sourceFrameOffsetPoint(end, basis, -halfWidth, 0);
+  const leftStartTop = sourceFrameOffsetPoint(start, basis, halfWidth, depth);
+  const leftEndTop = sourceFrameOffsetPoint(end, basis, halfWidth, depth);
+  const rightStartTop = sourceFrameOffsetPoint(start, basis, -halfWidth, depth);
+  const rightEndTop = sourceFrameOffsetPoint(end, basis, -halfWidth, depth);
+  return {
+    basis,
+    leftStartBottom,
+    leftEndBottom,
+    rightStartBottom,
+    rightEndBottom,
+    leftStartTop,
+    leftEndTop,
+    rightStartTop,
+    rightEndTop,
+  };
+}
 
-  addSourceLine(group, [leftStartTop, leftEndTop], material, 'side-rail');
-  addSourceLine(group, [rightStartTop, rightEndTop], material, 'side-rail');
-  addSourceLine(group, [leftStartBottom, leftEndBottom], detailMaterial, 'lower-edge');
-  addSourceLine(group, [rightStartBottom, rightEndBottom], detailMaterial, 'lower-edge');
-  addSourceLine(group, [leftStartBottom, leftStartTop], detailMaterial, 'depth-tick');
-  addSourceLine(group, [rightStartBottom, rightStartTop], detailMaterial, 'depth-tick');
-  addSourceLine(group, [leftEndBottom, leftEndTop], detailMaterial, 'depth-tick');
-  addSourceLine(group, [rightEndBottom, rightEndTop], detailMaterial, 'depth-tick');
+function addSegmentProxyFaces(positions, colors, run, start, end, faceColors) {
+  const corners = segmentCornerPoints(run, start, end);
+  if (!corners) return;
+  addProxyQuad(positions, colors, corners.leftStartBottom, corners.rightStartBottom, corners.rightEndBottom, corners.leftEndBottom, faceColors.bottom);
+  addProxyQuad(positions, colors, corners.leftStartBottom, corners.leftEndBottom, corners.leftEndTop, corners.leftStartTop, faceColors.side);
+  addProxyQuad(positions, colors, corners.rightStartBottom, corners.rightStartTop, corners.rightEndTop, corners.rightEndBottom, faceColors.side);
+}
+
+function addRunProxyFaceMesh(group, run, color, selected) {
+  const positions = [];
+  const colors = [];
+  const faceColors = proxyFaceColors(color, selected);
+  for (let index = 1; index < run.nodes.length; index += 1) {
+    addSegmentProxyFaces(positions, colors, run, run.nodes[index - 1], run.nodes[index], faceColors);
+  }
+  if (positions.length < 18) return null;
+  const geometry = setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors);
+  const mesh = new runtime.THREE.Mesh(geometry, proxyFaceMaterial(color, selected));
+  mesh.userData.racewayPreviewKind = 'solid-3-plane-proxy';
+  mesh.userData.racewayRunId = run.id;
+  mesh.userData.faceCount = positions.length / 18;
+  mesh.renderOrder = 18;
+  group.add(mesh);
+  return mesh;
+}
+
+function addSegmentPreview(group, run, start, end, material, detailMaterial) {
+  const corners = segmentCornerPoints(run, start, end);
+  if (!corners) return;
+  const { basis } = corners;
+  const halfWidth = runWidthM(run) / 2;
+
+  addSourceLine(group, [corners.leftStartTop, corners.leftEndTop], material, 'side-rail');
+  addSourceLine(group, [corners.rightStartTop, corners.rightEndTop], material, 'side-rail');
+  addSourceLine(group, [corners.leftStartBottom, corners.leftEndBottom], detailMaterial, 'lower-edge');
+  addSourceLine(group, [corners.rightStartBottom, corners.rightEndBottom], detailMaterial, 'lower-edge');
+  addSourceLine(group, [corners.leftStartBottom, corners.leftStartTop], detailMaterial, 'depth-tick');
+  addSourceLine(group, [corners.rightStartBottom, corners.rightStartTop], detailMaterial, 'depth-tick');
+  addSourceLine(group, [corners.leftEndBottom, corners.leftEndTop], detailMaterial, 'depth-tick');
+  addSourceLine(group, [corners.rightEndBottom, corners.rightEndTop], detailMaterial, 'depth-tick');
 
   const spacing = isLadderRun(run) ? 0.75 : 1.2;
   const maxCrossMembers = isLadderRun(run) ? 16 : 10;
@@ -841,8 +1058,8 @@ function addSegmentPreview(group, run, start, end, material, detailMaterial) {
   for (let index = 0; index <= memberCount; index += 1) {
     const distance = (basis.length * index) / memberCount;
     const center = sourcePointAlongSegment(start, basis, distance);
-    const leftBottom = sourceOffsetPoint(center, basis.nx, basis.ny, halfWidth);
-    const rightBottom = sourceOffsetPoint(center, basis.nx, basis.ny, -halfWidth);
+    const leftBottom = sourceFrameOffsetPoint(center, basis, halfWidth, 0);
+    const rightBottom = sourceFrameOffsetPoint(center, basis, -halfWidth, 0);
     addSourceLine(group, [leftBottom, rightBottom], detailMaterial, isLadderRun(run) ? 'rung' : 'tray-cross-member');
   }
 }
@@ -882,20 +1099,26 @@ function addNodeHandle(group, run, node, index, color) {
   const renderPoint = renderSourcePoint(node);
   if (!renderPoint) return;
   const selected = run.id === state.activeRunId && index === state.selectedNodeIndex;
-  const radius = runtime.worldUnitsForScreenPixels?.(renderPoint, 7, 0.04, 0.22) || 0.12;
   const handle = new runtime.THREE.Mesh(
-    new runtime.THREE.SphereGeometry(radius, 16, 16),
+    new runtime.THREE.SphereGeometry(1, 16, 16),
     new runtime.THREE.MeshBasicMaterial({ color: selected ? 0xf97316 : color, depthTest: false }),
   );
   handle.position.copy(renderPoint);
   handle.userData.racewayPreviewKind = 'node-handle';
   handle.userData.racewayRunId = run.id;
   handle.userData.racewayNodeIndex = index;
+  handle.userData.screenScale = {
+    kind: 'marker',
+    pixels: selected ? NODE_HANDLE_SELECTED_SCREEN_PX : NODE_HANDLE_SCREEN_PX,
+    min: 0.012,
+    max: 0.075,
+  };
+  updateRacewayScreenScale(handle);
+  handle.renderOrder = 32;
   group.add(handle);
 
-  const hitRadius = runtime.worldUnitsForScreenPixels?.(renderPoint, 18, 0.09, 0.45) || radius * 2.4;
   const hitTarget = new runtime.THREE.Mesh(
-    new runtime.THREE.SphereGeometry(hitRadius, 12, 12),
+    new runtime.THREE.SphereGeometry(1, 12, 12),
     new runtime.THREE.MeshBasicMaterial({
       color,
       depthTest: false,
@@ -908,6 +1131,13 @@ function addNodeHandle(group, run, node, index, color) {
   hitTarget.userData.racewayPreviewKind = 'node-hit-target';
   hitTarget.userData.racewayRunId = run.id;
   hitTarget.userData.racewayNodeIndex = index;
+  hitTarget.userData.screenScale = {
+    kind: 'marker',
+    pixels: NODE_HIT_TARGET_SCREEN_PX,
+    min: 0.045,
+    max: 0.18,
+  };
+  updateRacewayScreenScale(hitTarget);
   group.add(hitTarget);
 }
 
@@ -1054,6 +1284,7 @@ function renderTrayPreview(group, run, color) {
   const material = previewMaterial(selected ? 0xf97316 : color, selected ? 1 : 0.92);
   const detailMaterial = previewMaterial(color, 0.62);
   const guideMaterial = previewMaterial(0x475569, selected ? 0.7 : 0.35);
+  if (state.showProxyFaces) addRunProxyFaceMesh(group, run, color, selected);
   const points = run.nodes.map(renderSourcePoint).filter(Boolean);
   if (points.length > 1) {
     const guide = new runtime.THREE.Line(
@@ -1500,6 +1731,7 @@ async function loadSavedRaceways({ force = false } = {}) {
     syncPaletteFromRun(activeRun());
     renderRaceway();
     await loadGraphProjection({ quiet: true });
+    if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
     setStatus(state.runs.length ? `${state.runs.length} saved raceway run(s) loaded.` : 'Raceway layer loaded with no runs.');
   } catch (error) {
     state.persistenceReady = false;
@@ -1731,6 +1963,9 @@ function injectStyles() {
     .raceway-schedule-summary strong { color: #0f172a; }
     .raceway-schedule-row { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid #e2e8f0; padding-top: 4px; margin-top: 4px; }
     .raceway-schedule-warning { color: #92400e; }
+    .raceway-warning-list { display: grid; gap: 5px; margin-top: 8px; }
+    .raceway-validation-warning { border-left: 3px solid #ca8a04; padding-left: 7px; color: #713f12; font-size: 11px; line-height: 1.35; }
+    .raceway-warning-info { border-left-color: #2563eb; color: #1e3a8a; }
     #racewayToolSection button:disabled { cursor: not-allowed; opacity: 0.55; }
     .raceway-node-editor { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
   `;
@@ -1779,6 +2014,68 @@ function nodeRowsHtml() {
   `).join('');
 }
 
+function warningClass(warning) {
+  return warning?.severity === 'info' ? 'raceway-warning-info' : 'raceway-warning-warning';
+}
+
+function localWarningLabel(warning) {
+  return warning?.message || warning?.code || 'Raceway warning.';
+}
+
+function validationWarningLabel(warning) {
+  if (warning?.code === 'raceway.warning.short_segment') {
+    return warning.message || 'Short raceway segment; review adjacent nodes.';
+  }
+  if (warning?.code === 'raceway.warning.excessive_bends') {
+    return warning.message || 'High bend count; review constructability and cable pulling.';
+  }
+  if (warning?.code === 'raceway.warning.too_few_nodes') {
+    return warning.message || 'Run has fewer than two nodes.';
+  }
+  if (warning?.code === 'raceway.warning.inactive_catalog_reference') {
+    return warning.message || 'Run references inactive catalogue data.';
+  }
+  if (warning?.code === 'raceway.warning.unknown_coordinate_context') {
+    return warning.message || 'Coordinate context is incomplete.';
+  }
+  if (warning?.code === 'raceway.warning.support_span_placeholder_basis') {
+    return warning.message || 'Support quantities are placeholder basis only.';
+  }
+  return warning?.message || warning?.code || 'Raceway validation notice.';
+}
+
+function localWarningsHtml(run, nodeIndex = -1) {
+  const warnings = runWarnings(run).filter(warning => (
+    nodeIndex < 0 || !warning.nodeIndices || warning.nodeIndices.includes(nodeIndex)
+  ));
+  if (!warnings.length) return '';
+  return `
+    <div class="raceway-warning-list">
+      ${warnings.slice(0, 4).map(warning => `
+        <div class="raceway-validation-warning ${warningClass(warning)}">
+          ${escapeHtml(localWarningLabel(warning))}
+        </div>
+      `).join('')}
+      ${warnings.length > 4 ? `<div class="meta">+${warnings.length - 4} more warning(s)</div>` : ''}
+    </div>
+  `;
+}
+
+function scheduleWarningRowsHtml(schedule) {
+  const warnings = Array.isArray(schedule?.warnings) ? schedule.warnings : [];
+  if (!warnings.length) return '';
+  return `
+    <div class="raceway-warning-list">
+      ${warnings.slice(0, 4).map(warning => `
+        <div class="raceway-validation-warning ${warningClass(warning)}">
+          ${escapeHtml(validationWarningLabel(warning))}
+        </div>
+      `).join('')}
+      ${warnings.length > 4 ? `<div class="meta">+${warnings.length - 4} more validation notice(s) in JSON/CSV</div>` : ''}
+    </div>
+  `;
+}
+
 function graphWarningLabel(warning) {
   const point = warning?.source_point_m || {};
   const location = Number.isFinite(Number(point.x))
@@ -1817,9 +2114,13 @@ function scheduleSummaryHtml() {
   if (!state.scheduleLoaded || !state.scheduleProjection) return '';
   const schedule = state.scheduleProjection;
   const totals = schedule.totals || {};
-  const warnings = schedule.graph_warnings || {};
+  const warnings = schedule.warning_summary || schedule.graph_warnings || {};
   const assumptions = Array.isArray(schedule.assumptions) ? schedule.assumptions : [];
   const groups = Array.isArray(schedule.groups) ? schedule.groups : [];
+  const warningText = warnings.total
+    ? `${warnings.total} validation notice(s) affect this schedule`
+      + (warnings.by_severity ? ` (${warnings.warning || 0} warning, ${warnings.info || 0} info).` : '.')
+    : '';
   const groupRows = groups.slice(0, 3).map(group => `
     <div class="raceway-schedule-row">
       <span>${escapeHtml(group.family_code)} ${escapeHtml(group.size_label)} ${escapeHtml(group.service_class)}</span>
@@ -1831,17 +2132,18 @@ function scheduleSummaryHtml() {
       <strong>Schedule</strong><br>
       ${totals.run_count || 0} run(s) | ${formatM(totals.length_m)} m | ${totals.piece_count_estimate || 0} piece(s) | ${formatM(totals.offcut_m_estimate)} m offcut<br>
       ${totals.plan_bend_count || 0} bend(s) | ${totals.riser_count || 0} riser(s) | ${totals.support_placeholders || 0} support placeholder(s)
-      ${warnings.total ? `<br><span class="raceway-schedule-warning">${warnings.total} graph warning(s) affect this schedule.</span>` : ''}
+      ${warningText ? `<br><span class="raceway-schedule-warning">${escapeHtml(warningText)}</span>` : ''}
       <br>${assumptions.length} assumption(s) included in JSON/CSV output.
       ${groupRows}
       ${groups.length > 3 ? `<div class="meta">+${groups.length - 3} more group(s)</div>` : ''}
+      ${scheduleWarningRowsHtml(schedule)}
     </div>
   `;
 }
 
 function inspectorHtml() {
   const node = selectedNode();
-  if (!node) return '<div class="meta">Select a node</div>';
+  if (!node) return `<div class="meta">Select a node</div>${localWarningsHtml(activeRun())}`;
   const anchor = anchorLabel(node.anchor);
   return `
     <div class="raceway-node-editor">
@@ -1850,6 +2152,7 @@ function inspectorHtml() {
       <label>EL m<input type="number" step="0.001" value="${formatM(node.z)}" data-raceway-node-axis="z"></label>
     </div>
     <div class="meta" style="margin-top: 6px;">${anchor ? `Anchor: ${escapeHtml(anchor)}` : 'No plant model anchor'}</div>
+    ${localWarningsHtml(activeRun(), state.selectedNodeIndex)}
   `;
 }
 
@@ -1876,6 +2179,7 @@ function ensurePanel() {
       <label>Direction<select id="racewaySegmentDirectionSelect">${segmentDirectionOptionsHtml()}</select></label>
       <label>Length m<input id="racewaySegmentLengthInput" type="number" min="0.001" step="0.001" value="${formatM(state.segmentLengthM)}"></label>
       <button type="button" data-raceway-action="add-segment" title="${escapeHtml(actionTooltip('add-segment'))}">Add Segment</button>
+      <button id="racewaySurfaceToggleBtn" type="button" data-raceway-action="toggle-surfaces" title="${escapeHtml(actionTooltip('toggle-surfaces'))}" aria-pressed="${state.showProxyFaces ? 'true' : 'false'}">${state.showProxyFaces ? 'Surface On' : 'Wire Only'}</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 10px;">
       <button type="button" class="p3d-button-primary" data-raceway-action="start" title="${escapeHtml(actionTooltip('start'))}">Start</button>
@@ -1953,6 +2257,7 @@ function updateActionStates(run) {
   setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
   setActionState('add-segment', !run?.nodes?.length || !(Number(state.segmentLengthM) > 0), 'Add at least one node and enter a positive segment length.');
+  setActionState('toggle-surfaces', false);
 }
 
 function renderPanel(options = {}) {
@@ -1962,6 +2267,7 @@ function renderPanel(options = {}) {
   const sizeSelect = panel.querySelector('#racewaySizeSelect');
   const serviceSelect = panel.querySelector('#racewayServiceSelect');
   const orthoInput = panel.querySelector('#racewayOrthoInput');
+  const surfaceToggleBtn = panel.querySelector('#racewaySurfaceToggleBtn');
   const segmentDirectionSelect = panel.querySelector('#racewaySegmentDirectionSelect');
   const segmentLengthInput = panel.querySelector('#racewaySegmentLengthInput');
   if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
@@ -1975,6 +2281,10 @@ function renderPanel(options = {}) {
   }
   if (serviceSelect && serviceSelect !== document.activeElement) serviceSelect.value = state.serviceClass;
   if (orthoInput && orthoInput !== document.activeElement) orthoInput.checked = Boolean(state.orthoMode);
+  if (surfaceToggleBtn) {
+    surfaceToggleBtn.textContent = state.showProxyFaces ? 'Surface On' : 'Wire Only';
+    surfaceToggleBtn.setAttribute('aria-pressed', state.showProxyFaces ? 'true' : 'false');
+  }
   if (segmentDirectionSelect && segmentDirectionSelect !== document.activeElement) segmentDirectionSelect.value = state.segmentDirection;
   if (segmentLengthInput && segmentLengthInput !== document.activeElement) segmentLengthInput.value = formatM(state.segmentLengthM);
   if (panel.querySelector('#racewayElevationInput') !== document.activeElement) {
@@ -1983,8 +2293,9 @@ function renderPanel(options = {}) {
   if (summaryEl) {
     const warnings = run ? runWarnings(run).length : 0;
     const graphWarningCount = graphWarnings().length;
+    const visualMode = state.showProxyFaces ? 'surface view' : 'wire view';
     summaryEl.textContent = run
-      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | work EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} local warning(s) | ${graphWarningCount} graph warning(s)`
+      ? `${run.tag} | ${isLadderRun(run) ? 'ladder proxy' : 'tray proxy'} | ${visualMode} | work EL +${formatM(run.elevationM)} | ${bendCount(run)} bends | ${riserCount(run)} risers | ${formatM(runLength(run))} m | ${runPersistenceLabel(run)} | ${warnings} local warning(s) | ${graphWarningCount} graph warning(s)`
       : 'No active run';
   }
   if (graphWarningsEl) graphWarningsEl.innerHTML = graphWarningsHtml();
@@ -2016,6 +2327,12 @@ function runPanelAction(action, button = null) {
   if (action === 'toggle-ortho') {
     state.orthoMode = !state.orthoMode;
     setStatus(`Ortho drawing assist ${state.orthoMode ? 'on' : 'off'}.`);
+    renderPanel();
+  }
+  if (action === 'toggle-surfaces') {
+    state.showProxyFaces = !state.showProxyFaces;
+    setStatus(`Raceway shaded faces ${state.showProxyFaces ? 'on' : 'off'}; wire overlay remains active.`);
+    renderRaceway();
     renderPanel();
   }
   if (action === 'select-node-mode') {
@@ -2199,6 +2516,7 @@ function handleRacewayKeyboardShortcut(event) {
   if (key === 'm' && !event.shiftKey) action = 'move-node';
   if (key === 'j' && !event.shiftKey) action = 'connect-node';
   if (key === 'o' && !event.shiftKey) action = 'toggle-ortho';
+  if (key === 'v' && event.shiftKey) action = 'toggle-surfaces';
   if (key === 'a') action = event.shiftKey ? 'clear-anchor' : 'anchor-node';
   if (key === 'b') action = event.shiftKey ? 'open-schedule-csv' : 'refresh-schedule';
   if (key === 'r' && !event.shiftKey) action = 'reload';

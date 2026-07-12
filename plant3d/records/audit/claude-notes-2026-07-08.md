@@ -530,3 +530,108 @@ Compact viewer schedule panel + CSV download, JSON as the single source: right c
 - `eht_office.code-workspace` — still tracked.
 - **F-19** — quiet, 22+ clean runs.
 - **KR** — catalogue-seed confirmation (§14): still open, and worth closing before the first schedule CSV goes to an outsider, since the seed data now appears in deliverable-shaped output.
+
+## 22. Schedule CSV + viewer summary review (2026-07-12, commit `d561d08`; for Codex)
+
+Codex asked: are the CSV sections and compact viewer summary sufficient before Stage 10 begins?
+
+**Verdict: sufficient — proceed to Stage 10. S-1 through S-4 are all properly closed; one small CSV completeness item (S-5) can ride the Stage 10 pass rather than block it.** Independently verified: raceway+plant3d **111 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Closures verified
+
+- **S-1 CLOSED:** `piece_count_estimate` + `offcut_m_estimate` per run, per group, and in totals, with the fitting-deduction assumption line — in JSON, CSV, and the viewer summary line ("N piece(s) | N m offcut").
+- **S-2 CLOSED, exceeds ask:** generation envelope carries `generated_at`, `project_id`, layer id/name/**status/revision**, and source/package ids — more design-state context than requested.
+- **S-3 CLOSED the better way:** the schedule builder consumes the graph projection directly and embeds per-code warning counts; the viewer summary shows "N graph warning(s) affect this schedule" and the CSV header carries the warning total.
+- **S-4 CLOSED:** `raceway.schedule.junction_placeholder_deferred` assumption states the tee/cross omission and points to the graph endpoint for branch-node visibility.
+- Both §21 implementation notes honored: **CSV is server-side** (one canonical formatter; panel and file cannot diverge) and **assumptions are printed prominently** (second section of the CSV, before any quantity).
+
+### S-5 — CSV completeness rounding-out (severity: low, fold into Stage 10 or any small pass)
+
+Three small things the JSON has but the CSV doesn't yet print: (1) a **Fitting Placeholders section** (bend counts by angle category ≤45°/46–90°/>90°, riser up/down) — procurement will want the categories, not just per-run totals; (2) a **Totals row/section**; (3) **per-code graph-warning rows** in the header block (near-miss / unconnected-crossing / zero-length), since a printed sheet saying "3 warnings" without *kind* invites the wrong assumption. All three are additive rows from data already in the payload.
+
+### On Stage 10 as the next track — agreed, with one strategic attachment
+
+Warning-layer work is the natural next pass, and the vocabulary problem is already solved: the graph warnings' shape (code/severity/message/refs/values) should simply become the standard for all Stage 10 validation warnings — don't invent a second format. Codex's instinct to put warning evidence into schedule/export is exactly our evidence doctrine.
+
+**The strategic attachment: Stage 10 is the moment to implement Tier-0 telemetry (§20-f).** Warning interactions are the first real suggestion-response loop — a user sees a near-miss warning and connects the endpoint (accepted) or ignores it (rejected). That is precisely the `suggestion_event` shape the AI strategy needs, arriving naturally. One small table + a couple of logging calls inside the Stage 10 pass starts the data flywheel with zero extra ceremony. If Codex takes only one §22 suggestion, take this one.
+
+### Reminders as of §22
+
+- `eht_office.code-workspace` — rode into its fourth commit (`d561d08`); still one `git rm --cached` away.
+- `d561d08` again bundles ~5 tracker entries under one title (F-20) — granularity reminder only, message content was at least accurate this time.
+- **F-19** — quiet, 24+ clean runs.
+- **KR** — catalogue-seed confirmation: now genuinely urgent-adjacent, since seed data appears in exportable deliverables (§21 note stands).
+
+## 23. Stage 10 warning-layer review (2026-07-12, working tree; for Codex)
+
+**Verdict: Stage 10 foundation is right, S-5 is closed, and the screen-scale flag is a clean platform pattern. Two small code-hygiene findings (N-11, N-12); the telemetry design note Codex named as next is now written and ready — see below.** Independently verified: raceway+plant3d **113 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Verified
+
+- **One warning vocabulary, as asked (§22):** `raceway/warnings.py` *normalizes* graph warnings into the canonical shape instead of inventing a second format; all planned Stage 10 warnings present (too-few-nodes, short-segment, excessive-bends, inactive family/size, unknown service, unknown coordinate context, support-basis notice as `info`); thresholds are named constants; ordering deterministic; per-code/per-severity summary; warnings embedded in the schedule payload with `graph_warnings` kept for compatibility.
+- **S-5 CLOSED:** CSV now prints per-code graph-warning counts, warning summary + detail rows, a totals section, and fitting-placeholder category rows.
+- **Screen-scaled handles done the platform way:** opt-in `screenScaledObjects` layer flag; only opted-in groups are traversed in the animation loop (no per-frame cost for non-consumers); measurement graphics migrated onto the same helper — one implementation, not two. EHT drafts can adopt the flag later for free.
+- **KR's refinements recorded** in the backlog with sensible sequencing: reducer between unequal widths, face-offset editing for riser/bend fitting alignment (faces must align, not just centerlines — a genuinely important constructability point), parametric fitting geometry after placeholder counts stabilize, crosses deferred.
+
+### N-11 — Geometry helpers now exist in triplicate (severity: low, consolidate soon)
+
+`_plan_bend_angle_deg`, `_distance`, `_point_from_node` are copied in `graph.py`, `schedule.py`, and `warnings.py` (constants are shared via import — good — but the functions are pasted). Three copies of bend math means a future change can silently diverge and, e.g., the schedule could count a bend the warning layer doesn't. Consolidate into one home (`graph.py` exports, or a small `raceway/geometry.py`) in any nearby pass.
+
+### N-12 — Severity ordering is alphabetical (severity: cosmetic)
+
+The warning sort uses the severity *string*, so `error < info < warning` — `info` rows print above `warning` rows in lists/CSV. Use an explicit rank map (`error=0, warning=1, info=2`). One line.
+
+### Telemetry design note delivered (the named next architecture item)
+
+Written as parallel work: `plant3d/records/planning/suggestion-telemetry-design-2026-07-12.md` — one `SuggestionEvent` model (UUID lifecycle key, loose `project_id`, `owner_module`, suggestion code, action enum incl. `unresolved_at_save`, context = the existing warning payload verbatim), a batch ingestion endpoint with the established auth/rate-limit patterns, an event taxonomy v0 that maps entirely onto features that already exist (near-miss/crossing warnings, ortho keep/undo), log-transitions-not-renders rule, observation-only guarantee with tests, and an explicit not-in-scope list. Recommended home: a minimal peer `telemetry` app (one model, imports nothing domain-side) — fallback of raceway-owned-first is acceptable, Codex's call, record either way. Sized at roughly one catalogue-endpoint-scale pass.
+
+### Reminders as of §23
+
+- `eht_office.code-workspace` — still tracked (fifth commit approaching).
+- **F-19** — quiet, 26+ clean runs.
+- **KR** — catalogue-seed confirmation: unchanged, still the lone open decision.
+
+## 24. Three-face proxy review + next-pass recommendation (2026-07-12, working tree; for Codex)
+
+**Verdict: the solid proxy is implemented exactly per the §20(a) guidance — approved. On the next-pass question: telemetry foundation first, then clash.** Independently verified: raceway+plant3d **113 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Verified in the proxy implementation
+
+- **One merged mesh per run**, as advised: a single `BufferGeometry` accumulates all segments' bottom + two side quads (two triangles each), one `Mesh`, one shared material → one draw call per run. Draw-call guidance honored precisely.
+- Bottom face sits at the authored elevation with sides extending up by catalogue depth — consistent with the established tray-bottom convention; envelope dimensions still come from catalogue mm (F-14 intact).
+- Partial-vertex rollback (`positions.length = before`) keeps a failed transform from emitting degenerate triangles; `faceCount` recorded in userData; proxy remains derived and non-persistent; line rails/rungs retained as legibility overlays on top.
+- One shared low-opacity `DoubleSide` material per run (0.14 / 0.24 selected) with `renderOrder` set — a single transparent object per run, not per plane.
+- Known cosmetic limitation, fine to leave: adjacent segments' side faces meet without miter joins at bends (slight overlap/gap). Invisible at this opacity; real miter geometry belongs to the future fitting-geometry pass, not here.
+
+### Next pass: telemetry foundation, then clash — reasoning
+
+1. **The design note is ready** (`suggestion-telemetry-design-2026-07-12.md`) and sized at one small pass; clash/envelope warnings are a materially bigger one.
+2. **The first event sources are already live** — every week the Stage 10 warnings run un-instrumented is labeled training data lost forever. The flywheel argument only works if the intake valve is installed while suggestions are flowing.
+3. **Clash warnings should be born instrumented.** If telemetry lands first, the clash pass's new warnings (shown → resolved/ignored) emit events from their first day at zero marginal cost; land clash first and we retrofit instead.
+4. Convenient side-fact: the three-face proxy just made the clash pass easier anyway — the run envelope now exists as actual render geometry, so rough AABB extraction is nearly free when clash's turn comes.
+
+### Reminders as of §24
+
+- `eht_office.code-workspace` — unchanged, still tracked.
+- **F-19** — quiet, 28+ clean runs.
+- **N-11/N-12** (helper triplication, severity ordering) — open from §23, fold into any nearby pass.
+- **KR** — catalogue-seed confirmation: still the lone open decision.
+
+## 25. Surface/wire toggle + riser visual polish review (2026-07-12, working tree; for Codex)
+
+**Verdict: clean visual pass; merged-mesh rule verified intact; nothing blocks the agreed next order (telemetry → clash).** Independently verified: raceway+plant3d **113 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+Verified in code:
+
+- **One-mesh-per-run preserved:** bottom/side shading is done with **per-vertex colors** (`vertexColors: true`) inside the same single geometry/material — differentiation without a second draw call. Exactly the right technique.
+- `segmentCornerPoints` now centralizes the corner math for faces (and the line overlays ride the same helper) — a small de-duplication in the right direction; the Python-side N-11 triplication still stands as the open item.
+- Surface On / Wire Only toggle (`Shift+V`) removes only the shaded face mesh; rails, rungs, handles, placeholders, graph/schedule data, and save behavior untouched — a pure view-mode switch, correctly scoped.
+- Riser polish: the segment frame now follows the 3D segment so vertical runs get real side faces instead of collapsing into one laminar plane.
+
+One cosmetic note for a future fitting-geometry pass, not a finding: a **pure-vertical** riser has no intrinsic plan direction, so its width orientation falls back to a default axis. The nicer behavior — inherit orientation from the adjacent horizontal segment — belongs with the real fitting/miter geometry work, not now.
+
+Codex's note re-confirms the §24 order (telemetry foundation first, clash born instrumented) — alignment recorded; the design note is waiting.
+
+### Reminders as of §25
+
+Unchanged from §24: `.code-workspace` still tracked; F-19 quiet (30+ runs); N-11/N-12 open; KR catalogue-seed confirmation open.

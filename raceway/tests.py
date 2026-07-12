@@ -30,6 +30,12 @@ from .models import (
     RacewaySize,
 )
 from .schedule import PLACEHOLDER_SUPPORT_SPAN_M, build_layer_schedule
+from .warnings import (
+    EXCESSIVE_BEND_COUNT_WARNING,
+    SHORT_SEGMENT_WARNING_M,
+    build_layer_warnings,
+    summarize_warnings,
+)
 
 
 def create_project(proj_id):
@@ -473,6 +479,61 @@ class RacewayGraphProjectionTests(TestCase):
         self.assertLess(warnings[0]["distance_m"], NEAR_MISS_ENDPOINT_RADIUS_M)
 
 
+class RacewayWarningProjectionTests(TestCase):
+    def test_layer_warnings_standardize_route_catalog_and_context_notices(self):
+        layer = RacewayLayer.objects.create(project_id="RWY-WARN", name="Warning draft")
+        family = create_family("WARN-LADDER")
+        family.is_active = False
+        family.save()
+        size = create_size(family=family)
+        run = create_run(layer=layer, family=family, size=size)
+        create_nodes(run, [(0.0, 0.0, 0.0), (SHORT_SEGMENT_WARNING_M / 2, 0.0, 0.0)])
+
+        warnings = build_layer_warnings(layer)
+        codes = {warning["code"] for warning in warnings}
+        summary = summarize_warnings(warnings)
+
+        self.assertIn("raceway.warning.unknown_coordinate_context", codes)
+        self.assertIn("raceway.warning.inactive_catalog_reference", codes)
+        self.assertIn("raceway.warning.short_segment", codes)
+        self.assertIn("raceway.warning.support_span_placeholder_basis", codes)
+        short_warning = next(warning for warning in warnings if warning["code"] == "raceway.warning.short_segment")
+        self.assertEqual(short_warning["source"], "route")
+        self.assertEqual(short_warning["object_type"], "segment")
+        self.assertEqual(short_warning["run_id"], run.pk)
+        self.assertAlmostEqual(short_warning["values"]["threshold_m"], SHORT_SEGMENT_WARNING_M)
+        self.assertGreaterEqual(summary["warning"], 3)
+        self.assertEqual(summary["info"], 1)
+
+    def test_layer_warnings_flag_excessive_plan_bends(self):
+        layer = create_layer(project_id="RWY-WARN-BENDS")
+        family = create_family("WARN-BEND-LADDER")
+        size = create_size(family=family)
+        run = create_run(layer=layer, family=family, size=size)
+        points = [
+            (0.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0),
+            (1.0, 1.0, 0.0),
+            (2.0, 1.0, 0.0),
+            (2.0, 2.0, 0.0),
+            (3.0, 2.0, 0.0),
+            (3.0, 3.0, 0.0),
+            (4.0, 3.0, 0.0),
+            (4.0, 4.0, 0.0),
+            (5.0, 4.0, 0.0),
+            (5.0, 5.0, 0.0),
+        ]
+        create_nodes(run, points)
+
+        warnings = build_layer_warnings(layer)
+        excessive_warning = next(
+            warning for warning in warnings if warning["code"] == "raceway.warning.excessive_bends"
+        )
+
+        self.assertEqual(excessive_warning["values"]["threshold"], EXCESSIVE_BEND_COUNT_WARNING)
+        self.assertGreater(excessive_warning["values"]["plan_bend_count"], EXCESSIVE_BEND_COUNT_WARNING)
+
+
 class RacewayScheduleProjectionTests(TestCase):
     def test_layer_schedule_splits_segments_and_counts_placeholders(self):
         layer = create_layer(project_id="RWY-SCHEDULE")
@@ -518,6 +579,12 @@ class RacewayScheduleProjectionTests(TestCase):
         self.assertEqual(schedule["layer_id"], layer.pk)
         self.assertTrue(schedule["generated_at"])
         self.assertEqual(schedule["graph_warnings"]["total"], 0)
+        self.assertEqual(schedule["warning_summary"]["warning"], 0)
+        self.assertEqual(schedule["warning_summary"]["info"], 1)
+        self.assertEqual(
+            schedule["warning_summary"]["by_code"]["raceway.warning.support_span_placeholder_basis"],
+            1,
+        )
 
     def test_layer_schedule_groups_by_family_size_and_service(self):
         layer = create_layer(project_id="RWY-SCHEDULE-GROUP")
@@ -674,6 +741,11 @@ class RacewayApiTests(TestCase):
         csv_text = response.content.decode("utf-8")
         self.assertIn("Raceway Schedule", csv_text)
         self.assertIn("Assumptions", csv_text)
+        self.assertIn("Totals", csv_text)
+        self.assertIn("Fitting Placeholders", csv_text)
+        self.assertIn("Validation Warnings", csv_text)
+        self.assertIn("Warning Summary", csv_text)
+        self.assertIn("Graph Warning Counts", csv_text)
         self.assertIn("Grouped Quantities", csv_text)
         self.assertIn("RWY-CSV", csv_text)
         self.assertIn("Piece Estimate", csv_text)
@@ -908,7 +980,10 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function graphWarningsHtml", content)
         self.assertIn("function loadScheduleProjection", content)
         self.assertIn("function scheduleSummaryHtml", content)
+        self.assertIn("function scheduleWarningRowsHtml", content)
         self.assertIn("function openScheduleCsv", content)
+        self.assertIn("function localWarningsHtml", content)
+        self.assertIn("function validationWarningLabel", content)
         self.assertIn("function sanitizeAnchorForPersistence", content)
         self.assertIn("function attachSelectedModelToNode", content)
         self.assertIn("function clearSelectedNodeAnchor", content)
@@ -937,6 +1012,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("data-raceway-action=\"refresh-schedule\"", content)
         self.assertIn("data-raceway-action=\"open-schedule-csv\"", content)
         self.assertIn("data-raceway-action=\"delete-run\"", content)
+        self.assertIn("data-raceway-action=\"toggle-surfaces\"", content)
         self.assertIn("racewayGraphWarnings", content)
         self.assertIn("racewayScheduleSummary", content)
         self.assertIn("registerInteraction", content)
@@ -955,12 +1031,28 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("Ortho drawing assist", content)
         self.assertIn("pointOnSourceElevationFromViewerEvent", content)
         self.assertIn("function renderTrayPreview", content)
+        self.assertIn("function addRunProxyFaceMesh", content)
+        self.assertIn("function addSegmentProxyFaces", content)
+        self.assertIn("function addProxyQuad", content)
         self.assertIn("function addSegmentPreview", content)
         self.assertIn("function addBendPlaceholder", content)
+        self.assertIn("function sourceFrameOffsetPoint", content)
+        self.assertIn("function segmentCornerPoints", content)
         self.assertNotIn("function applyRunElevation", content)
         self.assertIn("'side-rail'", content)
+        self.assertIn("'solid-3-plane-proxy'", content)
         self.assertIn("'rung'", content)
         self.assertIn("'node-hit-target'", content)
+        self.assertIn("PROXY_BOTTOM_SHADE", content)
+        self.assertIn("PROXY_SIDE_SHADE", content)
+        self.assertIn("vertexColors: true", content)
+        self.assertIn("showProxyFaces", content)
+        self.assertIn("if (state.showProxyFaces) addRunProxyFaceMesh", content)
+        self.assertIn("screenScaledObjects: true", content)
+        self.assertIn("NODE_HANDLE_SCREEN_PX", content)
+        self.assertIn("function updateRacewayScreenScale", content)
+        self.assertIn("raceway-validation-warning", content)
         self.assertIn("'riser-placeholder'", content)
         self.assertIn("'bend-placeholder'", content)
+        self.assertIn("Shift+V", content)
         self.assertLess(content.index('id="racewayInspector"'), content.index('id="racewaySummary"'))

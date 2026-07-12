@@ -40,6 +40,18 @@ KR alignment from Claude discussion on 2026-07-08:
   with source/package context; derive render-frame positions through the
   `plant3d` coordinate/RTC contract for the viewer.
 
+Default Raceway pass ritual from KR, 2026-07-12:
+
+1. Read Claude/Fable notes first.
+2. Do quick housekeeping/status check and respect unrelated dirty files.
+3. Answer KR clarification/advice questions before coding.
+4. State what KR should manually verify after the pass, including any useful
+   code sections to inspect for understanding.
+5. Leave a concise note to Claude when review, research, or architecture input
+   would benefit the project.
+6. End with ordered next-pass recommendations; if the order differs from the
+   tracker, explain why in one or two lines.
+
 Immediate active plan:
 
 1. Move into Stage 9 derived parts and BOQ v0: split saved raceway runs into
@@ -212,6 +224,38 @@ Code facts verified on 2026-07-09:
   `Refresh Schedule` (`B`) and `CSV` (`Shift+B`) with a compact summary of
   length, pieces, offcut, bend/riser/support placeholders, graph warning count,
   and leading family/size/service groups.
+- Stage 10 warning-layer foundation is in place. `raceway/warnings.py`
+  standardizes warning payloads, normalizes graph warnings, and derives
+  route/catalog/context notices for too-few nodes, short segments, excessive
+  bends, inactive catalogue references, unknown service class, missing
+  coordinate context, and support-placeholder basis. Schedule JSON now includes
+  `warnings` and `warning_summary` while keeping `graph_warnings`; schedule CSV
+  now prints graph warning counts, warning summary/detail rows, totals, and
+  fitting placeholder category rows. Viewer cache key is
+  `20260712_raceway16`. Hard-clash warnings remain next-stage work.
+- Stage 10 inspector/polish pass is in place. Raceway local draft warnings now
+  use structured warning objects and are visible in the inspector before save;
+  refreshed schedules show warning detail rows in the panel. Plant3D viewer
+  layers now have an opt-in `screenScaledObjects` hook, and Raceway node handles
+  use it so visible spheres stay small while invisible hit targets remain
+  selectable. Cache keys: package viewer `20260712_screen_scale1`, Raceway
+  overlay `20260712_raceway17`. Backlog now explicitly includes reducer
+  fittings, segment/face-offset editing for riser/bend face alignment,
+  parametric bend/riser/tee fitting geometry, and cross fittings later.
+- Solid 3-plane Raceway proxy visual pass is in place. Each run now renders one
+  merged `solid-3-plane-proxy` mesh from source-frame centreline nodes and
+  catalogue width/depth: bottom face plus two side faces. Existing lines/rungs,
+  bend/riser placeholders, and node handles remain as legibility overlays. The
+  mesh is derived/non-persistent and does not change centerline truth or vendor
+  asset policy. Raceway overlay cache key is `20260712_raceway18`.
+- Raceway surface/wire visual polish is in place. The solid proxy remains one
+  merged mesh per run, but now uses vertex colours so bottom and side faces have
+  different shades without extra draw calls. Users can toggle shaded faces with
+  the Surface On/Wire Only button or `Shift+V`; wire mode keeps rails, rungs,
+  bend/riser placeholders, nodes, and engineering truth active. Segment frame
+  geometry is now 3D-aware so vertical risers push tray depth sideways instead
+  of collapsing side faces into the riser direction. Raceway overlay cache key
+  is `20260712_raceway19`.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

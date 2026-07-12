@@ -47,7 +47,11 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                           traverse(callback) { callback(this); this.children.forEach(child => child.traverse ? child.traverse(callback) : callback(child)); }
                         }
                         class BufferGeometry {
+                          constructor() { this.attributes = {}; this.userData = {}; }
                           setFromPoints(points) { this.points = points; return this; }
+                          setAttribute(name, attribute) { this.attributes[name] = attribute; return this; }
+                          computeVertexNormals() {}
+                          computeBoundingSphere() {}
                           dispose() {}
                         }
                         class LineBasicMaterial { constructor(config) { this.config = config; } dispose() {} }
@@ -192,6 +196,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                                   layer_id: 91,
                                   layer_name: 'Raceway Draft',
                                   graph_warnings: { total: 0, by_code: {}, near_miss_endpoint: 0, unconnected_crossing: 0, zero_length_segment: 0 },
+                                  warning_summary: { total: 1, by_code: { 'raceway.warning.support_span_placeholder_basis': 1 }, by_severity: { info: 1 }, warning: 0, info: 1, error: 0 },
                                   assumptions: [
                                     { code: 'raceway.schedule.traceability', message: 'Use durable UUID keys.' },
                                     { code: 'raceway.schedule.standard_length_piece_estimate', message: 'Piece estimate assumption.' },
@@ -355,6 +360,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("G", page.get_attribute('[data-raceway-action="refresh-graph"]', "title"))
                 self.assertIn("B", page.get_attribute('[data-raceway-action="refresh-schedule"]', "title"))
                 self.assertIn("Shift+B", page.get_attribute('[data-raceway-action="open-schedule-csv"]', "title"))
+                self.assertIn("Shift+V", page.get_attribute('[data-raceway-action="toggle-surfaces"]', "title"))
                 self.assertTrue(
                     page.evaluate(
                         """() => {
@@ -439,11 +445,34 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     """
                 )
                 self.assertIn("side-rail", preview_kinds)
+                self.assertIn("solid-3-plane-proxy", preview_kinds)
                 self.assertIn("rung", preview_kinds)
                 self.assertIn("bend-placeholder", preview_kinds)
                 self.assertIn("node-handle", preview_kinds)
                 self.assertIn("node-hit-target", preview_kinds)
                 self.assertIn("riser-placeholder", preview_kinds)
+                solid_proxy = page.evaluate(
+                    """() => {
+                        const proxy = window.racewayViewerOverlay.layer.group.children
+                          .flatMap((runGroup) => runGroup.children)
+                          .find((child) => child.userData?.racewayPreviewKind === 'solid-3-plane-proxy');
+                        return {
+                          faceCount: proxy?.userData?.faceCount || 0,
+                          positionCount: proxy?.geometry?.userData?.positionCount || 0,
+                          colorCount: proxy?.geometry?.attributes?.color?.count || 0,
+                          vertexColors: Boolean(proxy?.material?.config?.vertexColors),
+                          hasShadeVariation: (() => {
+                            const values = Array.from(proxy?.geometry?.attributes?.color?.array || []);
+                            return new Set(values.map(value => value.toFixed(4))).size > 2;
+                          })(),
+                        };
+                    }"""
+                )
+                self.assertGreaterEqual(solid_proxy["faceCount"], 3)
+                self.assertEqual(solid_proxy["positionCount"], solid_proxy["faceCount"] * 6)
+                self.assertEqual(solid_proxy["colorCount"], solid_proxy["positionCount"])
+                self.assertTrue(solid_proxy["vertexColors"])
+                self.assertTrue(solid_proxy["hasShadeVariation"])
                 depth_tick_points = page.evaluate(
                     """() => {
                         const tick = window.racewayViewerOverlay.layer.group.children
@@ -453,6 +482,21 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     }"""
                 )
                 self.assertGreater(depth_tick_points[1]["y"], depth_tick_points[0]["y"])
+                page.click('[data-raceway-action="toggle-surfaces"]')
+                page.wait_for_function("() => document.querySelector('#racewaySurfaceToggleBtn')?.textContent === 'Wire Only'")
+                wire_preview_kinds = page.evaluate(
+                    """() => window.racewayViewerOverlay.layer.group.children
+                        .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))
+                        .filter(Boolean)
+                    """
+                )
+                self.assertNotIn("solid-3-plane-proxy", wire_preview_kinds)
+                self.assertIn("side-rail", wire_preview_kinds)
+                self.assertIn("rung", wire_preview_kinds)
+                self.assertIn("wire view", page.text_content("#racewaySummary"))
+                page.keyboard.press("Shift+V")
+                page.wait_for_function("() => document.querySelector('#racewaySurfaceToggleBtn')?.textContent === 'Surface On'")
+                self.assertIn("surface view", page.text_content("#racewaySummary"))
 
                 page.click('[data-raceway-action="select-node"][data-node-index="1"]')
                 page.click('[data-raceway-action="anchor-node"]')
@@ -478,6 +522,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("12.500 m", schedule_summary)
                 self.assertIn("5 piece", schedule_summary)
                 self.assertIn("2.500 m offcut", schedule_summary)
+                self.assertIn("validation notice", schedule_summary)
                 page.click('[data-raceway-action="open-schedule-csv"]')
                 self.assertEqual(
                     page.evaluate("() => window.__racewayOpenedUrls.at(-1)"),

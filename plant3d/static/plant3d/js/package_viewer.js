@@ -131,6 +131,7 @@ function registerViewerLayer(config) {
     getElements: config.getElements || (() => []),
     setVisible: config.setVisible || null,
     hiddenInControls: Boolean(config.hiddenInControls),
+    screenScaledObjects: Boolean(config.screenScaledObjects),
     visible: config.visible !== false,
   };
   viewerLayers.set(layer.id, layer);
@@ -2478,7 +2479,7 @@ function worldUnitsForScreenPixels(point, pixels, minValue = 0.004, maxValue = 0
   return THREE.MathUtils.clamp((visibleHeight / viewportHeight) * pixels, minValue, maxValue);
 }
 
-function updateMeasurementGraphicScale(object) {
+function updateScreenScaledGraphic(object) {
   if (!object?.userData?.screenScale) return;
   const config = object.userData.screenScale;
   const worldSize = worldUnitsForScreenPixels(
@@ -2488,16 +2489,37 @@ function updateMeasurementGraphicScale(object) {
     config.max,
   );
   if (config.kind === 'sprite') {
-    object.scale.set(worldSize * (config.aspect || 1), worldSize, 1);
+    object.scale?.set?.(worldSize * (config.aspect || 1), worldSize, 1);
   } else {
-    object.scale.setScalar(worldSize);
+    object.scale?.setScalar?.(worldSize);
   }
+}
+
+function updateMeasurementGraphicScale(object) {
+  updateScreenScaledGraphic(object);
 }
 
 function updateMeasurementGraphicsScale() {
   measurementGroup.children.forEach(updateMeasurementGraphicScale);
   ehtDraftGroup.traverse(updateMeasurementGraphicScale);
   pendingRouteGroup.traverse(updateMeasurementGraphicScale);
+}
+
+function updateViewerLayerGraphicsScale() {
+  viewerLayers.forEach(layer => {
+    if (!layer.screenScaledObjects) return;
+    if (layer.group) {
+      layer.group.traverse(updateScreenScaledGraphic);
+      return;
+    }
+    (layer.getObjects?.() || []).forEach(object => {
+      if (object?.traverse) {
+        object.traverse(updateScreenScaledGraphic);
+      } else {
+        updateScreenScaledGraphic(object);
+      }
+    });
+  });
 }
 
 function createMeasurementMarker(point) {
@@ -4684,6 +4706,7 @@ function animate() {
   lastFrameAt = now;
   controls.update();
   updateMeasurementGraphicsScale();
+  updateViewerLayerGraphicsScale();
   if (runtimeStats.package?.package_format === 'GLB') {
     updateGlbTileStreaming(runtimeStats.package);
   }
