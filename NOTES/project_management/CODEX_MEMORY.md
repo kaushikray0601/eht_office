@@ -101,8 +101,8 @@ Code facts verified on 2026-07-09:
   keyboard undo-redo/move/delete against a stubbed viewer host. Run it before
   asking KR to manually check authoring.
 - Static cache note: Plant3D viewer host script version is
-  `20260712_frame_source1`; raceway overlay script version is
-  `20260712_raceway25`. Bump the relevant cache key whenever changing either
+  `20260712_snap_provider1`; raceway overlay script version is
+  `20260712_raceway26`. Bump the relevant cache key whenever changing either
   browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
@@ -340,6 +340,24 @@ Code facts verified on 2026-07-09:
   frame the warning segment/source point in the host camera. The Raceway section
   summary has a collapsed-visible notice-count badge. Cache keys: package viewer
   `20260712_frame_source1`, Raceway overlay `20260712_raceway25`.
+- Face/orientation foundation note is written:
+  `plant3d/records/planning/raceway-face-orientation-foundation-2026-07-12.md`.
+  It keeps centerline as truth, treats orientation/handedness/face-offset as
+  authoring intent, defers fitting/accessory persistence, and identifies stable
+  node-key preservation as a prerequisite before segment-level overrides. KR's
+  Measure Snap Vertex requirement is recorded: Measurement should snap to
+  Raceway tray/ladder edges through a generic viewer-layer snap-provider
+  contract, not by importing or special-casing Raceway.
+- Measurement snap provider foundation is implemented. `registerViewerLayer`
+  accepts `getMeasurementSnapObjects`; the Measure tool includes visible
+  provider objects while preserving selected EHT/model snap behavior. Raceway
+  exposes side rails, lower edges, depth ticks, rungs, and tray cross-members as
+  snap targets through that contract, excluding node handles and warning glyphs.
+  Follow-up reliability fix: provider edge objects are selected by closest
+  screen-space line segment within a tight pixel threshold before selected mesh
+  vertex snapping, so nearby structures/trays do not win by raycaster depth
+  order. Cache keys: package viewer `20260713_snap_provider2`, Raceway overlay
+  `20260712_raceway26`.
 - Deferred stock reviewed against Claude §28 on 2026-07-12. Keep open:
   `.code-workspace` tracked-file cleanup decision, KR generic catalogue seed
   confirmation, F-19/F-20 commit hygiene notes, blocked-telemetry browser

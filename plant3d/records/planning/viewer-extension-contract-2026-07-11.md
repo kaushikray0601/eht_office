@@ -48,6 +48,23 @@ Extensions should prefer these helpers over raw viewer internals:
 Only one canvas tool should be active at a time. Activating Measure, EHT, or an
 extension interaction deactivates the others.
 
+## Layer Snap Providers
+
+Viewer layers registered through `plant3dViewerLayers.register()` may optionally
+provide:
+
+- `getMeasurementSnapObjects()`: returns visible `Object3D` instances that the
+  Plant3D Measure tool may use when `Snap Vertex On` is active.
+
+Use this for consumer-owned overlay geometry such as Raceway tray rails, lower
+edges, depth ticks, rungs, and cross-members. The Measure tool should depend on
+this generic layer contract, not on a specific consumer app.
+
+Line-like provider objects are selected by closest screen-space segment within a
+tight pixel radius before selected-model vertex snapping is attempted. This keeps
+thin overlay edge picking tied to the visual cursor target instead of ordinary
+raycaster depth order.
+
 ## Provisional Internals
 
 `scene`, `camera`, `controls`, `renderer`, `canvas`, and `raycaster` are still

@@ -528,6 +528,20 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("node-handle", preview_kinds)
                 self.assertIn("node-hit-target", preview_kinds)
                 self.assertIn("riser-placeholder", preview_kinds)
+                snap_kinds = page.evaluate(
+                    """() => window.racewayViewerOverlay.layer.getMeasurementSnapObjects()
+                        .map((child) => ({
+                          kind: child.userData?.racewayPreviewKind,
+                          snap: Boolean(child.userData?.measurementSnapTarget),
+                        }))
+                    """
+                )
+                self.assertIn("side-rail", {item["kind"] for item in snap_kinds})
+                self.assertIn("lower-edge", {item["kind"] for item in snap_kinds})
+                self.assertIn("depth-tick", {item["kind"] for item in snap_kinds})
+                self.assertIn("rung", {item["kind"] for item in snap_kinds})
+                self.assertNotIn("node-handle", {item["kind"] for item in snap_kinds})
+                self.assertTrue(all(item["snap"] for item in snap_kinds))
                 solid_proxy = page.evaluate(
                     """() => {
                         const proxy = window.racewayViewerOverlay.layer.group.children

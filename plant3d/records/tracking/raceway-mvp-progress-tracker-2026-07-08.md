@@ -54,6 +54,12 @@ that foundation.
 - [x] Review deferred stock against Claude §28 and keep open items visible.
 - [x] Add warning-to-camera framing from Raceway warning rows.
 - [x] Add collapsed-visible Raceway warning/notice badge.
+- [x] Add face/orientation foundation design note before coding controls.
+- [x] Record Measure Snap Vertex requirement for Raceway tray/edge snapping.
+- [x] Add generic Measurement snap-provider contract on viewer layers.
+- [x] Expose Raceway tray/ladder edges as Measure Snap Vertex targets.
+- [x] Fix Raceway edge snap reliability by using closest screen-space edge
+  selection before mesh snap fallback.
 
 ## Default Pass Ritual
 
@@ -385,6 +391,24 @@ Acceptance:
   - inherit riser orientation from adjacent horizontal tray by default,
   - add cheap orthogonal rotate presets first,
   - defer arbitrary numeric roll angle until field usage proves it is needed.
+- [x] Face/orientation foundation design note:
+  - `../planning/raceway-face-orientation-foundation-2026-07-12.md`,
+  - route centerline remains truth,
+  - orientation/handedness/face-offset are authoring intent,
+  - fitting/accessory persistence remains deferred,
+  - node-key preservation is a prerequisite before segment-level overrides.
+- [ ] Preserve stable node UUID keys during node replacement before any
+  segment-level orientation/face-offset override is persisted.
+- [x] Extend Measure `Snap Vertex On` to Raceway tray/ladder edges:
+  - add a viewer-layer snap-provider contract,
+  - let visible consumer overlays expose snap objects/points,
+  - avoid Plant3D Measurement importing or special-casing Raceway.
+- [ ] Evolve Measurement snap-provider contract before accessory geometry is
+  selectable:
+  - explicit snap points/segments with kind tags,
+  - endpoint/corner priority over edge midpoint,
+  - optional depth tie-break only if occluded-edge picking becomes a real user
+    problem.
 - [ ] Raceway visual opacity preference for shaded faces:
   - viewer/user preference first,
   - no effect on saved centreline geometry, schedule, graph, or clash truth.
@@ -1446,3 +1470,107 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
   - `git diff --check`
+
+### 2026-07-12 - Face Orientation Design Note and Raceway Snap Requirement
+
+- Read Claude/Fable §29 before coding.
+- Agreed with Claude's course correction:
+  - face/orientation controls are the correct next architecture item,
+  - because they affect persistence, reducer handedness, riser orientation, clash
+    envelopes, and fitting semantics, this pass is a design-note pass before
+    implementation.
+- Added design note:
+  - `plant3d/records/planning/raceway-face-orientation-foundation-2026-07-12.md`.
+- Key design conclusions:
+  - route centerline remains the truth,
+  - orientation/handedness/face-offset are authoring intent,
+  - fitting/accessory persistence remains deferred,
+  - first coded slice should start with cheap orientation presets,
+  - arbitrary roll angle remains deferred,
+  - stable node-key preservation is required before segment-level overrides.
+- Recorded KR's measurement requirement:
+  - Measure with `Snap Vertex On` must snap to Raceway tray/ladder edges,
+  - this should use a generic viewer-layer snap-provider contract,
+  - Measurement should not import or special-case Raceway.
+- No runtime/schema changes in this pass.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `git diff --check`
+
+### 2026-07-12 - Measurement Snap Provider and Raceway Edge Snap
+
+- Read Claude/Fable §30 before coding; no blocker found.
+- Folded KR orientation answers into the face/orientation design note:
+  - orientation changes should save through the normal Raceway save flow,
+  - reducers/expanders should default to one-edge matching instead of
+    centerline matching.
+- Added a generic viewer-layer measurement snap provider:
+  - `getMeasurementSnapObjects`,
+  - Measurement gathers visible provider objects without importing consumer apps,
+  - selected EHT/model snap behavior remains unchanged.
+- Raceway now exposes measurement snap targets:
+  - side rails,
+  - lower edges,
+  - depth ticks,
+  - rungs,
+  - tray cross-members.
+- Node handles, warning glyphs, and centerline guides remain excluded from
+  measurement snap targets.
+- Updated the viewer-extension contract note with the layer snap-provider seam.
+- Bumped browser cache keys:
+  - Plant3D package viewer: `20260712_snap_provider1`,
+  - Raceway overlay: `20260712_raceway26`.
+- Verification passed:
+  - `cp plant3d/static/plant3d/js/package_viewer.js /tmp/package_viewer_check.mjs`
+  - `node --check /tmp/package_viewer_check.mjs`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-13 - Raceway Edge Snap Reliability Fix
+
+- Read Claude/Fable notes before coding; no new blocking item found for this
+  fix.
+- Root cause from KR manual test:
+  - the first snap-provider implementation merged Raceway line objects and
+    selected mesh objects into ordinary raycaster hit order,
+  - thin Raceway edges could therefore lose the click to nearby trays,
+    structures, or another 3D hit that was closer along the ray.
+- Changed Measurement snap behavior:
+  - visible layer snap-provider line objects are ranked by closest projected
+    screen-space segment,
+  - a tight 9 px radius is required before an edge snap is accepted,
+  - selected EHT/model mesh vertex snap remains as the fallback,
+  - free measurement behavior with `Snap Vertex Off` remains unchanged.
+- Updated the viewer-extension contract note to record the screen-space edge
+  selection rule.
+- Bumped browser cache key:
+  - Plant3D package viewer: `20260713_snap_provider2`.
+- Verification passed:
+  - `cp plant3d/static/plant3d/js/package_viewer.js /tmp/package_viewer_check.mjs`
+  - `node --check /tmp/package_viewer_check.mjs`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`
+- KR manual verification:
+  - previous random/nearby edge selection symptoms are resolved,
+  - observed measurement agreement is about `+/-2 mm`, acceptable for this
+    stage.
+- Claude/Fable §31 independently confirmed:
+  - the camera-distance winner defect is fixed by construction,
+  - screen-space edge selection has a theoretical occlusion nuance, not a current
+    defect,
+  - endpoint-priority snapping and explicit snap geometry should be deferred
+    until before accessory geometry becomes selectable.

@@ -129,6 +129,7 @@ function registerViewerLayer(config) {
     group,
     getObjects: config.getObjects || (() => (group ? [group] : [])),
     getElements: config.getElements || (() => []),
+    getMeasurementSnapObjects: config.getMeasurementSnapObjects || null,
     setVisible: config.setVisible || null,
     hiddenInControls: Boolean(config.hiddenInControls),
     screenScaledObjects: Boolean(config.screenScaledObjects),
@@ -514,6 +515,7 @@ function viewerLayerSummary() {
       visible: isViewerLayerVisible(layer),
       objectCount: objects.filter(Boolean).length,
       elementCount: elements.filter(Boolean).length,
+      snapObjectCount: layerMeasurementSnapObjects(layer).length,
     };
   });
 }
@@ -647,6 +649,7 @@ let restoringDraftHistory = false;
 let showGridScale = true;
 let measureModeActive = false;
 let vertexSnapEnabled = true;
+const MEASUREMENT_LAYER_SNAP_SCREEN_PX = 9;
 let navigationMode = 'orbit';
 let measurementPoints = [];
 let measurementLine = null;
@@ -2464,11 +2467,136 @@ function nearestFaceVertex(hit) {
   return best;
 }
 
+function objectIsVisibleInHierarchy(object) {
+  let cursor = object;
+  while (cursor) {
+    if (cursor.visible === false) return false;
+    cursor = cursor.parent;
+  }
+  return true;
+}
+
+function uniqueObjectList(objects) {
+  const seen = new Set();
+  const unique = [];
+  objects.filter(Boolean).forEach(object => {
+    if (seen.has(object)) return;
+    seen.add(object);
+    unique.push(object);
+  });
+  return unique;
+}
+
+function layerMeasurementSnapObjects(layer) {
+  if (!layer || layer.id === 'measurement' || !isViewerLayerVisible(layer)) return [];
+  if (typeof layer.getMeasurementSnapObjects !== 'function') return [];
+  try {
+    return uniqueObjectList(layer.getMeasurementSnapObjects() || []);
+  } catch (error) {
+    console.warn(`Measurement snap provider failed for layer ${layer.id}.`, error);
+    return [];
+  }
+}
+
+function measurementSnapObjectsFromViewerLayers() {
+  const objects = [];
+  viewerLayers.forEach(layer => {
+    objects.push(...layerMeasurementSnapObjects(layer));
+  });
+  return uniqueObjectList(objects);
+}
+
 function selectedMeasurementSnapObjects() {
+  const objects = [];
   const draftElement = selectedDraftElement();
-  if (isViewerLayerIdVisible('eht-draft') && draftElement?.object3d) return [draftElement.object3d];
-  if (isViewerLayerIdVisible('model') && selectedHighlight) return [selectedHighlight];
-  return [];
+  if (isViewerLayerIdVisible('eht-draft') && draftElement?.object3d) objects.push(draftElement.object3d);
+  if (isViewerLayerIdVisible('model') && selectedHighlight) objects.push(selectedHighlight);
+  return uniqueObjectList(objects);
+}
+
+function viewerEventCanvasPoint(event) {
+  const rect = renderer.domElement.getBoundingClientRect();
+  return {
+    rect,
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+  };
+}
+
+function worldPointToCanvasPoint(worldPoint, rect) {
+  const projected = worldPoint.clone().project(camera);
+  if (
+    !Number.isFinite(projected.x)
+    || !Number.isFinite(projected.y)
+    || !Number.isFinite(projected.z)
+    || projected.z < -1
+    || projected.z > 1
+  ) {
+    return null;
+  }
+  return {
+    x: ((projected.x + 1) / 2) * rect.width,
+    y: ((1 - projected.y) / 2) * rect.height,
+  };
+}
+
+function closestCanvasSegmentPoint(cursor, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const lengthSq = dx * dx + dy * dy;
+  const t = lengthSq > 0
+    ? THREE.MathUtils.clamp(((cursor.x - start.x) * dx + (cursor.y - start.y) * dy) / lengthSq, 0, 1)
+    : 0;
+  const x = start.x + dx * t;
+  const y = start.y + dy * t;
+  const distanceSq = ((cursor.x - x) ** 2) + ((cursor.y - y) ** 2);
+  return { t, distanceSq };
+}
+
+function closestLineSnapPointFromObject(object, cursor, rect) {
+  if (!object?.geometry || !objectIsVisibleInHierarchy(object)) return null;
+  const positions = object.geometry.getAttribute?.('position');
+  if (!positions || positions.count < 2) return null;
+  const indexedPositions = object.geometry.index || null;
+  const pointCount = indexedPositions ? indexedPositions.count : positions.count;
+  const step = object.isLineSegments || object.type === 'LineSegments' ? 2 : 1;
+  const localStart = new THREE.Vector3();
+  const localEnd = new THREE.Vector3();
+  let best = null;
+  object.updateWorldMatrix?.(true, false);
+
+  for (let rawIndex = 0; rawIndex + 1 < pointCount; rawIndex += step) {
+    const startIndex = indexedPositions ? indexedPositions.getX(rawIndex) : rawIndex;
+    const endIndex = indexedPositions ? indexedPositions.getX(rawIndex + 1) : rawIndex + 1;
+    const worldStart = localStart.fromBufferAttribute(positions, startIndex).applyMatrix4(object.matrixWorld).clone();
+    const worldEnd = localEnd.fromBufferAttribute(positions, endIndex).applyMatrix4(object.matrixWorld).clone();
+    const screenStart = worldPointToCanvasPoint(worldStart, rect);
+    const screenEnd = worldPointToCanvasPoint(worldEnd, rect);
+    if (!screenStart || !screenEnd) continue;
+    const candidate = closestCanvasSegmentPoint(cursor, screenStart, screenEnd);
+    if (!best || candidate.distanceSq < best.distanceSq) {
+      best = {
+        distanceSq: candidate.distanceSq,
+        point: worldStart.lerp(worldEnd, candidate.t),
+      };
+    }
+  }
+  return best;
+}
+
+function closestLayerMeasurementSnapPoint(event) {
+  const snapObjects = measurementSnapObjectsFromViewerLayers();
+  if (!snapObjects.length) return null;
+  const cursor = viewerEventCanvasPoint(event);
+  let best = null;
+  snapObjects.forEach(object => {
+    const candidate = closestLineSnapPointFromObject(object, cursor, cursor.rect);
+    if (candidate && (!best || candidate.distanceSq < best.distanceSq)) {
+      best = candidate;
+    }
+  });
+  const thresholdSq = MEASUREMENT_LAYER_SNAP_SCREEN_PX ** 2;
+  return best && best.distanceSq <= thresholdSq ? best.point.clone() : null;
 }
 
 function measurementPointFromViewerEvent(event) {
@@ -2477,16 +2605,18 @@ function measurementPointFromViewerEvent(event) {
   pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
   raycaster.setFromCamera(pointer, camera);
   if (vertexSnapEnabled) {
+    const layerSnapPoint = closestLayerMeasurementSnapPoint(event);
+    if (layerSnapPoint) return layerSnapPoint;
     const snapTargets = selectedMeasurementSnapObjects();
     if (snapTargets.length) {
       const selectedHits = raycaster.intersectObjects(snapTargets, true);
       if (selectedHits.length) {
         return nearestFaceVertex(selectedHits[0]) || selectedHits[0].point.clone();
       }
-      setMeasurementStatus('Snap Vertex On: click on the selected component, or turn snap off for free measurement.');
+      setMeasurementStatus('Snap Vertex On: click a selected component or visible snap-enabled layer, or turn snap off for free measurement.');
       return null;
     } else {
-      setMeasurementStatus('Snap Vertex On: select a component first, or turn snap off for free measurement.');
+      setMeasurementStatus('Snap Vertex On: select a component or show a snap-enabled layer first, or turn snap off for free measurement.');
       return null;
     }
   }

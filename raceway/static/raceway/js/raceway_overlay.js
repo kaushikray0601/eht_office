@@ -13,6 +13,13 @@ const PROXY_BOTTOM_SHADE = 1.12;
 const PROXY_SIDE_SHADE = 0.72;
 const TELEMETRY_FLUSH_DELAY_MS = 750;
 const TELEMETRY_MAX_BATCH_SIZE = 50;
+const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
+  'side-rail',
+  'lower-edge',
+  'depth-tick',
+  'rung',
+  'tray-cross-member',
+]);
 const TELEMETRY_FORBIDDEN_ID_KEYS = new Set([
   'id',
   'pk',
@@ -474,6 +481,16 @@ function highlightedSegment(run, segmentIndex) {
   return Boolean(focus && focus.runId === run.id && Number(focus.segmentIndex) === Number(segmentIndex));
 }
 
+function racewayMeasurementSnapObjects() {
+  const objects = [];
+  layer?.group?.traverse?.(object => {
+    if (!object || object.visible === false) return;
+    const kind = object.userData?.racewayPreviewKind || '';
+    if (RACEWAY_MEASUREMENT_SNAP_KINDS.has(kind)) objects.push(object);
+  });
+  return objects;
+}
+
 function ensureElevationDefault() {
   if (state.elevationInitialized) return;
   const currentElevation = runtime?.currentSourceElevationM?.();
@@ -489,6 +506,7 @@ function registerRacewayOverlay() {
   if (registry.ids?.().includes(RACEWAY_LAYER_ID)) {
     return registry.update?.(RACEWAY_LAYER_ID, {
       getElements: () => state.runs,
+      getMeasurementSnapObjects: racewayMeasurementSnapObjects,
       screenScaledObjects: true,
     });
   }
@@ -499,6 +517,7 @@ function registerRacewayOverlay() {
     label: 'Raceway',
     createGroup: true,
     getElements: () => state.runs,
+    getMeasurementSnapObjects: racewayMeasurementSnapObjects,
     screenScaledObjects: true,
   });
 }
@@ -993,6 +1012,9 @@ function addSourceLine(group, sourcePoints, material, previewKind) {
     material,
   );
   line.userData.racewayPreviewKind = previewKind;
+  if (RACEWAY_MEASUREMENT_SNAP_KINDS.has(previewKind)) {
+    line.userData.measurementSnapTarget = true;
+  }
   group.add(line);
   return line;
 }
@@ -1520,7 +1542,10 @@ function renderRaceway() {
     run.nodes.forEach((node, index) => addNodeHandle(group, run, node, index, color));
     layer.group.add(group);
   });
-  window.plant3dViewerLayers?.update?.(RACEWAY_LAYER_ID, { getElements: () => state.runs });
+  window.plant3dViewerLayers?.update?.(RACEWAY_LAYER_ID, {
+    getElements: () => state.runs,
+    getMeasurementSnapObjects: racewayMeasurementSnapObjects,
+  });
   runtime.renderNow?.();
 }
 
