@@ -660,6 +660,55 @@ class RacewayWarningProjectionTests(TestCase):
         self.assertLessEqual(clearance_warning["values"]["gap_m"], 0.10)
         self.assertEqual(clearance_warning["values"]["object_stable_id"], "ifc-pipe-near")
 
+    def test_layer_warnings_use_saved_orientation_for_model_envelope(self):
+        project_id = "RWY-WARN-ORIENTED"
+        source, package = create_source_and_package(project_id)
+        layer = RacewayLayer.objects.create(
+            project_id=project_id,
+            source_model_id=source.pk,
+            render_package_id=package.pk,
+            name="Oriented clash draft",
+        )
+        family = create_family("WARN-ORIENTED-LADDER")
+        size = create_size(family=family, width_mm=600, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        create_nodes(run, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            stable_id="ifc-rolled-clash",
+            source_object_id="Pipe-rolled",
+            object_type="IfcPipeSegment",
+            bounds={
+                "min_x": 0.9,
+                "max_x": 1.1,
+                "min_y": -0.08,
+                "max_y": -0.04,
+                "min_z": 0.22,
+                "max_z": 0.24,
+            },
+        )
+
+        default_warnings = build_layer_warnings(layer)
+        self.assertFalse(
+            any(warning["code"] == "raceway.warning.model_clash_aabb" for warning in default_warnings)
+        )
+
+        run.metadata = {
+            "orientation": {
+                "schema": "raceway.orientation.v0",
+                "preset": "roll_right",
+                "quarter_turns": 1,
+            }
+        }
+        run.save(update_fields=["metadata"])
+        warnings = build_layer_warnings(layer)
+        clash_warning = next(warning for warning in warnings if warning["code"] == "raceway.warning.model_clash_aabb")
+
+        self.assertEqual(clash_warning["values"]["object_stable_id"], "ifc-rolled-clash")
+        self.assertLessEqual(clash_warning["values"]["raceway_bounds"]["min_z"], -0.3)
+        self.assertGreaterEqual(clash_warning["values"]["raceway_bounds"]["max_z"], 0.3)
+
     def test_layer_warnings_sort_by_explicit_severity_rank(self):
         layer = RacewayLayer.objects.create(project_id="RWY-WARN-SORT", name="Sort draft")
         family = create_family("WARN-SORT-LADDER")
@@ -1329,8 +1378,13 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function rollBasisAroundTangent", content)
         self.assertIn("orientation: runOrientation(run)", content)
         self.assertIn("if (node.key) payload.key = node.key", content)
+        self.assertIn("selectedSegmentIndex", content)
+        self.assertIn("function runSegments", content)
+        self.assertIn("function segmentRowsHtml", content)
+        self.assertIn("function selectSegment", content)
         self.assertIn("racewaySegmentDirectionSelect", content)
         self.assertIn("racewaySegmentLengthInput", content)
+        self.assertIn("racewaySegmentList", content)
         self.assertIn("CATALOG_URL = '/raceway/catalog/'", content)
         self.assertIn("function loadCatalog", content)
         self.assertIn("function loadSavedRaceways", content)
@@ -1394,6 +1448,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("data-raceway-action=\"refresh-schedule\"", content)
         self.assertIn("data-raceway-action=\"refresh-fittings\"", content)
         self.assertIn("data-raceway-action=\"select-warning\"", content)
+        self.assertIn("data-raceway-action=\"select-segment\"", content)
         self.assertIn("data-raceway-action=\"open-schedule-csv\"", content)
         self.assertIn("data-raceway-action=\"delete-run\"", content)
         self.assertIn("data-raceway-action=\"toggle-surfaces\"", content)
@@ -1425,6 +1480,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertNotIn("function applyRunElevation", content)
         self.assertIn("'side-rail'", content)
         self.assertIn("'solid-3-plane-proxy'", content)
+        self.assertIn("'selected-segment-highlight'", content)
         self.assertIn("'rung'", content)
         self.assertIn("'node-hit-target'", content)
         self.assertIn("PROXY_BOTTOM_SHADE", content)

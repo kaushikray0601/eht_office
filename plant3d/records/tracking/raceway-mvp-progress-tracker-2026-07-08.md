@@ -63,6 +63,9 @@ that foundation.
 - [x] Add first run-level Raceway orientation preset controls with save-flow
   persistence.
 - [x] Preserve stable Raceway node UUID keys during node replacement.
+- [x] Add derived segment identity/selection groundwork before segment-level
+  face-offset persistence.
+- [x] Make rough model clash/clearance AABB respect saved run orientation.
 
 ## Default Pass Ritual
 
@@ -393,6 +396,7 @@ Acceptance:
 - [ ] Tray/riser cross-section orientation controls:
   - inherit riser orientation from adjacent horizontal tray by default,
   - [x] add cheap run-level orthogonal rotate presets first,
+  - [x] close first server integration by using orientation in rough clash AABB,
   - defer arbitrary numeric roll angle until field usage proves it is needed.
 - [x] Face/orientation foundation design note:
   - `../planning/raceway-face-orientation-foundation-2026-07-12.md`,
@@ -402,6 +406,10 @@ Acceptance:
   - node-key preservation is a prerequisite before segment-level overrides.
 - [x] Preserve stable node UUID keys during node replacement before any
   segment-level orientation/face-offset override is persisted.
+- [x] Add derived segment identity and selectable segment rows:
+  - stable identity is derived from adjacent saved node UUIDs,
+  - unsaved segments show draft identity until first save,
+  - no segment-level override persistence yet.
 - [x] Extend Measure `Snap Vertex On` to Raceway tray/ladder edges:
   - add a viewer-layer snap-provider contract,
   - let visible consumer overlays expose snap objects/points,
@@ -1635,6 +1643,41 @@ Append each pass here.
   - `venv/bin/python manage.py makemigrations --check --dry-run`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-13 - Segment Identity Groundwork and Oriented Clash Envelope
+
+- Read Claude/Fable §33 before finalizing the pass:
+  - node-key preservation was approved as the right substrate,
+  - segment split/merge/stale-intent semantics were folded into the face/
+    orientation design note,
+  - N-17 was kept in this pass as requested.
+- Added derived segment identity/selection groundwork in the Raceway overlay:
+  - segment rows are derived from adjacent node pairs,
+  - saved segments show stable `start_node_key::end_node_key` identity,
+  - unsaved segments show a temporary draft identity until first save,
+  - selecting a segment clears node selection and highlights the segment in blue.
+- Kept persistence intentionally out of this pass:
+  - no segment-level orientation/face-offset override is saved yet,
+  - reducer handedness remains the next architecture item after segment intent.
+- Closed Claude N-17:
+  - rough model clash/clearance AABB now uses oriented proxy corners for saved
+    run-level orientation,
+  - the behavior is covered by a warning regression test where `Roll Right`
+    changes the detected envelope.
+- Bumped browser cache key:
+  - Raceway overlay: `20260713_raceway29`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+    after rerun outside sandbox because Playwright/live-server were blocked
+    inside the sandbox,
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`

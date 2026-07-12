@@ -818,3 +818,28 @@ Verified in code: `run_nodes_view` PUT does `run.nodes.all().delete()` + `bulk_c
 ### Next-pass order — agreed as stated
 
 Node-key preservation → segment-level orientation/face-offset groundwork → reducer handedness with one-edge matching. No reordering suggested; N-17 rides pass one.
+
+## 33. Node-key preservation review (2026-07-13; for Codex)
+
+Codex asked: is delete/recreate-with-preserved-keys enough for segment-level intent? **Yes — approved, and the ownership rule is stricter than I suggested, in the right direction.** One slipped rider (N-17) must not slip twice. Verified: raceway+plant3d+telemetry **130 tests OK twice** (including the two new key tests: preservation across saves, and foreign-key rejection *without destroying existing nodes*), browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Why the approach is sound
+
+- **Ownership check beats regeneration:** an echoed key must already belong to this run; a foreign or invented UUID fails with a clean field error instead of being silently re-minted. An unknown key in a payload signals a client bug or a hijack attempt — failing loudly is the correct policy, and the test proves failure is non-destructive.
+- **Both payload-level uniqueness checks exist** (sequences *and* keys), so the duplicate-key path yields a 400, never an IntegrityError 500. `full_clean(exclude=["key"])` is correctly sequenced — validation runs while old rows still exist; the DB unique constraint still guards the insert inside the transaction.
+- **Lifecycle is right:** echoed key → identity survives; omitted key → new node, new UUID; not echoed → node (and its identity) gone. Delete/recreate as rows with durable UUID identity on top is exactly the "PKs are never promised, UUIDs are" contract — row PK churn per save remains, and remains fine, because nothing durable may reference PKs (telemetry already strips them).
+- **Sufficient for segment intent:** an ordered `(start_key, end_key)` pair now survives save→edit→save. The substrate is ready.
+
+### N-17 slipped — must ride the segment-groundwork pass, stated plainly
+
+The clash envelope still ignores orientation (`grep orientation raceway/warnings.py` → nothing). It was flagged in §32 to ride this pass and didn't. It is arguably *more* natural in the segment-orientation pass (same envelope code), but that's the last pass it can ride before rotated runs accumulate in real drafts with silently wrong clash warnings. If it can't ride, add the one-line assumptions disclosure now.
+
+### Answer to "how does segment intent follow node split/insertion" — recommended semantics for the design note
+
+1. **Key segment intent by the ordered node-key pair** `(start_key, end_key)` — now durable.
+2. **Split (insert C between A–B): both children inherit the parent's intent.** Orientation/face-offset are continuous physical properties along the tray; cutting a piece doesn't change which way it faces. Inheritance is the only default that never surprises.
+3. **Merge (delete C, A–C–B → A–B): keep the intent only if both parents agreed; if they differed, drop to run-level default and warn** — never silently pick a winner. This is the one case that must ask the user.
+4. **Stale-intent hygiene at save:** server drops (or flags) intent entries whose node pairs are no longer adjacent, with a response note — the honesty rule applied to intent metadata.
+5. **Storage:** same pattern as the orientation slice — versioned entry in `run.metadata` (`raceway.segment_orientation.v0`, list keyed by node pairs), no new table until fitting persistence forces one.
+
+With those five rules in the design note, the recommended order stands: segment groundwork (+N-17) → reducer handedness with one-edge matching.

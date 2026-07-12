@@ -73,6 +73,7 @@ const state = {
   runs: [],
   activeRunId: '',
   selectedNodeIndex: -1,
+  selectedSegmentIndex: -1,
   mode: 'idle',
   familyId: '',
   sizeId: '',
@@ -172,6 +173,7 @@ let fittingSummaryEl = null;
 let warningBadgeEl = null;
 let runListEl = null;
 let nodeListEl = null;
+let segmentListEl = null;
 let inspectorEl = null;
 let bootstrapAttempts = 0;
 let persistenceBootstrapQueued = false;
@@ -262,6 +264,7 @@ function captureHistorySnapshot() {
     runs: clonePlain(state.runs),
     activeRunId: state.activeRunId,
     selectedNodeIndex: state.selectedNodeIndex,
+    selectedSegmentIndex: state.selectedSegmentIndex,
     mode: state.mode,
     familyId: state.familyId,
     sizeId: state.sizeId,
@@ -281,9 +284,14 @@ function restoreHistorySnapshot(snapshot) {
   }
   state.selectedNodeIndex = Number(snapshot.selectedNodeIndex);
   if (!Number.isInteger(state.selectedNodeIndex)) state.selectedNodeIndex = -1;
+  state.selectedSegmentIndex = Number(snapshot.selectedSegmentIndex);
+  if (!Number.isInteger(state.selectedSegmentIndex)) state.selectedSegmentIndex = -1;
   const run = activeRun();
   if (!run || state.selectedNodeIndex >= run.nodes.length) {
     state.selectedNodeIndex = run?.nodes.length ? run.nodes.length - 1 : -1;
+  }
+  if (!run || state.selectedSegmentIndex < 1 || state.selectedSegmentIndex >= run.nodes.length) {
+    state.selectedSegmentIndex = -1;
   }
   state.familyId = snapshot.familyId || state.familyId;
   state.sizeId = snapshot.sizeId || state.sizeId;
@@ -509,9 +517,13 @@ function focusScheduleWarningTarget(warning, run) {
   }) === true;
 }
 
-function highlightedSegment(run, segmentIndex) {
+function warningSegmentIsFocused(run, segmentIndex) {
   const focus = state.warningFocus;
   return Boolean(focus && focus.runId === run.id && Number(focus.segmentIndex) === Number(segmentIndex));
+}
+
+function selectedSegmentIsFocused(run, segmentIndex) {
+  return run.id === state.activeRunId && Number(segmentIndex) === Number(state.selectedSegmentIndex);
 }
 
 function racewayMeasurementSnapObjects() {
@@ -845,6 +857,7 @@ function attachSelectedModelToNode() {
     run.nodes.push(point);
     state.selectedNodeIndex = run.nodes.length - 1;
   }
+  state.selectedSegmentIndex = -1;
   markRunDirty(run);
   setStatus(`${run.tag}: node ${state.selectedNodeIndex + 1} anchored to ${anchorLabel(anchor)}.`);
   renderRaceway();
@@ -907,6 +920,57 @@ function riserCount(run) {
 
 function runLength(run) {
   return run.nodes.reduce((total, node, index) => total + nodeDistance(run.nodes[index - 1], node), 0);
+}
+
+function segmentIdentity(startNode, endNode, segmentIndex) {
+  const startKey = String(startNode?.key || '');
+  const endKey = String(endNode?.key || '');
+  if (startKey && endKey) {
+    return {
+      key: `${startKey}::${endKey}`,
+      status: 'saved',
+      label: `${startKey.slice(0, 8)} -> ${endKey.slice(0, 8)}`,
+    };
+  }
+  return {
+    key: `draft:${segmentIndex}`,
+    status: 'draft',
+    label: 'draft identity until saved',
+  };
+}
+
+function runSegments(run) {
+  const nodes = run?.nodes || [];
+  const segments = [];
+  for (let index = 1; index < nodes.length; index += 1) {
+    const startNode = nodes[index - 1];
+    const endNode = nodes[index];
+    const lengthM = nodeDistance(startNode, endNode);
+    const dz = Number(endNode?.z || 0) - Number(startNode?.z || 0);
+    const identity = segmentIdentity(startNode, endNode, index);
+    segments.push({
+      segmentIndex: index,
+      startNodeIndex: index - 1,
+      endNodeIndex: index,
+      startNode,
+      endNode,
+      lengthM,
+      isRiser: Math.abs(dz) > 0.001,
+      orientation: runOrientation(run),
+      faceOffsetM: 0,
+      intentStatus: 'run_default',
+      key: identity.key,
+      keyStatus: identity.status,
+      keyLabel: identity.label,
+    });
+  }
+  return segments;
+}
+
+function selectedSegment() {
+  const run = activeRun();
+  if (!run || state.selectedSegmentIndex < 1) return null;
+  return runSegments(run).find(segment => segment.segmentIndex === state.selectedSegmentIndex) || null;
 }
 
 function runWarnings(run) {
@@ -1377,6 +1441,15 @@ function addWarningSegmentHighlight(group, run, start, end) {
   addBendPlaceholder(group, run, end, material);
 }
 
+function addSelectedSegmentHighlight(group, run, start, end) {
+  const material = previewMaterial(0x2563eb, 0.98);
+  const line = addSourceLine(group, [start, end], material, 'selected-segment-highlight');
+  if (line) {
+    line.userData.racewayRunId = run.id;
+    line.renderOrder = 40;
+  }
+}
+
 function addNodeHandle(group, run, node, index, color) {
   const renderPoint = renderSourcePoint(node);
   if (!renderPoint) return;
@@ -1472,6 +1545,7 @@ function selectRacewayNodeFromEvent(event) {
   if (!run || !run.nodes[picked.nodeIndex]) return false;
   state.activeRunId = run.id;
   state.selectedNodeIndex = picked.nodeIndex;
+  state.selectedSegmentIndex = -1;
   syncPaletteFromRun(run);
   activateNodeSelectionMode(run);
   setStatus(`${run.tag}: node ${picked.nodeIndex + 1} selected.`);
@@ -1579,8 +1653,10 @@ function renderTrayPreview(group, run, color) {
   for (let index = 1; index < run.nodes.length; index += 1) {
     addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial);
     addRiserPlaceholder(group, run, run.nodes[index - 1], run.nodes[index], previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
-    if (highlightedSegment(run, index)) {
+    if (warningSegmentIsFocused(run, index)) {
       addWarningSegmentHighlight(group, run, run.nodes[index - 1], run.nodes[index]);
+    } else if (selectedSegmentIsFocused(run, index)) {
+      addSelectedSegmentHighlight(group, run, run.nodes[index - 1], run.nodes[index]);
     }
   }
   for (let index = 1; index < run.nodes.length - 1; index += 1) {
@@ -1623,6 +1699,7 @@ function beginRun() {
   state.runs.push(run);
   state.activeRunId = run.id;
   state.selectedNodeIndex = -1;
+  state.selectedSegmentIndex = -1;
   activateCanvasMode('draw');
   setStatus(`${run.tag}: click centerline nodes at EL +${formatM(run.elevationM)}`);
   renderRaceway();
@@ -1648,6 +1725,7 @@ function continueRun() {
     return;
   }
   state.selectedNodeIndex = run.nodes.length - 1;
+  state.selectedSegmentIndex = -1;
   activateCanvasMode('draw');
   setStatus(`${run.tag}: continue from node ${run.nodes.length || 1}. Click structure or the working plane to append.`);
   renderRaceway();
@@ -1677,6 +1755,7 @@ function addTypedSegment() {
   pushUndo('Add typed segment');
   run.nodes.push(point);
   state.selectedNodeIndex = run.nodes.length - 1;
+  state.selectedSegmentIndex = -1;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
   activateCanvasMode('draw');
@@ -1694,6 +1773,7 @@ function cancelRun() {
   }
   deactivateCanvasMode();
   state.selectedNodeIndex = -1;
+  state.selectedSegmentIndex = -1;
   setStatus('Raceway command cancelled.');
   renderRaceway();
   renderPanel();
@@ -1711,6 +1791,7 @@ function addNodeFromEvent(event) {
   const previousPoint = run.nodes.at(-1) || null;
   run.nodes.push(point);
   state.selectedNodeIndex = run.nodes.length - 1;
+  state.selectedSegmentIndex = -1;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
   if (adjusted) recordOrthoTelemetry(run, previousPoint, rawPoint, point);
@@ -1728,6 +1809,7 @@ function deleteSelectedNode() {
   pushUndo('Delete node');
   run.nodes.splice(state.selectedNodeIndex, 1);
   state.selectedNodeIndex = Math.min(state.selectedNodeIndex, run.nodes.length - 1);
+  state.selectedSegmentIndex = -1;
   markRunDirty(run);
   if (run.nodes.length) {
     activateNodeSelectionMode(run);
@@ -1745,6 +1827,7 @@ function moveSelectedNodeFromEvent(event) {
   if (!run || state.selectedNodeIndex < 0 || !point) return;
   pushUndo('Move node');
   run.nodes[state.selectedNodeIndex] = point;
+  state.selectedSegmentIndex = -1;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
   activateNodeSelectionMode(run);
@@ -2376,7 +2459,7 @@ function injectStyles() {
     .raceway-warning-badge[hidden] { display: none; }
     .raceway-status { margin: 8px 0; color: #475569; font-size: 12px; line-height: 1.35; }
     .raceway-status-busy { color: #1d4ed8; }
-    .raceway-run-list, .raceway-node-list { display: grid; gap: 6px; margin-top: 8px; }
+    .raceway-run-list, .raceway-node-list, .raceway-segment-list { display: grid; gap: 6px; margin-top: 8px; }
     .raceway-row { width: 100%; justify-content: space-between; text-align: left; }
     .raceway-row-active { border-color: #2563eb; color: #1d4ed8; }
     .raceway-graph-warnings { display: grid; gap: 5px; margin-top: 8px; }
@@ -2443,6 +2526,23 @@ function nodeRowsHtml() {
       ${anchorLabel(node.anchor) ? `<br>Anchor: ${escapeHtml(anchorLabel(node.anchor))}` : ''}
     </button>
   `).join('');
+}
+
+function segmentRowsHtml() {
+  const run = activeRun();
+  const segments = runSegments(run);
+  if (!segments.length) return '<div class="meta">No segments</div>';
+  return segments.map(segment => {
+    const kind = segment.isRiser ? 'riser' : 'straight';
+    const identityText = segment.keyStatus === 'saved' ? 'stable key' : 'draft key';
+    const title = `Select segment ${segment.segmentIndex}: ${segment.keyLabel}`;
+    return `
+      <button type="button" class="raceway-row ${segment.segmentIndex === state.selectedSegmentIndex ? 'raceway-row-active' : ''}" data-raceway-action="select-segment" data-segment-index="${segment.segmentIndex}" title="${escapeHtml(title)}">
+        <strong>S${segment.segmentIndex}</strong> N${segment.startNodeIndex + 1}->N${segment.endNodeIndex + 1} | ${formatM(segment.lengthM)} m | ${kind}<br>
+        ${escapeHtml(orientationLabel(run))} | ${escapeHtml(segment.intentStatus.replace('_', ' '))} | ${identityText}
+      </button>
+    `;
+  }).join('');
 }
 
 function warningClass(warning) {
@@ -2630,7 +2730,19 @@ function fittingSummaryHtml() {
 
 function inspectorHtml() {
   const node = selectedNode();
-  if (!node) return `<div class="meta">Select a node</div>${localWarningsHtml(activeRun())}`;
+  const segment = selectedSegment();
+  if (!node && segment) {
+    const kind = segment.isRiser ? 'riser' : 'straight';
+    return `
+      <div class="meta">
+        Segment S${segment.segmentIndex}: N${segment.startNodeIndex + 1}->N${segment.endNodeIndex + 1}<br>
+        ${formatM(segment.lengthM)} m | ${kind} | ${escapeHtml(orientationLabel(activeRun()))}<br>
+        ${segment.keyStatus === 'saved' ? 'Stable identity from node UUID pair' : 'Draft identity; save once to lock node UUIDs'}
+      </div>
+      ${localWarningsHtml(activeRun())}
+    `;
+  }
+  if (!node) return `<div class="meta">Select a node or segment</div>${localWarningsHtml(activeRun())}`;
   const anchor = anchorLabel(node.anchor);
   return `
     <div class="raceway-node-editor">
@@ -2703,6 +2815,7 @@ function ensurePanel() {
     <div id="racewayFittingSummary" class="raceway-schedule-summary"></div>
     <div id="racewayRunList" class="raceway-run-list"></div>
     <div id="racewayNodeList" class="raceway-node-list"></div>
+    <div id="racewaySegmentList" class="raceway-segment-list"></div>
   `;
   layerPanel.parentNode.insertBefore(panel, layerPanel);
   statusEl = panel.querySelector('#racewayToolStatus');
@@ -2713,6 +2826,7 @@ function ensurePanel() {
   warningBadgeEl = panel.querySelector('#racewayWarningBadge');
   runListEl = panel.querySelector('#racewayRunList');
   nodeListEl = panel.querySelector('#racewayNodeList');
+  segmentListEl = panel.querySelector('#racewaySegmentList');
   inspectorEl = panel.querySelector('#racewayInspector');
   panel.addEventListener('click', handlePanelClick);
   panel.addEventListener('change', handlePanelChange);
@@ -2807,6 +2921,7 @@ function renderPanel(options = {}) {
   }
   if (runListEl) runListEl.innerHTML = runRowsHtml();
   if (nodeListEl) nodeListEl.innerHTML = nodeRowsHtml();
+  if (segmentListEl) segmentListEl.innerHTML = segmentRowsHtml();
   if (inspectorEl && (options.forceInspector || !inspectorEl.contains(document.activeElement))) inspectorEl.innerHTML = inspectorHtml();
   recordVisibleWarningTelemetry('shown');
   updateActionStates(run);
@@ -2823,6 +2938,7 @@ function selectScheduleWarning(index) {
   const segmentIndex = Number(warning.segment_index);
   state.activeRunId = run.id;
   state.selectedNodeIndex = warningTargetNodeIndex(run, warning);
+  state.selectedSegmentIndex = Number.isInteger(segmentIndex) ? segmentIndex : -1;
   state.warningFocus = {
     warningIndex,
     runId: run.id,
@@ -2833,6 +2949,25 @@ function selectScheduleWarning(index) {
   activateNodeSelectionMode(run);
   const framed = focusScheduleWarningTarget(warning, run);
   setStatus(`${run.tag}: selected from ${warning.code || 'schedule warning'}${framed ? ' and framed in viewer' : ''}.`);
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
+function selectSegment(index) {
+  const run = activeRun();
+  const segmentIndex = Number(index);
+  const segment = runSegments(run).find(item => item.segmentIndex === segmentIndex);
+  if (!run || !segment) {
+    setStatus('Select an active run segment.');
+    return false;
+  }
+  state.selectedSegmentIndex = segment.segmentIndex;
+  state.selectedNodeIndex = -1;
+  state.warningFocus = null;
+  activateNodeSelectionMode(run);
+  const identityText = segment.keyStatus === 'saved' ? 'stable segment identity' : 'draft segment identity until saved';
+  setStatus(`${run.tag}: segment S${segment.segmentIndex} selected (${formatM(segment.lengthM)} m, ${segment.isRiser ? 'riser' : 'straight'}, ${identityText}).`);
   renderRaceway();
   renderPanel({ forceInspector: true });
   return true;
@@ -2884,6 +3019,7 @@ function runPanelAction(action, button = null) {
   if (action === 'select-run') {
     state.activeRunId = button?.dataset.runId || '';
     state.selectedNodeIndex = -1;
+    state.selectedSegmentIndex = -1;
     state.warningFocus = null;
     syncPaletteFromRun(activeRun());
     activateNodeSelectionMode(activeRun());
@@ -2892,10 +3028,14 @@ function runPanelAction(action, button = null) {
   }
   if (action === 'select-node') {
     state.selectedNodeIndex = Number(button?.dataset.nodeIndex);
+    state.selectedSegmentIndex = -1;
     state.warningFocus = null;
     activateNodeSelectionMode(activeRun());
     renderRaceway();
     renderPanel();
+  }
+  if (action === 'select-segment') {
+    selectSegment(button?.dataset.segmentIndex);
   }
   if (action === 'select-warning') {
     selectScheduleWarning(button?.dataset.warningIndex);
@@ -3107,6 +3247,7 @@ window.racewayViewerOverlay = {
       : [];
     state.activeRunId = state.runs[0]?.id || '';
     state.selectedNodeIndex = -1;
+    state.selectedSegmentIndex = -1;
     syncPaletteFromRun(activeRun());
     clearHistory();
     clearGraphProjection();

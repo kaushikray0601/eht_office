@@ -361,15 +361,27 @@ Code facts verified on 2026-07-09:
   run-level orientation preset (`Open Up`, `Roll Right`, `Open Down`,
   `Roll Left`), applied to proxy geometry, undo/redo aware, and persisted only
   through the normal Save Draft flow under validated
-  `RacewayRun.metadata["orientation"]`. Still deferred: stable node-key
-  preservation before segment overrides, segment/face-offset authoring, reducer
-  handedness, and explicit accessory snap geometry.
+  `RacewayRun.metadata["orientation"]`. Still deferred: segment/face-offset
+  authoring, reducer handedness, and explicit accessory snap geometry.
 - Raceway node-key preservation is implemented. Saved nodes resend `node.key`;
   the server preserves keys only when they already belong to the same run,
   rejects foreign/invalid keys without deleting existing nodes, and gives new
   nodes fresh UUID keys. This closes the identity prerequisite before
   segment-level orientation/face-offset overrides. Cache keys: package viewer
   `20260713_snap_provider2`, Raceway overlay `20260713_raceway28`.
+- Raceway segment identity/selection groundwork is implemented. The overlay
+  derives selectable segment rows from adjacent node pairs, uses
+  `start_node_key::end_node_key` as the stable authoring identity after save,
+  and temporary `draft:<segment_index>` identities before save. Selected
+  segments get a blue viewer highlight and inspector text. No segment-level
+  override is persisted yet. Split-inheritance rule in the design note: if a
+  segment is split by future mid-run insertion, both child segments inherit the
+  original segment intent by default; new branch segments start from the run
+  default unless explicitly copied/assigned. Merge/stale-intent future rules are
+  also recorded: keep merged intent only when both parents agree, and drop/flag
+  stale non-adjacent segment entries. Claude N-17 is closed: rough model
+  clash/clearance AABB now uses oriented proxy corners for saved run
+  orientation. Raceway overlay cache key: `20260713_raceway29`.
 - Deferred stock reviewed against Claude §28 on 2026-07-12. Keep open:
   `.code-workspace` tracked-file cleanup decision, KR generic catalogue seed
   confirmation, F-19/F-20 commit hygiene notes, blocked-telemetry browser

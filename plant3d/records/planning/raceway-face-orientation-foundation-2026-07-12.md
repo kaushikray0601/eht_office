@@ -210,10 +210,8 @@ Warnings:
 
 Clash:
 
-- rough AABB may continue using conservative centerline envelope until
-  orientation is persisted,
-- once orientation is persisted, clash envelope should use oriented proxy
-  corners but remain warning-only.
+- rough AABB should use oriented proxy corners once orientation is persisted,
+  but remain warning-only.
 
 Schedule/CSV:
 
@@ -228,6 +226,34 @@ Schedule/CSV:
 - Arbitrary roll angle.
 - Cable pulling radius/tension.
 - Fitting/support fabrication drawings.
+
+## Segment Identity and Split Inheritance
+
+First segment-authoring foundation, 2026-07-13:
+
+- a route segment is derived from an ordered pair of adjacent node UUIDs,
+- segment key convention for draft/authoring logic is
+  `start_node_key::end_node_key`,
+- unsaved segments use a temporary `draft:<segment_index>` identity until the
+  run is saved and node UUIDs are available,
+- no segment-level override is persisted yet.
+
+Future mid-run insertion/split rule:
+
+- when a user inserts a node into an existing segment, both child segments
+  inherit the original segment-level orientation/face-offset intent by default,
+- this preserves the physical assumption that splitting a straight tray for a
+  tee, support, or detailing point should not silently change its face
+  alignment,
+- a new branch segment created from that split starts from the run default unless
+  the user explicitly copies or assigns an override,
+- when a user deletes a node and merges two adjacent segments, keep segment
+  intent only if both parent segments had the same intent; if they differed,
+  drop to the run default and warn rather than silently picking a winner,
+- when segment-intent metadata is introduced, save/update should drop or flag
+  stale entries whose node-key pair is no longer adjacent,
+- reducer handedness remains a fitting-level decision at the unequal-size
+  transition, not a side effect of centerline splitting.
 
 ## Review Questions
 
@@ -248,6 +274,13 @@ Schedule/CSV:
   - new nodes still receive fresh UUID keys,
   - segment-level overrides remain deferred, but their identity prerequisite is
     now closed.
+- Codex implemented segment identity/selection groundwork on 2026-07-13:
+  - the UI now derives selectable segment rows from adjacent node pairs,
+  - selected segments highlight in the viewer,
+  - segment-level face-offset/orientation overrides remain deferred.
+- Codex closed Claude N-17 on 2026-07-13:
+  - model clash/clearance AABB now uses oriented proxy corners for saved
+    run-level orientation.
 - Claude/Fable: is run metadata acceptable for a first saved orientation schema,
   or should we require node-key preservation first and then add a segment-intent
   model?

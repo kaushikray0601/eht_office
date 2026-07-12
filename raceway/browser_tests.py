@@ -691,6 +691,19 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                         "00000000-0000-4000-8000-000000000003",
                     ],
                 )
+                page.wait_for_function(
+                    "() => document.querySelector('#racewaySegmentList [data-raceway-action=\"select-segment\"][data-segment-index=\"1\"]')"
+                )
+                self.assertIn("S1", page.text_content("#racewaySegmentList"))
+                page.click('[data-raceway-action="select-segment"][data-segment-index="1"]')
+                self.assertIn("segment S1 selected", page.text_content("#racewayToolStatus"))
+                selected_segment_preview_kinds = page.evaluate(
+                    """() => window.racewayViewerOverlay.layer.group.children
+                        .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))
+                        .filter(Boolean)
+                    """
+                )
+                self.assertIn("selected-segment-highlight", selected_segment_preview_kinds)
                 page.click('[data-raceway-action="select-warning"][data-warning-index="0"]')
                 page.wait_for_function(
                     "() => document.querySelector('[data-raceway-action=\"select-node\"][data-node-index=\"1\"]')?.classList.contains('raceway-row-active')"

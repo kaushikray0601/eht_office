@@ -1,3 +1,4 @@
+import math
 from collections import defaultdict
 
 from plant3d.overlay import model_object_bounds_for_source
@@ -26,6 +27,12 @@ BEND_MIN_ANGLE_DEG = 5.0
 MODEL_CLASH_CLEARANCE_M = 0.10
 MODEL_CLASH_WARNING_LIMIT = 25
 MODEL_OBJECT_SCAN_LIMIT = 2000
+ORIENTATION_QUARTER_TURNS = {
+    "open_up": 0,
+    "roll_right": 1,
+    "open_down": 2,
+    "roll_left": 3,
+}
 SEVERITY_ORDER = {
     "error": 0,
     "warning": 1,
@@ -445,8 +452,124 @@ def _segment_envelope_bounds(run, start_node, end_node, *, clearance_m):
         return None
     width_m = max(float(run.size.width_mm or 0) / 1000.0, 0.0)
     depth_m = max(float(run.size.depth_mm or 0) / 1000.0, 0.0)
-    envelope_margin_m = max(width_m / 2.0, depth_m) + max(float(clearance_m or 0.0), 0.0)
-    return bounds_from_points([start, end], margin_m=envelope_margin_m)
+    return bounds_from_points(
+        _segment_proxy_corner_points(
+            start,
+            end,
+            width_m=width_m,
+            depth_m=depth_m,
+            quarter_turns=_run_orientation_quarter_turns(run),
+        ),
+        margin_m=max(float(clearance_m or 0.0), 0.0),
+    )
+
+
+def _run_orientation_quarter_turns(run):
+    metadata = run.metadata if isinstance(run.metadata, dict) else {}
+    orientation = metadata.get("orientation")
+    if not isinstance(orientation, dict):
+        return 0
+    try:
+        return int(orientation.get("quarter_turns")) % 4
+    except (TypeError, ValueError):
+        return ORIENTATION_QUARTER_TURNS.get(str(orientation.get("preset") or ""), 0)
+
+
+def _segment_proxy_corner_points(start, end, *, width_m, depth_m, quarter_turns):
+    basis = _oriented_segment_basis(start, end, quarter_turns=quarter_turns)
+    half_width = width_m / 2.0
+    points = []
+    for source_point in (start, end):
+        for lateral_offset_m in (half_width, -half_width):
+            bottom = _source_frame_offset_point(source_point, basis, lateral_offset_m, 0.0)
+            top = _source_frame_offset_point(source_point, basis, lateral_offset_m, depth_m)
+            points.extend([bottom, top])
+    return points
+
+
+def _oriented_segment_basis(start, end, *, quarter_turns):
+    basis = _segment_plan_basis(start, end)
+    turns = int(quarter_turns or 0) % 4
+    if not turns:
+        return basis
+    angle = turns * math.pi / 2.0
+    cos_value = round(math.cos(angle))
+    sin_value = round(math.sin(angle))
+    return {
+        **basis,
+        "nx": (basis["nx"] * cos_value) + (basis["dx"] * sin_value),
+        "ny": (basis["ny"] * cos_value) + (basis["dy"] * sin_value),
+        "nz": (basis["nz"] * cos_value) + (basis["dz"] * sin_value),
+        "dx": (basis["dx"] * cos_value) - (basis["nx"] * sin_value),
+        "dy": (basis["dy"] * cos_value) - (basis["ny"] * sin_value),
+        "dz": (basis["dz"] * cos_value) - (basis["nz"] * sin_value),
+    }
+
+
+def _segment_plan_basis(start, end):
+    delta_x = end["x"] - start["x"]
+    delta_y = end["y"] - start["y"]
+    delta_z = end["z"] - start["z"]
+    length = math.sqrt((delta_x * delta_x) + (delta_y * delta_y) + (delta_z * delta_z))
+    if length < MIN_SEGMENT_LENGTH_M:
+        return {
+            "tx": 1.0,
+            "ty": 0.0,
+            "tz": 0.0,
+            "nx": 0.0,
+            "ny": 1.0,
+            "nz": 0.0,
+            "dx": 0.0,
+            "dy": 0.0,
+            "dz": 1.0,
+        }
+
+    plan_length = math.hypot(delta_x, delta_y)
+    normal_x = 0.0
+    normal_y = 1.0
+    if plan_length >= MIN_SEGMENT_LENGTH_M:
+        normal_x = -delta_y / plan_length
+        normal_y = delta_x / plan_length
+
+    tangent_x = delta_x / length
+    tangent_y = delta_y / length
+    tangent_z = delta_z / length
+    depth_x = -tangent_z * normal_y
+    depth_y = tangent_z * normal_x
+    depth_z = (tangent_x * normal_y) - (tangent_y * normal_x)
+    depth_length = math.sqrt((depth_x * depth_x) + (depth_y * depth_y) + (depth_z * depth_z))
+    if depth_length < MIN_SEGMENT_LENGTH_M:
+        depth_x = 0.0
+        depth_y = 0.0
+        depth_z = 1.0
+        depth_length = 1.0
+    depth_x /= depth_length
+    depth_y /= depth_length
+    depth_z /= depth_length
+    if depth_z < -MIN_SEGMENT_LENGTH_M:
+        depth_x *= -1.0
+        depth_y *= -1.0
+        depth_z *= -1.0
+
+    return {
+        "tx": tangent_x,
+        "ty": tangent_y,
+        "tz": tangent_z,
+        "nx": normal_x,
+        "ny": normal_y,
+        "nz": 0.0,
+        "dx": depth_x,
+        "dy": depth_y,
+        "dz": depth_z,
+    }
+
+
+def _source_frame_offset_point(point, basis, lateral_offset_m=0.0, depth_offset_m=0.0):
+    return {
+        "x": point["x"] + (basis["nx"] * lateral_offset_m) + (basis["dx"] * depth_offset_m),
+        "y": point["y"] + (basis["ny"] * lateral_offset_m) + (basis["dy"] * depth_offset_m),
+        "z": point["z"] + (basis["nz"] * lateral_offset_m) + (basis["dz"] * depth_offset_m),
+    }
 
 
 def _model_clash_warning(
