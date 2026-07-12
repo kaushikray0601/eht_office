@@ -362,6 +362,18 @@ Acceptance:
 - [x] Solid 3-plane tray/ladder proxy visual pass.
 - [x] Surface/wire visual toggle, shaded bottom/side faces, and vertical
   riser face-legibility polish.
+- [ ] Tray/riser cross-section orientation controls:
+  - inherit riser orientation from adjacent horizontal tray by default,
+  - add cheap orthogonal rotate presets first,
+  - defer arbitrary numeric roll angle until field usage proves it is needed.
+- [ ] Raceway visual opacity preference for shaded faces:
+  - viewer/user preference first,
+  - no effect on saved centreline geometry, schedule, graph, or clash truth.
+- [ ] Governed Raceway colour strategy:
+  - keep service-class colours as the engineering semantic default,
+  - add project/service palette configuration before arbitrary per-run colours,
+  - allow run-level visual override later only with legend/metadata clarity.
+- [ ] Lightweight Raceway visual legend and/or isolate-selected-run polish.
 - [ ] Screen-scaled consumer overlay handles as a platform pattern beyond
   Raceway.
 - [ ] Reducer fitting/accessory between unequal tray widths.
@@ -372,7 +384,17 @@ Acceptance:
 - [ ] Project/admin-level connection tolerance setting when needed.
 - [ ] Project/admin or user-level near-miss warning sensitivity setting when
   needed.
-- [ ] Define `suggestion_event` telemetry schema in a design note.
+- [x] Define `suggestion_event` telemetry schema in a design note.
+- [x] Implement Tier-0 suggestion telemetry foundation:
+  - peer `telemetry` app,
+  - `SuggestionEvent` lifecycle model,
+  - session/CSRF batch endpoint with project access validation,
+  - Raceway warning/ortho event producers.
+- [ ] Raceway keyboard shortcut reliability audit:
+  - review context gating for every advertised shortcut,
+  - add focused browser coverage for shortcuts that can be triggered from the
+    viewer canvas as well as from the Raceway pane,
+  - avoid broad key capture that conflicts with typing or viewer navigation.
 - [ ] Decision record `0007-ai-gateway-seam` before first Tier-1 AI feature.
 
 ## Open Questions
@@ -1085,6 +1107,7 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `venv/bin/python manage.py migrate telemetry`
   - `git diff --check`
 
 ### 2026-07-12 - Raceway Surface/Wire Toggle and Riser Visual Polish
@@ -1113,5 +1136,35 @@ Append each pass here.
   - `venv/bin/python manage.py makemigrations raceway --check --dry-run`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Tier-0 Suggestion Telemetry Foundation
+
+- Added a consumer-neutral peer `telemetry` app:
+  - `SuggestionEvent` records UUID lifecycle key, user, loose `project_id`,
+    owner module, suggestion code, action, context, action detail, and client,
+  - no domain-table FK to Raceway/EHT/Plant3D models,
+  - context/action detail are server-sanitized to remove primary-key-like IDs.
+- Added batch ingestion endpoint:
+  - `POST /telemetry/events/`,
+  - session login, CSRF, project-access gateway validation,
+  - rate-limited and capped to 50 accepted events per batch.
+- Wired Raceway viewer producers:
+  - local/graph warning `shown` events are deduped per browser session,
+  - save emits `unresolved_at_save` for visible unresolved warnings,
+  - ortho-lock node commits emit `raceway.ortho.axis_lock`,
+  - telemetry requests are fire-and-forget and cannot block authoring or save.
+- Recorded KR shortcut reliability observation:
+  - dedicated shortcut audit/testing pass added to backlog.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway20`.
+- Focused verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `git diff --check`

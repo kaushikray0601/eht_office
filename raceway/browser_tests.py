@@ -132,6 +132,9 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                           if (String(url).startsWith('/raceway/catalog/')) {
                             return { ok: true, status: 200, json: async () => catalogPayload };
                           }
+                          if (String(url).startsWith('/telemetry/events/') && method === 'POST') {
+                            return { ok: false, status: 503, json: async () => ({ error: 'Telemetry unavailable in smoke test.' }) };
+                          }
                           if (String(url).startsWith('/raceway/projects/RWY-BROWSER/layers/') && method === 'GET') {
                             return { ok: true, status: 200, json: async () => ({ layers: [] }) };
                           }
@@ -392,6 +395,18 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 same_y = round(ortho_nodes[1]["y"], 3) == round(ortho_nodes[0]["y"], 3)
                 self.assertTrue(same_x or same_y, ortho_nodes)
                 self.assertFalse(same_x and same_y, ortho_nodes)
+                page.evaluate("() => window.racewayViewerOverlay.flushTelemetry()")
+                page.wait_for_function("() => window.__racewayFetchLog.some((entry) => entry.url.includes('/telemetry/events/'))")
+                telemetry_events = page.evaluate(
+                    """() => window.__racewayFetchLog
+                      .filter((entry) => entry.url.includes('/telemetry/events/'))
+                      .flatMap((entry) => entry.body?.events || [])
+                    """
+                )
+                self.assertIn("raceway.ortho.axis_lock", {event["suggestion_code"] for event in telemetry_events})
+                self.assertTrue(any(event["suggestion_code"].startswith("raceway.warning.") for event in telemetry_events))
+                self.assertFalse(any("run_id" in event.get("context", {}) for event in telemetry_events))
+                self.assertFalse(any("node_id" in event.get("context", {}) for event in telemetry_events))
                 page.select_option("#racewaySegmentDirectionSelect", "plus_y")
                 page.fill("#racewaySegmentLengthInput", "4")
                 page.press("#racewaySegmentLengthInput", "Enter")

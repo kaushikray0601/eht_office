@@ -256,6 +256,29 @@ Code facts verified on 2026-07-09:
   geometry is now 3D-aware so vertical risers push tray depth sideways instead
   of collapsing side faces into the riser direction. Raceway overlay cache key
   is `20260712_raceway19`.
+- KR visual-control notes, 2026-07-12: vertical/riser trays need user-controlled
+  cross-section orientation. Default should eventually inherit from the
+  adjacent horizontal segment; add orthogonal rotate presets before arbitrary
+  roll angles. A shaded-face opacity slider is cheap if treated as viewer/user
+  preference only. Colour is graphically cheap but semantically important:
+  service-class colours remain the default truth; project/service palette config
+  should precede arbitrary per-run colour overrides.
+- Tier-0 suggestion telemetry foundation is implemented as peer app
+  `telemetry`. `SuggestionEvent` stores a UUID lifecycle key, loose
+  `project_id`, owner module, suggestion code, action, context, action detail,
+  client, and user FK; it has no FK to Raceway/EHT/Plant3D domain rows. The
+  ingestion endpoint is `POST /telemetry/events/`, session/CSRF protected,
+  project-gateway validated, rate-limited, and capped to 50 accepted events per
+  batch. Server sanitizes context/action detail to remove primary-key-like IDs.
+  Raceway overlay emits deduped warning `shown`, save-time
+  `unresolved_at_save`, and `raceway.ortho.axis_lock` events through a
+  fire-and-forget queue; telemetry failure cannot block authoring/save. Raceway
+  overlay cache key is `20260712_raceway20`.
+- KR observed that some advertised Raceway keyboard shortcuts sometimes do not
+  fire. The likely area is shortcut context gating between pane focus, active
+  canvas modes, and idle viewer focus. This is recorded as a dedicated audit
+  item; do not broaden key capture casually because it can conflict with typing
+  or viewer navigation.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

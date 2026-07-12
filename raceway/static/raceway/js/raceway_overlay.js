@@ -1,6 +1,7 @@
 const RACEWAY_LAYER_ID = 'raceway-overlay';
 const RACEWAY_INTERACTION_ID = 'raceway-centerline-authoring';
 const CATALOG_URL = '/raceway/catalog/';
+const TELEMETRY_EVENTS_URL = '/telemetry/events/';
 const SOURCE_COORDINATE_FRAME = 'source_xyz_m';
 const HISTORY_LIMIT = 80;
 const NODE_HANDLE_SCREEN_PX = 5;
@@ -10,6 +11,30 @@ const PROXY_FACE_OPACITY = 0.14;
 const PROXY_FACE_SELECTED_OPACITY = 0.24;
 const PROXY_BOTTOM_SHADE = 1.12;
 const PROXY_SIDE_SHADE = 0.72;
+const TELEMETRY_FLUSH_DELAY_MS = 750;
+const TELEMETRY_MAX_BATCH_SIZE = 50;
+const TELEMETRY_FORBIDDEN_ID_KEYS = new Set([
+  'id',
+  'pk',
+  'layer_id',
+  'run_id',
+  'node_id',
+  'edge_id',
+  'family_id',
+  'size_id',
+  'source_model_id',
+  'render_package_id',
+  'model_object_id',
+]);
+const TELEMETRY_CLIENT = (() => {
+  try {
+    const src = document.currentScript?.getAttribute?.('src') || '';
+    const version = new URL(src, window.location.href).searchParams.get('v') || '';
+    return version ? `raceway-overlay@${version}` : 'raceway-overlay';
+  } catch (_error) {
+    return 'raceway-overlay';
+  }
+})();
 
 let catalog = [];
 
@@ -126,6 +151,10 @@ let inspectorEl = null;
 let bootstrapAttempts = 0;
 let persistenceBootstrapQueued = false;
 let catalogLoadPromise = null;
+let telemetryQueue = [];
+let telemetryFlushTimer = null;
+const telemetryShownSignatures = new Set();
+const telemetryLifecycleKeys = new Map();
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -760,6 +789,75 @@ function runWarnings(run) {
     }
   });
   return warnings;
+}
+
+function warningTelemetrySignature(warning) {
+  return [
+    warning?.code || 'raceway.warning',
+    warning?.run_key || warning?.runTag || warning?.run_tag || '',
+    Array.isArray(warning?.node_keys) ? warning.node_keys.join(',') : '',
+    warning?.node_key || warning?.endpoint_node_key || '',
+    Array.isArray(warning?.edge_keys) ? warning.edge_keys.join(',') : '',
+    warning?.segment_index ?? '',
+    warning?.message || '',
+  ].join('|');
+}
+
+function recordWarningTelemetry(warnings, action = 'shown', options = {}) {
+  const items = Array.isArray(warnings) ? warnings : [];
+  items.forEach(warning => {
+    const suggestionCode = warning?.code || 'raceway.warning';
+    const signature = `warning:${warningTelemetrySignature(warning)}`;
+    if (action === 'shown' && telemetryShownSignatures.has(signature)) return;
+    if (action === 'shown') telemetryShownSignatures.add(signature);
+    queueTelemetryEvent({
+      key: telemetryLifecycleKey(signature),
+      suggestionCode,
+      action,
+      context: warning,
+      actionDetail: options.actionDetail || {},
+    });
+  });
+}
+
+function recordVisibleWarningTelemetry(action = 'shown', options = {}) {
+  const run = activeRun();
+  const localWarnings = runWarnings(run).map(warning => ({
+    ...warning,
+    run_key: run?.key || warning.run_key || '',
+    run_tag: run?.tag || warning.run_tag || '',
+  }));
+  recordWarningTelemetry([...localWarnings, ...graphWarnings()], action, options);
+}
+
+function recordOrthoTelemetry(run, previousPoint, rawPoint, adjustedPoint) {
+  if (!run || !previousPoint || !rawPoint || !adjustedPoint) return;
+  const lockedAxis = Math.abs(Number(rawPoint.x || 0) - Number(adjustedPoint.x || 0)) > 0.001 ? 'x' : 'y';
+  queueTelemetryEvent({
+    suggestionCode: 'raceway.ortho.axis_lock',
+    action: 'shown',
+    context: {
+      run_key: run.key || '',
+      run_tag: run.tag || '',
+      segment_index: Math.max(run.nodes.length - 1, 0),
+      previous_point_m: {
+        x: Number(previousPoint.x) || 0,
+        y: Number(previousPoint.y) || 0,
+        z: Number(previousPoint.z) || 0,
+      },
+      raw_point_m: {
+        x: Number(rawPoint.x) || 0,
+        y: Number(rawPoint.y) || 0,
+        z: Number(rawPoint.z) || 0,
+      },
+      adjusted_point_m: {
+        x: Number(adjustedPoint.x) || 0,
+        y: Number(adjustedPoint.y) || 0,
+        z: Number(adjustedPoint.z) || 0,
+      },
+    },
+    actionDetail: { locked_axis: lockedAxis },
+  });
 }
 
 function clearLayerGroup() {
@@ -1420,10 +1518,12 @@ function addNodeFromEvent(event) {
     return;
   }
   pushUndo('Add node');
+  const previousPoint = run.nodes.at(-1) || null;
   run.nodes.push(point);
   state.selectedNodeIndex = run.nodes.length - 1;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
+  if (adjusted) recordOrthoTelemetry(run, previousPoint, rawPoint, point);
   const anchor = anchorLabel(point.anchor);
   setStatus(anchor
     ? `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)} and anchored to ${anchor}.`
@@ -1513,6 +1613,82 @@ async function apiFetch(url, options = {}) {
   return payload;
 }
 
+function telemetryUuid() {
+  if (window.crypto?.randomUUID) return window.crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, char => {
+    const value = Math.floor(Math.random() * 16);
+    const digit = char === 'x' ? value : ((value & 0x3) | 0x8);
+    return digit.toString(16);
+  });
+}
+
+function telemetryLifecycleKey(signature) {
+  if (!telemetryLifecycleKeys.has(signature)) {
+    telemetryLifecycleKeys.set(signature, telemetryUuid());
+  }
+  return telemetryLifecycleKeys.get(signature);
+}
+
+function telemetrySafeJson(value) {
+  if (Array.isArray(value)) return value.map(item => telemetrySafeJson(item));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([key]) => !TELEMETRY_FORBIDDEN_ID_KEYS.has(String(key)))
+        .map(([key, item]) => [key, telemetrySafeJson(item)]),
+    );
+  }
+  return value;
+}
+
+function scheduleTelemetryFlush() {
+  if (telemetryFlushTimer) return;
+  telemetryFlushTimer = window.setTimeout(() => {
+    telemetryFlushTimer = null;
+    flushTelemetryEvents();
+  }, TELEMETRY_FLUSH_DELAY_MS);
+}
+
+function queueTelemetryEvent({ key = '', suggestionCode, action = 'shown', context = {}, actionDetail = {} }) {
+  const packageInfo = packageContext();
+  if (!packageInfo?.projectId || !suggestionCode) return;
+  telemetryQueue.push({
+    key: key || telemetryUuid(),
+    project_id: packageInfo.projectId,
+    owner_module: 'raceway',
+    suggestion_code: suggestionCode,
+    action,
+    context: telemetrySafeJson(context),
+    action_detail: telemetrySafeJson(actionDetail),
+    client: TELEMETRY_CLIENT,
+  });
+  scheduleTelemetryFlush();
+}
+
+async function flushTelemetryEvents(options = {}) {
+  if (telemetryFlushTimer) {
+    window.clearTimeout(telemetryFlushTimer);
+    telemetryFlushTimer = null;
+  }
+  if (!telemetryQueue.length) return null;
+  const batch = telemetryQueue.splice(0, TELEMETRY_MAX_BATCH_SIZE);
+  try {
+    const response = await fetch(TELEMETRY_EVENTS_URL, {
+      credentials: 'same-origin',
+      method: 'POST',
+      keepalive: Boolean(options.keepalive),
+      headers: apiHeaders('POST'),
+      body: JSON.stringify({ events: batch }),
+    });
+    if (!response.ok) throw new Error(`Telemetry request failed (${response.status}).`);
+  } catch (error) {
+    console.warn('Raceway telemetry was not recorded.', error?.message || error);
+  } finally {
+    if (telemetryQueue.length) scheduleTelemetryFlush();
+  }
+  return null;
+}
+
 function packageContext() {
   const pkg = runtime?.getPackage?.() || null;
   const projectId = String(pkg?.project_id || pkg?.metadata?.project_id || '').trim();
@@ -1592,6 +1768,7 @@ async function loadGraphProjection(options = {}) {
     const payload = await apiFetch(url);
     state.graphProjection = payload.graph || null;
     state.graphLoaded = true;
+    recordWarningTelemetry(graphWarnings(), 'shown');
     if (!options.quiet) {
       const count = graphWarnings().length;
       setStatus(count ? `Raceway graph refreshed with ${count} warning(s).` : 'Raceway graph refreshed with no warnings.');
@@ -1924,6 +2101,8 @@ async function saveDrafts() {
     state.contextKey = contextKey(context);
     clearHistory();
     await loadGraphProjection({ quiet: true });
+    recordVisibleWarningTelemetry('unresolved_at_save', { actionDetail: { trigger: 'save' } });
+    flushTelemetryEvents();
     if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
     setStatus(`${savedCount} raceway run(s) saved to server.`);
     renderRaceway();
@@ -2303,6 +2482,7 @@ function renderPanel(options = {}) {
   if (runListEl) runListEl.innerHTML = runRowsHtml();
   if (nodeListEl) nodeListEl.innerHTML = nodeRowsHtml();
   if (inspectorEl && (options.forceInspector || !inspectorEl.contains(document.activeElement))) inspectorEl.innerHTML = inspectorHtml();
+  recordVisibleWarningTelemetry('shown');
   updateActionStates(run);
 }
 
@@ -2530,6 +2710,7 @@ window.addEventListener('plant3dviewer:layers-ready', scheduleBootstrap);
 window.addEventListener('plant3dviewer:runtime-ready', scheduleBootstrap);
 window.addEventListener('plant3dviewer:package-loaded', schedulePersistenceBootstrap);
 window.addEventListener('DOMContentLoaded', scheduleBootstrap);
+window.addEventListener('beforeunload', () => { flushTelemetryEvents({ keepalive: true }); });
 document.addEventListener('keydown', handleRacewayKeyboardShortcut);
 window.setTimeout(scheduleBootstrap, 0);
 
@@ -2550,4 +2731,6 @@ window.racewayViewerOverlay = {
     renderRaceway();
     renderPanel();
   },
+  flushTelemetry: flushTelemetryEvents,
+  telemetryQueueSize: () => telemetryQueue.length,
 };

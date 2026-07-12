@@ -118,6 +118,7 @@ INSTALLED_APPS = [
     "idfviewer",
     "plant3d",
     "raceway",
+    "telemetry",
 ]
 
 CRISPY_ALLOWED_TEMPLATE_PACKS = "bootstrap4"
@@ -172,6 +173,7 @@ EHT_LOGIN_USERNAME_RATE_LIMIT = env("EHT_LOGIN_USERNAME_RATE_LIMIT", default="5/
 EHT_UPLOAD_RATE_LIMIT = env("EHT_UPLOAD_RATE_LIMIT", default="20/h")
 EHT_CONFIRM_UPLOAD_RATE_LIMIT = env("EHT_CONFIRM_UPLOAD_RATE_LIMIT", default="60/h")
 EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT = env("EHT_ERROR_FILE_DOWNLOAD_RATE_LIMIT", default="60/h")
+TELEMETRY_EVENTS_RATE_LIMIT = env("TELEMETRY_EVENTS_RATE_LIMIT", default="120/m")
 
 SQLITE_DB_PATH = BASE_DIR / env("SQLITE_DB_NAME", default="db.sqlite3")
 SQLITE_SOURCE_DB_PATH = BASE_DIR / env("SQLITE_SOURCE_DB_NAME", default="db.sqlite3")
@@ -271,7 +273,7 @@ PLANT3D_VIEWER_EXTENSIONS = [
         "owner": "raceway",
         "kind": "consumer-overlay",
         "script": "raceway/js/raceway_overlay.js",
-        "version": "20260712_raceway19",
+        "version": "20260712_raceway20",
     },
 ]
 

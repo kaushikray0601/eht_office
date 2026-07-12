@@ -8,4 +8,5 @@ urlpatterns = [
     path("idfviewer/", include("idfviewer.urls")),  # TEST: Temporarily added comment
     path("plant3d/", include("plant3d.urls")),
     path("raceway/", include("raceway.urls")),
+    path("telemetry/", include("telemetry.urls")),
 ]
