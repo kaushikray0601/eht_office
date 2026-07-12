@@ -89,6 +89,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                         const canvas = document.getElementById('viewerCanvas');
                         let activeInteraction = null;
                         window.__racewayRenderCount = 0;
+                        window.__racewayFrameRequests = [];
                         const catalogPayload = {
                           families: [
                             {
@@ -270,6 +271,41 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                               }),
                             };
                           }
+                          if (String(url).startsWith('/raceway/layers/91/fittings/') && method === 'GET') {
+                            return {
+                              ok: true,
+                              status: 200,
+                              json: async () => ({
+                                layer: { id: 91, project_id: 'RWY-BROWSER' },
+                                fittings: {
+                                  generated_at: '2026-07-12T00:00:00+00:00',
+                                  project_id: 'RWY-BROWSER',
+                                  layer_id: 91,
+                                  projection: 'raceway.fittings.v0',
+                                  status: 'derived_placeholder',
+                                  counts: {
+                                    total: 4,
+                                    by_kind: { plan_bend: 2, riser: 1, reducer_candidate: 1 },
+                                    by_category: { plan_bend_46_90: 2, riser_up: 1, width_reducer: 1 },
+                                    requires_catalogue_validation: 4,
+                                    requires_face_alignment: 2,
+                                  },
+                                  graph_summary: {
+                                    node_count: 3,
+                                    edge_count: 2,
+                                    branch_node_count: 0,
+                                    junction_node_count: 1,
+                                    warning_count: 0,
+                                  },
+                                  assumptions: [
+                                    { code: 'raceway.fittings.route_as_truth', message: 'Route is truth.' },
+                                    { code: 'raceway.fittings.face_alignment_deferred', message: 'Face alignment deferred.' },
+                                  ],
+                                  items: [],
+                                },
+                              }),
+                            };
+                          }
                           if (String(url).startsWith('/raceway/runs/501/') && method === 'DELETE') {
                             return { ok: true, status: 200, json: async () => ({ status: 'deleted', run_id: 501 }) };
                           }
@@ -317,6 +353,10 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                           pointOnSourceElevationFromViewerEvent: (event, elevation) => new Vector3(event.clientX / 10, elevation, event.clientY / 10),
                           renderPointToSourcePoint: point => ({ x: point.x, y: point.z, z: point.y, coordinate_frame: 'source_xyz_m' }),
                           sourcePointToRenderPoint: point => new Vector3(point.x, point.z, point.y),
+                          frameSourcePoints: (points, options = {}) => {
+                            window.__racewayFrameRequests.push({ points, options });
+                            return true;
+                          },
                           raycastObjectsFromViewerEvent: (event, objects) => objects
                             .map(object => {
                               const dx = object.position.x - (event.clientX / 10);
@@ -383,6 +423,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("J", page.get_attribute('[data-raceway-action="connect-node"]', "title"))
                 self.assertIn("G", page.get_attribute('[data-raceway-action="refresh-graph"]', "title"))
                 self.assertIn("B", page.get_attribute('[data-raceway-action="refresh-schedule"]', "title"))
+                self.assertIn("T", page.get_attribute('[data-raceway-action="refresh-fittings"]', "title"))
                 self.assertIn("Shift+B", page.get_attribute('[data-raceway-action="open-schedule-csv"]', "title"))
                 self.assertIn("Shift+V", page.get_attribute('[data-raceway-action="toggle-surfaces"]', "title"))
                 self.assertTrue(
@@ -560,6 +601,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("2.500 m offcut", schedule_summary)
                 self.assertIn("validation notice", schedule_summary)
                 self.assertIn("B-001", schedule_summary)
+                self.assertEqual(page.text_content("#racewayWarningBadge"), "1")
                 schedule_fetches_before = page.evaluate(
                     "() => window.__racewayFetchLog.filter((entry) => entry.url.includes('/schedule/') && entry.method === 'GET').length"
                 )
@@ -570,6 +612,25 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     arg=schedule_fetches_before,
                 )
                 self.assertIn("Raceway schedule refreshed", page.text_content("#racewayToolStatus"))
+                page.click('[data-raceway-action="refresh-fittings"]')
+                page.wait_for_function(
+                    "() => window.__racewayFetchLog.some((entry) => entry.url.includes('/fittings/') && entry.method === 'GET')"
+                )
+                fitting_summary = page.text_content("#racewayFittingSummary")
+                self.assertIn("Fittings", fitting_summary)
+                self.assertIn("4 placeholder", fitting_summary)
+                self.assertIn("1 reducer candidate", fitting_summary)
+                self.assertIn("2 need face alignment", fitting_summary)
+                fitting_fetches_before = page.evaluate(
+                    "() => window.__racewayFetchLog.filter((entry) => entry.url.includes('/fittings/') && entry.method === 'GET').length"
+                )
+                page.click("#viewerCanvas", position={"x": 32, "y": 32})
+                page.keyboard.press("T")
+                page.wait_for_function(
+                    "(before) => window.__racewayFetchLog.filter((entry) => entry.url.includes('/fittings/') && entry.method === 'GET').length > before",
+                    arg=fitting_fetches_before,
+                )
+                self.assertIn("Raceway fittings refreshed", page.text_content("#racewayToolStatus"))
                 node_puts_before = page.evaluate(
                     "() => window.__racewayFetchLog.filter((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT').length"
                 )
@@ -584,7 +645,12 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 page.wait_for_function(
                     "() => document.querySelector('[data-raceway-action=\"select-node\"][data-node-index=\"1\"]')?.classList.contains('raceway-row-active')"
                 )
+                page.wait_for_function("() => window.__racewayFrameRequests.length === 1")
                 self.assertIn("selected from raceway.warning.model_clash_aabb", page.text_content("#racewayToolStatus"))
+                self.assertIn("framed in viewer", page.text_content("#racewayToolStatus"))
+                frame_request = page.evaluate("() => window.__racewayFrameRequests[0]")
+                self.assertEqual(len(frame_request["points"]), 2)
+                self.assertEqual(frame_request["options"]["minRadiusM"], 1.5)
                 warning_preview_kinds = page.evaluate(
                     """() => window.racewayViewerOverlay.layer.group.children
                         .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))

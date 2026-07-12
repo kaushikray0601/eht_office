@@ -80,6 +80,10 @@ const state = {
   scheduleLoaded: false,
   scheduleLoading: false,
   scheduleError: '',
+  fittingProjection: null,
+  fittingsLoaded: false,
+  fittingsLoading: false,
+  fittingsError: '',
   undoStack: [],
   redoStack: [],
   orthoMode: false,
@@ -107,6 +111,7 @@ const actionLabels = {
   reload: 'Reload saved raceways',
   'refresh-graph': 'Refresh raceway graph warnings',
   'refresh-schedule': 'Refresh raceway schedule totals',
+  'refresh-fittings': 'Refresh fitting placeholders',
   'open-schedule-csv': 'Download raceway schedule CSV',
   'delete-run': 'Delete active run',
   'add-segment': 'Add typed segment from the last node',
@@ -131,6 +136,7 @@ const actionShortcuts = {
   reload: 'R',
   'refresh-graph': 'G',
   'refresh-schedule': 'B',
+  'refresh-fittings': 'T',
   'open-schedule-csv': 'Shift+B',
   'delete-run': 'Shift+Del',
   'add-segment': 'Enter in segment fields',
@@ -146,6 +152,8 @@ let statusEl = null;
 let summaryEl = null;
 let graphWarningsEl = null;
 let scheduleSummaryEl = null;
+let fittingSummaryEl = null;
+let warningBadgeEl = null;
 let runListEl = null;
 let nodeListEl = null;
 let inspectorEl = null;
@@ -315,6 +323,13 @@ function clearScheduleProjection() {
   state.scheduleError = '';
 }
 
+function clearFittingProjection() {
+  state.fittingProjection = null;
+  state.fittingsLoaded = false;
+  state.fittingsLoading = false;
+  state.fittingsError = '';
+}
+
 function graphWarnings() {
   const warnings = state.graphProjection?.warnings;
   return Array.isArray(warnings) ? warnings : [];
@@ -407,6 +422,51 @@ function warningTargetNodeIndex(run, warning) {
     return Math.min(Math.max(segmentIndex, 0), run.nodes.length - 1);
   }
   return -1;
+}
+
+function nodeSourcePoint(node) {
+  const x = Number(node?.x);
+  const y = Number(node?.y);
+  const z = Number(node?.z);
+  if (![x, y, z].every(Number.isFinite)) return null;
+  return { x, y, z, coordinate_frame: SOURCE_COORDINATE_FRAME };
+}
+
+function warningTargetSourcePoints(run, warning) {
+  if (!run) return [];
+  const segmentIndex = Number(warning?.segment_index);
+  if (Number.isInteger(segmentIndex) && segmentIndex > 0 && segmentIndex < run.nodes.length) {
+    return [
+      nodeSourcePoint(run.nodes[segmentIndex - 1]),
+      nodeSourcePoint(run.nodes[segmentIndex]),
+    ].filter(Boolean);
+  }
+  const sourcePoint = warning?.source_point_m || warning?.sourcePointM || null;
+  if (sourcePoint) {
+    const x = Number(sourcePoint.x);
+    const y = Number(sourcePoint.y);
+    const z = Number(sourcePoint.z);
+    if ([x, y, z].every(Number.isFinite)) {
+      return [{ x, y, z, coordinate_frame: SOURCE_COORDINATE_FRAME }];
+    }
+  }
+  const nodeIndex = warningTargetNodeIndex(run, warning);
+  return nodeIndex >= 0 ? [nodeSourcePoint(run.nodes[nodeIndex])].filter(Boolean) : [];
+}
+
+function warningFramePaddingM(run) {
+  const trayWidthM = Math.max(Number(run?.widthMm) || 0, Number(run?.depthMm) || 0) / 1000;
+  return Math.max(trayWidthM, 0.5);
+}
+
+function focusScheduleWarningTarget(warning, run) {
+  if (!runtime?.frameSourcePoints) return false;
+  const sourcePoints = warningTargetSourcePoints(run, warning);
+  if (!sourcePoints.length) return false;
+  return runtime.frameSourcePoints(sourcePoints, {
+    paddingM: warningFramePaddingM(run),
+    minRadiusM: 1.5,
+  }) === true;
 }
 
 function highlightedSegment(run, segmentIndex) {
@@ -1798,6 +1858,10 @@ function layerScheduleUrl() {
   return state.layerId ? `/raceway/layers/${encodeURIComponent(state.layerId)}/schedule/` : '';
 }
 
+function layerFittingsUrl() {
+  return state.layerId ? `/raceway/layers/${encodeURIComponent(state.layerId)}/fittings/` : '';
+}
+
 function layerScheduleCsvUrl() {
   return state.layerId ? `/raceway/layers/${encodeURIComponent(state.layerId)}/schedule.csv` : '';
 }
@@ -1862,6 +1926,41 @@ async function loadScheduleProjection(options = {}) {
     return null;
   } finally {
     state.scheduleLoading = false;
+    renderPanel();
+  }
+}
+
+async function loadFittingProjection(options = {}) {
+  const url = layerFittingsUrl();
+  if (!url) {
+    clearFittingProjection();
+    renderPanel();
+    return null;
+  }
+  state.fittingsLoading = true;
+  state.fittingsError = '';
+  renderPanel();
+  try {
+    const payload = await apiFetch(url);
+    state.fittingProjection = payload.fittings || null;
+    state.fittingsLoaded = true;
+    if (!options.quiet) {
+      const counts = state.fittingProjection?.counts || {};
+      const byKind = counts.by_kind || {};
+      setStatus(
+        `Raceway fittings refreshed: ${counts.total || 0} placeholder(s), `
+        + `${byKind.reducer_candidate || 0} reducer candidate(s).`
+      );
+    }
+    return state.fittingProjection;
+  } catch (error) {
+    state.fittingProjection = null;
+    state.fittingsLoaded = false;
+    state.fittingsError = error.message || 'Unable to refresh raceway fittings.';
+    if (!options.quiet) setStatus(state.fittingsError);
+    return null;
+  } finally {
+    state.fittingsLoading = false;
     renderPanel();
   }
 }
@@ -1939,6 +2038,7 @@ async function loadSavedRaceways({ force = false } = {}) {
     if (!layerMatch) {
       clearGraphProjection();
       clearScheduleProjection();
+      clearFittingProjection();
       if (force || !state.runs.length) {
         state.runs = [];
         state.activeRunId = '';
@@ -1958,6 +2058,7 @@ async function loadSavedRaceways({ force = false } = {}) {
     renderRaceway();
     await loadGraphProjection({ quiet: true });
     if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
+    if (state.fittingsLoaded) await loadFittingProjection({ quiet: true });
     setStatus(state.runs.length ? `${state.runs.length} saved raceway run(s) loaded.` : 'Raceway layer loaded with no runs.');
   } catch (error) {
     state.persistenceReady = false;
@@ -2025,6 +2126,7 @@ async function deleteActiveRun() {
     removeRunFromState(run);
     await loadGraphProjection({ quiet: true });
     if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
+    if (state.fittingsLoaded) await loadFittingProjection({ quiet: true });
     setStatus(`${label} deleted.`);
   } catch (error) {
     setStatus(error.message || `Unable to delete ${label}.`);
@@ -2151,6 +2253,7 @@ async function saveDrafts() {
     clearHistory();
     await loadGraphProjection({ quiet: true });
     if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
+    if (state.fittingsLoaded) await loadFittingProjection({ quiet: true });
     recordVisibleWarningTelemetry('unresolved_at_save', { actionDetail: { trigger: 'save' } });
     flushTelemetryEvents();
     setStatus(`${savedCount} raceway run(s) saved to server.`);
@@ -2178,6 +2281,9 @@ function injectStyles() {
     .raceway-aid-grid { align-items: end; margin-top: 8px; }
     .raceway-check { align-self: end; min-height: 28px; display: flex !important; align-items: center; gap: 6px !important; }
     .raceway-check input { width: auto !important; }
+    .raceway-summary-row { display: inline-flex; align-items: center; gap: 8px; }
+    .raceway-warning-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 999px; background: #fee2e2; color: #991b1b; font-size: 11px; font-weight: 800; line-height: 1; }
+    .raceway-warning-badge[hidden] { display: none; }
     .raceway-status { margin: 8px 0; color: #475569; font-size: 12px; line-height: 1.35; }
     .raceway-status-busy { color: #1d4ed8; }
     .raceway-run-list, .raceway-node-list { display: grid; gap: 6px; margin-top: 8px; }
@@ -2358,6 +2464,16 @@ function graphWarningsHtml() {
   `).join('');
 }
 
+function racewayNoticeBadgeCount() {
+  const scheduleCount = scheduleWarnings().length;
+  const graphCount = scheduleCount ? 0 : graphWarnings().length;
+  const draftCount = state.runs.reduce((total, run) => {
+    if (run.serverRunId && !run.dirty) return total;
+    return total + runWarnings(run).length;
+  }, 0);
+  return scheduleCount + graphCount + draftCount;
+}
+
 function scheduleSummaryHtml() {
   if (state.scheduleLoading) return '<div class="meta">Refreshing schedule...</div>';
   if (state.scheduleError) return `<div class="raceway-graph-error">${escapeHtml(state.scheduleError)}</div>`;
@@ -2391,6 +2507,33 @@ function scheduleSummaryHtml() {
   `;
 }
 
+function fittingSummaryHtml() {
+  if (state.fittingsLoading) return '<div class="meta">Refreshing fittings...</div>';
+  if (state.fittingsError) return `<div class="raceway-graph-error">${escapeHtml(state.fittingsError)}</div>`;
+  if (!state.fittingsLoaded || !state.fittingProjection) return '';
+  const projection = state.fittingProjection;
+  const counts = projection.counts || {};
+  const byKind = counts.by_kind || {};
+  const byCategory = counts.by_category || {};
+  const graph = projection.graph_summary || {};
+  const categoryRows = Object.entries(byCategory).slice(0, 4).map(([category, count]) => `
+    <div class="raceway-schedule-row">
+      <span>${escapeHtml(category)}</span>
+      <span>${count}</span>
+    </div>
+  `).join('');
+  return `
+    <div>
+      <strong>Fittings</strong><br>
+      ${counts.total || 0} placeholder(s) | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s) | ${byKind.reducer_candidate || 0} reducer candidate(s)<br>
+      ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation<br>
+      ${graph.junction_node_count || 0} junction node(s) | ${graph.branch_node_count || 0} branch node(s)
+      ${categoryRows}
+      ${(projection.assumptions || []).length ? `<div class="meta">${projection.assumptions.length} fitting assumption(s) in JSON output.</div>` : ''}
+    </div>
+  `;
+}
+
 function inspectorHtml() {
   const node = selectedNode();
   if (!node) return `<div class="meta">Select a node</div>${localWarningsHtml(activeRun())}`;
@@ -2416,7 +2559,7 @@ function ensurePanel() {
   panel.className = 'panel p3d-viewer-section';
   panel.open = true;
   panel.innerHTML = `
-    <summary>Raceway Draft</summary>
+    <summary><span class="raceway-summary-row"><span>Raceway Draft</span><span id="racewayWarningBadge" class="raceway-warning-badge" hidden>0</span></span></summary>
     <div id="racewayToolStatus" class="raceway-status">Ready</div>
     <div class="raceway-tool-grid">
       <label>Family<select id="racewayFamilySelect">${familyOptionsHtml()}</select></label>
@@ -2454,6 +2597,7 @@ function ensurePanel() {
       <button type="button" data-raceway-action="reload" title="${escapeHtml(actionTooltip('reload'))}">Reload Saved</button>
       <button type="button" data-raceway-action="refresh-graph" title="${escapeHtml(actionTooltip('refresh-graph'))}">Refresh Graph</button>
       <button type="button" data-raceway-action="refresh-schedule" title="${escapeHtml(actionTooltip('refresh-schedule'))}">Refresh Schedule</button>
+      <button type="button" data-raceway-action="refresh-fittings" title="${escapeHtml(actionTooltip('refresh-fittings'))}">Refresh Fittings</button>
       <button type="button" data-raceway-action="open-schedule-csv" title="${escapeHtml(actionTooltip('open-schedule-csv'))}">CSV</button>
       <button type="button" data-raceway-action="delete-run" title="${escapeHtml(actionTooltip('delete-run'))}">Delete Run</button>
     </div>
@@ -2461,6 +2605,7 @@ function ensurePanel() {
     <div id="racewaySummary" class="meta" style="margin-top: 8px;"></div>
     <div id="racewayGraphWarnings" class="raceway-graph-warnings"></div>
     <div id="racewayScheduleSummary" class="raceway-schedule-summary"></div>
+    <div id="racewayFittingSummary" class="raceway-schedule-summary"></div>
     <div id="racewayRunList" class="raceway-run-list"></div>
     <div id="racewayNodeList" class="raceway-node-list"></div>
   `;
@@ -2469,6 +2614,8 @@ function ensurePanel() {
   summaryEl = panel.querySelector('#racewaySummary');
   graphWarningsEl = panel.querySelector('#racewayGraphWarnings');
   scheduleSummaryEl = panel.querySelector('#racewayScheduleSummary');
+  fittingSummaryEl = panel.querySelector('#racewayFittingSummary');
+  warningBadgeEl = panel.querySelector('#racewayWarningBadge');
   runListEl = panel.querySelector('#racewayRunList');
   nodeListEl = panel.querySelector('#racewayNodeList');
   inspectorEl = panel.querySelector('#racewayInspector');
@@ -2504,6 +2651,7 @@ function updateActionStates(run) {
   setActionState('reload', state.persistenceLoading, state.persistenceLoading ? 'Raceway persistence is busy.' : '');
   setActionState('refresh-graph', state.persistenceLoading || state.graphLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing graph warnings.');
   setActionState('refresh-schedule', state.persistenceLoading || state.scheduleLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing the schedule.');
+  setActionState('refresh-fittings', state.persistenceLoading || state.fittingsLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing fittings.');
   setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
   setActionState('add-segment', !run?.nodes?.length || !(Number(state.segmentLengthM) > 0), 'Add at least one node and enter a positive segment length.');
@@ -2550,6 +2698,13 @@ function renderPanel(options = {}) {
   }
   if (graphWarningsEl) graphWarningsEl.innerHTML = graphWarningsHtml();
   if (scheduleSummaryEl) scheduleSummaryEl.innerHTML = scheduleSummaryHtml();
+  if (fittingSummaryEl) fittingSummaryEl.innerHTML = fittingSummaryHtml();
+  if (warningBadgeEl) {
+    const noticeCount = racewayNoticeBadgeCount();
+    warningBadgeEl.hidden = noticeCount <= 0;
+    warningBadgeEl.textContent = noticeCount > 99 ? '99+' : String(noticeCount);
+    warningBadgeEl.title = `${noticeCount} Raceway validation notice(s)`;
+  }
   if (runListEl) runListEl.innerHTML = runRowsHtml();
   if (nodeListEl) nodeListEl.innerHTML = nodeRowsHtml();
   if (inspectorEl && (options.forceInspector || !inspectorEl.contains(document.activeElement))) inspectorEl.innerHTML = inspectorHtml();
@@ -2576,7 +2731,8 @@ function selectScheduleWarning(index) {
   };
   syncPaletteFromRun(run);
   activateNodeSelectionMode(run);
-  setStatus(`${run.tag}: selected from ${warning.code || 'schedule warning'}.`);
+  const framed = focusScheduleWarningTarget(warning, run);
+  setStatus(`${run.tag}: selected from ${warning.code || 'schedule warning'}${framed ? ' and framed in viewer' : ''}.`);
   renderRaceway();
   renderPanel({ forceInspector: true });
   return true;
@@ -2597,6 +2753,7 @@ function runPanelAction(action, button = null) {
   if (action === 'reload') reloadSavedRaceways();
   if (action === 'refresh-graph') loadGraphProjection({ quiet: false });
   if (action === 'refresh-schedule') loadScheduleProjection({ quiet: false });
+  if (action === 'refresh-fittings') loadFittingProjection({ quiet: false });
   if (action === 'open-schedule-csv') openScheduleCsv();
   if (action === 'delete-run') deleteActiveRun();
   if (action === 'add-segment') addTypedSegment();
@@ -2767,6 +2924,7 @@ function racewayShortcutActionForEvent(event, key) {
   if (key === 'b') return event.shiftKey ? 'open-schedule-csv' : 'refresh-schedule';
   if (key === 'r' && !event.shiftKey) return 'reload';
   if (key === 'g' && !event.shiftKey) return 'refresh-graph';
+  if (key === 't' && !event.shiftKey) return 'refresh-fittings';
   return '';
 }
 
@@ -2781,7 +2939,12 @@ function racewayShortcutAvailableForAction(action) {
   if (action === 'save') return state.runs.some(item => item.nodes.length >= 2);
   if (action === 'undo') return state.undoStack.length > 0;
   if (action === 'redo') return state.redoStack.length > 0;
-  if (action === 'refresh-graph' || action === 'refresh-schedule' || action === 'open-schedule-csv') {
+  if (
+    action === 'refresh-graph'
+    || action === 'refresh-schedule'
+    || action === 'refresh-fittings'
+    || action === 'open-schedule-csv'
+  ) {
     return Boolean(state.layerId);
   }
   return false;
@@ -2835,6 +2998,7 @@ window.racewayViewerOverlay = {
     clearHistory();
     clearGraphProjection();
     clearScheduleProjection();
+    clearFittingProjection();
     deactivateCanvasMode();
     renderRaceway();
     renderPanel();

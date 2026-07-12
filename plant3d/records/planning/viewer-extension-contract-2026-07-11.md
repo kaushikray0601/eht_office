@@ -22,6 +22,8 @@ Extensions should prefer these helpers over raw viewer internals:
   extension-owned handles or overlays using the host camera/raycaster.
 - `sourcePointToRenderPoint(point)` / `renderPointToSourcePoint(point)`:
   source/render coordinate conversion for the active package.
+- `frameSourcePoints(points, options)`: frame one or more source-frame points in
+  the host camera. Current options: `paddingM` and `minRadiusM`.
 - `worldUnitsForScreenPixels(point, pixels, minValue, maxValue)`: stable handle
   sizing across camera distance.
 - `currentSourceElevationM()`: current viewer target elevation in source-frame
@@ -59,4 +61,3 @@ tools should ask for a helper instead of depending on these directly.
   placement.
 - pointer-move routing on interactions, for ghost previews and true drag
   handles. Build this with the first real consumer.
-

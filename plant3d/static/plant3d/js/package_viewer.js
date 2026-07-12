@@ -207,6 +207,29 @@ function renderPointToSourcePoint(renderPoint) {
   };
 }
 
+function frameSourcePoints(sourcePoints, options = {}) {
+  const points = Array.isArray(sourcePoints) ? sourcePoints : [];
+  const renderBounds = new THREE.Box3();
+  points.forEach(point => {
+    const x = Number(point?.x);
+    const y = Number(point?.y);
+    const z = Number(point?.z);
+    if (![x, y, z].every(Number.isFinite)) return;
+    renderBounds.expandByPoint(sourcePointToRenderPoint({ x, y, z }));
+  });
+  if (renderBounds.isEmpty()) return false;
+  const scaleToM = activeCoordinateScaleToM();
+  const paddingM = Number(options.paddingM ?? options.padding_m ?? 0);
+  if (Number.isFinite(paddingM) && paddingM > 0) {
+    renderBounds.expandByScalar(paddingM * scaleToM);
+  }
+  const minRadiusM = Number(options.minRadiusM ?? options.min_radius_m ?? 0);
+  frameBounds(renderBounds, {
+    minRadius: Number.isFinite(minRadiusM) ? minRadiusM * scaleToM : undefined,
+  });
+  return true;
+}
+
 function rayFromViewerEvent(event) {
   updatePointerFromViewerEvent(event);
   return raycaster.ray.clone();
@@ -427,6 +450,7 @@ function publishViewerExtensionHost() {
     worldUnitsForScreenPixels,
     sourcePointToRenderPoint,
     renderPointToSourcePoint,
+    frameSourcePoints,
     getSelectedModelAnchor,
     modelAnchorFromViewerEvent,
     pointOnSourceElevationFromViewerEvent,
@@ -3834,13 +3858,14 @@ function frameScene(boundsOverride = null) {
   controls.update();
 }
 
-function frameBounds(bounds) {
+function frameBounds(bounds, options = {}) {
   if (!(bounds instanceof THREE.Box3) || bounds.isEmpty()) return;
   const size = new THREE.Vector3();
   const center = new THREE.Vector3();
   bounds.getSize(size);
   bounds.getCenter(center);
-  const radius = Math.max(size.length() * 0.5, 0.5);
+  const minRadius = Number.isFinite(Number(options.minRadius)) ? Number(options.minRadius) : 0.5;
+  const radius = Math.max(size.length() * 0.5, minRadius, 0.5);
   const fovRadians = THREE.MathUtils.degToRad(camera.fov);
   const distance = Math.max(radius / Math.tan(fovRadians / 2), radius * 2.0);
   const direction = new THREE.Vector3().subVectors(camera.position, controls.target);

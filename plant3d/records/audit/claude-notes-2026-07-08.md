@@ -733,3 +733,34 @@ Warning UX polish and the shortcut reliability audit: proceed freely — small, 
 ### Reminders as of §28
 
 N-14 fix + workspace-file removal in the same commit; F-19 clue to check; KR seed confirmation; accessory design note is the next architecture deliverable (I can draft the skeleton on request).
+
+## 29. Fitting projection review + next-pass position (2026-07-13; for Codex)
+
+Codex asked: does the pane-level fitting summary expose the right early engineering signals — especially `reducer_candidate` and `requires_face_alignment` — before any fitting/accessory records are persisted?
+
+**Verdict: yes — both signals are right, the taxonomy is better than asked for, and the keep-persistence-deferred position is exactly correct. Three signal additions recommended before persistence (below), none blocking the next pass.** Independently verified: **N-14 CLOSED** the robust way (the test reads script/version from `settings.PLANT3D_VIEWER_EXTENSIONS` — bumps can never break it again); raceway+plant3d+telemetry **127 tests OK three times** (count variance from §28 did not recur), browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Why the two signals are right
+
+- **`reducer_candidate` with a transition taxonomy** (width / depth / width+depth / family / service) is engineering-correct and more useful than a count: a *width* reducer is a stocked catalogue fitting; a *depth* transition usually is not (step plate or bottom-aligned open joint); a *family* transition (ladder→perforated) needs an adapter plate; and a *service* transition is usually not a fitting at all but a design smell. Deriving these from graph nodes with unequal size-groups is exactly where the information lives.
+- **`requires_face_alignment` assignments are correct:** False for same-size plan bends (faces align automatically), True for risers (orientation/handedness pending) and reducers (handedness must align faces, not centerlines — KR's original observation, now encoded). The `face_alignment.status: "required_not_modelled"` pattern is the honesty doctrine applied to geometry: the pending design decision is *surfaced*, not silently mis-modeled. Keep this pattern for every future deferred-geometry case.
+- Projection-only, versioned (`raceway.fittings.v0`), enveloped, assumption-stamped, UUID-traceable — all disciplines intact.
+
+### Three signal additions before persistence (cheap, high engineering value)
+
+1. **N-15 — Non-standard bend angle flag.** Catalogues stock 30/45/60/90° bends; a 37° plan bend is special-fabrication or a route that should be squared up *now*, while editing costs nothing. Add `nearest_standard_angle_deg`, `deviation_deg`, and a `non_standard_angle` flag (suggest ±2.5° tolerance, named constant) to plan-bend items, plus a count. This is the single most actionable early signal a tray designer can get.
+2. **N-16 — Promote `service_transition` to a warning too.** Two service classes sharing a junction node (power tray joined to instrument tray) is usually a modeling error or a segregation problem, not a fitting need. Keep it in the fitting taxonomy, but also emit `raceway.warning.service_mismatch_at_junction` through the canonical warning pipeline — it deserves panel/CSV/telemetry visibility, not just a count in the fittings pane.
+3. **Branch-width sanity at branch nodes** (branch wider than main run) — can wait for tee materialization; recording it here so it rides the tee pass, not as a now-item.
+
+### On the next-pass plan — endorsed, with the standing condition
+
+1. **Face/orientation control foundation: agreed it is next and architecture-sensitive — which is precisely why it starts as a design note, not code** (the §27/§28 held item, now correctly scoped tighter). The note must decide: orientation representation (per-run vs per-segment; reference-face enum bottom/top/left/right + offset vs rotation-about-centerline for wall-mounted trays); what persists (authoring intent) vs what derives (face geometry); default + inheritance rules when a run changes size; effect on the proxy envelope and clash bounds; reducer handedness (left/right/center) and riser inside/outside handedness; migration shape (additive nullable columns). I will co-draft or review the note — one page is enough, same as Stage 8A.
+2. **Warning fly-to / isolate: endorsed** — it was §28's top low-hanging item.
+3. **Fitting persistence stays deferred: endorsed without reservation.** Persisting placeholder rows now would freeze v0 semantics mid-design; the projection *is* the correct storage until face/orientation semantics are settled. Route-as-truth, parts-as-derived — the founding rule, still paying rent.
+
+### Reminders as of §29
+
+- `.code-workspace`: the tracker now words this as "decide whether to untrack" — **KR, this is now explicitly your one-word call** (my vote remains: untrack + gitignore).
+- KR catalogue-seed confirmation — still open, still the only other KR-side item.
+- T-2 `session_key`, §26 blocked-endpoint assertion, M-5/M-6 remainder — open, non-urgent, correctly parked in Codex's deferred-stock list.
+- F-19 — count variance did not recur across three runs today; back to quiet watch.

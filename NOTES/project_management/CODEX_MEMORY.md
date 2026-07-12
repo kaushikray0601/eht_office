@@ -101,8 +101,8 @@ Code facts verified on 2026-07-09:
   keyboard undo-redo/move/delete against a stubbed viewer host. Run it before
   asking KR to manually check authoring.
 - Static cache note: Plant3D viewer host script version is
-  `20260712_screen_scale1`; raceway overlay script version is
-  `20260712_raceway23`. Bump the relevant cache key whenever changing either
+  `20260712_frame_source1`; raceway overlay script version is
+  `20260712_raceway25`. Bump the relevant cache key whenever changing either
   browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
@@ -325,6 +325,27 @@ Code facts verified on 2026-07-09:
   fitting/accessory persistence yet; review reducer candidate shape and
   face-alignment semantics before coding persisted fitting records or
   face-offset authoring.
+- Raceway fitting projection is now visible in the authoring pane. `Refresh
+  Fittings` / shortcut `T` loads the saved layer fitting projection and shows
+  placeholder totals, plan-bend/riser/reducer counts, face-alignment/catalogue
+  validation counts, and branch/junction graph counts. This remains read-only
+  and non-persistent. Claude N-14 is closed: `plant3d.tests` now reads the
+  Raceway extension script/version from `settings.PLANT3D_VIEWER_EXTENSIONS`
+  instead of hardcoding a stale cache key. Raceway overlay cache key is
+  `20260712_raceway24`.
+- Warning navigation polish is in place. `package_viewer.js` exposes
+  `frameSourcePoints(points, { paddingM, minRadiusM })` as a consumer-helper on
+  `plant3dViewerRuntime`; the viewer-extension contract note documents it.
+  Raceway schedule warning rows now select/highlight the affected run/node and
+  frame the warning segment/source point in the host camera. The Raceway section
+  summary has a collapsed-visible notice-count badge. Cache keys: package viewer
+  `20260712_frame_source1`, Raceway overlay `20260712_raceway25`.
+- Deferred stock reviewed against Claude §28 on 2026-07-12. Keep open:
+  `.code-workspace` tracked-file cleanup decision, KR generic catalogue seed
+  confirmation, F-19/F-20 commit hygiene notes, blocked-telemetry browser
+  assertion, telemetry `session_key`, M-5 parallel offset, M-6 plan-view
+  polish, warning lifecycle/config, reducer/face-offset semantics, and the
+  `ai_gateway` decision record before Tier-1 AI.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

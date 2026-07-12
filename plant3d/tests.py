@@ -7,6 +7,7 @@ import tempfile
 from decimal import Decimal
 from unittest.mock import patch
 
+from django.conf import settings
 from django.core.management import call_command, CommandError
 from django.core.exceptions import SuspiciousFileOperation, ValidationError
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -2067,18 +2068,26 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "sidepanel-toggle")
         self.assertContains(response, "sidepanel-reopen")
         self.assertContains(response, "20260707_centerline1")
-        self.assertContains(response, "20260712_screen_scale1")
+        self.assertContains(response, "20260712_frame_source1")
         self.assertContains(response, "ehtDeleteGuideBtn")
         self.assertContains(response, "ehtOrthogonalRouteBtn")
         self.assertContains(response, "ehtRouteHud")
         self.assertContains(response, "ehtSelectedRouteControls")
         self.assertContains(response, "ehtEditSelectedRouteBtn")
         self.assertContains(response, "eht-redo-btn")
-        self.assertContains(response, "/static/plant3d/js/package_viewer.js?v=20260712_screen_scale1")
+        self.assertContains(response, "/static/plant3d/js/package_viewer.js?v=20260712_frame_source1")
         self.assertContains(response, "plant3dViewerExtensionsConfig")
         self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-overlay\"")
         self.assertContains(response, "data-owner=\"raceway\"")
-        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260712_raceway22")
+        raceway_extension = next(
+            extension
+            for extension in settings.PLANT3D_VIEWER_EXTENSIONS
+            if extension["id"] == "raceway-overlay"
+        )
+        self.assertContains(
+            response,
+            f"/static/{raceway_extension['script']}?v={raceway_extension['version']}",
+        )
 
     def test_package_viewer_static_js_exposes_generic_layer_registry(self):
         script_path = os.path.join(
@@ -2112,6 +2121,8 @@ class Plant3DIntakeTests(TestCase):
         self.assertIn("dispatchViewerInteractionClick(event)", content)
         self.assertIn("plant3dviewer:package-loaded", content)
         self.assertIn("function sourcePointToRenderPoint", content)
+        self.assertIn("function frameSourcePoints", content)
+        self.assertIn("frameSourcePoints,", content)
         self.assertIn("function pointOnSourceElevationFromViewerEvent", content)
         self.assertIn("function raycastObjectsFromViewerEvent", content)
         self.assertIn("function shouldIgnoreViewerCommitClick", content)

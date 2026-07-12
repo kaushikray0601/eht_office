@@ -48,6 +48,12 @@ that foundation.
   run/node/segment.
 - [x] Move source-detail conversion progress visibility below the primary 3D
   model action.
+- [x] Close Claude N-14 by making the Plant3D extension cache-key test
+  settings-driven.
+- [x] Add compact Raceway pane summary for the fitting/accessory projection.
+- [x] Review deferred stock against Claude §28 and keep open items visible.
+- [x] Add warning-to-camera framing from Raceway warning rows.
+- [x] Add collapsed-visible Raceway warning/notice badge.
 
 ## Default Pass Ritual
 
@@ -399,6 +405,11 @@ Acceptance:
   - riser placeholders,
   - reducer candidates at connected unequal-size graph nodes,
   - no fitting/accessory persistence yet.
+- [x] Raceway pane fitting projection summary:
+  - `Refresh Fittings` button,
+  - `T` keyboard shortcut,
+  - placeholder, reducer-candidate, face-alignment, catalogue-validation, and
+    graph branch/junction counts.
 - [ ] Review `raceway-fitting-accessory-foundation-2026-07-12.md` before
   persisting fitting/accessory records or coding face-offset authoring.
 - [ ] Project/admin-level connection tolerance setting when needed.
@@ -417,6 +428,14 @@ Acceptance:
   - acknowledge/accept/ignore/dismiss warnings from the Raceway panel,
   - preserve warning evidence in JSON/CSV even when the working UI filters it,
   - record reviewer, action, timestamp, optional reason, and telemetry event.
+- [x] Warning-to-camera framing:
+  - expose Plant3D runtime `frameSourcePoints`,
+  - frame the affected Raceway segment/source point when a schedule warning row
+    is clicked.
+- [x] Collapsed Raceway warning-count badge on the section header.
+- [ ] Service-class colour legend chips.
+- [ ] Inline run-tag rename in the Raceway inspector.
+- [ ] Raceway shortcut cheat sheet.
 - [x] Define `suggestion_event` telemetry schema in a design note.
 - [x] Implement Tier-0 suggestion telemetry foundation:
   - peer `telemetry` app,
@@ -429,6 +448,14 @@ Acceptance:
     viewer canvas as well as from the Raceway pane,
   - avoid broad key capture that conflicts with typing or viewer navigation.
 - [ ] Decision record `0007-ai-gateway-seam` before first Tier-1 AI feature.
+- [ ] Telemetry `session_key` column or equivalent browser-session grouping
+  strategy.
+- [ ] Browser assertion for blocked telemetry endpoint behavior.
+- [ ] Commit/readiness housekeeping from Claude §28:
+  - decide whether to untrack `.code-workspace`,
+  - keep KR catalogue seed confirmation visible,
+  - revisit F-19 plant3d test-count variance only if it reappears,
+  - preserve F-20 commit granularity when preparing changes.
 
 ## Open Questions
 
@@ -1341,4 +1368,81 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Fitting Projection Pane and Deferred Stock Review
+
+- Read Claude/Fable §28 before coding.
+- Closed Claude N-14:
+  - `plant3d.tests` no longer hardcodes a Raceway overlay cache key,
+  - the test now reads `raceway-overlay` script/version from
+    `settings.PLANT3D_VIEWER_EXTENSIONS`.
+- Added compact fitting projection visibility to the Raceway pane:
+  - `Refresh Fittings` button,
+  - `T` keyboard shortcut,
+  - summary for total placeholders, plan bends, risers, reducer candidates,
+    face-alignment counts, catalogue-validation counts, and graph branch/junction
+    counts.
+- Kept the fitting pane read-only:
+  - no schema change,
+  - no fitting persistence,
+  - no vendor part mapping or face-offset authority yet.
+- Added browser smoke coverage:
+  - button-driven fitting refresh,
+  - canvas-focus `T` shortcut refresh,
+  - summary rendering for placeholder/reducer/face-alignment counts.
+- Reviewed deferred stock against Claude §28:
+  - no item discarded,
+  - `.code-workspace` cleanup, catalogue seed confirmation, telemetry
+    `session_key`, blocked-endpoint browser assertion, warning lifecycle/config,
+    reducer/face-offset semantics, M-5/M-6, and `ai_gateway` remain open.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway24`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Warning Camera Framing and Header Badge
+
+- Read Claude/Fable §28 and KR's pasted review before coding.
+- No course correction needed:
+  - N-14 was already closed by the previous pass,
+  - accessory design note and fitting projection were already in place,
+  - `.code-workspace` cleanup remains a commit-hygiene item rather than part of
+    this UI behavior pass.
+- Added a Plant3D viewer runtime helper:
+  - `frameSourcePoints(points, options)`,
+  - frames source-frame points through host-owned camera/controls logic,
+  - options currently include `paddingM` and `minRadiusM`.
+- Documented the helper in the viewer-extension contract note.
+- Improved Raceway warning navigation:
+  - clicking a schedule warning still selects the affected run/node and segment,
+  - now also frames the affected segment/source point in the 3D viewer,
+  - status text confirms when the warning was framed.
+- Added a collapsed-visible Raceway header badge:
+  - shows current validation notice count,
+  - avoids double-counting graph warnings when a schedule warning payload is
+    already loaded,
+  - adds no geometry or per-frame viewer work.
+- Bumped browser cache keys:
+  - Plant3D package viewer: `20260712_frame_source1`,
+  - Raceway overlay: `20260712_raceway25`.
+- Verification passed:
+  - `cp plant3d/static/plant3d/js/package_viewer.js /tmp/package_viewer_check.mjs`
+  - `node --check /tmp/package_viewer_check.mjs`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
   - `git diff --check`
