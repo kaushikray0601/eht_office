@@ -18,6 +18,7 @@ from django.urls import reverse
 from eht.models import ManagedProject, ProjectData
 
 from .models import ConversionJob, ModelObject, RenderPackage, RenderTile, SourceModel
+from .overlay import model_object_bounds_for_source
 from .parsers.ifc import (
     _cpu_count_from_cgroup_v1,
     _cpu_count_from_cgroup_v2,
@@ -267,6 +268,60 @@ class Plant3DModelTests(TestCase):
 
         with self.assertRaises(IntegrityError):
             ModelObject.objects.create(source_model=source, stable_id="ifc-guid-1", object_type="IfcColumn")
+
+    def test_model_object_bounds_helper_uses_tile_bounds_prefilter(self):
+        project = create_project()
+        source = SourceModel.objects.create(
+            project=project,
+            display_name="Bounds helper IFC",
+            source_format="IFC",
+            original_filename="bounds.ifc",
+            storage_key="source/bounds.ifc",
+        )
+        package = RenderPackage.objects.create(
+            source_model=source,
+            package_format="TILED_JSON",
+            storage_prefix="render/bounds/",
+        )
+        near_tile = RenderTile.objects.create(
+            render_package=package,
+            tile_id="near",
+            storage_key="render/bounds/near.glb",
+            bounds={"min_x": 0, "max_x": 2, "min_y": 0, "max_y": 2, "min_z": 0, "max_z": 2},
+        )
+        far_tile = RenderTile.objects.create(
+            render_package=package,
+            tile_id="far",
+            storage_key="render/bounds/far.glb",
+            bounds={"min_x": 50, "max_x": 60, "min_y": 0, "max_y": 2, "min_z": 0, "max_z": 2},
+        )
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            render_tile=near_tile,
+            stable_id="near-object",
+            tag="Near",
+            bounds={"min_x": 0.5, "max_x": 1.0, "min_y": 0.5, "max_y": 1.0, "min_z": 0.5, "max_z": 1.0},
+        )
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            render_tile=far_tile,
+            stable_id="far-object",
+            tag="Far",
+            bounds={"min_x": 52, "max_x": 53, "min_y": 0.5, "max_y": 1.0, "min_z": 0.5, "max_z": 1.0},
+        )
+
+        payload = model_object_bounds_for_source(
+            source.pk,
+            render_package_id=package.pk,
+            bounds_filter={"min_x": 0, "max_x": 3, "min_y": 0, "max_y": 3, "min_z": 0, "max_z": 3},
+            limit=10,
+        )
+
+        self.assertFalse(payload["limited"])
+        self.assertEqual([item["stable_id"] for item in payload["objects"]], ["near-object"])
+        self.assertEqual(payload["objects"][0]["bounds"]["min_x"], 0.5)
 
 
 class Plant3DProjectGatewayTests(TestCase):
@@ -2023,7 +2078,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "plant3dViewerExtensionsConfig")
         self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-overlay\"")
         self.assertContains(response, "data-owner=\"raceway\"")
-        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260712_raceway20")
+        self.assertContains(response, "/static/raceway/js/raceway_overlay.js?v=20260712_raceway22")
 
     def test_package_viewer_static_js_exposes_generic_layer_registry(self):
         script_path = os.path.join(
@@ -2189,10 +2244,11 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "Queue IFC JSON Debug Conversion")
         self.assertContains(response, 'data-watch-job')
         self.assertContains(response, 'plant3d/js/source_detail.js')
+        self.assertContains(response, "primaryConversionProgress")
         self.assertContains(response, "p3d-progress")
         self.assertContains(response, "Technical source details")
         self.assertContains(response, "Upload / Replace Working Model")
-        self.assertContains(response, "20260706_sourceui1")
+        self.assertContains(response, "20260712_sourceui2")
 
     @patch("plant3d.services.parse_multiple_ifc_uploads")
     def test_source_detail_page_shows_conversion_timing_summary(self, mock_parse):
@@ -2211,6 +2267,9 @@ class Plant3DIntakeTests(TestCase):
         response = self.client.get(reverse("plant3d_source_detail", args=[source.pk]))
 
         self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Open 3D Viewer")
+        self.assertContains(response, "primaryConversionProgress")
+        self.assertContains(response, "Latest conversion")
         self.assertContains(response, "Total conversion:")
         self.assertContains(response, "Timings:")
         self.assertContains(response, "IFC parse=")

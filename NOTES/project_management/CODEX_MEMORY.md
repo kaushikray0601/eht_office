@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -49,19 +49,23 @@ Default Raceway pass ritual from KR, 2026-07-12:
    code sections to inspect for understanding.
 5. Leave a concise note to Claude when review, research, or architecture input
    would benefit the project.
-6. End with ordered next-pass recommendations; if the order differs from the
-   tracker, explain why in one or two lines.
+6. End every pass summary with an explicit `Next Pass` recommendation section:
+   ordered items, one-line reason per item when useful, and a short note if the
+   order differs from the tracker. Do not omit this section even when the pass
+   is small or mostly invisible.
 
 Immediate active plan:
 
-1. Move into Stage 9 derived parts and BOQ v0: split saved raceway runs into
-   straight segment lengths, bend counts, simple support placeholders, and a
-   first schedule endpoint/view.
+1. Move from coarse warning evidence toward useful engineering refinement:
+   fitting/accessory modeling order is derived projection first, reducer
+   candidate review, segment/face-offset editing, parametric bend/riser/tee
+   geometry, then cross if field usage demands it.
 2. Keep raceway drawing/persistence in `raceway`; use Plant3D only as the
-   viewer host and coordinate/package contract provider.
-3. Use the generic viewer extension seam for all raceway viewer code.
-4. Keep schema narrow. Derived supports/fittings/schedule are allowed in Stage
-   9; vendor catalogue assets and cable assignment remain later.
+   viewer host and coordinate/package/object-bounds contract provider.
+3. Keep clash/collision warning-only until BVH/narrow-phase, swept-volume, and
+   fitting-aware geometry foundations are tested.
+4. Keep schema narrow. Vendor catalogue assets, cable assignment, and
+   pathfinding remain later.
 5. Update `plant3d/records/tracking/raceway-mvp-progress-tracker-2026-07-08.md`
    after each pass.
 
@@ -97,8 +101,8 @@ Code facts verified on 2026-07-09:
   keyboard undo-redo/move/delete against a stubbed viewer host. Run it before
   asking KR to manually check authoring.
 - Static cache note: Plant3D viewer host script version is
-  `20260711_raceway_runtime6`; raceway overlay script version is
-  `20260712_raceway15`. Bump the relevant cache key whenever changing either
+  `20260712_screen_scale1`; raceway overlay script version is
+  `20260712_raceway23`. Bump the relevant cache key whenever changing either
   browser file.
 - Root-cause correction after KR reported missing 3D view/only Raceway layer:
   do not dispatch `plant3dviewer:*` extension host events before core viewer
@@ -274,11 +278,53 @@ Code facts verified on 2026-07-09:
   `unresolved_at_save`, and `raceway.ortho.axis_lock` events through a
   fire-and-forget queue; telemetry failure cannot block authoring/save. Raceway
   overlay cache key is `20260712_raceway20`.
-- KR observed that some advertised Raceway keyboard shortcuts sometimes do not
-  fire. The likely area is shortcut context gating between pane focus, active
-  canvas modes, and idle viewer focus. This is recorded as a dedicated audit
-  item; do not broaden key capture casually because it can conflict with typing
-  or viewer navigation.
+- Rough Plant3D envelope warnings are implemented in `raceway/warnings.py`.
+  `raceway/geometry.py` now centralizes point/distance/bend/bounds helpers for
+  graph/schedule/warnings. `build_layer_warnings()` reads accessible
+  `plant3d.ModelObject.bounds` by loose source/package ids and emits
+  warning-only `raceway.warning.model_clash_aabb` / `model_clearance_aabb`
+  notices with stable object evidence, raceway/object AABBs, gap, run/node
+  keys, and segment index. The first-pass object scan is capped and emits
+  `raceway.warning.model_clash_scan_limited` when incomplete. This is coarse
+  source-frame AABB only: not BVH, swept-volume, fitting-aware, or a hard
+  blocker. Schedule warnings now emit telemetry `shown` and are included before
+  `unresolved_at_save`. Claude N-13 is closed: Raceway now consumes object
+  bounds through `plant3d.overlay.model_object_bounds_for_source()` instead of
+  importing `plant3d.models`, and that helper can prefilter through
+  `RenderTile.bounds`. Raceway overlay cache key is `20260712_raceway22`.
+- Raceway warning UX polish: schedule warning rows tied to a saved `run_key`
+  are clickable. Clicking selects the affected run/node and highlights the
+  affected segment with `warning-segment-highlight`; layer-level warnings
+  remain plain text. The telemetry design note now documents the context shapes
+  for `model_clash_aabb`, `model_clearance_aabb`, and `model_clash_scan_limited`.
+- Plant3D source detail polish: `source_detail.html` shows the latest
+  conversion progress directly below the primary 3D Model action, including
+  below `Open 3D Viewer`, and `source_detail.js` keeps it updated during
+  polling. Source detail script cache key is `20260712_sourceui2`.
+- KR threshold-config note: warning thresholds/settings should later move into
+  a role-gated project/admin configuration surface, not stay hardcoded forever.
+  Include short-segment threshold, excessive-bend count, support placeholder
+  span, rough clash clearance, broad-phase scan cap, graph tolerance, and
+  near-miss sensitivity.
+- Raceway shortcut reliability audit is complete. `raceway_overlay.js` now maps
+  keyboard events to concrete actions before gating. Advertised commands work
+  from viewer canvas focus when a run/layer context makes them relevant, while
+  external typing targets keep normal keyboard behavior. Browser smoke covers
+  canvas-focus `B` schedule refresh and `Ctrl+S` repeat save. Raceway overlay
+  cache key is `20260712_raceway23`.
+- KR warning-action note: after functional pieces stabilize, add a warning
+  lifecycle UX for acknowledge/accept/ignore/dismiss actions. It should preserve
+  full JSON/CSV evidence and record reviewer/action/timestamp/reason plus
+  telemetry, not silently delete engineering evidence.
+- Fitting/accessory foundation slice is in place. Design note:
+  `plant3d/records/planning/raceway-fitting-accessory-foundation-2026-07-12.md`.
+  `raceway/fittings.py` derives a read-only `raceway.fittings.v0` projection
+  exposed at `GET /raceway/layers/<id>/fittings/`: plan-bend placeholders,
+  riser placeholders, and reducer candidates at connected unequal-size graph
+  nodes. Schedule now reuses these bend/riser helpers. No schema change and no
+  fitting/accessory persistence yet; review reducer candidate shape and
+  face-alignment semantics before coding persisted fitting records or
+  face-offset authoring.
 - `plant3d.models.SourceModel.project_id` is a loose string reference, not a
   hard FK to EHT. The EHT-backed access dependency is intentionally confined to
   `plant3d.project_gateway`.

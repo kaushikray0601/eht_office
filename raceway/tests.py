@@ -11,7 +11,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from eht.models import ManagedProject, ProjectData
-from plant3d.models import RenderPackage, SourceModel
+from plant3d.models import ModelObject, RenderPackage, SourceModel
 
 from .access import (
     accessible_project_ids,
@@ -20,7 +20,9 @@ from .access import (
     user_can_access_project,
     validate_project_id,
 )
+from .fittings import build_layer_fitting_projection
 from .graph import GRAPH_NODE_TOLERANCE_M, NEAR_MISS_ENDPOINT_RADIUS_M, build_layer_graph, build_project_graph
+from .geometry import normalize_bounds
 from .models import (
     SOURCE_COORDINATE_FRAME,
     RacewayFamily,
@@ -32,6 +34,7 @@ from .models import (
 from .schedule import PLACEHOLDER_SUPPORT_SPAN_M, build_layer_schedule
 from .warnings import (
     EXCESSIVE_BEND_COUNT_WARNING,
+    MODEL_OBJECT_SCAN_LIMIT,
     SHORT_SEGMENT_WARNING_M,
     build_layer_warnings,
     summarize_warnings,
@@ -282,6 +285,34 @@ class RacewayAccessTests(TestCase):
 
         self.assertEqual(offenders, [])
 
+    def test_raceway_runtime_modules_do_not_import_plant3d_models_directly(self):
+        raceway_root = os.path.dirname(__file__)
+        offenders = []
+        for directory, _dirnames, filenames in os.walk(raceway_root):
+            rel_dir = os.path.relpath(directory, raceway_root)
+            path_parts = set(rel_dir.split(os.sep))
+            if "__pycache__" in path_parts or "migrations" in path_parts:
+                continue
+            for filename in filenames:
+                if not filename.endswith(".py"):
+                    continue
+                path = os.path.join(directory, filename)
+                rel_path = os.path.relpath(path, raceway_root)
+                if rel_path == "tests.py":
+                    continue
+                with open(path, encoding="utf-8") as handle:
+                    content = handle.read()
+                tree = ast.parse(content, filename=path)
+                for node in ast.walk(tree):
+                    if isinstance(node, ast.ImportFrom) and node.module == "plant3d.models":
+                        offenders.append(rel_path)
+                    if isinstance(node, ast.Import):
+                        for alias in node.names:
+                            if alias.name == "plant3d.models":
+                                offenders.append(rel_path)
+
+        self.assertEqual(offenders, [])
+
 
 class RacewayModelTests(TestCase):
     def test_family_and_size_store_generic_iec_metric_catalogue_data(self):
@@ -479,6 +510,23 @@ class RacewayGraphProjectionTests(TestCase):
         self.assertLess(warnings[0]["distance_m"], NEAR_MISS_ENDPOINT_RADIUS_M)
 
 
+class RacewayGeometryHelperTests(TestCase):
+    def test_normalize_bounds_accepts_plant3d_and_legacy_shapes(self):
+        self.assertEqual(
+            normalize_bounds({"min_x": 5, "max_x": 1, "min_y": 0, "max_y": 2, "min_z": -1, "max_z": 3}),
+            {"min_x": 1.0, "max_x": 5.0, "min_y": 0.0, "max_y": 2.0, "min_z": -1.0, "max_z": 3.0},
+        )
+        self.assertEqual(
+            normalize_bounds({"min": [0, 1, 2], "max": [3, 4, 5]}),
+            {"min_x": 0.0, "max_x": 3.0, "min_y": 1.0, "max_y": 4.0, "min_z": 2.0, "max_z": 5.0},
+        )
+        self.assertEqual(
+            normalize_bounds({"min": {"x": 0, "y": 1, "z": 2}, "max": {"x": 3, "y": 4, "z": 5}}),
+            {"min_x": 0.0, "max_x": 3.0, "min_y": 1.0, "max_y": 4.0, "min_z": 2.0, "max_z": 5.0},
+        )
+        self.assertIsNone(normalize_bounds({"min_x": 0, "max_x": 1}))
+
+
 class RacewayWarningProjectionTests(TestCase):
     def test_layer_warnings_standardize_route_catalog_and_context_notices(self):
         layer = RacewayLayer.objects.create(project_id="RWY-WARN", name="Warning draft")
@@ -532,6 +580,131 @@ class RacewayWarningProjectionTests(TestCase):
 
         self.assertEqual(excessive_warning["values"]["threshold"], EXCESSIVE_BEND_COUNT_WARNING)
         self.assertGreater(excessive_warning["values"]["plan_bend_count"], EXCESSIVE_BEND_COUNT_WARNING)
+
+    def test_layer_warnings_flag_rough_model_object_aabb_clash(self):
+        project_id = "RWY-WARN-CLASH"
+        source, package = create_source_and_package(project_id)
+        layer = RacewayLayer.objects.create(
+            project_id=project_id,
+            source_model_id=source.pk,
+            render_package_id=package.pk,
+            name="Clash draft",
+        )
+        family = create_family("WARN-CLASH-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        create_nodes(run, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            stable_id="ifc-beam-clash",
+            source_object_id="Beam-001",
+            object_type="IfcBeam",
+            tag="B-001",
+            bounds={
+                "min_x": 0.9,
+                "max_x": 1.1,
+                "min_y": -0.05,
+                "max_y": 0.05,
+                "min_z": -0.05,
+                "max_z": 0.05,
+            },
+        )
+
+        warnings = build_layer_warnings(layer)
+        clash_warning = next(warning for warning in warnings if warning["code"] == "raceway.warning.model_clash_aabb")
+
+        self.assertEqual(clash_warning["source"], "model_envelope")
+        self.assertEqual(clash_warning["object_type"], "segment")
+        self.assertEqual(clash_warning["values"]["method"], "aabb")
+        self.assertEqual(clash_warning["values"]["object_stable_id"], "ifc-beam-clash")
+        self.assertEqual(clash_warning["values"]["object_label"], "B-001")
+        self.assertIn("raceway_bounds", clash_warning["values"])
+        self.assertNotIn("model_object_id", clash_warning["values"])
+
+    def test_layer_warnings_flag_rough_model_clearance_band(self):
+        project_id = "RWY-WARN-CLEARANCE"
+        source, package = create_source_and_package(project_id)
+        layer = RacewayLayer.objects.create(
+            project_id=project_id,
+            source_model_id=source.pk,
+            render_package_id=package.pk,
+            name="Clearance draft",
+        )
+        family = create_family("WARN-CLEARANCE-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        create_nodes(run, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            stable_id="ifc-pipe-near",
+            source_object_id="Pipe-001",
+            object_type="IfcPipeSegment",
+            bounds={
+                "min_x": 0.9,
+                "max_x": 1.1,
+                "min_y": 0.21,
+                "max_y": 0.25,
+                "min_z": -0.05,
+                "max_z": 0.05,
+            },
+        )
+
+        warnings = build_layer_warnings(layer)
+        clearance_warning = next(
+            warning for warning in warnings if warning["code"] == "raceway.warning.model_clearance_aabb"
+        )
+
+        self.assertAlmostEqual(clearance_warning["values"]["clearance_m"], 0.10)
+        self.assertLessEqual(clearance_warning["values"]["gap_m"], 0.10)
+        self.assertEqual(clearance_warning["values"]["object_stable_id"], "ifc-pipe-near")
+
+    def test_layer_warnings_sort_by_explicit_severity_rank(self):
+        layer = RacewayLayer.objects.create(project_id="RWY-WARN-SORT", name="Sort draft")
+        family = create_family("WARN-SORT-LADDER")
+        size = create_size(family=family)
+        run = create_run(layer=layer, family=family, size=size)
+        create_nodes(run, [(0.0, 0.0, 0.0), (SHORT_SEGMENT_WARNING_M / 2, 0.0, 0.0)])
+
+        severities = [warning["severity"] for warning in build_layer_warnings(layer)]
+
+        self.assertLess(severities.index("warning"), severities.index("info"))
+
+    def test_layer_warnings_report_when_model_object_scan_is_limited(self):
+        project_id = "RWY-WARN-SCAN-LIMIT"
+        source, package = create_source_and_package(project_id)
+        layer = RacewayLayer.objects.create(
+            project_id=project_id,
+            source_model_id=source.pk,
+            render_package_id=package.pk,
+            name="Scan limit draft",
+        )
+        ModelObject.objects.bulk_create(
+            [
+                ModelObject(
+                    source_model=source,
+                    render_package=package,
+                    stable_id=f"ifc-object-{index:04d}",
+                    bounds={
+                        "min_x": index,
+                        "max_x": index + 0.1,
+                        "min_y": 0.0,
+                        "max_y": 0.1,
+                        "min_z": 0.0,
+                        "max_z": 0.1,
+                    },
+                )
+                for index in range(MODEL_OBJECT_SCAN_LIMIT + 1)
+            ]
+        )
+
+        warnings = build_layer_warnings(layer)
+        limited_warning = next(
+            warning for warning in warnings if warning["code"] == "raceway.warning.model_clash_scan_limited"
+        )
+
+        self.assertEqual(limited_warning["values"]["scan_limit"], MODEL_OBJECT_SCAN_LIMIT)
 
 
 class RacewayScheduleProjectionTests(TestCase):
@@ -613,6 +786,61 @@ class RacewayScheduleProjectionTests(TestCase):
         self.assertAlmostEqual(groups["power"]["offcut_m_estimate"], 2.0)
         self.assertEqual(groups["control"]["piece_count_estimate"], 1)
         self.assertAlmostEqual(groups["control"]["offcut_m_estimate"], 1.0)
+
+
+class RacewayFittingProjectionTests(TestCase):
+    def test_layer_fitting_projection_derives_plan_bend_and_riser_placeholders(self):
+        layer = create_layer(project_id="RWY-FITTINGS")
+        family = create_family("FIT-LADDER")
+        size = create_size(family=family, width_mm=450, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        run.tag = "RWY-FIT-1"
+        run.save()
+        create_nodes(run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 4.0, 0.0), (3.0, 4.0, 2.0)])
+
+        projection = build_layer_fitting_projection(layer)
+        items_by_kind = {item["kind"]: item for item in projection["items"]}
+
+        self.assertEqual(projection["projection"], "raceway.fittings.v0")
+        self.assertEqual(projection["status"], "derived_placeholder")
+        self.assertEqual(projection["counts"]["by_kind"]["plan_bend"], 1)
+        self.assertEqual(projection["counts"]["by_kind"]["riser"], 1)
+        self.assertEqual(projection["counts"]["requires_catalogue_validation"], 2)
+        self.assertEqual(items_by_kind["plan_bend"]["category"], "plan_bend_46_90")
+        self.assertAlmostEqual(items_by_kind["plan_bend"]["angle_deg"], 90.0)
+        self.assertFalse(items_by_kind["plan_bend"]["requires_face_alignment"])
+        self.assertEqual(items_by_kind["riser"]["category"], "riser_up")
+        self.assertTrue(items_by_kind["riser"]["requires_face_alignment"])
+        self.assertEqual(items_by_kind["riser"]["face_alignment"]["status"], "required_not_modelled")
+        assumption_codes = {assumption["code"] for assumption in projection["assumptions"]}
+        self.assertIn("raceway.fittings.route_as_truth", assumption_codes)
+        self.assertIn("raceway.fittings.face_alignment_deferred", assumption_codes)
+        self.assertIn("raceway.fittings.tee_cross_deferred", assumption_codes)
+
+    def test_layer_fitting_projection_flags_unequal_size_reducer_candidate_at_connected_node(self):
+        layer = create_layer(project_id="RWY-FITTINGS-REDUCER")
+        family = create_family("FIT-RED-LADDER")
+        small = create_size(family=family, width_mm=300, depth_mm=100)
+        large = create_size(family=family, width_mm=600, depth_mm=100)
+        small_run = create_run(layer=layer, family=family, size=small)
+        small_run.tag = "RWY-SMALL"
+        small_run.save()
+        large_run = create_run(layer=layer, family=family, size=large)
+        large_run.tag = "RWY-LARGE"
+        large_run.save()
+        create_nodes(small_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(large_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+        projection = build_layer_fitting_projection(layer)
+        reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
+
+        self.assertEqual(reducer["category"], "width_reducer")
+        self.assertEqual(reducer["graph_node_kind"], "junction")
+        self.assertEqual({group["width_mm"] for group in reducer["size_groups"]}, {300, 600})
+        self.assertEqual({member["run_tag"] for member in reducer["members"]}, {"RWY-SMALL", "RWY-LARGE"})
+        self.assertTrue(reducer["requires_face_alignment"])
+        self.assertEqual(projection["counts"]["by_kind"]["reducer_candidate"], 1)
+        self.assertEqual(projection["graph_summary"]["junction_node_count"], 1)
 
 
 class RacewayApiTests(TestCase):
@@ -723,6 +951,29 @@ class RacewayApiTests(TestCase):
         other_user = get_user_model().objects.create_user(username="raceway-schedule-blocked", password="pw")
         self.client.force_login(other_user)
         blocked_response = self.client.get(reverse("raceway:layer_schedule", args=[layer.pk]))
+
+        self.assertEqual(blocked_response.status_code, 403)
+
+    def test_layer_fittings_endpoint_returns_project_scoped_projection(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.tag = "RWY-API-FIT"
+        run.save()
+        create_nodes(run, [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (4.0, 2.0, 0.0), (4.0, 2.0, 1.0)])
+
+        response = self.client.get(reverse("raceway:layer_fittings", args=[layer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["layer"]["project_id"], self.project.proj_id)
+        self.assertEqual(payload["fittings"]["projection"], "raceway.fittings.v0")
+        self.assertEqual(payload["fittings"]["counts"]["by_kind"]["plan_bend"], 1)
+        self.assertEqual(payload["fittings"]["counts"]["by_kind"]["riser"], 1)
+        self.assertEqual(payload["fittings"]["project_id"], self.project.proj_id)
+
+        other_user = get_user_model().objects.create_user(username="raceway-fittings-blocked", password="pw")
+        self.client.force_login(other_user)
+        blocked_response = self.client.get(reverse("raceway:layer_fittings", args=[layer.pk]))
 
         self.assertEqual(blocked_response.status_code, 403)
 
@@ -979,8 +1230,11 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function loadGraphProjection", content)
         self.assertIn("function graphWarningsHtml", content)
         self.assertIn("function loadScheduleProjection", content)
+        self.assertIn("function scheduleWarnings", content)
+        self.assertIn("function selectScheduleWarning", content)
         self.assertIn("function scheduleSummaryHtml", content)
         self.assertIn("function scheduleWarningRowsHtml", content)
+        self.assertIn("warning-segment-highlight", content)
         self.assertIn("function openScheduleCsv", content)
         self.assertIn("function localWarningsHtml", content)
         self.assertIn("function validationWarningLabel", content)
@@ -1001,6 +1255,8 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function continueRun", content)
         self.assertIn("function undoRacewayEdit", content)
         self.assertIn("function redoRacewayEdit", content)
+        self.assertIn("function racewayShortcutActionForEvent", content)
+        self.assertIn("function racewayShortcutAvailableForAction", content)
         self.assertIn("function handleRacewayKeyboardShortcut", content)
         self.assertIn("function orthoAdjustedPoint", content)
         self.assertIn("function addTypedSegment", content)
@@ -1018,6 +1274,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("data-raceway-action=\"reload\"", content)
         self.assertIn("data-raceway-action=\"refresh-graph\"", content)
         self.assertIn("data-raceway-action=\"refresh-schedule\"", content)
+        self.assertIn("data-raceway-action=\"select-warning\"", content)
         self.assertIn("data-raceway-action=\"open-schedule-csv\"", content)
         self.assertIn("data-raceway-action=\"delete-run\"", content)
         self.assertIn("data-raceway-action=\"toggle-surfaces\"", content)

@@ -1,5 +1,6 @@
 const queueStatus = document.getElementById('conversionQueueStatus');
 const jobList = document.getElementById('conversionJobList');
+const primaryProgress = document.getElementById('primaryConversionProgress');
 const watchedJobs = new Map();
 
 function setQueueStatus(message) {
@@ -37,6 +38,21 @@ function rawMetricsBlock(data) {
   return `<details><summary>Raw metrics</summary><pre>${escapeHtml(JSON.stringify(data.metrics))}</pre></details>`;
 }
 
+function progressBar(percent, label = 'Conversion progress') {
+  const width = Math.max(0, Math.min(100, Number(percent) || 0));
+  return `<div class="p3d-progress" aria-label="${escapeHtml(label)}"><div class="p3d-progress-bar" style="width: ${width}%;"></div></div>`;
+}
+
+function updatePrimaryProgress(data) {
+  if (!primaryProgress || !data?.id) return;
+  primaryProgress.hidden = false;
+  primaryProgress.dataset.primaryJobId = String(data.id);
+  primaryProgress.innerHTML = [
+    `<div class="p3d-list-title"><span>Latest conversion - ${escapeHtml(data.job_type || '')}</span><span>${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%</span></div>`,
+    progressBar(data.progress_percent, 'Latest conversion progress'),
+  ].join('');
+}
+
 function jobLine(data) {
   const packageLinks = data.package
     ? `<div class="p3d-list-actions"><a class="p3d-button p3d-button-primary" href="${escapeHtml(data.package.viewer_url)}">View</a> <a class="p3d-button p3d-button-quiet" href="${escapeHtml(data.package.json_url)}">Package JSON</a></div>`
@@ -55,7 +71,7 @@ function jobLine(data) {
   const error = data.error_message ? `<br>Error: ${escapeHtml(data.error_message)}` : '';
   return [
     `<div class="p3d-list-title"><span>Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')}</span><span>${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%</span></div>`,
-    `<div class="p3d-progress" aria-label="Conversion progress"><div class="p3d-progress-bar" style="width: ${Math.max(0, Math.min(100, Number(data.progress_percent) || 0))}%;"></div></div>`,
+    progressBar(data.progress_percent),
     processHint,
     workerHint,
     stage,
@@ -83,6 +99,7 @@ function upsertJobRow(data) {
   }
   row.dataset.jobUrl = data.url || `/plant3d/jobs/${data.id}/json/`;
   row.innerHTML = jobLine(data);
+  updatePrimaryProgress(data);
   return row;
 }
 

@@ -37,6 +37,17 @@ that foundation.
 - [x] Add raceway layer/run/node JSON endpoints.
 - [x] Add Stage 4 API tests.
 - [x] Run Stage 4 verification commands.
+- [x] Apply Claude §26 guidance before clash work.
+- [x] Consolidate duplicated raceway geometry helpers.
+- [x] Add rough Plant3D object AABB clash/clearance warnings.
+- [x] Include schedule warnings in Raceway telemetry lifecycle events.
+- [x] Run clash-warning verification commands.
+- [x] Close Claude N-13 by moving Plant3D object-bounds lookup behind a
+  Plant3D overlay seam.
+- [x] Add clickable schedule-warning navigation to affected Raceway
+  run/node/segment.
+- [x] Move source-detail conversion progress visibility below the primary 3D
+  model action.
 
 ## Default Pass Ritual
 
@@ -45,8 +56,9 @@ that foundation.
 - [x] Answer KR clarification/advice questions before implementation.
 - [x] Report what KR should manually verify after each pass.
 - [x] Add note to Claude when review/research/architecture input is useful.
-- [x] End with ordered next-pass recommendations, with a short reason if the
-  order differs from the tracker.
+- [x] End every pass summary with an explicit `Next Pass` recommendation
+  section: ordered items, one-line reason per item when useful, and a short
+  note if the order differs from the tracker.
 
 ## Decisions
 
@@ -64,7 +76,7 @@ that foundation.
 - [x] Implement initial generic curated catalogue seed first; keep rows
   vendor-free and `is_validated=False` until KR-reviewed source data exists.
 - [x] Choose initial standards/default stance: IEC-first; NEMA/ANSI later.
-- [ ] Confirm BOQ-first before DXF/fabrication drawings.
+- [x] Confirm BOQ-first before DXF/fabrication drawings.
 - [x] Resolve coordinate-frame contract stance: durable source/world metres or
   stable anchors; render-frame derived for viewer.
 
@@ -79,9 +91,9 @@ that foundation.
 - [x] Render-frame positions are derived through `plant3d` coordinate/RTC
   contract, not stored as durable truth.
 - [x] Route centerline is stored as truth.
-- [ ] Derived segments/fittings/supports remain regenerable.
+- [x] Derived segments/fittings/supports remain regenerable.
 - [ ] Cable pathfinding is deferred until raceway graph exists.
-- [ ] Collision starts as warnings/previews, not hard authority.
+- [x] Collision starts as warnings/previews, not hard authority.
 
 ## Stage 0 - Reset Closure And Decision
 
@@ -330,14 +342,15 @@ Acceptance:
 - [x] Add unsupported-span placeholder warning.
 - [x] Add missing/inactive family/size/service warning.
 - [x] Add unknown coordinate context warning.
+- [x] Add rough Plant3D object AABB clash/clearance warnings.
 - [x] Add inspector warning display.
 - [x] Add schedule/export warning evidence.
-- [ ] Defer hard clash constraints.
+- [x] Defer hard clash constraints.
 
 Acceptance:
 
-- [ ] Warnings appear before save and after reload.
-- [ ] Only invalid payload/access blocks persistence.
+- [x] Warnings appear before save and after reload.
+- [x] Only invalid payload/access blocks persistence.
 - [x] Warning vocabulary can grow to fill/segregation/clash.
 
 ## Deferred Backlog
@@ -381,16 +394,36 @@ Acceptance:
   connected tray faces must align rather than only centreline nodes.
 - [ ] Parametric bend/riser/tee fitting geometry after placeholder counts are
   stable; cross fittings can follow later if project usage demands it.
+- [x] Accessory/fitting foundation note and read-only derived projection:
+  - plan-bend placeholders,
+  - riser placeholders,
+  - reducer candidates at connected unequal-size graph nodes,
+  - no fitting/accessory persistence yet.
+- [ ] Review `raceway-fitting-accessory-foundation-2026-07-12.md` before
+  persisting fitting/accessory records or coding face-offset authoring.
 - [ ] Project/admin-level connection tolerance setting when needed.
 - [ ] Project/admin or user-level near-miss warning sensitivity setting when
   needed.
+- [ ] Role-gated Raceway warning/config panel:
+  - short segment threshold,
+  - excessive bend count threshold,
+  - support placeholder span,
+  - rough AABB clash clearance band,
+  - broad-phase object scan cap,
+  - graph tolerance / near-miss sensitivity,
+  - project defaults first; user display preferences only where they do not
+    change engineering truth.
+- [ ] Warning lifecycle UX:
+  - acknowledge/accept/ignore/dismiss warnings from the Raceway panel,
+  - preserve warning evidence in JSON/CSV even when the working UI filters it,
+  - record reviewer, action, timestamp, optional reason, and telemetry event.
 - [x] Define `suggestion_event` telemetry schema in a design note.
 - [x] Implement Tier-0 suggestion telemetry foundation:
   - peer `telemetry` app,
   - `SuggestionEvent` lifecycle model,
   - session/CSRF batch endpoint with project access validation,
   - Raceway warning/ortho event producers.
-- [ ] Raceway keyboard shortcut reliability audit:
+- [x] Raceway keyboard shortcut reliability audit:
   - review context gating for every advertised shortcut,
   - add focused browser coverage for shortcuts that can be triggered from the
     viewer canvas as well as from the Raceway pane,
@@ -1167,4 +1200,145 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Rough Plant3D AABB Clash Warning Pass
+
+- Read Claude/Fable §26 before coding; no course correction was needed.
+- Folded in Claude N-11/N-12 housekeeping:
+  - added `raceway/geometry.py` for shared point, distance, bend-angle, bounds,
+    interpolation, and point-to-segment helpers,
+  - switched graph/schedule/warnings to shared helpers where practical,
+  - changed warning sorting to an explicit severity rank:
+    error -> warning -> info.
+- Added warning-only Plant3D envelope checks:
+  - `raceway.warning.model_clash_aabb` for overlap between a raceway segment
+    rough envelope and a `plant3d.ModelObject.bounds` box,
+  - `raceway.warning.model_clearance_aabb` for objects inside the rough
+    clearance band,
+  - warning payloads carry stable object evidence, object/raceway bounds, gap,
+    method, clearance, run/node keys, and segment index,
+  - warnings are capped so a dense model area does not flood the panel/export,
+  - a separate `raceway.warning.model_clash_scan_limited` warning appears when
+    the first-pass object-bounds scan cap is reached.
+- Kept collision authority deliberately deferred:
+  - this is a coarse source-frame AABB preview,
+  - it is not BVH, swept-volume, fitting-aware, support-aware, or a hard
+    persistence blocker.
+- Extended telemetry coverage:
+  - schedule warnings now emit `shown`,
+  - saved visible schedule warnings are refreshed before
+    `unresolved_at_save`,
+  - new clash/clearance warnings therefore join the same lifecycle event stream
+    from day one.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway21`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+
+### 2026-07-12 - Warning Navigation and Source Progress Polish
+
+- Read Claude/Fable §27 before coding.
+- Closed Claude N-13 boundary correction:
+  - moved the Plant3D model-object bounds lookup from `raceway.warnings` into
+    `plant3d.overlay.model_object_bounds_for_source()`,
+  - kept Raceway consuming plain dictionaries through the seam,
+  - added a Raceway boundary test preventing runtime direct imports of
+    `plant3d.models`,
+  - added a Plant3D helper test proving `RenderTile.bounds` prefilters object
+    candidates before object AABB checks.
+- Improved warning UX:
+  - schedule warning rows tied to a saved `run_key` are clickable,
+  - clicking selects the affected run/node,
+  - the affected segment is highlighted in the Raceway overlay as
+    `warning-segment-highlight`,
+  - layer-level warnings remain plain text.
+- Updated telemetry documentation:
+  - added event dictionary entries for rough model clash/clearance and
+    scan-limited warning context shapes.
+- Added source-detail progress visibility:
+  - latest conversion progress now appears directly below the primary 3D Model
+    card action, including below `Open 3D Viewer`,
+  - existing polling keeps the visible progress strip updated,
+  - Conversion Jobs still retains full evidence and raw metrics.
+- Recorded KR's threshold-config observation in the backlog as a future
+  role-gated project/admin configuration panel.
+- Bumped browser cache keys:
+  - Raceway overlay: `20260712_raceway22`,
+  - Plant3D source detail script: `20260712_sourceui2`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check plant3d/static/plant3d/js/source_detail.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+
+### 2026-07-12 - Raceway Shortcut Reliability Audit
+
+- Read Claude/Fable §27 before coding; no course correction was needed.
+- Reworked Raceway keyboard shortcut gating:
+  - shortcuts now map to concrete Raceway actions before context checks,
+  - advertised commands work from the viewer canvas when a run/layer context
+    makes them relevant,
+  - `S`, view toggles, reload, saved-layer graph/schedule commands, and active
+    run commands no longer depend on focus remaining inside the Raceway pane,
+  - external typing targets still keep normal keyboard behavior.
+- Added browser coverage for the manual failure shape:
+  - after saving and focusing the viewer canvas, `B` refreshes the schedule,
+  - after focusing the viewer canvas, `Ctrl+S` saves through the existing API,
+  - the test stub now handles saved-run `PATCH` to cover repeat saves.
+- Recorded KR's warning-action note as deferred:
+  - acknowledge/accept/ignore/dismiss workflow belongs in a later warning
+    lifecycle UX pass,
+  - JSON/CSV evidence should remain complete even when the panel lets a user
+    filter or close items.
+- Bumped browser cache key:
+  - Raceway overlay: `20260712_raceway23`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-12 - Fitting and Accessory Projection Foundation
+
+- Read Claude/Fable §27 before coding; no new blocking note was present.
+- Added design note:
+  - `plant3d/records/planning/raceway-fitting-accessory-foundation-2026-07-12.md`,
+  - records route-as-truth, persistence boundary, reducer semantics,
+    face-alignment problem, tee/cross deferral, and review questions.
+- Added read-only derived fitting projection:
+  - new `raceway/fittings.py`,
+  - new `GET /raceway/layers/<id>/fittings/`,
+  - layer payload now includes `graph_url`, `schedule_url`, and `fittings_url`.
+- Derived placeholder items currently include:
+  - `plan_bend` at saved direction-change nodes,
+  - `riser` on elevation-changing saved segments,
+  - `reducer_candidate` at connected graph nodes with unequal tray
+    width/depth/family/service context.
+- Kept the implementation intentionally non-persistent:
+  - no schema change,
+  - no vendor part table,
+  - no fitting/accessory rows,
+  - no face-offset or handedness authority yet.
+- Refactored schedule bend/riser placeholder logic to reuse the new fitting
+  helpers so schedule and fitting projection do not drift.
+- Verification passed:
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
   - `git diff --check`

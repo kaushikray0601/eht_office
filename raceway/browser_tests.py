@@ -172,6 +172,15 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                               }),
                             };
                           }
+                          if (String(url).startsWith('/raceway/runs/501/') && method === 'PATCH') {
+                            return {
+                              ok: true,
+                              status: 200,
+                              json: async () => ({
+                                run: { id: 501, key: 'run-key', nodes_url: '/raceway/runs/501/nodes/' },
+                              }),
+                            };
+                          }
                           if (String(url).startsWith('/raceway/layers/91/graph/') && method === 'GET') {
                             return {
                               ok: true,
@@ -199,7 +208,19 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                                   layer_id: 91,
                                   layer_name: 'Raceway Draft',
                                   graph_warnings: { total: 0, by_code: {}, near_miss_endpoint: 0, unconnected_crossing: 0, zero_length_segment: 0 },
-                                  warning_summary: { total: 1, by_code: { 'raceway.warning.support_span_placeholder_basis': 1 }, by_severity: { info: 1 }, warning: 0, info: 1, error: 0 },
+                                  warning_summary: { total: 1, by_code: { 'raceway.warning.model_clash_aabb': 1 }, by_severity: { warning: 1 }, warning: 1, info: 0, error: 0 },
+                                  warnings: [
+                                    {
+                                      code: 'raceway.warning.model_clash_aabb',
+                                      severity: 'warning',
+                                      message: 'Raceway segment envelope overlaps a Plant3D object bounds box.',
+                                      run_key: 'run-key',
+                                      run_tag: 'RWY-001',
+                                      node_keys: ['node-0', 'node-1'],
+                                      segment_index: 1,
+                                      values: { object_label: 'B-001' },
+                                    },
+                                  ],
                                   assumptions: [
                                     { code: 'raceway.schedule.traceability', message: 'Use durable UUID keys.' },
                                     { code: 'raceway.schedule.standard_length_piece_estimate', message: 'Piece estimate assumption.' },
@@ -538,6 +559,39 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("5 piece", schedule_summary)
                 self.assertIn("2.500 m offcut", schedule_summary)
                 self.assertIn("validation notice", schedule_summary)
+                self.assertIn("B-001", schedule_summary)
+                schedule_fetches_before = page.evaluate(
+                    "() => window.__racewayFetchLog.filter((entry) => entry.url.includes('/schedule/') && entry.method === 'GET').length"
+                )
+                page.click("#viewerCanvas", position={"x": 30, "y": 30})
+                page.keyboard.press("B")
+                page.wait_for_function(
+                    "(before) => window.__racewayFetchLog.filter((entry) => entry.url.includes('/schedule/') && entry.method === 'GET').length > before",
+                    arg=schedule_fetches_before,
+                )
+                self.assertIn("Raceway schedule refreshed", page.text_content("#racewayToolStatus"))
+                node_puts_before = page.evaluate(
+                    "() => window.__racewayFetchLog.filter((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT').length"
+                )
+                page.click("#viewerCanvas", position={"x": 35, "y": 35})
+                page.keyboard.press("Control+S")
+                page.wait_for_function(
+                    "(before) => window.__racewayFetchLog.filter((entry) => entry.url.includes('/nodes/') && entry.method === 'PUT').length > before",
+                    arg=node_puts_before,
+                )
+                self.assertIn("saved to server", page.text_content("#racewayToolStatus"))
+                page.click('[data-raceway-action="select-warning"][data-warning-index="0"]')
+                page.wait_for_function(
+                    "() => document.querySelector('[data-raceway-action=\"select-node\"][data-node-index=\"1\"]')?.classList.contains('raceway-row-active')"
+                )
+                self.assertIn("selected from raceway.warning.model_clash_aabb", page.text_content("#racewayToolStatus"))
+                warning_preview_kinds = page.evaluate(
+                    """() => window.racewayViewerOverlay.layer.group.children
+                        .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))
+                        .filter(Boolean)
+                    """
+                )
+                self.assertIn("warning-segment-highlight", warning_preview_kinds)
                 page.click('[data-raceway-action="open-schedule-csv"]')
                 self.assertEqual(
                     page.evaluate("() => window.__racewayOpenedUrls.at(-1)"),

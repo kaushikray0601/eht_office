@@ -1,14 +1,20 @@
-import math
 from dataclasses import dataclass, field
 
+from .geometry import (
+    MIN_SEGMENT_LENGTH_M,
+    PLAN_BEND_COSINE_LIMIT,
+    distance,
+    interpolate,
+    is_plan_bend,
+    point_from_node,
+    point_to_segment_distance,
+)
 from .models import RacewayLayer, RacewayRun
 
 
 GRAPH_NODE_TOLERANCE_M = 0.01
 NEAR_MISS_ENDPOINT_RADIUS_M = 0.25
 RISER_ELEVATION_DELTA_M = 0.001
-PLAN_BEND_COSINE_LIMIT = 0.996
-MIN_SEGMENT_LENGTH_M = 0.000001
 
 
 @dataclass
@@ -193,17 +199,9 @@ def _member_from_node(run, node, ordered_nodes, index):
         sequence=node.sequence,
         persisted_kind=node.node_kind,
         derived_kind=_derived_node_kind(ordered_nodes, index),
-        source_point_m=_point_from_node(node),
+        source_point_m=point_from_node(node),
         anchor=dict(node.anchor or {}),
     )
-
-
-def _point_from_node(node):
-    return {
-        "x": float(node.source_x_m),
-        "y": float(node.source_y_m),
-        "z": float(node.source_z_m),
-    }
 
 
 def _derived_node_kind(nodes, index):
@@ -217,22 +215,9 @@ def _derived_node_kind(nodes, index):
         or abs(float(next_node.source_z_m) - float(node.source_z_m)) > RISER_ELEVATION_DELTA_M
     ):
         return "riser"
-    if _is_plan_bend(previous_node, node, next_node):
+    if is_plan_bend(previous_node, node, next_node):
         return "bend"
     return "intermediate"
-
-
-def _is_plan_bend(previous_node, node, next_node):
-    in_x = float(node.source_x_m) - float(previous_node.source_x_m)
-    in_y = float(node.source_y_m) - float(previous_node.source_y_m)
-    out_x = float(next_node.source_x_m) - float(node.source_x_m)
-    out_y = float(next_node.source_y_m) - float(node.source_y_m)
-    in_plan = math.hypot(in_x, in_y)
-    out_plan = math.hypot(out_x, out_y)
-    if in_plan < MIN_SEGMENT_LENGTH_M or out_plan < MIN_SEGMENT_LENGTH_M:
-        return False
-    cosine = ((in_x * out_x) + (in_y * out_y)) / (in_plan * out_plan)
-    return cosine < PLAN_BEND_COSINE_LIMIT
 
 
 def _cluster_members(members, member_to_graph_key, tolerance_m):
@@ -252,7 +237,7 @@ def _cluster_members(members, member_to_graph_key, tolerance_m):
 
     for left_index, left_member in enumerate(members):
         for right_index in range(left_index + 1, len(members)):
-            if _distance(left_member.source_point_m, members[right_index].source_point_m) <= tolerance_m:
+            if distance(left_member.source_point_m, members[right_index].source_point_m) <= tolerance_m:
                 union(left_index, right_index)
 
     clusters = {}
@@ -332,7 +317,7 @@ def _build_edges(runs, run_members, member_to_graph_key, tolerance_m):
                     end_sequence=end_member.sequence,
                     start_point_m=start_member.source_point_m,
                     end_point_m=end_member.source_point_m,
-                    length_m=_distance(start_member.source_point_m, end_member.source_point_m),
+                    length_m=distance(start_member.source_point_m, end_member.source_point_m),
                     dz_m=dz,
                     is_riser=abs(dz) > RISER_ELEVATION_DELTA_M,
                 )
@@ -378,8 +363,8 @@ def _unconnected_crossing_warnings(graph_nodes, graph_edges, tolerance_m):
             if intersection is None:
                 continue
             x, y, left_t, right_t = intersection
-            left_z = _interpolate(left_edge.start_point_m["z"], left_edge.end_point_m["z"], left_t)
-            right_z = _interpolate(right_edge.start_point_m["z"], right_edge.end_point_m["z"], right_t)
+            left_z = interpolate(left_edge.start_point_m["z"], left_edge.end_point_m["z"], left_t)
+            right_z = interpolate(right_edge.start_point_m["z"], right_edge.end_point_m["z"], right_t)
             if abs(left_z - right_z) > tolerance_m:
                 continue
             source_point = {"x": x, "y": y, "z": (left_z + right_z) / 2}
@@ -455,8 +440,8 @@ def _closest_near_miss_candidate(node, endpoint_member, graph_nodes, graph_edges
         target_member = _first_member_from_other_run(target_node.members, endpoint_member.run_id)
         if not target_member:
             continue
-        distance = _distance(node.source_point_m, target_node.source_point_m)
-        if tolerance_m < distance <= near_miss_radius_m:
+        gap = distance(node.source_point_m, target_node.source_point_m)
+        if tolerance_m < gap <= near_miss_radius_m:
             candidates.append(
                 {
                     "target_kind": "node",
@@ -465,14 +450,14 @@ def _closest_near_miss_candidate(node, endpoint_member, graph_nodes, graph_edges
                     "target_run_key": target_member.run_key,
                     "target_run_tag": target_member.run_tag,
                     "target_point_m": target_node.source_point_m,
-                    "distance_m": distance,
+                    "distance_m": gap,
                 }
             )
     for edge in graph_edges:
         if edge.run_id == endpoint_member.run_id:
             continue
-        distance, target_point = _point_to_segment_distance(node.source_point_m, edge.start_point_m, edge.end_point_m)
-        if tolerance_m < distance <= near_miss_radius_m:
+        gap, target_point = point_to_segment_distance(node.source_point_m, edge.start_point_m, edge.end_point_m)
+        if tolerance_m < gap <= near_miss_radius_m:
             candidates.append(
                 {
                     "target_kind": "edge",
@@ -481,7 +466,7 @@ def _closest_near_miss_candidate(node, endpoint_member, graph_nodes, graph_edges
                     "target_run_key": edge.run_key,
                     "target_run_tag": edge.run_tag,
                     "target_point_m": target_point,
-                    "distance_m": distance,
+                    "distance_m": gap,
                 }
             )
     if not candidates:
@@ -523,46 +508,12 @@ def _plan_intersection(left_edge, right_edge):
     if not (0 < left_t < 1 and 0 < right_t < 1):
         return None
     return (
-        _interpolate(left_start["x"], left_end["x"], left_t),
-        _interpolate(left_start["y"], left_end["y"], left_t),
+        interpolate(left_start["x"], left_end["x"], left_t),
+        interpolate(left_start["y"], left_end["y"], left_t),
         left_t,
         right_t,
     )
 
 
 def _point_matches_graph_node(graph_nodes, point, tolerance_m):
-    return any(_distance(node.source_point_m, point) <= tolerance_m for node in graph_nodes)
-
-
-def _interpolate(start, end, ratio):
-    return start + (end - start) * ratio
-
-
-def _point_to_segment_distance(point, start, end):
-    vector = {
-        "x": end["x"] - start["x"],
-        "y": end["y"] - start["y"],
-        "z": end["z"] - start["z"],
-    }
-    length_sq = (vector["x"] * vector["x"]) + (vector["y"] * vector["y"]) + (vector["z"] * vector["z"])
-    if length_sq < MIN_SEGMENT_LENGTH_M:
-        return _distance(point, start), dict(start)
-    ratio = (
-        ((point["x"] - start["x"]) * vector["x"])
-        + ((point["y"] - start["y"]) * vector["y"])
-        + ((point["z"] - start["z"]) * vector["z"])
-    ) / length_sq
-    ratio = max(0.0, min(1.0, ratio))
-    target_point = {
-        "x": _interpolate(start["x"], end["x"], ratio),
-        "y": _interpolate(start["y"], end["y"], ratio),
-        "z": _interpolate(start["z"], end["z"], ratio),
-    }
-    return _distance(point, target_point), target_point
-
-
-def _distance(left, right):
-    dx = left["x"] - right["x"]
-    dy = left["y"] - right["y"]
-    dz = left["z"] - right["z"]
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+    return any(distance(node.source_point_m, point) <= tolerance_m for node in graph_nodes)

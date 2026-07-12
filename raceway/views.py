@@ -12,6 +12,7 @@ from plant3d.access import render_packages_for_user, source_models_for_user
 from plant3d.overlay import validate_overlay_anchor
 
 from .access import require_project_access
+from .fittings import build_layer_fitting_projection
 from .graph import build_layer_graph
 from .models import RacewayFamily, RacewayLayer, RacewayNode, RacewayRun, RacewaySize
 from .schedule import build_layer_schedule
@@ -163,6 +164,9 @@ def _layer_payload(layer):
         "updated_at": layer.updated_at.isoformat() if layer.updated_at else "",
         "url": reverse("raceway:layer_detail", args=[layer.pk]),
         "runs_url": reverse("raceway:layer_runs", args=[layer.pk]),
+        "graph_url": reverse("raceway:layer_graph", args=[layer.pk]),
+        "schedule_url": reverse("raceway:layer_schedule", args=[layer.pk]),
+        "fittings_url": reverse("raceway:layer_fittings", args=[layer.pk]),
     }
 
 
@@ -406,6 +410,14 @@ def layer_schedule_view(request, layer_id):
     if layer is None:
         return _error_response("Raceway layer was not found.", status=404)
     return JsonResponse({"layer": _layer_payload(layer), "schedule": build_layer_schedule(layer)})
+
+
+@require_http_methods(["GET"])
+def layer_fittings_view(request, layer_id):
+    layer = _layer_for_user(request.user, layer_id)
+    if layer is None:
+        return _error_response("Raceway layer was not found.", status=404)
+    return JsonResponse({"layer": _layer_payload(layer), "fittings": build_layer_fitting_projection(layer)})
 
 
 @require_http_methods(["GET"])

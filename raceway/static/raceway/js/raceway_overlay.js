@@ -87,6 +87,7 @@ const state = {
   segmentDirection: segmentDirections[0].id,
   segmentLengthM: 6,
   connectSource: null,
+  warningFocus: null,
 };
 
 const actionLabels = {
@@ -319,6 +320,11 @@ function graphWarnings() {
   return Array.isArray(warnings) ? warnings : [];
 }
 
+function scheduleWarnings() {
+  const warnings = state.scheduleProjection?.warnings;
+  return Array.isArray(warnings) ? warnings : [];
+}
+
 function allSizes() {
   return catalog.flatMap(family => family.sizes.map(size => ({ ...size, family })));
 }
@@ -378,6 +384,34 @@ function selectedNodeIsEndpoint(run = activeRun()) {
 function canConnectSelectedEndpoint(run = activeRun()) {
   const totalNodes = state.runs.reduce((count, item) => count + (item.nodes?.length || 0), 0);
   return selectedNodeIsEndpoint(run) && totalNodes > 1;
+}
+
+function runByKey(runKey) {
+  const key = String(runKey || '');
+  if (!key) return null;
+  return state.runs.find(run => String(run.key || '') === key) || null;
+}
+
+function warningTargetRun(warning) {
+  return runByKey(warning?.run_key || warning?.runKey || '');
+}
+
+function warningTargetNodeIndex(run, warning) {
+  if (!run) return -1;
+  const nodeKeys = Array.isArray(warning?.node_keys) ? warning.node_keys.map(String) : [];
+  for (let index = run.nodes.length - 1; index >= 0; index -= 1) {
+    if (nodeKeys.includes(String(run.nodes[index]?.key || ''))) return index;
+  }
+  const segmentIndex = Number(warning?.segment_index);
+  if (Number.isInteger(segmentIndex) && segmentIndex >= 0 && run.nodes.length) {
+    return Math.min(Math.max(segmentIndex, 0), run.nodes.length - 1);
+  }
+  return -1;
+}
+
+function highlightedSegment(run, segmentIndex) {
+  const focus = state.warningFocus;
+  return Boolean(focus && focus.runId === run.id && Number(focus.segmentIndex) === Number(segmentIndex));
 }
 
 function ensureElevationDefault() {
@@ -827,7 +861,7 @@ function recordVisibleWarningTelemetry(action = 'shown', options = {}) {
     run_key: run?.key || warning.run_key || '',
     run_tag: run?.tag || warning.run_tag || '',
   }));
-  recordWarningTelemetry([...localWarnings, ...graphWarnings()], action, options);
+  recordWarningTelemetry([...localWarnings, ...graphWarnings(), ...scheduleWarnings()], action, options);
 }
 
 function recordOrthoTelemetry(run, previousPoint, rawPoint, adjustedPoint) {
@@ -1193,6 +1227,17 @@ function addRiserPlaceholder(group, run, start, end, material) {
   ], material, 'riser-placeholder');
 }
 
+function addWarningSegmentHighlight(group, run, start, end) {
+  const material = previewMaterial(0xdc2626, 1);
+  const line = addSourceLine(group, [start, end], material, 'warning-segment-highlight');
+  if (line) {
+    line.userData.racewayRunId = run.id;
+    line.renderOrder = 42;
+  }
+  addBendPlaceholder(group, run, start, material);
+  addBendPlaceholder(group, run, end, material);
+}
+
 function addNodeHandle(group, run, node, index, color) {
   const renderPoint = renderSourcePoint(node);
   if (!renderPoint) return;
@@ -1395,6 +1440,9 @@ function renderTrayPreview(group, run, color) {
   for (let index = 1; index < run.nodes.length; index += 1) {
     addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial);
     addRiserPlaceholder(group, run, run.nodes[index - 1], run.nodes[index], previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
+    if (highlightedSegment(run, index)) {
+      addWarningSegmentHighlight(group, run, run.nodes[index - 1], run.nodes[index]);
+    }
   }
   for (let index = 1; index < run.nodes.length - 1; index += 1) {
     addBendPlaceholder(group, run, run.nodes[index], previewMaterial(0xf97316, selected ? 0.95 : 0.65));
@@ -1800,6 +1848,7 @@ async function loadScheduleProjection(options = {}) {
     const payload = await apiFetch(url);
     state.scheduleProjection = payload.schedule || null;
     state.scheduleLoaded = true;
+    recordWarningTelemetry(scheduleWarnings(), 'shown');
     if (!options.quiet) {
       const totals = state.scheduleProjection?.totals || {};
       setStatus(`Raceway schedule refreshed: ${formatM(totals.length_m)} m, ${totals.piece_count_estimate || 0} piece(s).`);
@@ -2101,9 +2150,9 @@ async function saveDrafts() {
     state.contextKey = contextKey(context);
     clearHistory();
     await loadGraphProjection({ quiet: true });
+    if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
     recordVisibleWarningTelemetry('unresolved_at_save', { actionDetail: { trigger: 'save' } });
     flushTelemetryEvents();
-    if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
     setStatus(`${savedCount} raceway run(s) saved to server.`);
     renderRaceway();
   } catch (error) {
@@ -2143,7 +2192,10 @@ function injectStyles() {
     .raceway-schedule-row { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid #e2e8f0; padding-top: 4px; margin-top: 4px; }
     .raceway-schedule-warning { color: #92400e; }
     .raceway-warning-list { display: grid; gap: 5px; margin-top: 8px; }
-    .raceway-validation-warning { border-left: 3px solid #ca8a04; padding-left: 7px; color: #713f12; font-size: 11px; line-height: 1.35; }
+    .raceway-validation-warning { border: 0; border-left: 3px solid #ca8a04; background: transparent; padding: 0 0 0 7px; color: #713f12; font: inherit; font-size: 11px; line-height: 1.35; text-align: left; }
+    button.raceway-validation-warning { cursor: pointer; }
+    button.raceway-validation-warning:hover { background: rgba(202, 138, 4, 0.08); }
+    .raceway-warning-active { background: rgba(220, 38, 38, 0.1); border-left-color: #dc2626; color: #7f1d1d; }
     .raceway-warning-info { border-left-color: #2563eb; color: #1e3a8a; }
     #racewayToolSection button:disabled { cursor: not-allowed; opacity: 0.55; }
     .raceway-node-editor { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
@@ -2197,6 +2249,10 @@ function warningClass(warning) {
   return warning?.severity === 'info' ? 'raceway-warning-info' : 'raceway-warning-warning';
 }
 
+function warningFocusClass(index) {
+  return state.warningFocus?.warningIndex === index ? ' raceway-warning-active' : '';
+}
+
 function localWarningLabel(warning) {
   return warning?.message || warning?.code || 'Raceway warning.';
 }
@@ -2219,6 +2275,14 @@ function validationWarningLabel(warning) {
   }
   if (warning?.code === 'raceway.warning.support_span_placeholder_basis') {
     return warning.message || 'Support quantities are placeholder basis only.';
+  }
+  if (warning?.code === 'raceway.warning.model_clash_aabb') {
+    const label = warning?.values?.object_label || warning?.values?.object_stable_id || 'Plant3D object';
+    return `Raceway rough envelope overlaps ${label}.`;
+  }
+  if (warning?.code === 'raceway.warning.model_clearance_aabb') {
+    const label = warning?.values?.object_label || warning?.values?.object_stable_id || 'Plant3D object';
+    return `Raceway rough envelope is close to ${label}.`;
   }
   return warning?.message || warning?.code || 'Raceway validation notice.';
 }
@@ -2245,11 +2309,18 @@ function scheduleWarningRowsHtml(schedule) {
   if (!warnings.length) return '';
   return `
     <div class="raceway-warning-list">
-      ${warnings.slice(0, 4).map(warning => `
-        <div class="raceway-validation-warning ${warningClass(warning)}">
-          ${escapeHtml(validationWarningLabel(warning))}
-        </div>
-      `).join('')}
+      ${warnings.slice(0, 4).map((warning, index) => {
+        const label = escapeHtml(validationWarningLabel(warning));
+        const className = `raceway-validation-warning ${warningClass(warning)}${warningFocusClass(index)}`;
+        if (!warningTargetRun(warning)) {
+          return `<div class="${className}">${label}</div>`;
+        }
+        return `
+          <button type="button" class="${className}" data-raceway-action="select-warning" data-warning-index="${index}" title="Select affected raceway segment">
+            ${label}
+          </button>
+        `;
+      }).join('')}
       ${warnings.length > 4 ? `<div class="meta">+${warnings.length - 4} more validation notice(s) in JSON/CSV</div>` : ''}
     </div>
   `;
@@ -2486,6 +2557,31 @@ function renderPanel(options = {}) {
   updateActionStates(run);
 }
 
+function selectScheduleWarning(index) {
+  const warningIndex = Number(index);
+  const warning = scheduleWarnings()[warningIndex];
+  const run = warningTargetRun(warning);
+  if (!warning || !run) {
+    setStatus('This schedule warning is not tied to a saved raceway run.');
+    return false;
+  }
+  const segmentIndex = Number(warning.segment_index);
+  state.activeRunId = run.id;
+  state.selectedNodeIndex = warningTargetNodeIndex(run, warning);
+  state.warningFocus = {
+    warningIndex,
+    runId: run.id,
+    segmentIndex: Number.isInteger(segmentIndex) ? segmentIndex : null,
+    code: warning.code || '',
+  };
+  syncPaletteFromRun(run);
+  activateNodeSelectionMode(run);
+  setStatus(`${run.tag}: selected from ${warning.code || 'schedule warning'}.`);
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
 function runPanelAction(action, button = null) {
   if (action === 'start') beginRun();
   if (action === 'continue-run') continueRun();
@@ -2531,6 +2627,7 @@ function runPanelAction(action, button = null) {
   if (action === 'select-run') {
     state.activeRunId = button?.dataset.runId || '';
     state.selectedNodeIndex = -1;
+    state.warningFocus = null;
     syncPaletteFromRun(activeRun());
     activateNodeSelectionMode(activeRun());
     renderRaceway();
@@ -2538,9 +2635,13 @@ function runPanelAction(action, button = null) {
   }
   if (action === 'select-node') {
     state.selectedNodeIndex = Number(button?.dataset.nodeIndex);
+    state.warningFocus = null;
     activateNodeSelectionMode(activeRun());
     renderRaceway();
     renderPanel();
+  }
+  if (action === 'select-warning') {
+    selectScheduleWarning(button?.dataset.warningIndex);
   }
   return true;
 }
@@ -2643,11 +2744,47 @@ function isTypingTarget(target) {
   return Boolean(target?.closest?.('input, textarea, select, [contenteditable="true"]'));
 }
 
-function racewayShortcutContextActive(key, options = {}) {
-  if (!panel?.open) return false;
+function racewayShortcutActionForEvent(event, key) {
+  if (event.ctrlKey || event.metaKey) {
+    if (event.altKey) return '';
+    if (key === 'z') return event.shiftKey ? 'redo' : 'undo';
+    if (key === 'y') return 'redo';
+    if (key === 's') return 'save';
+    return '';
+  }
+  if (event.altKey) return '';
+  if (key === 'escape') return 'cancel';
+  if (key === 'delete' || key === 'backspace') return event.shiftKey ? 'delete-run' : 'delete-node';
+  if (key === 's' && !event.shiftKey) return 'start';
+  if (key === 'c' && !event.shiftKey) return 'continue-run';
+  if (key === 'f' && !event.shiftKey) return 'finish';
+  if (key === 'n' && !event.shiftKey) return 'select-node-mode';
+  if (key === 'm' && !event.shiftKey) return 'move-node';
+  if (key === 'j' && !event.shiftKey) return 'connect-node';
+  if (key === 'o' && !event.shiftKey) return 'toggle-ortho';
+  if (key === 'v' && event.shiftKey) return 'toggle-surfaces';
+  if (key === 'a') return event.shiftKey ? 'clear-anchor' : 'anchor-node';
+  if (key === 'b') return event.shiftKey ? 'open-schedule-csv' : 'refresh-schedule';
+  if (key === 'r' && !event.shiftKey) return 'reload';
+  if (key === 'g' && !event.shiftKey) return 'refresh-graph';
+  return '';
+}
+
+function racewayShortcutAvailableForAction(action) {
+  if (!panel?.open || !action) return false;
   if (panel.contains(document.activeElement)) return true;
   if (state.mode !== 'idle') return true;
-  return Boolean(options.allowIdleStart && key === 's');
+  const run = activeRun();
+  if (run) return true;
+  if (action === 'start') return true;
+  if (action === 'toggle-ortho' || action === 'toggle-surfaces' || action === 'reload') return true;
+  if (action === 'save') return state.runs.some(item => item.nodes.length >= 2);
+  if (action === 'undo') return state.undoStack.length > 0;
+  if (action === 'redo') return state.redoStack.length > 0;
+  if (action === 'refresh-graph' || action === 'refresh-schedule' || action === 'open-schedule-csv') {
+    return Boolean(state.layerId);
+  }
+  return false;
 }
 
 function handleRacewayKeyboardShortcut(event) {
@@ -2655,25 +2792,11 @@ function handleRacewayKeyboardShortcut(event) {
   const key = String(event.key || '').toLowerCase();
   const ctrlLike = event.ctrlKey || event.metaKey;
   const typingOutsideRaceway = isTypingTarget(event.target) && !panel?.contains(event.target);
-  if (ctrlLike && !event.altKey && key === 'z') {
-    if (typingOutsideRaceway) return;
-    if (!racewayShortcutContextActive(key)) return;
+  if (ctrlLike) {
+    const action = racewayShortcutActionForEvent(event, key);
+    if (!action || typingOutsideRaceway || !racewayShortcutAvailableForAction(action)) return;
     event.preventDefault();
-    triggerRacewayAction(event.shiftKey ? 'redo' : 'undo');
-    return;
-  }
-  if (ctrlLike && !event.altKey && key === 'y') {
-    if (typingOutsideRaceway) return;
-    if (!racewayShortcutContextActive(key)) return;
-    event.preventDefault();
-    triggerRacewayAction('redo');
-    return;
-  }
-  if (ctrlLike && !event.altKey && key === 's') {
-    if (typingOutsideRaceway) return;
-    if (!racewayShortcutContextActive(key)) return;
-    event.preventDefault();
-    triggerRacewayAction('save');
+    triggerRacewayAction(action);
     return;
   }
   if (!ctrlLike && !event.altKey && key === 'enter' && panel?.contains(event.target)) {
@@ -2684,24 +2807,9 @@ function handleRacewayKeyboardShortcut(event) {
     }
   }
   if (isTypingTarget(event.target)) return;
-  if (ctrlLike || event.altKey) return;
-  if (!racewayShortcutContextActive(key, { allowIdleStart: true })) return;
-  let action = '';
-  if (key === 'escape') action = 'cancel';
-  if (key === 'delete' || key === 'backspace') action = event.shiftKey ? 'delete-run' : 'delete-node';
-  if (key === 's' && !event.shiftKey) action = 'start';
-  if (key === 'c' && !event.shiftKey) action = 'continue-run';
-  if (key === 'f' && !event.shiftKey) action = 'finish';
-  if (key === 'n' && !event.shiftKey) action = 'select-node-mode';
-  if (key === 'm' && !event.shiftKey) action = 'move-node';
-  if (key === 'j' && !event.shiftKey) action = 'connect-node';
-  if (key === 'o' && !event.shiftKey) action = 'toggle-ortho';
-  if (key === 'v' && event.shiftKey) action = 'toggle-surfaces';
-  if (key === 'a') action = event.shiftKey ? 'clear-anchor' : 'anchor-node';
-  if (key === 'b') action = event.shiftKey ? 'open-schedule-csv' : 'refresh-schedule';
-  if (key === 'r' && !event.shiftKey) action = 'reload';
-  if (key === 'g' && !event.shiftKey) action = 'refresh-graph';
-  if (!action) return;
+  if (event.altKey) return;
+  const action = racewayShortcutActionForEvent(event, key);
+  if (!racewayShortcutAvailableForAction(action)) return;
   event.preventDefault();
   triggerRacewayAction(action);
 }

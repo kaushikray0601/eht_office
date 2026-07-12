@@ -1,9 +1,19 @@
-import math
 from collections import defaultdict
 
-from .graph import (
+from plant3d.overlay import model_object_bounds_for_source
+
+from .geometry import (
     MIN_SEGMENT_LENGTH_M,
-    PLAN_BEND_COSINE_LIMIT,
+    bounds_center,
+    bounds_from_points,
+    bounds_gap,
+    bounds_intersect,
+    distance,
+    normalize_bounds,
+    plan_bend_angle_deg,
+    point_from_node,
+)
+from .graph import (
     build_layer_graph,
 )
 from .models import RacewayLayer, RacewayRun
@@ -13,6 +23,14 @@ SHORT_SEGMENT_WARNING_M = 0.05
 EXCESSIVE_BEND_COUNT_WARNING = 8
 SUPPORT_SPAN_PLACEHOLDER_M = 3.0
 BEND_MIN_ANGLE_DEG = 5.0
+MODEL_CLASH_CLEARANCE_M = 0.10
+MODEL_CLASH_WARNING_LIMIT = 25
+MODEL_OBJECT_SCAN_LIMIT = 2000
+SEVERITY_ORDER = {
+    "error": 0,
+    "warning": 1,
+    "info": 2,
+}
 
 
 def build_layer_warnings(
@@ -55,6 +73,19 @@ def build_layer_warnings(
             )
         )
 
+    model_objects, model_scan_limited = _model_objects_for_layer(layer_obj, runs)
+    if model_scan_limited:
+        warnings.append(
+            _warning(
+                "raceway.warning.model_clash_scan_limited",
+                "warning",
+                "Only part of the Plant3D object-bounds index was scanned; rough clash warnings may be incomplete.",
+                source="model_envelope",
+                object_type="layer",
+                layer_id=layer_obj.pk,
+                values={"scan_limit": MODEL_OBJECT_SCAN_LIMIT},
+            )
+        )
     has_measurable_route = False
     for run in runs:
         nodes = sorted(run.nodes.all(), key=lambda node: (node.sequence, node.pk))
@@ -96,7 +127,7 @@ def build_layer_warnings(
         for index in range(1, len(nodes)):
             start_node = nodes[index - 1]
             end_node = nodes[index]
-            length_m = _distance(_point_from_node(start_node), _point_from_node(end_node))
+            length_m = distance(point_from_node(start_node), point_from_node(end_node))
             has_measurable_route = has_measurable_route or length_m > MIN_SEGMENT_LENGTH_M
             if MIN_SEGMENT_LENGTH_M < length_m < short_segment_m:
                 warnings.append(
@@ -110,11 +141,24 @@ def build_layer_warnings(
                         run=run,
                         node_keys=[str(start_node.key), str(end_node.key)],
                         segment_index=index,
-                        source_point_m=_point_from_node(end_node),
+                        source_point_m=point_from_node(end_node),
                         values={
                             "length_m": length_m,
                             "threshold_m": short_segment_m,
                         },
+                    )
+                )
+        if model_objects:
+            remaining = max(MODEL_CLASH_WARNING_LIMIT - _model_warning_count(warnings), 0)
+            if remaining > 0:
+                warnings.extend(
+                    _model_clash_warnings(
+                        run,
+                        nodes,
+                        model_objects,
+                        layer_id=layer_obj.pk,
+                        warning_limit=remaining,
+                        clearance_m=MODEL_CLASH_CLEARANCE_M,
                     )
                 )
 
@@ -134,7 +178,7 @@ def build_layer_warnings(
     return sorted(
         warnings,
         key=lambda warning: (
-            warning.get("severity", ""),
+            SEVERITY_ORDER.get(warning.get("severity"), 9),
             warning.get("code", ""),
             warning.get("run_tag", ""),
             warning.get("segment_index") or 0,
@@ -299,38 +343,165 @@ def _warning(
 def _plan_bend_count(nodes):
     count = 0
     for index in range(1, len(nodes) - 1):
-        angle_deg = _plan_bend_angle_deg(nodes[index - 1], nodes[index], nodes[index + 1])
+        angle_deg = plan_bend_angle_deg(nodes[index - 1], nodes[index], nodes[index + 1])
         if angle_deg is not None and angle_deg >= BEND_MIN_ANGLE_DEG:
             count += 1
     return count
 
 
-def _plan_bend_angle_deg(previous_node, node, next_node):
-    in_x = float(node.source_x_m) - float(previous_node.source_x_m)
-    in_y = float(node.source_y_m) - float(previous_node.source_y_m)
-    out_x = float(next_node.source_x_m) - float(node.source_x_m)
-    out_y = float(next_node.source_y_m) - float(node.source_y_m)
-    in_plan = math.hypot(in_x, in_y)
-    out_plan = math.hypot(out_x, out_y)
-    if in_plan < MIN_SEGMENT_LENGTH_M or out_plan < MIN_SEGMENT_LENGTH_M:
-        return None
-    cosine = ((in_x * out_x) + (in_y * out_y)) / (in_plan * out_plan)
-    cosine = max(-1.0, min(1.0, cosine))
-    if cosine >= PLAN_BEND_COSINE_LIMIT:
-        return None
-    return math.degrees(math.acos(cosine))
+def _model_objects_for_layer(layer, runs):
+    if layer.source_model_id is None:
+        return [], False
+    payload = model_object_bounds_for_source(
+        layer.source_model_id,
+        render_package_id=layer.render_package_id,
+        bounds_filter=_layer_envelope_bounds(runs),
+        limit=MODEL_OBJECT_SCAN_LIMIT,
+    )
+    return payload["objects"], bool(payload["limited"])
 
 
-def _distance(start, end):
-    dx = end["x"] - start["x"]
-    dy = end["y"] - start["y"]
-    dz = end["z"] - start["z"]
-    return math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+def _layer_envelope_bounds(runs):
+    layer_bounds = None
+    for run in runs:
+        nodes = sorted(run.nodes.all(), key=lambda node: (node.sequence, node.pk))
+        for index in range(1, len(nodes)):
+            segment_bounds = _segment_envelope_bounds(
+                run,
+                nodes[index - 1],
+                nodes[index],
+                clearance_m=MODEL_CLASH_CLEARANCE_M,
+            )
+            layer_bounds = _bounds_union(layer_bounds, segment_bounds)
+    return layer_bounds
 
 
-def _point_from_node(node):
+def _bounds_union(left, right):
+    left_bounds = normalize_bounds(left)
+    right_bounds = normalize_bounds(right)
+    if left_bounds is None:
+        return right_bounds
+    if right_bounds is None:
+        return left_bounds
     return {
-        "x": float(node.source_x_m),
-        "y": float(node.source_y_m),
-        "z": float(node.source_z_m),
+        "min_x": min(left_bounds["min_x"], right_bounds["min_x"]),
+        "max_x": max(left_bounds["max_x"], right_bounds["max_x"]),
+        "min_y": min(left_bounds["min_y"], right_bounds["min_y"]),
+        "max_y": max(left_bounds["max_y"], right_bounds["max_y"]),
+        "min_z": min(left_bounds["min_z"], right_bounds["min_z"]),
+        "max_z": max(left_bounds["max_z"], right_bounds["max_z"]),
     }
+
+
+def _model_clash_warnings(run, nodes, model_objects, *, layer_id, warning_limit, clearance_m):
+    warnings = []
+    for index in range(1, len(nodes)):
+        start_node = nodes[index - 1]
+        end_node = nodes[index]
+        raceway_bounds = _segment_envelope_bounds(run, start_node, end_node, clearance_m=0.0)
+        if raceway_bounds is None:
+            continue
+        clearance_bounds = _segment_envelope_bounds(run, start_node, end_node, clearance_m=clearance_m)
+        if clearance_bounds is None:
+            continue
+        segment_candidates = []
+        for model_object in model_objects:
+            object_bounds = model_object["bounds"]
+            if bounds_intersect(raceway_bounds, object_bounds):
+                segment_candidates.append((0, 0.0, model_object, object_bounds))
+                continue
+            if bounds_intersect(clearance_bounds, object_bounds):
+                gap_m = bounds_gap(raceway_bounds, object_bounds)
+                if gap_m is not None and gap_m <= clearance_m:
+                    segment_candidates.append((1, gap_m, model_object, object_bounds))
+        for category, gap_m, model_object, object_bounds in sorted(
+            segment_candidates,
+            key=lambda item: (item[0], round(item[1], 6), item[2]["stable_id"]),
+        ):
+            warnings.append(
+                _model_clash_warning(
+                    run,
+                    start_node,
+                    end_node,
+                    segment_index=index,
+                    layer_id=layer_id,
+                    model_object=model_object,
+                    object_bounds=object_bounds,
+                    raceway_bounds=raceway_bounds,
+                    gap_m=gap_m,
+                    is_clash=category == 0,
+                    clearance_m=clearance_m,
+                )
+            )
+            if len(warnings) >= warning_limit:
+                return warnings
+    return warnings
+
+
+def _segment_envelope_bounds(run, start_node, end_node, *, clearance_m):
+    start = point_from_node(start_node)
+    end = point_from_node(end_node)
+    if distance(start, end) < MIN_SEGMENT_LENGTH_M:
+        return None
+    width_m = max(float(run.size.width_mm or 0) / 1000.0, 0.0)
+    depth_m = max(float(run.size.depth_mm or 0) / 1000.0, 0.0)
+    envelope_margin_m = max(width_m / 2.0, depth_m) + max(float(clearance_m or 0.0), 0.0)
+    return bounds_from_points([start, end], margin_m=envelope_margin_m)
+
+
+def _model_clash_warning(
+    run,
+    start_node,
+    end_node,
+    *,
+    segment_index,
+    layer_id,
+    model_object,
+    object_bounds,
+    raceway_bounds,
+    gap_m,
+    is_clash,
+    clearance_m,
+):
+    code = "raceway.warning.model_clash_aabb" if is_clash else "raceway.warning.model_clearance_aabb"
+    message = (
+        "Raceway segment envelope overlaps a Plant3D object bounds box; review route or elevation."
+        if is_clash
+        else "Raceway segment envelope is within the rough clearance band of a Plant3D object bounds box."
+    )
+    return _warning(
+        code,
+        "warning",
+        message,
+        source="model_envelope",
+        object_type="segment",
+        layer_id=layer_id,
+        run=run,
+        node_keys=[str(start_node.key), str(end_node.key)],
+        segment_index=segment_index,
+        source_point_m=bounds_center(raceway_bounds),
+        values={
+            "method": "aabb",
+            "clearance_m": clearance_m,
+            "gap_m": gap_m,
+            "object_stable_id": model_object["stable_id"],
+            "object_source_object_id": model_object["source_object_id"],
+            "object_type": model_object["object_type"],
+            "object_label": (
+                model_object["tag"]
+                or model_object["line_id"]
+                or model_object["source_object_id"]
+                or model_object["stable_id"]
+            ),
+            "object_bounds": object_bounds,
+            "raceway_bounds": raceway_bounds,
+        },
+    )
+
+
+def _model_warning_count(warnings):
+    return sum(
+        1
+        for warning in warnings
+        if warning.get("code") in {"raceway.warning.model_clash_aabb", "raceway.warning.model_clearance_aabb"}
+    )

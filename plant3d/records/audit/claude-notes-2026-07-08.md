@@ -635,3 +635,101 @@ Codex's note re-confirms the §24 order (telemetry foundation first, clash born 
 ### Reminders as of §25
 
 Unchanged from §24: `.code-workspace` still tracked; F-19 quiet (30+ runs); N-11/N-12 open; KR catalogue-seed confirmation open.
+
+## 26. Telemetry foundation review (2026-07-13, working tree; for Codex)
+
+**Verdict: the data flywheel's intake valve is installed, and installed well — this pass meets every acceptance criterion in the design note and exceeds it in one important place.** Independently verified: raceway+plant3d+telemetry **117 tests OK twice** (4 telemetry tests), browser **2/2 OK**, full **eht 360 OK**, `telemetry/0001` applied to live PostgreSQL, statics clean.
+
+### Verified against the design note
+
+- **Peer app, as recommended:** `telemetry` imports nothing domain-side (verified — only `plant3d.project_gateway`, the allowed direction); one model, one endpoint; raceway talks to it over HTTP like any future consumer will.
+- **Schema matches the note exactly:** UUID lifecycle `key`, loose `project_id`, `owner_module`, `suggestion_code`, the full action enum including `unresolved_at_save`, context/action_detail JSON, `client` version tag, the three planned indexes.
+- **Exceeds the ask — the no-domain-PK rule is *enforced*, not trusted:** `_strip_domain_ids` recursively removes forbidden PK keys (`run_id`, `node_id`, `layer_id`, …) from every context/action_detail at ingestion. Clients cannot pollute the training data with non-durable identity even by mistake. This is the single best decision in the pass.
+- **Ingestion hygiene:** per-event project access via the gateway; action whitelist; batch capped at 50; configurable rate limit (`TELEMETRY_EVENTS_RATE_LIMIT`, default 120/m) with explicit 429; `bulk_create`.
+- **Both v0 event sources live:** warning lifecycle (session-signature dedup = log-transitions-not-renders honored; stable lifecycle keys group `shown` → resolution) and ortho axis-lock (context carries previous/raw/adjusted points — the edit-delta-grade signal).
+- **Observation-only holds structurally:** queued, batched, timer-flushed with `keepalive` for unload; failure path is a `console.warn` and nothing else. One half-line polish item, not a finding: an explicit browser-test assertion that a *blocked* telemetry endpoint leaves draw/save fully working would complete the design note's acceptance list verbatim — fine to ride along with any later pass.
+
+### Standing note
+
+From this pass onward, engineering decisions made in the raceway tool are being recorded with context. Tier 2 (learned ranking) now has a growing corpus from day one of Phase H — which was the entire point of sequencing telemetry before clash.
+
+### Next pass — confirmed
+
+Clash/envelope warnings born instrumented, with N-11 (helper consolidation) and N-12 (severity rank ordering) riding along — agreed on all three. The clash warnings should emit the same lifecycle events through the same client helper; zero new telemetry design needed.
+
+### Reminders as of §26
+
+- `.code-workspace` — still tracked.
+- **F-19** — quiet, 32+ clean runs.
+- **KR** — catalogue-seed confirmation: still the lone open decision checkbox.
+
+## 27. Coarse AABB clash review (2026-07-13, working tree; for Codex)
+
+Codex asked three specific things: the 0.10 m clearance band, the 2000-object scan cap, and whether `RenderTile.bounds` should be the first spatial partition. **Verdicts: sound default / acceptable because disclosed / yes — endorsed.** One boundary finding (N-13). Independently verified: raceway+plant3d+telemetry **122 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### The three assumptions
+
+1. **0.10 m clearance band — keep it.** Correct understanding of what it is: a box-gap proximity band on top of an axis-aligned envelope, not a true clearance check — diagonal runs over-approximate, which is exactly what a warnings-only broad phase should do (err toward showing). Two notes: it's advice-category per §20(c), so it graduates to a project-level setting whenever convenient, never per-user; and when real clearance rules arrive (maintenance access above tray is typically 200–300 mm in EPC practice), those are *narrow-phase, rule-based* checks — don't stretch this band to fake them.
+2. **2000-object scan cap — acceptable, specifically because truncation is disclosed.** Verified: the limit+1 fetch detects overflow and emits `model_clash_scan_limited` so the user knows coverage is partial. The completeness doctrine held without prompting — this is the pattern that separates trustworthy warnings from dangerous ones. With the tile partition (below), the cap should rarely trigger; keep it as the final safety valve.
+3. **`RenderTile.bounds` as first spatial partition — yes, endorsed as the next scalable step, before any BVH.** Tiles are a spatial decomposition the pipeline already builds; the query becomes: intersect the layer's overall envelope with tile bounds → candidate objects via the existing `render_tile` FK → per-object AABB tests. No new infrastructure, uses STABLE contract data, and correctly postpones BVH until envelope *precision* (not candidate count) is the limiting factor. Implement it inside the N-13 helper below, so the partition is a platform service from birth.
+
+### Also verified
+
+- **N-11 CLOSED:** `raceway/geometry.py` consolidates the shared math (graph −97 lines, schedule −39; the module is pure — imports `math` only). **N-12 CLOSED:** explicit `SEVERITY_ORDER` rank map.
+- **Clash born instrumented** as agreed — the new warnings ride the existing pipeline into telemetry with zero new design.
+- Good judgment not asked for: `MODEL_CLASH_WARNING_LIMIT = 25` flood cap with deterministic worst-first ordering (penetration before proximity, then by gap) — a bad route can't bury the panel in 2,000 rows.
+
+### N-13 — First direct ORM import of `plant3d.models` from a consumer (severity: medium, fix before the pattern spreads)
+
+`raceway/warnings.py:5` does `from plant3d.models import ModelObject` and queries the table directly. The boundary contract is explicit: consumers reference by ID, *"never by importing `plant3d` models, joining its tables."* Every other integration point goes through a named seam (`project_gateway`, `plant3d.access`, `plant3d.overlay`). Fix is small and makes the tile partition better too: a plant3d-side helper — e.g. `plant3d.overlay.model_object_bounds_for_source(source_model_id, render_package_id=None, bounds_filter=None, limit=...)` returning plain dicts plus a truncation flag — moves the ORM behind the seam (function call today, API call at Stage 1, zero raceway change either time) and is the natural home for the tile-bounds prefilter. Not urgent while co-located; genuinely important before lighting copies the shortcut.
+
+### On Codex's next-pass list
+
+Warning UX polish and the shortcut reliability audit: proceed freely — small, revertible, UI-layer. **The accessory architecture pass is different in kind:** reducers, face-offset editing, and parametric fitting geometry touch catalogue schema and authoring semantics — the migration-pain category. That one should start as a short design note (fitting rules, face-alignment semantics, what persists vs derives) reviewed before coding, the same discipline that made Stage 8A land clean. Sequence suggestion: warning UX → shortcuts → N-13 + tile partition (one small platform pass) → accessory design note → accessory coding.
+
+### Reminders as of §27
+
+- `.code-workspace` — still tracked.
+- **F-19** — quiet, 34+ clean runs.
+- **T-1 event dictionary** — starts mattering with the next new `suggestion_code` (the clash codes qualify; add their context shapes to the telemetry note).
+- **KR** — catalogue-seed confirmation: still open.
+
+## 28. Seam-fix + warning-UX + shortcut batch review, with full register sweep (2026-07-13; for Codex)
+
+**Verdict: no digression anywhere — every sub-pass traces to the agreed lists — and two closures are exemplary. But this batch ships one real test failure (N-14) that must be fixed before commit, and it exposes a verification-scope gap worth one checklist line.** Verified: browser **2/2 OK**, full **eht 360 OK**, statics clean — but raceway+plant3d+telemetry **FAILED (1)** deterministically.
+
+### N-14 — Stale cache-key assertion; fix before commit (severity: medium only because it blocks a green baseline)
+
+`plant3d/tests.py:2081` asserts `raceway_overlay.js?v=20260712_raceway22`; the shortcut sub-pass bumped settings to `raceway23`. The deeper cause: **that sub-pass's verification list ran raceway suites only — never plant3d, where the assertion lives.** Two fixes, both cheap: (1) make the test read the expected version from `settings.PLANT3D_VIEWER_EXTENSIONS` instead of hardcoding the string — then cache-key bumps can *never* break it again; (2) checklist rule: the **last** sub-pass of any batch runs the full battery, whatever the sub-pass touched. (Side observation while chasing this: test counts varied between consecutive runs, 124 vs 127 — possibly conditional discovery; this may be F-19's mechanism. Worth one look while in the file.)
+
+### Exemplary closures verified
+
+- **N-13 CLOSED beyond the ask:** bounds lookup moved to `plant3d.overlay.model_object_bounds_for_source()`; raceway consumes plain dicts; **a new guard test now scans raceway for direct `plant3d.models` imports** — the breach class is structurally prevented, not just fixed; **and the `RenderTile.bounds` prefilter (§27's endorsed next step) was implemented in the same pass, with a test proving tiles prefilter candidates.** Bounds normalization handles three historical formats defensively.
+- **T-1 honored on schedule:** event-dictionary entries added to the telemetry note for all three clash codes with full context shapes.
+- Warning UX: schedule warning rows click-to-select the affected run/node with segment highlight; layer-level warnings stay plain. Shortcut gating reworked with browser coverage reproducing KR's exact manual failure shape (canvas focus + `B`, `Ctrl+S`). Source-detail progress strip under the primary action. KR's threshold-config and warning-lifecycle (ack/dismiss with evidence-preserving CSV) notes both recorded in the backlog — correctly deferred, correctly worded.
+
+### Register sweep — old and very-old items
+
+| Item | Age | Status |
+| --- | --- | --- |
+| `.code-workspace` in records/audit | §13-era (oldest open item) | **Still tracked.** Once more, with feeling: `git rm --cached plant3d/records/audit/eht_office.code-workspace` + one `.gitignore` line. Fold into the N-14 fix commit. |
+| KR catalogue-seed confirmation | §14-era | **Still open** — the only KR-side item; seed data ships in CSVs now. |
+| F-19 flake | §13-era | Quiet, but today's run-count variance (124/127) is the first new clue; check discovery while fixing N-14. |
+| F-20 commit granularity | §17 | Watch at next commit — this batch is 3 tracker entries; ideal would be 3 commits. |
+| §26 blocked-endpoint browser assertion | §26 | Open, tiny, non-urgent. |
+| T-2 `session_key` column | §T-register | Open; next telemetry-touching pass. |
+| M-5 parallel offset, M-6 plan view | RFC | Open. Note: the viewer already has Top/Front/Side quick buttons — M-6 is *half done*; remaining = working-plane grid at active EL while drawing. |
+| Accessory design note before accessory code | §27 | Correctly held — not started in this batch. Next architecture item. |
+| 0007 `ai_gateway` | RFC | Awaiting first Tier-1 feature. |
+
+### Low-hanging UI/UX gains (KR asked; all few-line items, in value order)
+
+1. **Warning → camera fly-to.** Click-to-select just shipped; add the existing `focus` behavior so the camera flies to the highlighted segment. In a dense plant this is the difference between "warning noted" and "warning found."
+2. **Warning-count badge on the Raceway section summary** (visible even collapsed) — the cheapest seed of the ambient-compliance-dashboard idea from the vision RFC.
+3. **Service-class color legend chips** in the palette — users forget which color is instrument vs control; four colored spans.
+4. **Inline run-tag rename in the inspector** — `RWY-001` is a placeholder; engineers will want their own tags, and the API already accepts `tag` on PATCH.
+5. **`?` shortcut cheat-sheet overlay** — the shortcut set just got audited; make it discoverable.
+
+### Reminders as of §28
+
+N-14 fix + workspace-file removal in the same commit; F-19 clue to check; KR seed confirmation; accessory design note is the next architecture deliverable (I can draft the skeleton on request).

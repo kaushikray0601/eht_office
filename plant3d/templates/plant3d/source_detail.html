@@ -49,6 +49,20 @@
             </div>
           {% endif %}
 
+          {% with latest_job=jobs.0 %}
+            <div id="primaryConversionProgress" class="p3d-primary-action" {% if latest_job %}data-primary-job-id="{{ latest_job.pk }}"{% else %}hidden{% endif %}>
+              {% if latest_job %}
+                <div class="p3d-list-title">
+                  <span>Latest conversion - {{ latest_job.job_type }}</span>
+                  <span>{{ latest_job.status }} - {{ latest_job.progress_percent }}%</span>
+                </div>
+                <div class="p3d-progress" aria-label="Latest conversion progress">
+                  <div class="p3d-progress-bar" style="width: {{ latest_job.progress_percent }}%;"></div>
+                </div>
+              {% endif %}
+            </div>
+          {% endwith %}
+
           <dl class="p3d-kv-grid">
             <div class="p3d-kv">
               <dt>Project</dt>
@@ -242,6 +256,6 @@
     </details>
   </main>
 
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260706_sourceui1" defer></script>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260712_sourceui2" defer></script>
 </body>
 </html>
