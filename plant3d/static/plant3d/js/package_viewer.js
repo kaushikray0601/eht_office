@@ -846,6 +846,14 @@ function hideOverlayViewerLayers() {
   setStatus('Overlays hidden. Plant model remains visible.');
 }
 
+function togglePlantModelLayerVisibility() {
+  const nextVisible = !isViewerLayerIdVisible('model');
+  setViewerLayerVisible('model', nextVisible);
+  updateViewerLayerStatus(`Plant model layer ${nextVisible ? 'shown' : 'hidden'} via Shift+M.`);
+  setStatus(`Plant model layer ${nextVisible ? 'shown' : 'hidden'}.`);
+  return true;
+}
+
 function formatDimension(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) return '';
@@ -2514,6 +2522,22 @@ function selectedMeasurementSnapObjects() {
   return uniqueObjectList(objects);
 }
 
+function closestSelectedMeasurementSnapPoint() {
+  const snapTargets = selectedMeasurementSnapObjects();
+  if (!snapTargets.length) return null;
+  const selectedHits = raycaster.intersectObjects(snapTargets, true);
+  if (!selectedHits.length) return null;
+  return nearestFaceVertex(selectedHits[0]) || selectedHits[0].point.clone();
+}
+
+function closestModelMeasurementSnapPoint() {
+  const canPickModel = isViewerLayerIdVisible('model') && selectableMeshes.length;
+  if (!canPickModel) return null;
+  const hit = firstVisibleGlbHit(raycaster.intersectObjects(selectableMeshes, false));
+  if (!hit) return null;
+  return nearestFaceVertex(hit) || hit.point.clone();
+}
+
 function viewerEventCanvasPoint(event) {
   const rect = renderer.domElement.getBoundingClientRect();
   return {
@@ -2607,18 +2631,12 @@ function measurementPointFromViewerEvent(event) {
   if (vertexSnapEnabled) {
     const layerSnapPoint = closestLayerMeasurementSnapPoint(event);
     if (layerSnapPoint) return layerSnapPoint;
-    const snapTargets = selectedMeasurementSnapObjects();
-    if (snapTargets.length) {
-      const selectedHits = raycaster.intersectObjects(snapTargets, true);
-      if (selectedHits.length) {
-        return nearestFaceVertex(selectedHits[0]) || selectedHits[0].point.clone();
-      }
-      setMeasurementStatus('Snap Vertex On: click a selected component or visible snap-enabled layer, or turn snap off for free measurement.');
-      return null;
-    } else {
-      setMeasurementStatus('Snap Vertex On: select a component or show a snap-enabled layer first, or turn snap off for free measurement.');
-      return null;
-    }
+    const selectedSnapPoint = closestSelectedMeasurementSnapPoint();
+    if (selectedSnapPoint) return selectedSnapPoint;
+    const modelSnapPoint = closestModelMeasurementSnapPoint();
+    if (modelSnapPoint) return modelSnapPoint;
+    setMeasurementStatus('Snap Vertex On: click a model object, selected component, or visible snap-enabled layer; turn snap off for free measurement.');
+    return null;
   }
   const canPickModel = isViewerLayerIdVisible('model') && selectableMeshes.length;
   const hit = firstVisibleGlbHit(canPickModel ? raycaster.intersectObjects(selectableMeshes, false) : []);
@@ -4850,6 +4868,9 @@ function handleViewerShortcut(event) {
     return true;
   } else if (key === 'f') {
     fitSelectedObject();
+    return true;
+  } else if (key === 'm' && event.shiftKey) {
+    togglePlantModelLayerVisibility();
     return true;
   }
   return false;

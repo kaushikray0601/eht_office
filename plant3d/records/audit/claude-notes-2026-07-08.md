@@ -843,3 +843,21 @@ The clash envelope still ignores orientation (`grep orientation raceway/warnings
 5. **Storage:** same pattern as the orientation slice — versioned entry in `run.metadata` (`raceway.segment_orientation.v0`, list keyed by node pairs), no new table until fitting persistence forces one.
 
 With those five rules in the design note, the recommended order stands: segment groundwork (+N-17) → reducer handedness with one-edge matching.
+
+## 34. Segment groundwork + manual-feedback pass review (2026-07-14; for Codex)
+
+Two layers reviewed: commit `3e8238c` (segment identity + oriented clash) and the working-tree manual-feedback fixes. **Verdict: both clean; N-17 closed on schedule; one process observation about the measurement regression.** Verified: raceway+plant3d+telemetry **131 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Commit `3e8238c` — verified
+
+- **N-17 CLOSED, did not slip twice:** the rough clash AABB now derives from oriented proxy corners (`_run_orientation_quarter_turns` → `_segment_proxy_corner_points`), with a regression test proving `Roll Right` changes the detected envelope. The §33 split/merge/stale-intent semantics were folded into the design note as asked.
+- **Segment identity groundwork is correctly scoped:** derived rows keyed `start_node_key::end_node_key` (stable, thanks to §33's substrate), draft identity until first save, selection UX in blue — and *no persistence*, exactly as agreed. Reducer handedness remains correctly queued behind segment intent.
+
+### Manual-feedback pass — verified, with one process note
+
+- **KR caught a real regression from the snap fix:** structure-only measurement broke (a layer-snap miss returned an error instead of falling back to the model). The fix restores a clean priority cascade — raceway edges (9 px screen-space) → selected objects → **visible model geometry with face-vertex snap** → clear message. Correct ordering. Process note: this is the second consequence-bug from the same snap pass; the lesson is a test-matrix line, not a person — **any change to a selection/snap path must include the "no raceway present, model-only" case**. A browser assertion for model-only measurement with snap on would lock this regression class shut; small, worth adding.
+- **Continue-from-selected-endpoint with prepend support** is correctly anchored: first endpoint prepends, last appends, mid-run declines (consistent with deferred tee/split). Prepending shifts every sequence number — which is now safe *because* node keys survive saves; the §33 substrate is already paying rent one pass later.
+- Two deferred observations are well-worded in the tracker: nearest-segment-interior picking (so shared endpoint handles don't block middle-segment selection) and the explicit work-plane mode message (supports must never feel like a drawing prerequisite — KR's product point, correctly captured).
+- Polish verified: Shift+M model-layer toggle, differentiated lower-edge colour, source-detail progress dedup.
+
+Next: segment-level orientation/face-offset persistence per the design note's five rules, then reducer handedness with one-edge matching — order unchanged.

@@ -56,13 +56,14 @@ def build_layer_warnings(
         _normalize_graph_warning(warning, layer_obj.pk)
         for warning in graph_payload.get("warnings", [])
     ]
-    runs = (
+    runs = list(
         RacewayRun.objects
         .select_related("layer", "family", "size")
         .prefetch_related("nodes")
         .filter(layer=layer_obj)
         .order_by("tag", "pk")
     )
+    runs_by_id = {run.pk: run for run in runs}
 
     if layer_obj.source_model_id is None or layer_obj.render_package_id is None:
         warnings.append(
@@ -93,6 +94,7 @@ def build_layer_warnings(
                 values={"scan_limit": MODEL_OBJECT_SCAN_LIMIT},
             )
         )
+    warnings.extend(_service_mismatch_warnings(graph_payload, runs_by_id, layer_obj.pk))
     has_measurable_route = False
     for run in runs:
         nodes = sorted(run.nodes.all(), key=lambda node: (node.sequence, node.pk))
@@ -304,6 +306,60 @@ def _run_context_warnings(run, layer):
             },
         )
     ]
+
+
+def _service_mismatch_warnings(graph_payload, runs_by_id, layer_id):
+    warnings = []
+    for graph_node in graph_payload.get("nodes", []):
+        members = _graph_node_run_members(graph_node, runs_by_id)
+        services = sorted({member["service_class"] for member in members if member["service_class"]})
+        if len(services) < 2:
+            continue
+        representative = members[0]
+        representative_run = runs_by_id.get(representative["run_id"])
+        warning = _warning(
+            "raceway.warning.service_mismatch_at_junction",
+            "warning",
+            "Connected raceway junction mixes service classes; review segregation or modelling intent.",
+            source="graph",
+            object_type="junction",
+            layer_id=layer_id,
+            run=representative_run,
+            node_keys=[member["node_key"] for member in members],
+            source_point_m=graph_node.get("source_point_m"),
+            values={
+                "graph_node_key": graph_node.get("key", ""),
+                "graph_node_kind": graph_node.get("derived_kind", ""),
+                "service_classes": services,
+                "members": members,
+            },
+        )
+        warning["run_ids"] = sorted({member["run_id"] for member in members})
+        warning["run_keys"] = sorted({member["run_key"] for member in members})
+        warning["run_tags"] = sorted({member["run_tag"] for member in members})
+        warnings.append(warning)
+    return warnings
+
+
+def _graph_node_run_members(graph_node, runs_by_id):
+    members = []
+    for member in graph_node.get("members", []):
+        run = runs_by_id.get(member.get("run_id"))
+        if run is None:
+            continue
+        members.append(
+            {
+                "run_id": run.pk,
+                "run_key": str(run.key),
+                "run_tag": run.tag or str(run.key),
+                "node_key": member.get("node_key", ""),
+                "sequence": member.get("sequence"),
+                "family_code": run.family.code,
+                "size_label": f"{run.size.width_mm} x {run.size.depth_mm} mm",
+                "service_class": run.service_class,
+            }
+        )
+    return sorted(members, key=lambda item: (item["run_tag"], item["sequence"], item["node_key"]))
 
 
 def _warning(

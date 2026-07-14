@@ -222,9 +222,6 @@
                 <span>{{ job.created_at }} - {{ job.job_type }}</span>
                 <span>{{ job.status }} - {{ job.progress_percent }}%</span>
               </div>
-              <div class="p3d-progress" aria-label="Conversion progress">
-                <div class="p3d-progress-bar" style="width: {{ job.progress_percent }}%;"></div>
-              </div>
               {% if job.metrics.stage %}<br>Stage: {{ job.metrics.stage }}{% endif %}
               {% if job.metrics.conversion_duration_ms %}<br>Total conversion: {{ job.metrics.conversion_duration_ms }} ms{% endif %}
               {% if job.timing_summary %}
@@ -256,6 +253,6 @@
     </details>
   </main>
 
-  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260712_sourceui2" defer></script>
+  <script src="{% static 'plant3d/js/source_detail.js' %}?v=20260714_sourceui3" defer></script>
 </body>
 </html>

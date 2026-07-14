@@ -1,5 +1,6 @@
 import ast
 import json
+import math
 import os
 from decimal import Decimal
 
@@ -581,6 +582,33 @@ class RacewayWarningProjectionTests(TestCase):
         self.assertEqual(excessive_warning["values"]["threshold"], EXCESSIVE_BEND_COUNT_WARNING)
         self.assertGreater(excessive_warning["values"]["plan_bend_count"], EXCESSIVE_BEND_COUNT_WARNING)
 
+    def test_layer_warnings_flag_service_mismatch_at_connected_junction(self):
+        layer = create_layer(project_id="RWY-WARN-SERVICE")
+        family = create_family("WARN-SERVICE-LADDER")
+        size = create_size(family=family)
+        power_run = create_run(layer=layer, family=family, size=size)
+        power_run.tag = "RWY-PWR"
+        power_run.service_class = "power"
+        power_run.save()
+        control_run = create_run(layer=layer, family=family, size=size)
+        control_run.tag = "RWY-CTL"
+        control_run.service_class = "control"
+        control_run.save()
+        create_nodes(power_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(control_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+        warnings = build_layer_warnings(layer)
+        service_warning = next(
+            warning for warning in warnings if warning["code"] == "raceway.warning.service_mismatch_at_junction"
+        )
+
+        self.assertEqual(service_warning["source"], "graph")
+        self.assertEqual(service_warning["object_type"], "junction")
+        self.assertEqual(set(service_warning["run_keys"]), {str(power_run.key), str(control_run.key)})
+        self.assertEqual(set(service_warning["values"]["service_classes"]), {"control", "power"})
+        self.assertEqual(service_warning["values"]["graph_node_kind"], "junction")
+        self.assertEqual(len(service_warning["values"]["members"]), 2)
+
     def test_layer_warnings_flag_rough_model_object_aabb_clash(self):
         project_id = "RWY-WARN-CLASH"
         source, package = create_source_and_package(project_id)
@@ -865,6 +893,38 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertIn("raceway.fittings.route_as_truth", assumption_codes)
         self.assertIn("raceway.fittings.face_alignment_deferred", assumption_codes)
         self.assertIn("raceway.fittings.tee_cross_deferred", assumption_codes)
+        self.assertIn("raceway.fittings.standard_angle_check", assumption_codes)
+
+    def test_layer_fitting_projection_flags_non_standard_bend_angle(self):
+        layer = create_layer(project_id="RWY-FITTINGS-ANGLE")
+        family = create_family("FIT-ANGLE-LADDER")
+        size = create_size(family=family)
+        run = create_run(layer=layer, family=family, size=size)
+        run.tag = "RWY-ANGLE"
+        run.save()
+        angle_rad = math.radians(37.0)
+        create_nodes(
+            run,
+            [
+                (0.0, 0.0, 0.0),
+                (2.0, 0.0, 0.0),
+                (2.0 + math.cos(angle_rad) * 2.0, math.sin(angle_rad) * 2.0, 0.0),
+            ],
+        )
+
+        projection = build_layer_fitting_projection(layer)
+        bend = next(item for item in projection["items"] if item["kind"] == "plan_bend")
+        schedule = build_layer_schedule(layer)
+
+        self.assertAlmostEqual(bend["angle_deg"], 37.0)
+        self.assertTrue(bend["non_standard_angle"])
+        self.assertEqual(bend["nearest_standard_angle_deg"], 30.0)
+        self.assertAlmostEqual(bend["deviation_deg"], 7.0)
+        self.assertEqual(projection["counts"]["non_standard_plan_bends"], 1)
+        self.assertEqual(
+            schedule["fitting_placeholders"]["counts"]["non_standard_plan_bend_total"],
+            1,
+        )
 
     def test_layer_fitting_projection_flags_unequal_size_reducer_candidate_at_connected_node(self):
         layer = create_layer(project_id="RWY-FITTINGS-REDUCER")
@@ -888,6 +948,27 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertEqual({group["width_mm"] for group in reducer["size_groups"]}, {300, 600})
         self.assertEqual({member["run_tag"] for member in reducer["members"]}, {"RWY-SMALL", "RWY-LARGE"})
         self.assertTrue(reducer["requires_face_alignment"])
+
+    def test_layer_fitting_projection_keeps_service_transition_taxonomy(self):
+        layer = create_layer(project_id="RWY-FITTINGS-SERVICE")
+        family = create_family("FIT-SERVICE-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        power_run = create_run(layer=layer, family=family, size=size)
+        power_run.tag = "RWY-FIT-PWR"
+        power_run.service_class = "power"
+        power_run.save()
+        control_run = create_run(layer=layer, family=family, size=size)
+        control_run.tag = "RWY-FIT-CTL"
+        control_run.service_class = "control"
+        control_run.save()
+        create_nodes(power_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(control_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+        projection = build_layer_fitting_projection(layer)
+        transition = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
+
+        self.assertEqual(transition["category"], "service_transition")
+        self.assertEqual({group["service_class"] for group in transition["size_groups"]}, {"control", "power"})
         self.assertEqual(projection["counts"]["by_kind"]["reducer_candidate"], 1)
         self.assertEqual(projection["graph_summary"]["junction_node_count"], 1)
 
@@ -1049,6 +1130,7 @@ class RacewayApiTests(TestCase):
         self.assertIn("Grouped Quantities", csv_text)
         self.assertIn("RWY-CSV", csv_text)
         self.assertIn("Piece Estimate", csv_text)
+        self.assertIn("non_standard_angle", csv_text)
 
     def test_run_create_update_delete_and_node_replace_workflow(self):
         layer = create_layer(project_id=self.project.proj_id)
@@ -1404,6 +1486,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("racewayWarningBadge", content)
         self.assertIn("function loadFittingProjection", content)
         self.assertIn("function fittingSummaryHtml", content)
+        self.assertIn("non-standard bend(s)", content)
         self.assertIn("function scheduleSummaryHtml", content)
         self.assertIn("function scheduleWarningRowsHtml", content)
         self.assertIn("warning-segment-highlight", content)
@@ -1425,6 +1508,8 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function connectSelectedNodeFromEvent", content)
         self.assertIn("function beginConnectNode", content)
         self.assertIn("function continueRun", content)
+        self.assertIn("function continuationAnchor", content)
+        self.assertIn("anchor.mode === 'prepend'", content)
         self.assertIn("function undoRacewayEdit", content)
         self.assertIn("function redoRacewayEdit", content)
         self.assertIn("function racewayShortcutActionForEvent", content)
@@ -1474,6 +1559,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function addSegmentProxyFaces", content)
         self.assertIn("function addProxyQuad", content)
         self.assertIn("function addSegmentPreview", content)
+        self.assertIn("bottomEdgeMaterial", content)
         self.assertIn("function addBendPlaceholder", content)
         self.assertIn("function sourceFrameOffsetPoint", content)
         self.assertIn("function segmentCornerPoints", content)

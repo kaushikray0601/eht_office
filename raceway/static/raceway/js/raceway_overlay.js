@@ -745,14 +745,14 @@ function sourcePointFromEvent(event) {
   };
 }
 
-function orthoAdjustedPoint(run, point) {
+function orthoAdjustedPoint(run, point, previousPoint = null) {
   if (!state.orthoMode || !run?.nodes?.length || !point) {
     return { point, adjusted: false };
   }
   if (point.anchor && Object.keys(point.anchor).length) {
     return { point, adjusted: false };
   }
-  const previous = run.nodes[run.nodes.length - 1];
+  const previous = previousPoint || run.nodes[run.nodes.length - 1];
   const dx = Number(point.x || 0) - Number(previous.x || 0);
   const dy = Number(point.y || 0) - Number(previous.y || 0);
   if (Math.abs(dx) < 0.001 && Math.abs(dy) < 0.001) {
@@ -765,6 +765,23 @@ function orthoAdjustedPoint(run, point) {
     adjusted.x = Number(previous.x) || 0;
   }
   return { point: adjusted, adjusted: true };
+}
+
+function continuationAnchor(run, { allowDefaultLast = true } = {}) {
+  const nodes = run?.nodes || [];
+  if (!nodes.length) return null;
+  if (nodes.length > 1 && state.selectedNodeIndex === 0) {
+    return { node: nodes[0], index: 0, mode: 'prepend' };
+  }
+  if (state.selectedNodeIndex === nodes.length - 1) {
+    return { node: nodes[nodes.length - 1], index: nodes.length - 1, mode: 'append' };
+  }
+  if (state.selectedNodeIndex >= 0 && state.selectedNodeIndex < nodes.length) {
+    return null;
+  }
+  return allowDefaultLast
+    ? { node: nodes[nodes.length - 1], index: nodes.length - 1, mode: 'append' }
+    : null;
 }
 
 function adoptWorkingElevationFromPoint(run, point) {
@@ -1372,7 +1389,7 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   return mesh;
 }
 
-function addSegmentPreview(group, run, start, end, material, detailMaterial) {
+function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial) {
   const corners = segmentCornerPoints(run, start, end);
   if (!corners) return;
   const { basis } = corners;
@@ -1380,8 +1397,8 @@ function addSegmentPreview(group, run, start, end, material, detailMaterial) {
 
   addSourceLine(group, [corners.leftStartTop, corners.leftEndTop], material, 'side-rail');
   addSourceLine(group, [corners.rightStartTop, corners.rightEndTop], material, 'side-rail');
-  addSourceLine(group, [corners.leftStartBottom, corners.leftEndBottom], detailMaterial, 'lower-edge');
-  addSourceLine(group, [corners.rightStartBottom, corners.rightEndBottom], detailMaterial, 'lower-edge');
+  addSourceLine(group, [corners.leftStartBottom, corners.leftEndBottom], bottomEdgeMaterial, 'lower-edge');
+  addSourceLine(group, [corners.rightStartBottom, corners.rightEndBottom], bottomEdgeMaterial, 'lower-edge');
   addSourceLine(group, [corners.leftStartBottom, corners.leftStartTop], detailMaterial, 'depth-tick');
   addSourceLine(group, [corners.rightStartBottom, corners.rightStartTop], detailMaterial, 'depth-tick');
   addSourceLine(group, [corners.leftEndBottom, corners.leftEndTop], detailMaterial, 'depth-tick');
@@ -1639,6 +1656,7 @@ function renderTrayPreview(group, run, color) {
   const selected = run.id === state.activeRunId;
   const material = previewMaterial(selected ? 0xf97316 : color, selected ? 1 : 0.92);
   const detailMaterial = previewMaterial(color, 0.62);
+  const bottomEdgeMaterial = previewMaterial(0x0891b2, selected ? 0.82 : 0.54);
   const guideMaterial = previewMaterial(0x475569, selected ? 0.7 : 0.35);
   if (state.showProxyFaces) addRunProxyFaceMesh(group, run, color, selected);
   const points = run.nodes.map(renderSourcePoint).filter(Boolean);
@@ -1651,7 +1669,7 @@ function renderTrayPreview(group, run, color) {
     group.add(guide);
   }
   for (let index = 1; index < run.nodes.length; index += 1) {
-    addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial);
+    addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial, bottomEdgeMaterial);
     addRiserPlaceholder(group, run, run.nodes[index - 1], run.nodes[index], previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
     if (warningSegmentIsFocused(run, index)) {
       addWarningSegmentHighlight(group, run, run.nodes[index - 1], run.nodes[index]);
@@ -1724,21 +1742,30 @@ function continueRun() {
     setStatus('Select a raceway run before continuing.');
     return;
   }
-  state.selectedNodeIndex = run.nodes.length - 1;
+  const anchor = continuationAnchor(run, { allowDefaultLast: true });
+  if (!anchor) {
+    setStatus(`${run.tag}: select the first or last node before continuing. Mid-run branch insertion comes with tee/split support.`);
+    renderPanel();
+    return;
+  }
+  state.selectedNodeIndex = anchor.index;
   state.selectedSegmentIndex = -1;
   activateCanvasMode('draw');
-  setStatus(`${run.tag}: continue from node ${run.nodes.length || 1}. Click structure or the working plane to append.`);
+  setStatus(`${run.tag}: continue from node ${anchor.index + 1}. Click structure or the working plane to extend.`);
   renderRaceway();
   renderPanel();
 }
 
 function addTypedSegment() {
   const run = activeRun();
-  const start = run?.nodes?.at(-1) || null;
+  const anchor = continuationAnchor(run, { allowDefaultLast: true });
+  const start = anchor?.node || null;
   const length = Number(state.segmentLengthM);
   const direction = segmentDirectionById();
   if (!run || !start) {
-    setStatus('Add or select a raceway run with at least one node before typed segment entry.');
+    setStatus(anchor === null && run?.nodes?.length
+      ? 'Select the first or last node before typed segment entry. Mid-run branch insertion comes later.'
+      : 'Add or select a raceway run with at least one node before typed segment entry.');
     return;
   }
   if (!Number.isFinite(length) || length <= 0) {
@@ -1753,8 +1780,13 @@ function addTypedSegment() {
     coordinate_frame: SOURCE_COORDINATE_FRAME,
   };
   pushUndo('Add typed segment');
-  run.nodes.push(point);
-  state.selectedNodeIndex = run.nodes.length - 1;
+  if (anchor.mode === 'prepend') {
+    run.nodes.unshift(point);
+    state.selectedNodeIndex = 0;
+  } else {
+    run.nodes.push(point);
+    state.selectedNodeIndex = run.nodes.length - 1;
+  }
   state.selectedSegmentIndex = -1;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
@@ -1782,23 +1814,33 @@ function cancelRun() {
 function addNodeFromEvent(event) {
   const run = activeRun();
   const rawPoint = sourcePointFromEvent(event);
-  const { point, adjusted } = orthoAdjustedPoint(run, rawPoint);
+  const endpoint = continuationAnchor(run, { allowDefaultLast: true });
+  const { point, adjusted } = orthoAdjustedPoint(run, rawPoint, endpoint?.node || null);
   if (!run || !point) {
     setStatus('No point found on the active elevation.');
     return;
   }
+  if (endpoint === null && run.nodes.length) {
+    setStatus(`${run.tag}: select the first or last node before continuing. Mid-run branch insertion comes with tee/split support.`);
+    return;
+  }
   pushUndo('Add node');
-  const previousPoint = run.nodes.at(-1) || null;
-  run.nodes.push(point);
-  state.selectedNodeIndex = run.nodes.length - 1;
+  const previousPoint = endpoint?.node || null;
+  if (endpoint?.mode === 'prepend') {
+    run.nodes.unshift(point);
+    state.selectedNodeIndex = 0;
+  } else {
+    run.nodes.push(point);
+    state.selectedNodeIndex = run.nodes.length - 1;
+  }
   state.selectedSegmentIndex = -1;
   adoptWorkingElevationFromPoint(run, point);
   markRunDirty(run);
   if (adjusted) recordOrthoTelemetry(run, previousPoint, rawPoint, point);
   const anchor = anchorLabel(point.anchor);
   setStatus(anchor
-    ? `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)} and anchored to ${anchor}.`
-    : `${run.tag}: node ${run.nodes.length} added at EL +${formatM(point.z)}${adjusted ? ' with ortho lock.' : '.'}`);
+    ? `${run.tag}: node ${state.selectedNodeIndex + 1} added at EL +${formatM(point.z)} and anchored to ${anchor}.`
+    : `${run.tag}: node ${state.selectedNodeIndex + 1} added at EL +${formatM(point.z)}${adjusted ? ' with ortho lock.' : '.'}`);
   renderRaceway();
   renderPanel();
 }
@@ -2720,7 +2762,7 @@ function fittingSummaryHtml() {
     <div>
       <strong>Fittings</strong><br>
       ${counts.total || 0} placeholder(s) | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s) | ${byKind.reducer_candidate || 0} reducer candidate(s)<br>
-      ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation<br>
+      ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation | ${counts.non_standard_plan_bends || 0} non-standard bend(s)<br>
       ${graph.junction_node_count || 0} junction node(s) | ${graph.branch_node_count || 0} branch node(s)
       ${categoryRows}
       ${(projection.assumptions || []).length ? `<div class="meta">${projection.assumptions.length} fitting assumption(s) in JSON output.</div>` : ''}

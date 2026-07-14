@@ -66,6 +66,13 @@ that foundation.
 - [x] Add derived segment identity/selection groundwork before segment-level
   face-offset persistence.
 - [x] Make rough model clash/clearance AABB respect saved run orientation.
+- [x] Restore Measurement snap fallback to visible Plant3D model geometry after
+  Raceway layer snapping.
+- [x] Fix Raceway continuation from the selected endpoint instead of always from
+  the last-created node.
+- [x] Add Plant model reference-layer hide/show shortcut.
+- [x] Add non-standard plan-bend angle flags to fitting/schedule projections.
+- [x] Promote connected service-class transitions to canonical warnings.
 
 ## Default Pass Ritual
 
@@ -428,6 +435,16 @@ Acceptance:
   - add project/service palette configuration before arbitrary per-run colours,
   - allow run-level visual override later only with legend/metadata clarity.
 - [ ] Lightweight Raceway visual legend and/or isolate-selected-run polish.
+- [ ] Canvas segment picking refinement:
+  - when adjacent segments share/coincide at nodes, support direct segment
+    picking by closest screen-space segment interior rather than letting shared
+    endpoint node handles always win,
+  - keep node selection available where the user explicitly aims at the node.
+- [ ] Explicit Raceway work-plane/free-route drawing mode:
+  - expose the existing working-plane fallback so AG tray routing does not feel
+    dependent on pre-existing structural supports,
+  - later support generation should consume the tray route rather than being a
+    prerequisite for drawing it.
 - [ ] Screen-scaled consumer overlay handles as a platform pattern beyond
   Raceway.
 - [ ] Reducer fitting/accessory between unequal tray widths.
@@ -447,6 +464,15 @@ Acceptance:
     graph branch/junction counts.
 - [ ] Review `raceway-fitting-accessory-foundation-2026-07-12.md` before
   persisting fitting/accessory records or coding face-offset authoring.
+- [x] Non-standard bend-angle advisory:
+  - fitting placeholders now record nearest standard angle, deviation, and
+    non-standard flag against common 30/45/60/90 degree bends,
+  - fitting summary and schedule CSV expose the aggregate count.
+- [x] Service-class transition warning:
+  - service transitions remain visible in the fitting taxonomy,
+  - connected mixed-service junctions now emit
+    `raceway.warning.service_mismatch_at_junction` through the canonical
+    warning/schedule/telemetry path.
 - [ ] Project/admin-level connection tolerance setting when needed.
 - [ ] Project/admin or user-level near-miss warning sensitivity setting when
   needed.
@@ -1682,3 +1708,88 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
   - `git diff --check`
+
+### 2026-07-14 - Manual Feedback Fixes: Snap, Continue, and Viewer Polish
+
+- Read Claude/Fable §33 before coding; no new blocker found.
+- Addressed KR manual feedback:
+  - Measurement with `Snap Vertex On` now falls back to visible Plant3D model
+    geometry after Raceway layer-edge snapping, restoring tray-to-structure and
+    structure-only measurement.
+  - Raceway `Continue` and typed segment entry now extend from the selected
+    endpoint:
+    - selected first endpoint prepends,
+    - selected last endpoint appends,
+    - single-node drafts still append,
+    - mid-run branch insertion remains deferred to tee/split support.
+  - Raceway lower edges now use a slightly different line colour for quick
+    visual recognition without adding geometry.
+  - Shift+M toggles the Plant model reference layer visibility.
+  - Source detail conversion progress is no longer duplicated inside
+    `Conversion Jobs`; completed job view links are surfaced in the primary
+    progress/action area.
+- Recorded deferred/manual observations:
+  - canvas segment picking needs a future nearest-segment-interior pass so
+    shared/coincident endpoint nodes do not prevent middle segment selection,
+  - explicit work-plane/free-route Raceway drawing mode should make it clear
+    that supports are not a prerequisite for sketching AG tray routes.
+- Bumped browser cache keys:
+  - Plant3D package viewer: `20260714_snap_provider3`,
+  - Plant3D source detail: `20260714_sourceui3`,
+  - Raceway overlay: `20260714_raceway30`.
+- Verification passed:
+  - `cp plant3d/static/plant3d/js/package_viewer.js /tmp/package_viewer_check.mjs`
+  - `node --check /tmp/package_viewer_check.mjs`
+  - `node --check plant3d/static/plant3d/js/source_detail.js`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+    outside sandbox for Playwright/live-server,
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+    outside sandbox for the same reason,
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `git diff --check`
+
+### 2026-07-14 - Fitting Advisory Signals: Bend Angles and Service Mismatch
+
+- Read Claude/Fable notes before coding; no blocker found.
+- Kept this pass projection-only:
+  - no fitting/accessory persistence,
+  - no vendor catalogue rules,
+  - no reducer handedness or face-offset authority.
+- Closed Claude/Fable N-15 as an advisory fitting signal:
+  - plan-bend placeholders now include:
+    - `nearest_standard_angle_deg`,
+    - `deviation_deg`,
+    - `standard_angle_tolerance_deg`,
+    - `non_standard_angle`,
+  - the check uses common `30/45/60/90` degree catalogue angles with a
+    named `2.5` degree tolerance,
+  - fitting projection counts `non_standard_plan_bends`,
+  - schedule placeholder counts and CSV export include the non-standard bend
+    total.
+- Closed Claude/Fable N-16:
+  - connected graph nodes with mixed service classes now emit
+    `raceway.warning.service_mismatch_at_junction`,
+  - the warning carries graph-node key/kind, source point, affected run keys,
+    service classes, and member evidence,
+  - service transitions remain in the fitting taxonomy as
+    `service_transition`.
+- Improved the existing fitting summary:
+  - `Refresh Fittings` now shows the non-standard bend count beside face
+    alignment and catalogue-validation counts.
+- Bumped browser cache key:
+  - Raceway overlay: `20260714_raceway31`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/warnings.py raceway/views.py raceway/tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayWarningProjectionTests raceway.tests.RacewayFittingProjectionTests raceway.tests.RacewayApiTests.test_layer_schedule_csv_endpoint_uses_same_schedule_payload_shape raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`

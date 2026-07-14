@@ -125,6 +125,21 @@ Crosses remain deferred until project usage demands them.
 - No migration is created.
 - Tracker records that accessory persistence remains deferred.
 
+## Implementation Addendum - 2026-07-14
+
+Codex added two advisory signals without changing the persistence rule:
+
+- plan-bend placeholders now record nearest standard angle, deviation, tolerance,
+  and `non_standard_angle` against common 30/45/60/90 degree catalogue angles;
+- fitting and schedule projections expose the non-standard bend count;
+- service transitions remain in this fitting taxonomy, and connected mixed
+  service-class junctions also emit
+  `raceway.warning.service_mismatch_at_junction` through the canonical warning
+  pipeline.
+
+This still does not create fitting/accessory rows, vendor-part records, or
+face-offset authority.
+
 ## Review Questions
 
 - Claude/Fable: is the reducer candidate shape sufficient before we add

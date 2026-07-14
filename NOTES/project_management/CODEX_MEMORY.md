@@ -382,6 +382,19 @@ Code facts verified on 2026-07-09:
   stale non-adjacent segment entries. Claude N-17 is closed: rough model
   clash/clearance AABB now uses oriented proxy corners for saved run
   orientation. Raceway overlay cache key: `20260713_raceway29`.
+- KR manual follow-up on 2026-07-14 produced two fixes and two recorded
+  backlogs. Fixes: Measurement snap now falls back to visible Plant3D model
+  meshes after Raceway layer-edge snapping, so tray-to-structure measurement is
+  possible again; Raceway Continue/Add Segment now extends from the selected
+  endpoint, prepending from N1 and appending from the last node. UI polish:
+  Shift+M toggles the Plant model reference layer, source-detail conversion
+  progress is only shown in the primary action area, completed conversion view
+  links surface there, and Raceway lower edges use a slightly different colour.
+  Backlogs: direct canvas segment picking for middle segments whose shared node
+  handles win the click, and an explicit work-plane/free-route mode so tray
+  routing does not appear dependent on pre-existing support steel. Cache keys:
+  package viewer `20260714_snap_provider3`, source detail `20260714_sourceui3`,
+  Raceway overlay `20260714_raceway30`.
 - Deferred stock reviewed against Claude §28 on 2026-07-12. Keep open:
   `.code-workspace` tracked-file cleanup decision, KR generic catalogue seed
   confirmation, F-19/F-20 commit hygiene notes, blocked-telemetry browser
@@ -976,3 +989,16 @@ focused SQLite dashboard/FAQ smoke slice passed 2 tests. Final reconciliation
 checks passed (`manage.py check`, SQLite migration dry-run, SLD JavaScript
 syntax check, and `git diff --check`), and the full SQLite `eht` suite passed
 360 tests.
+
+Plant3D/Raceway note, 2026-07-14: after KR manually confirmed the snap/
+continuation/viewer-polish pass, the next pass stayed projection-only and
+closed Claude N-15/N-16. `raceway/fittings.py` now flags plan-bend placeholders
+whose angle is outside +/-2.5 degrees of common 30/45/60/90 degree catalogue
+angles, and fitting/schedule/CSV outputs expose the non-standard bend count.
+`raceway/warnings.py` now emits
+`raceway.warning.service_mismatch_at_junction` when connected graph-node members
+mix service classes; the warning carries graph-node, source-point, run-key, and
+member evidence and participates in the existing schedule/telemetry warning
+pipeline. Raceway overlay cache key is `20260714_raceway31`. Fitting/accessory
+persistence, reducer handedness, face-offset authoring, and real tee/bend/riser
+geometry remain deferred.

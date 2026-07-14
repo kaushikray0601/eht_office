@@ -13,6 +13,8 @@ from .models import RacewayLayer, RacewayRun
 
 
 BEND_MIN_ANGLE_DEG = 5.0
+BEND_STANDARD_ANGLES_DEG = (30.0, 45.0, 60.0, 90.0)
+BEND_STANDARD_ANGLE_TOLERANCE_DEG = 2.5
 FITTING_PROJECTION_VERSION = "raceway.fittings.v0"
 
 
@@ -88,6 +90,7 @@ def plan_bend_placeholder(run, previous_node, node, next_node):
     angle_deg = plan_bend_angle_deg(previous_node, node, next_node)
     if angle_deg is None or angle_deg < BEND_MIN_ANGLE_DEG:
         return None
+    standard_angle = bend_standard_angle_check(angle_deg)
     return {
         **_run_fitting_basis(run),
         "fitting_key": f"fit:{run.key}:node:{node.key}:plan_bend",
@@ -101,6 +104,10 @@ def plan_bend_placeholder(run, previous_node, node, next_node):
         "next_node_key": str(next_node.key),
         "sequence": node.sequence,
         "angle_deg": angle_deg,
+        "nearest_standard_angle_deg": standard_angle["nearest_standard_angle_deg"],
+        "deviation_deg": standard_angle["deviation_deg"],
+        "standard_angle_tolerance_deg": BEND_STANDARD_ANGLE_TOLERANCE_DEG,
+        "non_standard_angle": standard_angle["non_standard_angle"],
         "source_point_m": point_from_node(node),
         "requires_catalogue_validation": True,
         "requires_face_alignment": False,
@@ -164,6 +171,7 @@ def fitting_counts(plan_bends, risers):
         "plan_bends": dict(sorted(bend_counts.items())),
         "risers": dict(sorted(riser_counts.items())),
         "plan_bend_total": len(plan_bends),
+        "non_standard_plan_bend_total": sum(1 for bend in plan_bends if bend.get("non_standard_angle")),
         "riser_total": len(risers),
     }
 
@@ -180,6 +188,11 @@ def fitting_item_counts(items):
         "by_category": dict(sorted(by_category.items())),
         "requires_catalogue_validation": sum(1 for item in items if item.get("requires_catalogue_validation")),
         "requires_face_alignment": sum(1 for item in items if item.get("requires_face_alignment")),
+        "non_standard_plan_bends": sum(
+            1
+            for item in items
+            if item.get("kind") == "plan_bend" and item.get("non_standard_angle")
+        ),
     }
 
 
@@ -189,6 +202,16 @@ def bend_angle_category(angle_deg):
     if angle_deg <= 90:
         return "plan_bend_46_90"
     return "plan_bend_gt_90"
+
+
+def bend_standard_angle_check(angle_deg):
+    nearest = min(BEND_STANDARD_ANGLES_DEG, key=lambda candidate: abs(candidate - angle_deg))
+    deviation = abs(float(angle_deg) - nearest)
+    return {
+        "nearest_standard_angle_deg": nearest,
+        "deviation_deg": deviation,
+        "non_standard_angle": deviation > BEND_STANDARD_ANGLE_TOLERANCE_DEG,
+    }
 
 
 def _reducer_candidates(graph, runs):
@@ -329,6 +352,15 @@ def _fitting_assumptions():
             "message": (
                 "Vendor part numbers, bend radii, development lengths, covers, dividers, and exact accessory geometry "
                 "are not selected by this first-pass projection."
+            ),
+        },
+        {
+            "code": "raceway.fittings.standard_angle_check",
+            "standard_angles_deg": list(BEND_STANDARD_ANGLES_DEG),
+            "tolerance_deg": BEND_STANDARD_ANGLE_TOLERANCE_DEG,
+            "message": (
+                "Plan bends are checked against common 30/45/60/90 degree catalogue angles. "
+                "Non-standard angles are advisory flags until a vendor catalogue is selected."
             ),
         },
         {

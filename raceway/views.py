@@ -548,6 +548,7 @@ def _write_schedule_csv(response, layer, schedule):
     writer.writerow(["Kind", "Category", "Count"])
     fitting_counts = schedule.get("fitting_placeholders", {}).get("counts", {})
     writer.writerow(["plan_bend", "total", fitting_counts.get("plan_bend_total", 0)])
+    writer.writerow(["plan_bend", "non_standard_angle", fitting_counts.get("non_standard_plan_bend_total", 0)])
     for category, count in sorted(fitting_counts.get("plan_bends", {}).items()):
         writer.writerow(["plan_bend", category, count])
     writer.writerow(["riser", "total", fitting_counts.get("riser_total", 0)])

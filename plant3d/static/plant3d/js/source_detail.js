@@ -47,9 +47,13 @@ function updatePrimaryProgress(data) {
   if (!primaryProgress || !data?.id) return;
   primaryProgress.hidden = false;
   primaryProgress.dataset.primaryJobId = String(data.id);
+  const packageLinks = data.package
+    ? `<div class="p3d-list-actions"><a class="p3d-button p3d-button-primary" href="${escapeHtml(data.package.viewer_url)}">Open 3D Viewer</a> <a class="p3d-button p3d-button-quiet" href="${escapeHtml(data.package.json_url)}">Package JSON</a></div>`
+    : '';
   primaryProgress.innerHTML = [
     `<div class="p3d-list-title"><span>Latest conversion - ${escapeHtml(data.job_type || '')}</span><span>${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%</span></div>`,
     progressBar(data.progress_percent, 'Latest conversion progress'),
+    packageLinks,
   ].join('');
 }
 
@@ -71,7 +75,6 @@ function jobLine(data) {
   const error = data.error_message ? `<br>Error: ${escapeHtml(data.error_message)}` : '';
   return [
     `<div class="p3d-list-title"><span>Job ${escapeHtml(data.id)} - ${escapeHtml(data.job_type || '')}</span><span>${escapeHtml(data.status)} - ${escapeHtml(data.progress_percent)}%</span></div>`,
-    progressBar(data.progress_percent),
     processHint,
     workerHint,
     stage,
