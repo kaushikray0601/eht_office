@@ -21,6 +21,8 @@ const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
   'tray-cross-member',
 ]);
 const ORIENTATION_SCHEMA = 'raceway.orientation.v0';
+const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0';
+const SEGMENT_ORIENTATION_INHERIT = '__run_default__';
 const orientationPresets = [
   { id: 'open_up', label: 'Open Up', quarterTurns: 0 },
   { id: 'roll_right', label: 'Roll Right', quarterTurns: 1 },
@@ -129,6 +131,7 @@ const actionLabels = {
   'refresh-graph': 'Refresh raceway graph warnings',
   'refresh-schedule': 'Refresh raceway schedule totals',
   'refresh-fittings': 'Refresh fitting placeholders',
+  'open-warning-details': 'Open raceway warning details',
   'open-schedule-csv': 'Download raceway schedule CSV',
   'delete-run': 'Delete active run',
   'add-segment': 'Add typed segment from the last node',
@@ -154,6 +157,7 @@ const actionShortcuts = {
   'refresh-graph': 'G',
   'refresh-schedule': 'B',
   'refresh-fittings': 'T',
+  'open-warning-details': 'Shift+W',
   'open-schedule-csv': 'Shift+B',
   'delete-run': 'Shift+Del',
   'add-segment': 'Enter in segment fields',
@@ -235,6 +239,103 @@ function runOrientation(run) {
 
 function orientationLabel(run) {
   return runOrientation(run).label;
+}
+
+function segmentPairKey(startNode, endNode) {
+  const startKey = String(startNode?.key || '');
+  const endKey = String(endNode?.key || '');
+  return startKey && endKey ? `${startKey}::${endKey}` : '';
+}
+
+function normalizedSegmentOrientationOverride(rawOverride) {
+  if (!rawOverride || typeof rawOverride !== 'object') return null;
+  const startNodeKey = String(rawOverride.start_node_key || rawOverride.startNodeKey || '').trim();
+  const endNodeKey = String(rawOverride.end_node_key || rawOverride.endNodeKey || '').trim();
+  const preset = orientationPresets.find(item => item.id === String(rawOverride.preset || rawOverride.orientation?.preset || '').trim());
+  if (!startNodeKey || !endNodeKey || !preset) return null;
+  return {
+    key: `${startNodeKey}::${endNodeKey}`,
+    start_node_key: startNodeKey,
+    end_node_key: endNodeKey,
+    orientation: normalizedOrientation(preset.id),
+  };
+}
+
+function ensureSegmentOrientationOverrides(run) {
+  if (!run) return {};
+  if (run.segmentOrientationOverrides && typeof run.segmentOrientationOverrides === 'object') {
+    return run.segmentOrientationOverrides;
+  }
+  const overrides = {};
+  const rawOverrides = run.metadata?.segment_orientation?.overrides || run.segmentOrientation?.overrides || [];
+  if (Array.isArray(rawOverrides)) {
+    rawOverrides.forEach(rawOverride => {
+      const override = normalizedSegmentOrientationOverride(rawOverride);
+      if (override) overrides[override.key] = override;
+    });
+  }
+  run.segmentOrientationOverrides = overrides;
+  return overrides;
+}
+
+function segmentOrientationOverrideFor(run, segmentKey) {
+  const overrides = ensureSegmentOrientationOverrides(run);
+  return overrides[String(segmentKey || '')] || null;
+}
+
+function segmentOrientationFor(run, segmentKey) {
+  return segmentOrientationOverrideFor(run, segmentKey)?.orientation || runOrientation(run);
+}
+
+function segmentIntentStatusFor(run, segmentKey) {
+  return segmentOrientationOverrideFor(run, segmentKey) ? 'segment_override' : 'run_default';
+}
+
+function segmentOrientationPayload(run) {
+  const overrides = ensureSegmentOrientationOverrides(run);
+  const items = [];
+  (run?.nodes || []).forEach((node, index) => {
+    if (index < 1) return;
+    const key = segmentPairKey(run.nodes[index - 1], node);
+    const override = overrides[key];
+    if (!key || !override) return;
+    items.push({
+      start_node_key: override.start_node_key,
+      end_node_key: override.end_node_key,
+      preset: override.orientation.preset,
+      quarter_turns: override.orientation.quarter_turns,
+      label: override.orientation.label,
+    });
+  });
+  return {
+    schema: SEGMENT_ORIENTATION_SCHEMA,
+    overrides: items,
+  };
+}
+
+function migrateDraftSegmentOrientationOverrides(run, oldSegments) {
+  const previousByIndex = new Map(
+    (oldSegments || [])
+      .filter(segment => segment.intentStatus === 'segment_override')
+      .map(segment => [Number(segment.segmentIndex), segment.orientation.preset]),
+  );
+  const overrides = {};
+  runSegments(run).forEach(segment => {
+    const preset = previousByIndex.get(Number(segment.segmentIndex));
+    const presetConfig = orientationPresets.find(item => item.id === preset);
+    if (!presetConfig || segment.keyStatus !== 'saved') return;
+    overrides[segment.key] = {
+      key: segment.key,
+      start_node_key: String(segment.startNode.key || ''),
+      end_node_key: String(segment.endNode.key || ''),
+      orientation: normalizedOrientation(presetConfig.id),
+    };
+  });
+  run.segmentOrientationOverrides = overrides;
+  run.metadata = {
+    ...(run.metadata || {}),
+    segment_orientation: segmentOrientationPayload(run),
+  };
 }
 
 function activeRun() {
@@ -684,6 +785,8 @@ function makeRun() {
     serviceClass: state.serviceClass,
     elevationM: Number(state.elevationM) || 0,
     orientation: normalizedOrientation(state.orientationPreset),
+    metadata: {},
+    segmentOrientationOverrides: {},
     nodes: [],
     dirty: true,
   };
@@ -965,6 +1068,7 @@ function runSegments(run) {
     const lengthM = nodeDistance(startNode, endNode);
     const dz = Number(endNode?.z || 0) - Number(startNode?.z || 0);
     const identity = segmentIdentity(startNode, endNode, index);
+    const orientation = segmentOrientationFor(run, identity.key);
     segments.push({
       segmentIndex: index,
       startNodeIndex: index - 1,
@@ -973,9 +1077,9 @@ function runSegments(run) {
       endNode,
       lengthM,
       isRiser: Math.abs(dz) > 0.001,
-      orientation: runOrientation(run),
+      orientation,
       faceOffsetM: 0,
-      intentStatus: 'run_default',
+      intentStatus: segmentIntentStatusFor(run, identity.key),
       key: identity.key,
       keyStatus: identity.status,
       keyLabel: identity.label,
@@ -1316,9 +1420,9 @@ function rollBasisAroundTangent(basis, quarterTurns = 0) {
   };
 }
 
-function orientedSegmentBasis(run, start, end) {
+function orientedSegmentBasis(run, start, end, orientation = runOrientation(run)) {
   const basis = segmentPlanBasis(start, end);
-  return rollBasisAroundTangent(basis, runOrientation(run).quarter_turns);
+  return rollBasisAroundTangent(basis, normalizedOrientation(orientation).quarter_turns);
 }
 
 function sourcePointAlongSegment(start, basis, distanceM) {
@@ -1337,8 +1441,8 @@ function sourceFrameOffsetPoint(point, basis, lateralOffsetM = 0, depthOffsetM =
   };
 }
 
-function segmentCornerPoints(run, start, end) {
-  const basis = orientedSegmentBasis(run, start, end);
+function segmentCornerPoints(run, start, end, orientation = runOrientation(run)) {
+  const basis = orientedSegmentBasis(run, start, end, orientation);
   if (basis.length < 0.001) return null;
   const halfWidth = runWidthM(run) / 2;
   const depth = runDepthM(run);
@@ -1363,8 +1467,8 @@ function segmentCornerPoints(run, start, end) {
   };
 }
 
-function addSegmentProxyFaces(positions, colors, run, start, end, faceColors) {
-  const corners = segmentCornerPoints(run, start, end);
+function addSegmentProxyFaces(positions, colors, run, start, end, faceColors, orientation = runOrientation(run)) {
+  const corners = segmentCornerPoints(run, start, end, orientation);
   if (!corners) return;
   addProxyQuad(positions, colors, corners.leftStartBottom, corners.rightStartBottom, corners.rightEndBottom, corners.leftEndBottom, faceColors.bottom);
   addProxyQuad(positions, colors, corners.leftStartBottom, corners.leftEndBottom, corners.leftEndTop, corners.leftStartTop, faceColors.side);
@@ -1375,9 +1479,9 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   const positions = [];
   const colors = [];
   const faceColors = proxyFaceColors(color, selected);
-  for (let index = 1; index < run.nodes.length; index += 1) {
-    addSegmentProxyFaces(positions, colors, run, run.nodes[index - 1], run.nodes[index], faceColors);
-  }
+  runSegments(run).forEach(segment => {
+    addSegmentProxyFaces(positions, colors, run, segment.startNode, segment.endNode, faceColors, segment.orientation);
+  });
   if (positions.length < 18) return null;
   const geometry = setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors);
   const mesh = new runtime.THREE.Mesh(geometry, proxyFaceMaterial(color, selected));
@@ -1389,8 +1493,8 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   return mesh;
 }
 
-function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial) {
-  const corners = segmentCornerPoints(run, start, end);
+function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial, orientation = runOrientation(run)) {
+  const corners = segmentCornerPoints(run, start, end, orientation);
   if (!corners) return;
   const { basis } = corners;
   const halfWidth = runWidthM(run) / 2;
@@ -1668,15 +1772,15 @@ function renderTrayPreview(group, run, color) {
     guide.userData.racewayPreviewKind = 'centerline-guide';
     group.add(guide);
   }
-  for (let index = 1; index < run.nodes.length; index += 1) {
-    addSegmentPreview(group, run, run.nodes[index - 1], run.nodes[index], material, detailMaterial, bottomEdgeMaterial);
-    addRiserPlaceholder(group, run, run.nodes[index - 1], run.nodes[index], previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
-    if (warningSegmentIsFocused(run, index)) {
-      addWarningSegmentHighlight(group, run, run.nodes[index - 1], run.nodes[index]);
-    } else if (selectedSegmentIsFocused(run, index)) {
-      addSelectedSegmentHighlight(group, run, run.nodes[index - 1], run.nodes[index]);
+  runSegments(run).forEach(segment => {
+    addSegmentPreview(group, run, segment.startNode, segment.endNode, material, detailMaterial, bottomEdgeMaterial, segment.orientation);
+    addRiserPlaceholder(group, run, segment.startNode, segment.endNode, previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
+    if (warningSegmentIsFocused(run, segment.segmentIndex)) {
+      addWarningSegmentHighlight(group, run, segment.startNode, segment.endNode);
+    } else if (selectedSegmentIsFocused(run, segment.segmentIndex)) {
+      addSelectedSegmentHighlight(group, run, segment.startNode, segment.endNode);
     }
-  }
+  });
   for (let index = 1; index < run.nodes.length - 1; index += 1) {
     addBendPlaceholder(group, run, run.nodes[index], previewMaterial(0xf97316, selected ? 0.95 : 0.65));
   }
@@ -2069,6 +2173,10 @@ function layerFittingsUrl() {
   return state.layerId ? `/raceway/layers/${encodeURIComponent(state.layerId)}/fittings/` : '';
 }
 
+function layerWarningDetailsUrl() {
+  return state.layerId ? `/raceway/layers/${encodeURIComponent(state.layerId)}/warnings/` : '';
+}
+
 function layerScheduleCsvUrl() {
   return state.layerId ? `/raceway/layers/${encodeURIComponent(state.layerId)}/schedule.csv` : '';
 }
@@ -2182,6 +2290,16 @@ function openScheduleCsv() {
   setStatus('Raceway schedule CSV download opened.');
 }
 
+function openWarningDetails() {
+  const url = layerWarningDetailsUrl();
+  if (!url) {
+    setStatus('Save a raceway layer before opening warning details.');
+    return;
+  }
+  window.open?.(url, 'racewayWarningDetails', 'width=1180,height=820,noopener');
+  setStatus('Raceway warning details opened.');
+}
+
 function runFromServer(payload) {
   const serverFamily = payload.family || {};
   const serverSize = payload.size || {};
@@ -2190,7 +2308,7 @@ function runFromServer(payload) {
   const sizeMatch = catalogSizeById(payload.size_id);
   const familyForSize = sizeMatch?.family || family;
   const size = sizeMatch || {};
-  return {
+  const run = {
     id: `raceway-run-${payload.id}`,
     serverRunId: payload.id,
     key: payload.key || '',
@@ -2208,6 +2326,7 @@ function runFromServer(payload) {
     elevationM: Number(payload.elevation_m) || 0,
     metadata,
     orientation: normalizedOrientation(metadata.orientation),
+    segmentOrientationOverrides: {},
     nodes: (Array.isArray(payload.nodes) ? payload.nodes : [])
       .slice()
       .sort((left, right) => Number(left.sequence) - Number(right.sequence))
@@ -2222,6 +2341,8 @@ function runFromServer(payload) {
       })),
     dirty: false,
   };
+  run.segmentOrientationOverrides = ensureSegmentOrientationOverrides(run);
+  return run;
 }
 
 async function loadSavedRaceways({ force = false } = {}) {
@@ -2390,6 +2511,7 @@ function runPayload(run, context) {
       catalogue_family_code: run.familyCode || '',
       catalogue_size_code: run.sizeCode || '',
       orientation: runOrientation(run),
+      segment_orientation: segmentOrientationPayload(run),
     },
   };
 }
@@ -2438,6 +2560,7 @@ async function saveDrafts() {
       try {
         const method = run.serverRunId ? 'PATCH' : 'POST';
         const url = run.serverRunId ? `/raceway/runs/${run.serverRunId}/` : persistentLayer.runs_url;
+        const preSaveSegments = runSegments(run);
         const savedRun = await apiFetch(url, {
           method,
           body: runPayload(run, context),
@@ -2456,6 +2579,18 @@ async function saveDrafts() {
           coordinate_frame: SOURCE_COORDINATE_FRAME,
           anchor: sanitizeAnchorForPersistence(node.anchor || {}),
         }));
+        migrateDraftSegmentOrientationOverrides(run, preSaveSegments);
+        const finalSegmentOrientation = segmentOrientationPayload(run);
+        if (finalSegmentOrientation.overrides.length) {
+          const patchedRun = await apiFetch(`/raceway/runs/${run.serverRunId}/`, {
+            method: 'PATCH',
+            body: runPayload(run, context),
+          });
+          run.metadata = patchedRun.run?.metadata || run.metadata || {};
+          run.orientation = normalizedOrientation(run.metadata.orientation);
+          run.segmentOrientationOverrides = {};
+          ensureSegmentOrientationOverrides(run);
+        }
         run.dirty = false;
         savedCount += 1;
       } catch (error) {
@@ -2543,6 +2678,18 @@ function orientationOptionsHtml() {
   return orientationPresets.map(preset => `<option value="${escapeHtml(preset.id)}"${preset.id === state.orientationPreset ? ' selected' : ''}>${escapeHtml(preset.label)}</option>`).join('');
 }
 
+function segmentOrientationOptionsHtml(segment) {
+  const run = activeRun();
+  const selectedValue = segment?.intentStatus === 'segment_override'
+    ? segment.orientation.preset
+    : SEGMENT_ORIENTATION_INHERIT;
+  const runDefaultLabel = run ? `Run default (${orientationLabel(run)})` : 'Run default';
+  return [
+    `<option value="${SEGMENT_ORIENTATION_INHERIT}"${selectedValue === SEGMENT_ORIENTATION_INHERIT ? ' selected' : ''}>${escapeHtml(runDefaultLabel)}</option>`,
+    ...orientationPresets.map(preset => `<option value="${escapeHtml(preset.id)}"${preset.id === selectedValue ? ' selected' : ''}>${escapeHtml(preset.label)}</option>`),
+  ].join('');
+}
+
 function segmentDirectionOptionsHtml() {
   return segmentDirections.map(direction => `<option value="${escapeHtml(direction.id)}"${direction.id === state.segmentDirection ? ' selected' : ''}>${escapeHtml(direction.label)}</option>`).join('');
 }
@@ -2581,7 +2728,7 @@ function segmentRowsHtml() {
     return `
       <button type="button" class="raceway-row ${segment.segmentIndex === state.selectedSegmentIndex ? 'raceway-row-active' : ''}" data-raceway-action="select-segment" data-segment-index="${segment.segmentIndex}" title="${escapeHtml(title)}">
         <strong>S${segment.segmentIndex}</strong> N${segment.startNodeIndex + 1}->N${segment.endNodeIndex + 1} | ${formatM(segment.lengthM)} m | ${kind}<br>
-        ${escapeHtml(orientationLabel(run))} | ${escapeHtml(segment.intentStatus.replace('_', ' '))} | ${identityText}
+        ${escapeHtml(segment.orientation.label)} | ${escapeHtml(segment.intentStatus.replace('_', ' '))} | ${identityText}
       </button>
     `;
   }).join('');
@@ -2778,8 +2925,11 @@ function inspectorHtml() {
     return `
       <div class="meta">
         Segment S${segment.segmentIndex}: N${segment.startNodeIndex + 1}->N${segment.endNodeIndex + 1}<br>
-        ${formatM(segment.lengthM)} m | ${kind} | ${escapeHtml(orientationLabel(activeRun()))}<br>
+        ${formatM(segment.lengthM)} m | ${kind} | ${escapeHtml(segment.orientation.label)} | ${escapeHtml(segment.intentStatus.replace('_', ' '))}<br>
         ${segment.keyStatus === 'saved' ? 'Stable identity from node UUID pair' : 'Draft identity; save once to lock node UUIDs'}
+      </div>
+      <div class="raceway-node-editor" style="margin-top: 6px;">
+        <label>Segment Orientation<select id="racewaySegmentOrientationSelect">${segmentOrientationOptionsHtml(segment)}</select></label>
       </div>
       ${localWarningsHtml(activeRun())}
     `;
@@ -2847,6 +2997,7 @@ function ensurePanel() {
       <button type="button" data-raceway-action="refresh-graph" title="${escapeHtml(actionTooltip('refresh-graph'))}">Refresh Graph</button>
       <button type="button" data-raceway-action="refresh-schedule" title="${escapeHtml(actionTooltip('refresh-schedule'))}">Refresh Schedule</button>
       <button type="button" data-raceway-action="refresh-fittings" title="${escapeHtml(actionTooltip('refresh-fittings'))}">Refresh Fittings</button>
+      <button type="button" data-raceway-action="open-warning-details" title="${escapeHtml(actionTooltip('open-warning-details'))}">Warnings</button>
       <button type="button" data-raceway-action="open-schedule-csv" title="${escapeHtml(actionTooltip('open-schedule-csv'))}">CSV</button>
       <button type="button" data-raceway-action="delete-run" title="${escapeHtml(actionTooltip('delete-run'))}">Delete Run</button>
     </div>
@@ -2903,6 +3054,7 @@ function updateActionStates(run) {
   setActionState('refresh-graph', state.persistenceLoading || state.graphLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing graph warnings.');
   setActionState('refresh-schedule', state.persistenceLoading || state.scheduleLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing the schedule.');
   setActionState('refresh-fittings', state.persistenceLoading || state.fittingsLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing fittings.');
+  setActionState('open-warning-details', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before opening warning details.');
   setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
   setActionState('add-segment', !run?.nodes?.length || !(Number(state.segmentLengthM) > 0), 'Add at least one node and enter a positive segment length.');
@@ -3015,6 +3167,46 @@ function selectSegment(index) {
   return true;
 }
 
+function changeSelectedSegmentOrientation(value) {
+  const run = activeRun();
+  const segment = selectedSegment();
+  if (!run || !segment) {
+    setStatus('Select a raceway segment before changing segment orientation.');
+    return false;
+  }
+  const preset = value === SEGMENT_ORIENTATION_INHERIT
+    ? null
+    : orientationPresets.find(item => item.id === String(value || ''));
+  if (value !== SEGMENT_ORIENTATION_INHERIT && !preset) {
+    setStatus('Unsupported segment orientation preset.');
+    return false;
+  }
+  const overrides = ensureSegmentOrientationOverrides(run);
+  pushUndo('Change segment orientation');
+  if (value === SEGMENT_ORIENTATION_INHERIT) {
+    delete overrides[segment.key];
+    setStatus(`${run.tag}: segment S${segment.segmentIndex} now follows the run orientation. Save Draft to persist.`);
+  } else {
+    const startNodeKey = String(segment.startNode.key || '');
+    const endNodeKey = String(segment.endNode.key || '');
+    overrides[segment.key] = {
+      key: segment.key,
+      start_node_key: startNodeKey,
+      end_node_key: endNodeKey,
+      orientation: normalizedOrientation(preset.id),
+    };
+    setStatus(`${run.tag}: segment S${segment.segmentIndex} orientation set to ${preset.label}. Save Draft to persist.`);
+  }
+  run.metadata = {
+    ...(run.metadata || {}),
+    segment_orientation: segmentOrientationPayload(run),
+  };
+  markRunDirty(run);
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
 function runPanelAction(action, button = null) {
   if (action === 'start') beginRun();
   if (action === 'continue-run') continueRun();
@@ -3031,6 +3223,7 @@ function runPanelAction(action, button = null) {
   if (action === 'refresh-graph') loadGraphProjection({ quiet: false });
   if (action === 'refresh-schedule') loadScheduleProjection({ quiet: false });
   if (action === 'refresh-fittings') loadFittingProjection({ quiet: false });
+  if (action === 'open-warning-details') openWarningDetails();
   if (action === 'open-schedule-csv') openScheduleCsv();
   if (action === 'delete-run') deleteActiveRun();
   if (action === 'add-segment') addTypedSegment();
@@ -3128,12 +3321,21 @@ function handlePanelChange(event) {
     if (run) {
       pushUndo('Change raceway orientation');
       run.orientation = normalizedOrientation(preset.id);
+      run.metadata = {
+        ...(run.metadata || {}),
+        orientation: run.orientation,
+        segment_orientation: segmentOrientationPayload(run),
+      };
       markRunDirty(run);
       setStatus(`${run.tag}: orientation set to ${preset.label}. Save Draft to persist.`);
     } else {
       setStatus(`Default raceway orientation set to ${preset.label}.`);
     }
     state.orientationPreset = preset.id;
+  }
+  if (target.id === 'racewaySegmentOrientationSelect') {
+    changeSelectedSegmentOrientation(target.value);
+    return;
   }
   if (target.id === 'racewayElevationInput') {
     if (run) pushUndo('Change raceway elevation');
@@ -3216,6 +3418,7 @@ function racewayShortcutActionForEvent(event, key) {
   if (key === 'v' && event.shiftKey) return 'toggle-surfaces';
   if (key === 'a') return event.shiftKey ? 'clear-anchor' : 'anchor-node';
   if (key === 'b') return event.shiftKey ? 'open-schedule-csv' : 'refresh-schedule';
+  if (key === 'w' && event.shiftKey) return 'open-warning-details';
   if (key === 'r' && !event.shiftKey) return 'reload';
   if (key === 'g' && !event.shiftKey) return 'refresh-graph';
   if (key === 't' && !event.shiftKey) return 'refresh-fittings';
@@ -3237,6 +3440,7 @@ function racewayShortcutAvailableForAction(action) {
     action === 'refresh-graph'
     || action === 'refresh-schedule'
     || action === 'refresh-fittings'
+    || action === 'open-warning-details'
     || action === 'open-schedule-csv'
   ) {
     return Boolean(state.layerId);

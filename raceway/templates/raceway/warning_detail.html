@@ -1,0 +1,189 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Raceway warning details</title>
+  {% load static %}
+  <link rel="stylesheet" href="{% static 'plant3d/css/plant3d.css' %}?v=20260702_shell1">
+  <style>
+    .rwy-warning-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+    .rwy-warning-table th,
+    .rwy-warning-table td {
+      padding: 8px;
+      border-bottom: 1px solid var(--p3d-border-soft);
+      text-align: left;
+      vertical-align: top;
+    }
+    .rwy-warning-table th {
+      color: var(--p3d-muted);
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .rwy-warning-pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 20px;
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #fff7ed;
+      color: #9a3412;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .rwy-warning-pill-info {
+      background: #eef6ff;
+      color: #1d4ed8;
+    }
+    .rwy-warning-values {
+      max-width: 520px;
+      overflow: auto;
+      margin: 8px 0 0;
+      padding: 8px;
+      border-radius: 6px;
+      background: #f8fafc;
+      color: #24364b;
+      font-size: 11px;
+      line-height: 1.45;
+    }
+  </style>
+</head>
+<body class="p3d-page">
+  <header class="p3d-topbar">
+    <div class="p3d-brand">
+      <h1 class="p3d-brand-title">Raceway warnings</h1>
+      <span class="p3d-brand-subtitle">{{ layer.name }} | {{ layer.project_id }}</span>
+    </div>
+    <div class="p3d-list-actions" style="margin-top: 0;">
+      <a class="p3d-button" href="{{ schedule_url }}">Schedule JSON</a>
+      <a class="p3d-button" href="{{ graph_url }}">Graph JSON</a>
+      <a class="p3d-button" href="{{ fittings_url }}">Fittings JSON</a>
+      <a class="p3d-button p3d-button-primary" href="{{ schedule_csv_url }}">CSV</a>
+    </div>
+  </header>
+  <main class="p3d-shell">
+    <section class="p3d-card">
+      <div class="p3d-card-header">
+        <h2>Summary</h2>
+        <p>Generated {{ schedule.generated_at }}</p>
+      </div>
+      <div class="p3d-card-body">
+        <dl class="p3d-kv-grid">
+          <div class="p3d-kv">
+            <dt>Total notices</dt>
+            <dd>{{ schedule.warning_summary.total|default:0 }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Warnings</dt>
+            <dd>{{ schedule.warning_summary.warning|default:0 }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Info</dt>
+            <dd>{{ schedule.warning_summary.info|default:0 }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Graph warnings</dt>
+            <dd>{{ schedule.graph_warnings.total|default:0 }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Fitting placeholders</dt>
+            <dd>{{ fittings.counts.total|default:0 }}</dd>
+          </div>
+          <div class="p3d-kv">
+            <dt>Non-standard bends</dt>
+            <dd>{{ fittings.counts.non_standard_plan_bends|default:0 }}</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section class="p3d-card" style="margin-top: 18px;">
+      <div class="p3d-card-header">
+        <h2>Validation Notices</h2>
+        <p>Expandable rows show the evidence payload used by the schedule and CSV export.</p>
+      </div>
+      <div class="p3d-card-body">
+        {% if warning_rows %}
+          <table class="rwy-warning-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Severity</th>
+                <th>Code</th>
+                <th>Run</th>
+                <th>Object</th>
+                <th>Message</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for warning in warning_rows %}
+                <tr>
+                  <td>{{ warning.index }}</td>
+                  <td>
+                    <span class="rwy-warning-pill{% if warning.severity == 'info' %} rwy-warning-pill-info{% endif %}">
+                      {{ warning.severity }}
+                    </span>
+                  </td>
+                  <td><code class="p3d-code">{{ warning.code }}</code></td>
+                  <td>
+                    {{ warning.run_tag|default:"-" }}
+                    {% if warning.run_tags %}<br><span class="p3d-help">{{ warning.run_tags }}</span>{% endif %}
+                  </td>
+                  <td>
+                    {{ warning.source }} / {{ warning.object_type }}
+                    {% if warning.segment_index %}<br><span class="p3d-help">segment {{ warning.segment_index }}</span>{% endif %}
+                    {% if warning.point_label %}<br><span class="p3d-help">{{ warning.point_label }}</span>{% endif %}
+                  </td>
+                  <td>
+                    {{ warning.message }}
+                    <details class="p3d-details" style="margin-top: 8px;">
+                      <summary>Evidence</summary>
+                      <div class="p3d-details-body">
+                        {% if warning.node_keys %}<div class="p3d-help">Node keys: {{ warning.node_keys }}</div>{% endif %}
+                        <pre class="rwy-warning-values">{{ warning.values_json }}</pre>
+                      </div>
+                    </details>
+                  </td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        {% else %}
+          <p class="p3d-help">No validation notices for this saved Raceway layer.</p>
+        {% endif %}
+      </div>
+    </section>
+
+    <section class="p3d-card" style="margin-top: 18px;">
+      <div class="p3d-card-header">
+        <h2>Assumptions</h2>
+        <p>These assumptions also appear in JSON and CSV output.</p>
+      </div>
+      <div class="p3d-card-body">
+        <ul class="p3d-list">
+          {% for assumption in schedule.assumptions %}
+            <li class="p3d-list-item">
+              <div class="p3d-list-title">
+                <span>{{ assumption.code }}</span>
+              </div>
+              <div class="p3d-help" style="margin-top: 6px;">{{ assumption.message }}</div>
+            </li>
+          {% endfor %}
+          {% for assumption in fittings.assumptions %}
+            <li class="p3d-list-item">
+              <div class="p3d-list-title">
+                <span>{{ assumption.code }}</span>
+              </div>
+              <div class="p3d-help" style="margin-top: 6px;">{{ assumption.message }}</div>
+            </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

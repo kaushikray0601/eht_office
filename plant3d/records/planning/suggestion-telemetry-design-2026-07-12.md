@@ -63,6 +63,7 @@ removed, while durable UUID keys and stable model object ids are preserved.
 | `raceway.warning.model_clash_aabb` | warning payload with `run_key`, `run_tag`, `node_keys`, `segment_index`, `source_point_m`, and `values.method = "aabb"`, `values.clearance_m`, `values.gap_m`, `values.object_stable_id`, `values.object_source_object_id`, `values.object_type`, `values.object_label`, `values.object_bounds`, `values.raceway_bounds` |
 | `raceway.warning.model_clearance_aabb` | same as `model_clash_aabb`; `gap_m` is the rough AABB gap inside the configured broad-phase clearance band |
 | `raceway.warning.model_clash_scan_limited` | layer-level warning payload with `values.scan_limit`; indicates the broad-phase object-bounds scan was capped and warnings may be incomplete |
+| `raceway.warning.service_mismatch_at_junction` | graph-node warning payload with `run_keys`, `run_tags`, `source_point_m`, and `values.graph_node_key`, `values.graph_node_kind`, `values.service_classes`, `values.member_count`, `values.members[]` containing run key/tag, service class, segment index, and node keys |
 
 ## Ingestion
 

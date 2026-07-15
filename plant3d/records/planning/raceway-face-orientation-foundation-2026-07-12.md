@@ -278,6 +278,17 @@ Future mid-run insertion/split rule:
   - the UI now derives selectable segment rows from adjacent node pairs,
   - selected segments highlight in the viewer,
   - segment-level face-offset/orientation overrides remain deferred.
+- Codex implemented first segment-level orientation intent on 2026-07-14:
+  - selected segments can override the run orientation with the same four
+    orthogonal presets,
+  - intent persists through the normal Save Draft flow under validated
+    `RacewayRun.metadata["segment_orientation"]`,
+  - segment overrides are keyed by adjacent node UUID pairs and stale entries
+    are pruned when node replacement changes adjacency,
+  - unsaved/draft segment overrides are carried through first save and re-keyed
+    once node UUIDs exist,
+  - face offset, reducer handedness, split/merge inheritance UI, and vendor
+    fitting geometry remain deferred.
 - Codex closed Claude N-17 on 2026-07-13:
   - model clash/clearance AABB now uses oriented proxy corners for saved
     run-level orientation.

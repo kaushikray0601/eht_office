@@ -73,6 +73,9 @@ that foundation.
 - [x] Add Plant model reference-layer hide/show shortcut.
 - [x] Add non-standard plan-bend angle flags to fitting/schedule projections.
 - [x] Promote connected service-class transitions to canonical warnings.
+- [x] Add browser warning-detail page for fast Raceway validation review.
+- [x] Add Plant3D home-page links to accessible uploaded/source models.
+- [x] Stop Plant3D source uploads from auto-pruning prior unsaved uploads.
 
 ## Default Pass Ritual
 
@@ -489,6 +492,10 @@ Acceptance:
   - acknowledge/accept/ignore/dismiss warnings from the Raceway panel,
   - preserve warning evidence in JSON/CSV even when the working UI filters it,
   - record reviewer, action, timestamp, optional reason, and telemetry event.
+- [x] Raceway warning-detail browser page:
+  - opens from the Raceway panel without downloading CSV,
+  - shows warning summary, table rows, source points, evidence payloads,
+    assumptions, JSON links, and CSV link.
 - [x] Warning-to-camera framing:
   - expose Plant3D runtime `frameSourcePoints`,
   - frame the affected Raceway segment/source point when a schedule warning row
@@ -1793,3 +1800,103 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-14 - Warning Details Page and Plant3D Home Navigation
+
+- Read Claude/Fable §34 before coding; no blocker found:
+  - segment-level orientation/face-offset remains the next architecture path,
+  - this pass stayed UI/evidence-only and did not change route semantics.
+- Added Raceway warning detail page:
+  - new route: `/raceway/layers/<id>/warnings/`,
+  - opens from the Raceway panel via `Warnings` button or `Shift+W`,
+  - uses the same `build_layer_schedule()` and fitting projection evidence as
+    JSON/CSV,
+  - shows summary counts, warning rows, source point labels, expandable evidence
+    payloads, assumptions, and quick links to schedule/graph/fittings JSON and
+    CSV.
+- Added Plant3D home navigation:
+  - `/plant3d/` now lists recent accessible source models,
+  - each row links to `Open Source`,
+  - rows with a render package include direct `Open 3D Viewer`,
+  - inaccessible project models stay hidden.
+- Bumped browser cache key:
+  - Raceway overlay: `20260714_raceway32`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile plant3d/views.py raceway/views.py plant3d/tests.py raceway/tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d.tests.Plant3DIntakeTests.test_home_page_lists_accessible_models_with_viewer_links raceway.tests.RacewayApiTests.test_layer_warning_detail_page_surfaces_schedule_warning_evidence raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+    after correcting the Plant3D test class target,
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+
+### 2026-07-14 - Plant3D Source Upload Retention Fix
+
+- Read Claude/Fable notes before coding; no blocker found for this safety fix:
+  - Claude's §35 T-1 telemetry dictionary reminder remains open and recorded,
+  - segment-level Raceway orientation/face-offset remains the next architecture
+    path after this Plant3D data-retention correction.
+- Addressed KR manual observation:
+  - second and later IFC/source uploads no longer delete/prune earlier unsaved
+    uploads for the same user/project,
+  - users can keep multiple uploaded source models and delete explicitly from
+    the source page when needed.
+- Implementation:
+  - removed the upload view's `replace_working=True` override,
+  - kept duplicate-content idempotency by `content_signature`,
+  - updated source upload/detail UI wording,
+  - updated stale platform/pipeline records so they no longer describe
+    disposable uploads as current behavior.
+- No schema or migration change.
+- Verification passed:
+  - `venv/bin/python -m py_compile plant3d/views.py plant3d/tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d.tests.Plant3DIntakeTests.test_upload_view_retains_prior_working_source_for_same_user_project plant3d.tests.Plant3DIntakeTests.test_saved_source_is_not_replaced_by_next_working_upload plant3d.tests.Plant3DIntakeTests.test_home_page_lists_accessible_models_with_viewer_links --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+
+### 2026-07-14 - Segment-Level Raceway Orientation Intent
+
+- Read Claude/Fable notes before coding; no blocker found:
+  - Claude/Fable §35 T-1 telemetry dictionary gap for
+    `raceway.warning.service_mismatch_at_junction` was closed in
+    `suggestion-telemetry-design-2026-07-12.md`,
+  - next architecture direction remains face-offset/reducer handedness after
+    this orientation-intent foundation.
+- Implemented segment-level orientation override foundation:
+  - selected segment inspector now exposes `Segment Orientation`,
+  - `Run default` remains the default behavior,
+  - overrides use the same four orthogonal presets as run orientation,
+  - affected segment proxy faces/rails rotate immediately while the rest of the
+    run remains unchanged,
+  - segment list rows show the effective orientation and whether the segment is
+    using run default or segment override.
+- Persistence:
+  - persisted under `RacewayRun.metadata["segment_orientation"]` with schema
+    `raceway.segment_orientation.v0`,
+  - keyed by adjacent node UUID pair `start_node_key::end_node_key`,
+  - draft segment overrides are carried through first Save Draft and re-keyed
+    once node UUIDs exist,
+  - server rejects unsupported segment presets and prunes stale overrides when
+    node replacement changes adjacency.
+- Deferred/not yet implemented:
+  - face-offset authoring,
+  - reducer handedness and one-edge matching geometry,
+  - split/merge inheritance UI,
+  - vendor bend/riser/tee/reducer geometry.
+- Bumped browser cache key:
+  - Raceway overlay: `20260714_raceway33`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/views.py raceway/tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayApiTests.test_run_accepts_segment_orientation_overrides_by_adjacent_node_keys raceway.tests.RacewayApiTests.test_node_replace_prunes_stale_segment_orientation_overrides raceway.tests.RacewayApiTests.test_run_rejects_unsupported_segment_orientation_preset raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`

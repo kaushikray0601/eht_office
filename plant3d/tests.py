@@ -432,7 +432,7 @@ class Plant3DIntakeTests(TestCase):
         self.assertEqual(first.pk, second.pk)
         self.assertEqual(SourceModel.objects.count(), 1)
 
-    def test_upload_view_replaces_prior_working_source_for_same_user_project(self):
+    def test_upload_view_retains_prior_working_source_for_same_user_project(self):
         user = get_user_model().objects.create_user(username="plant3d-retention-user", password="pw")
         assign_project(user, self.project)
         self.client.force_login(user)
@@ -458,12 +458,10 @@ class Plant3DIntakeTests(TestCase):
 
         self.assertEqual(response_1.status_code, 302)
         self.assertEqual(response_2.status_code, 302)
-        self.assertEqual(SourceModel.objects.count(), 1)
-        current = SourceModel.objects.get()
-        self.assertEqual(current.original_filename, "second.ifc")
-        self.assertEqual(current.uploaded_by, user)
-        self.assertFalse(current.is_saved_case)
-        self.assertFalse(first_path.exists())
+        self.assertEqual(SourceModel.objects.count(), 2)
+        self.assertTrue(SourceModel.objects.filter(pk=first.pk, original_filename="first.ifc").exists())
+        self.assertTrue(SourceModel.objects.filter(original_filename="second.ifc", uploaded_by=user, is_saved_case=False).exists())
+        self.assertTrue(first_path.exists())
 
     def test_saved_source_is_not_replaced_by_next_working_upload(self):
         user = get_user_model().objects.create_user(username="plant3d-save-user", password="pw")
@@ -804,6 +802,36 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "Choose IFC / source model")
         self.assertContains(response, "Selecting the file starts the upload automatically.")
         self.assertNotContains(response, "Upload Source Model</button>")
+
+    def test_home_page_lists_accessible_models_with_viewer_links(self):
+        user = get_user_model().objects.create_user(username="plant3d-home-models-user", password="pw")
+        assign_project(user, self.project)
+        visible = create_source_model_from_upload(
+            self.project,
+            SimpleUploadedFile("visible-home.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            display_name="Visible Home Model",
+        )
+        package = RenderPackage.objects.create(
+            source_model=visible,
+            package_format="GLB",
+            storage_prefix="render/visible-home/",
+        )
+        other_project = create_project("P3D-HOME-HIDDEN")
+        create_source_model_from_upload(
+            other_project,
+            SimpleUploadedFile("hidden-home.ifc", b"ISO-10303-21;\nHEADER;\nFILE_SCHEMA(('IFC4'));\nENDSEC;"),
+            display_name="Hidden Home Model",
+        )
+        self.client.force_login(user)
+
+        response = self.client.get(reverse("plant3d_home"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Available Models")
+        self.assertContains(response, "Visible Home Model")
+        self.assertContains(response, reverse("plant3d_source_detail", args=[visible.pk]))
+        self.assertContains(response, reverse("plant3d_package_viewer", args=[package.pk]))
+        self.assertNotContains(response, "Hidden Home Model")
 
     def _sample_ifc_scene(self):
         return {

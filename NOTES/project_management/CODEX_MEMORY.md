@@ -1002,3 +1002,37 @@ member evidence and participates in the existing schedule/telemetry warning
 pipeline. Raceway overlay cache key is `20260714_raceway31`. Fitting/accessory
 persistence, reducer handedness, face-offset authoring, and real tee/bend/riser
 geometry remain deferred.
+
+Plant3D/Raceway note, 2026-07-14 later: KR manually confirmed the advisory
+signal pass. Added a browser warning-detail page at
+`/raceway/layers/<id>/warnings/`, opened from the Raceway panel `Warnings`
+button or `Shift+W`; it reuses schedule/fitting projection evidence and shows
+summary counts, warning rows, expandable evidence payloads, assumptions, and
+JSON/CSV links. `/plant3d/` now lists recent accessible source models with
+`Open Source` and direct `Open 3D Viewer` links when a render package exists.
+Raceway overlay cache key is `20260714_raceway32`. Segment-level
+orientation/face-offset remains the next architecture path per Claude §34.
+
+Plant3D note, 2026-07-14 source retention: KR reported that sequential IFC
+uploads were overwriting/pruning earlier uploads, which is no longer desired.
+The old UI policy used `replace_working=True` in `source_upload_view`; remove
+that override so normal uploads create/retain separate `SourceModel` rows until
+explicit user deletion. Duplicate-content idempotency by `content_signature`
+still reuses an existing row. Source upload/detail wording and the platform/
+pipeline records were updated so "saved case" means deliberate protected
+reference, not the only way to avoid upload replacement. Next Raceway
+architecture path remains segment-level orientation/face-offset.
+
+Plant3D/Raceway note, 2026-07-14 segment orientation foundation: first
+segment-level orientation intent is implemented without a new table. Selected
+segments can override the run orientation using the same four orthogonal
+presets; the override renders immediately, participates in undo/redo, and
+persists only through Save Draft under validated
+`RacewayRun.metadata["segment_orientation"]` with schema
+`raceway.segment_orientation.v0`. Overrides are keyed by adjacent node UUID
+pairs, draft segment overrides are re-keyed after first save, and the server
+prunes stale overrides when node replacement changes adjacency. Claude/Fable
+T-1 telemetry documentation gap for
+`raceway.warning.service_mismatch_at_junction` is closed in the telemetry
+design note. Face offset, reducer handedness, split/merge inheritance UI, and
+real accessory geometry remain next/deferred architecture work.

@@ -6,6 +6,7 @@ from django.core.exceptions import ValidationError
 from django.db import transaction
 from django.db.models import Prefetch
 from django.http import HttpResponse, JsonResponse
+from django.shortcuts import render
 from django.urls import reverse
 from django.views.decorators.http import require_http_methods
 
@@ -25,6 +26,7 @@ RUN_ORIENTATION_PRESETS = {
     "roll_left": {"label": "Roll Left", "quarter_turns": 3},
 }
 RUN_ORIENTATION_SCHEMA = "raceway.orientation.v0"
+RUN_SEGMENT_ORIENTATION_SCHEMA = "raceway.segment_orientation.v0"
 
 
 def raceway_home_view(request):
@@ -115,21 +117,109 @@ def _metadata_value(payload, field_name):
 def _run_metadata_value(payload, field_name):
     metadata = dict(_metadata_value(payload, field_name))
     orientation = metadata.get("orientation")
-    if orientation in (None, ""):
-        return metadata
+    if orientation not in (None, ""):
+        metadata["orientation"] = _orientation_payload(orientation, "metadata.orientation")
+    segment_orientation = metadata.get("segment_orientation")
+    if segment_orientation not in (None, ""):
+        metadata["segment_orientation"] = _segment_orientation_payload(segment_orientation)
+    return metadata
+
+
+def _orientation_payload(orientation, field_name):
     if not isinstance(orientation, dict):
-        raise ValidationError({"metadata.orientation": "Orientation must be an object."})
+        raise ValidationError({field_name: "Orientation must be an object."})
     preset = str(orientation.get("preset") or "").strip()
     if preset not in RUN_ORIENTATION_PRESETS:
-        raise ValidationError({"metadata.orientation.preset": "Unsupported orientation preset."})
+        raise ValidationError({f"{field_name}.preset": "Unsupported orientation preset."})
     preset_config = RUN_ORIENTATION_PRESETS[preset]
-    metadata["orientation"] = {
+    return {
         "schema": RUN_ORIENTATION_SCHEMA,
         "preset": preset,
         "quarter_turns": preset_config["quarter_turns"],
         "label": preset_config["label"],
     }
-    return metadata
+
+
+def _segment_orientation_node_key(value, field_name):
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError, AttributeError):
+        raise ValidationError({field_name: "Node key must be a UUID."})
+
+
+def _segment_orientation_payload(segment_orientation):
+    if not isinstance(segment_orientation, dict):
+        raise ValidationError({"metadata.segment_orientation": "Segment orientation must be an object."})
+    raw_overrides = segment_orientation.get("overrides", [])
+    if raw_overrides in (None, ""):
+        raw_overrides = []
+    if not isinstance(raw_overrides, list):
+        raise ValidationError({"metadata.segment_orientation.overrides": "Overrides must be a list."})
+    overrides_by_pair = {}
+    for index, raw_override in enumerate(raw_overrides, start=1):
+        if not isinstance(raw_override, dict):
+            raise ValidationError({f"metadata.segment_orientation.overrides.{index}": "Override must be an object."})
+        start_node_key = _segment_orientation_node_key(
+            raw_override.get("start_node_key"),
+            f"metadata.segment_orientation.overrides.{index}.start_node_key",
+        )
+        end_node_key = _segment_orientation_node_key(
+            raw_override.get("end_node_key"),
+            f"metadata.segment_orientation.overrides.{index}.end_node_key",
+        )
+        if start_node_key == end_node_key:
+            raise ValidationError({f"metadata.segment_orientation.overrides.{index}": "Segment node keys must be different."})
+        preset = str(raw_override.get("preset") or "").strip()
+        if preset not in RUN_ORIENTATION_PRESETS:
+            raise ValidationError({f"metadata.segment_orientation.overrides.{index}.preset": "Unsupported orientation preset."})
+        preset_config = RUN_ORIENTATION_PRESETS[preset]
+        overrides_by_pair[(start_node_key, end_node_key)] = {
+            "start_node_key": start_node_key,
+            "end_node_key": end_node_key,
+            "preset": preset,
+            "quarter_turns": preset_config["quarter_turns"],
+            "label": preset_config["label"],
+        }
+    return {
+        "schema": RUN_SEGMENT_ORIENTATION_SCHEMA,
+        "overrides": list(overrides_by_pair.values()),
+    }
+
+
+def _prune_stale_segment_orientation(run):
+    metadata = dict(run.metadata or {})
+    segment_orientation = metadata.get("segment_orientation")
+    if not isinstance(segment_orientation, dict):
+        return False
+    raw_overrides = segment_orientation.get("overrides", [])
+    if not isinstance(raw_overrides, list):
+        metadata.pop("segment_orientation", None)
+        run.metadata = metadata
+        run.save(update_fields=["metadata"])
+        return True
+    nodes = list(run.nodes.order_by("sequence", "pk").values_list("key", flat=True))
+    adjacent_pairs = {
+        (str(nodes[index - 1]), str(nodes[index]))
+        for index in range(1, len(nodes))
+    }
+    kept = [
+        override
+        for override in raw_overrides
+        if (
+            str(override.get("start_node_key") or ""),
+            str(override.get("end_node_key") or ""),
+        )
+        in adjacent_pairs
+    ]
+    if len(kept) == len(raw_overrides):
+        return False
+    metadata["segment_orientation"] = {
+        "schema": RUN_SEGMENT_ORIENTATION_SCHEMA,
+        "overrides": kept,
+    }
+    run.metadata = metadata
+    run.save(update_fields=["metadata"])
+    return True
 
 
 def _node_key_from_payload(raw_node, index, existing_node_keys):
@@ -455,6 +545,70 @@ def layer_schedule_view(request, layer_id):
     return JsonResponse({"layer": _layer_payload(layer), "schedule": build_layer_schedule(layer)})
 
 
+def _json_detail(value):
+    return json.dumps(value or {}, indent=2, sort_keys=True, default=str)
+
+
+def _point_label(point):
+    if not isinstance(point, dict):
+        return ""
+    try:
+        return "X {x:.3f} Y {y:.3f} EL {z:.3f}".format(
+            x=float(point.get("x")),
+            y=float(point.get("y")),
+            z=float(point.get("z")),
+        )
+    except (TypeError, ValueError):
+        return ""
+
+
+def _warning_detail_rows(warnings):
+    rows = []
+    for index, warning in enumerate(warnings, start=1):
+        values = warning.get("values") if isinstance(warning.get("values"), dict) else {}
+        rows.append(
+            {
+                "index": index,
+                "severity": warning.get("severity", ""),
+                "code": warning.get("code", ""),
+                "source": warning.get("source", ""),
+                "object_type": warning.get("object_type", ""),
+                "run_tag": warning.get("run_tag", ""),
+                "segment_index": warning.get("segment_index", ""),
+                "message": warning.get("message", ""),
+                "point_label": _point_label(warning.get("source_point_m")),
+                "node_keys": ", ".join(str(key) for key in warning.get("node_keys", [])[:4]),
+                "run_tags": ", ".join(str(tag) for tag in warning.get("run_tags", [])[:4]),
+                "values_json": _json_detail(values),
+            }
+        )
+    return rows
+
+
+@require_http_methods(["GET"])
+def layer_warning_detail_view(request, layer_id):
+    layer = _layer_for_user(request.user, layer_id)
+    if layer is None:
+        return _error_response("Raceway layer was not found.", status=404)
+    schedule = build_layer_schedule(layer)
+    fittings = build_layer_fitting_projection(layer)
+    return render(
+        request,
+        "raceway/warning_detail.html",
+        {
+            "layer": layer,
+            "layer_payload": _layer_payload(layer),
+            "schedule": schedule,
+            "fittings": fittings,
+            "warning_rows": _warning_detail_rows(schedule.get("warnings", [])),
+            "schedule_url": reverse("raceway:layer_schedule", args=[layer.pk]),
+            "schedule_csv_url": reverse("raceway:layer_schedule_csv", args=[layer.pk]),
+            "graph_url": reverse("raceway:layer_graph", args=[layer.pk]),
+            "fittings_url": reverse("raceway:layer_fittings", args=[layer.pk]),
+        },
+    )
+
+
 @require_http_methods(["GET"])
 def layer_fittings_view(request, layer_id):
     layer = _layer_for_user(request.user, layer_id)
@@ -708,6 +862,7 @@ def run_detail_view(request, run_id):
         payload = _json_body(request)
         _apply_run_payload(run, payload, request.user)
         run.save()
+        _prune_stale_segment_orientation(run)
     except ValidationError as exc:
         return _error_response("Invalid raceway run payload.", errors=_validation_payload(exc))
     return JsonResponse({"run": _run_payload(run)})
@@ -765,6 +920,7 @@ def run_nodes_view(request, run_id):
         with transaction.atomic():
             run.nodes.all().delete()
             RacewayNode.objects.bulk_create(nodes)
+        _prune_stale_segment_orientation(run)
     except ValidationError as exc:
         return _error_response("Invalid raceway node payload.", errors=_validation_payload(exc))
     return JsonResponse({"nodes": [_node_payload(node) for node in run.nodes.order_by("sequence", "pk")]})

@@ -861,3 +861,21 @@ Two layers reviewed: commit `3e8238c` (segment identity + oriented clash) and th
 - Polish verified: Shift+M model-layer toggle, differentiated lower-edge colour, source-detail progress dedup.
 
 Next: segment-level orientation/face-offset persistence per the design note's five rules, then reducer handedness with one-edge matching — order unchanged.
+
+## 35. N-15/N-16 pass review (2026-07-14, commit `3538046`; for Codex)
+
+**Verdict: both findings closed exactly to the §29 specifications — one small documentation gap (T-1) is the only observation.** Verified: raceway+plant3d+telemetry **134 tests OK twice** (three new tests), browser **2/2 OK**, full **eht 360 OK**, statics clean, tree clean.
+
+### N-15/N-16 closures verified
+
+- **N-15 CLOSED to spec:** `BEND_STANDARD_ANGLES_DEG = (30, 45, 60, 90)` with the suggested **2.5° tolerance as a named constant**; each plan bend now carries `nearest_standard_angle_deg`, `deviation_deg`, and the `non_standard_angle` flag; aggregate counts flow into the fitting summary and schedule CSV; and the assumptions block documents the check with exactly the right honesty framing — *"advisory flags until a vendor catalogue is selected."* A tray designer now learns to square up a 37° bend while editing is still free.
+- **N-16 CLOSED to spec:** `raceway.warning.service_mismatch_at_junction` emits through the canonical warning shape whenever a connected graph node's members span two or more service classes — with node keys, source point, member evidence, and run keys/tags — so it reaches panel, CSV, *and* telemetry for free, while the `service_transition` entry stays in the fitting taxonomy as specified. Power-tray-joined-to-instrument-tray is now a visible, exportable, recorded event.
+- Commit granularity note (F-20, positive for once): `3538046` bundles the manual-feedback fixes with N-15/N-16 — two tracker entries, one commit — but the message names the dominant content accurately.
+
+### T-1 gap — one table row owed
+
+`raceway.warning.service_mismatch_at_junction` is a **new suggestion_code flowing into telemetry**, and the event dictionary in `suggestion-telemetry-design-2026-07-12.md` has no entry for it (checked — absent). The T-1 rule exists precisely for codes like this one, whose context carries an unusual shape (multi-run members list). One row, next touch of the telemetry note.
+
+### Register state after this pass
+
+The findings register is effectively clean again: open items are T-2 (`session_key`), the §26 blocked-endpoint assertion, the two KR decisions (workspace file, catalogue seed), M-5/M-6 remainders, and the two well-recorded deferred observations (segment-interior picking, explicit work-plane mode). Architecture path unchanged: segment-level intent persistence → reducer handedness with one-edge matching.

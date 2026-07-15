@@ -29,7 +29,7 @@ The next product direction should be **raceway/tray network first, cable assignm
 - Source upload, source detail, job status, package JSON, tile/blob APIs, and viewer pages exist.
 - Source models are scoped by loose `project_id`, not a hard FK to EHT `ProjectData`.
 - `plant3d.project_gateway` confines the current EHT-backed project access dependency to one seam.
-- Working source uploads are disposable per user/project; saved geometry cases are explicitly protected and capped.
+- Source uploads are retained per user/project until explicit user deletion; saved geometry cases are explicitly marked/protected references and capped.
 - Cleanup tooling exists for plant3d test/source/package data.
 
 ### Conversion And Rendering

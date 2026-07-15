@@ -127,7 +127,7 @@
                   {% csrf_token %}
                   <button type="submit">Save This Geometry Case</button>
                 </form>
-                <p class="p3d-help">Working uploads are replaced by the next upload for the same user and project. Save only cases that must be retained; up to five saved geometry cases are allowed per user/project.</p>
+                <p class="p3d-help">Uploaded source models are retained until you delete them. Save only cases that should be marked as protected geometry references; up to five saved geometry cases are allowed per user/project.</p>
 
                 <form method="post" action="{% url 'plant3d_source_delete' source.pk %}" onsubmit="return confirm('Delete this current source model, its conversion jobs, render packages, object index, and stored geometry files?');">
                   {% csrf_token %}
@@ -140,7 +140,7 @@
             <details class="p3d-details">
               <summary>Retention and cleanup</summary>
               <div class="p3d-details-body">
-                <p class="p3d-help">This source is protected as a saved geometry case and will not be replaced by normal working uploads.</p>
+                <p class="p3d-help">This source is marked as a saved geometry case for deliberate reference. It remains available until it is explicitly deleted.</p>
                 <form method="post" action="{% url 'plant3d_source_delete' source.pk %}" onsubmit="return confirm('Delete this saved source model, its conversion jobs, render packages, object index, and stored geometry files?');">
                   {% csrf_token %}
                   <button type="submit" class="p3d-button-danger">Delete This Saved Case</button>

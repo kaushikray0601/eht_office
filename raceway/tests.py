@@ -2,6 +2,7 @@ import ast
 import json
 import math
 import os
+import uuid
 from decimal import Decimal
 
 from django.core.exceptions import PermissionDenied
@@ -1084,6 +1085,36 @@ class RacewayApiTests(TestCase):
 
         self.assertEqual(blocked_response.status_code, 403)
 
+    def test_layer_warning_detail_page_surfaces_schedule_warning_evidence(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        power_run = create_run(layer=layer, family=self.family, size=self.size)
+        power_run.tag = "RWY-WARN-PWR"
+        power_run.service_class = "power"
+        power_run.save()
+        control_run = create_run(layer=layer, family=self.family, size=self.size)
+        control_run.tag = "RWY-WARN-CTL"
+        control_run.service_class = "control"
+        control_run.save()
+        create_nodes(power_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(control_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+        response = self.client.get(reverse("raceway:layer_warnings", args=[layer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Raceway warnings")
+        self.assertContains(response, "raceway.warning.service_mismatch_at_junction")
+        self.assertContains(response, "Connected raceway junction mixes service classes")
+        self.assertContains(response, "RWY-WARN-PWR")
+        self.assertContains(response, "RWY-WARN-CTL")
+        self.assertContains(response, "Schedule JSON")
+        self.assertContains(response, "Fittings JSON")
+
+        other_user = get_user_model().objects.create_user(username="raceway-warning-blocked", password="pw")
+        self.client.force_login(other_user)
+        blocked_response = self.client.get(reverse("raceway:layer_warnings", args=[layer.pk]))
+
+        self.assertEqual(blocked_response.status_code, 403)
+
     def test_layer_fittings_endpoint_returns_project_scoped_projection(self):
         layer = create_layer(project_id=self.project.proj_id)
         run = create_run(layer=layer, family=self.family, size=self.size)
@@ -1232,6 +1263,111 @@ class RacewayApiTests(TestCase):
         self.assertEqual(delete_response.status_code, 200)
         self.assertFalse(RacewayRun.objects.filter(pk=run_id).exists())
 
+    def test_run_accepts_segment_orientation_overrides_by_adjacent_node_keys(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        layer.source_model_id = self.source.pk
+        layer.render_package_id = self.package.pk
+        layer.save()
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.source_model_id = self.source.pk
+        run.render_package_id = self.package.pk
+        run.save()
+        start_node, end_node = create_nodes(run, [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0)])
+
+        response = self.client.patch(
+            reverse("raceway:run_detail", args=[run.pk]),
+            data=json_body(
+                {
+                    "metadata": {
+                        "orientation": {"preset": "open_up"},
+                        "segment_orientation": {
+                            "overrides": [
+                                {
+                                    "start_node_key": str(start_node.key),
+                                    "end_node_key": str(end_node.key),
+                                    "preset": "roll_right",
+                                }
+                            ]
+                        },
+                    }
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        metadata = response.json()["run"]["metadata"]
+        self.assertEqual(metadata["segment_orientation"]["schema"], "raceway.segment_orientation.v0")
+        override = metadata["segment_orientation"]["overrides"][0]
+        self.assertEqual(override["start_node_key"], str(start_node.key))
+        self.assertEqual(override["end_node_key"], str(end_node.key))
+        self.assertEqual(override["preset"], "roll_right")
+        self.assertEqual(override["quarter_turns"], 1)
+
+    def test_node_replace_prunes_stale_segment_orientation_overrides(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        layer.source_model_id = self.source.pk
+        layer.render_package_id = self.package.pk
+        layer.save()
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.source_model_id = self.source.pk
+        run.render_package_id = self.package.pk
+        run.save()
+        node_a, node_b, node_c = create_nodes(run, [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (8.0, 0.0, 0.0)])
+        run.metadata = {
+            "segment_orientation": {
+                "schema": "raceway.segment_orientation.v0",
+                "overrides": [
+                    {
+                        "start_node_key": str(node_a.key),
+                        "end_node_key": str(node_b.key),
+                        "preset": "roll_right",
+                        "quarter_turns": 1,
+                        "label": "Roll Right",
+                    },
+                    {
+                        "start_node_key": str(node_b.key),
+                        "end_node_key": str(node_c.key),
+                        "preset": "open_down",
+                        "quarter_turns": 2,
+                        "label": "Open Down",
+                    },
+                ],
+            }
+        }
+        run.save(update_fields=["metadata"])
+
+        response = self.client.put(
+            reverse("raceway:run_nodes", args=[run.pk]),
+            data=json_body(
+                {
+                    "nodes": [
+                        {
+                            "key": str(node_a.key),
+                            "sequence": 0,
+                            "node_kind": "endpoint",
+                            "source_x_m": 0.0,
+                            "source_y_m": 0.0,
+                            "source_z_m": 0.0,
+                        },
+                        {
+                            "key": str(node_c.key),
+                            "sequence": 1,
+                            "node_kind": "endpoint",
+                            "source_x_m": 8.0,
+                            "source_y_m": 0.0,
+                            "source_z_m": 0.0,
+                        },
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        run.refresh_from_db()
+        self.assertEqual(run.metadata["segment_orientation"]["overrides"], [])
+
     def test_run_rejects_unsupported_orientation_preset(self):
         layer = create_layer(project_id=self.project.proj_id)
         response = self.client.post(
@@ -1250,6 +1386,35 @@ class RacewayApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("metadata.orientation.preset", response.json()["errors"])
+
+    def test_run_rejects_unsupported_segment_orientation_preset(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        response = self.client.post(
+            reverse("raceway:layer_runs", args=[layer.pk]),
+            data=json_body(
+                {
+                    "tag": "RWY-BAD-SEG-ORIENT",
+                    "family_id": self.family.pk,
+                    "size_id": self.size.pk,
+                    "service_class": "power",
+                    "metadata": {
+                        "segment_orientation": {
+                            "overrides": [
+                                {
+                                    "start_node_key": str(uuid.uuid4()),
+                                    "end_node_key": str(uuid.uuid4()),
+                                    "preset": "diagonal_magic",
+                                }
+                            ]
+                        }
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("metadata.segment_orientation.overrides.1.preset", response.json()["errors"])
 
     def test_run_create_rejects_family_size_mismatch(self):
         layer = create_layer(project_id=self.project.proj_id)
@@ -1456,9 +1621,14 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("racewayElevationInput", content)
         self.assertIn("racewayOrthoInput", content)
         self.assertIn("const ORIENTATION_SCHEMA = 'raceway.orientation.v0'", content)
+        self.assertIn("const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0'", content)
         self.assertIn("function normalizedOrientation", content)
+        self.assertIn("function segmentOrientationPayload", content)
+        self.assertIn("function changeSelectedSegmentOrientation", content)
+        self.assertIn("racewaySegmentOrientationSelect", content)
         self.assertIn("function rollBasisAroundTangent", content)
         self.assertIn("orientation: runOrientation(run)", content)
+        self.assertIn("segment_orientation: segmentOrientationPayload(run)", content)
         self.assertIn("if (node.key) payload.key = node.key", content)
         self.assertIn("selectedSegmentIndex", content)
         self.assertIn("function runSegments", content)
@@ -1487,6 +1657,10 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function loadFittingProjection", content)
         self.assertIn("function fittingSummaryHtml", content)
         self.assertIn("non-standard bend(s)", content)
+        self.assertIn("function layerWarningDetailsUrl", content)
+        self.assertIn("function openWarningDetails", content)
+        self.assertIn("data-raceway-action=\"open-warning-details\"", content)
+        self.assertIn("'open-warning-details': 'Shift+W'", content)
         self.assertIn("function scheduleSummaryHtml", content)
         self.assertIn("function scheduleWarningRowsHtml", content)
         self.assertIn("warning-segment-highlight", content)

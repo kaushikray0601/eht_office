@@ -33,6 +33,44 @@
         </dl>
       </div>
     </section>
+    <section class="p3d-card" style="margin-top: 18px;">
+      <div class="p3d-card-header">
+        <h2>Available Models</h2>
+        <p>Open a source record or jump directly into the latest 3D viewer package.</p>
+      </div>
+      <div class="p3d-card-body">
+        {% if source_rows %}
+          <ul class="p3d-list">
+            {% for source in source_rows %}
+              <li class="p3d-list-item">
+                <div class="p3d-list-title">
+                  <span>{{ source.display_name }}</span>
+                  <span class="p3d-code">{{ source.project_id }}</span>
+                </div>
+                <div class="p3d-help" style="margin-top: 6px;">
+                  {{ source.source_format }} | {{ source.original_filename }}
+                  {% if source.job_status %}| latest job {{ source.job_status }}{% endif %}
+                  {% if source.package_format %}| latest package {{ source.package_format }}{% endif %}
+                </div>
+                <div class="p3d-list-actions">
+                  <a class="p3d-button" href="{{ source.detail_url }}">Open Source</a>
+                  {% if source.viewer_url %}
+                    <a class="p3d-button p3d-button-primary" href="{{ source.viewer_url }}">Open 3D Viewer</a>
+                  {% else %}
+                    <span class="p3d-help">No render package yet</span>
+                  {% endif %}
+                </div>
+              </li>
+            {% endfor %}
+          </ul>
+          {% if source_count > source_limit %}
+            <p class="p3d-help" style="margin-top: 12px;">Showing latest {{ source_limit }} of {{ source_count }} accessible source models.</p>
+          {% endif %}
+        {% else %}
+          <p class="p3d-help">No accessible source models yet.</p>
+        {% endif %}
+      </div>
+    </section>
   </main>
 </body>
 </html>

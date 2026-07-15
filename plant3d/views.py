@@ -29,6 +29,7 @@ from .storage import exists as storage_exists, read_bytes, read_text
 
 PLANT3D_WORKER_COMMAND = "venv/bin/python manage.py process_plant3d_job --watch --parser-threads auto"
 IMMUTABLE_RENDER_CACHE_CONTROL = "private, max-age=31536000, immutable"
+HOME_SOURCE_LIMIT = 20
 TIMING_LABELS = [
     ("source_read_ms", "source read"),
     ("parse_ms", "IFC parse"),
@@ -151,13 +152,40 @@ def package_coordinate_transform(package):
     }
 
 
+def _home_source_rows(sources):
+    rows = []
+    for source in sources:
+        latest_package = source.render_packages.order_by("-created_at", "-pk").first()
+        latest_job = source.conversion_jobs.order_by("-created_at", "-pk").first()
+        rows.append(
+            {
+                "id": source.pk,
+                "display_name": source.display_name or source.original_filename,
+                "project_id": source.project_id,
+                "source_format": source.source_format,
+                "original_filename": source.original_filename,
+                "created_at": source.created_at,
+                "detail_url": reverse("plant3d_source_detail", args=[source.pk]),
+                "viewer_url": reverse("plant3d_package_viewer", args=[latest_package.pk]) if latest_package else "",
+                "package_format": latest_package.package_format if latest_package else "",
+                "package_created_at": latest_package.created_at if latest_package else None,
+                "job_status": latest_job.status if latest_job else "",
+            }
+        )
+    return rows
+
+
 def platform_home_view(request):
-    sources = source_models_for_user(request.user)
+    sources = source_models_for_user(request.user).order_by("-created_at", "-pk")
+    source_count = sources.count()
+    source_rows = _home_source_rows(sources[:HOME_SOURCE_LIMIT])
     return render(
         request,
         "plant3d/home.html",
         {
-            "source_count": sources.count(),
+            "source_count": source_count,
+            "source_rows": source_rows,
+            "source_limit": HOME_SOURCE_LIMIT,
         },
     )
 
@@ -173,7 +201,6 @@ def source_upload_view(request):
                 display_name=form.cleaned_data.get("display_name") or "",
                 source_system=form.cleaned_data.get("source_system") or "",
                 user=request.user,
-                replace_working=True,
             )
             return redirect("plant3d_source_detail", source_id=source.pk)
     else:
