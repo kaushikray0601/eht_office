@@ -1900,3 +1900,106 @@ Append each pass here.
   - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
   - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
   - `git diff --check`
+
+### 2026-07-15 - Segment Orientation UI Context Polish
+
+- Read Claude/Fable notes before coding; no new blocker found.
+- Addressed KR manual UX feedback:
+  - removed the lower `Segment Orientation` dropdown from the segment
+    inspector,
+  - reused the top `Orientation` selector contextually:
+    - no segment selected: edits the run/default orientation,
+    - segment selected: edits the selected segment override,
+    - selected segment options include `Run default (...)` to remove the
+      override,
+  - preserved the same undo/redo and Save Draft persistence behavior from the
+    previous pass.
+- Bumped browser cache key:
+  - Raceway overlay: `20260715_raceway34`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/tests.py raceway/browser_tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+
+### 2026-07-15 - Segment Orientation Save Regression Fix
+
+- Read Claude/Fable notes before coding; no new blocker found.
+- Addressed KR manual regression:
+  - segment rotation previewed correctly,
+  - pressing `Save Draft` made the browser appear to forget/undo the selected
+    segment override.
+- Root cause:
+  - server metadata was saving the segment override correctly,
+  - the browser reset `segmentOrientationOverrides` to `{}` after save and then
+    treated that empty cache as authoritative,
+  - reload had the same risk because `runFromServer()` initialized an empty map
+    before reading `metadata.segment_orientation`.
+- Fix:
+  - empty override cache now rebuilds from non-empty saved metadata,
+  - `Run default` deletion uses an explicit payload-from-current-map path so
+    deleting an override does not resurrect old metadata,
+  - browser smoke now covers draft segment override before first save, post-save
+    local state, and reload persistence.
+- Bumped browser cache key:
+  - Raceway overlay: `20260715_raceway35`.
+- Verification passed:
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/browser_tests.py raceway/tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+
+### 2026-07-15 - Segment Face-Offset Foundation
+
+- Read Claude/Fable notes before coding; no new blocker found:
+  - face-offset/reducer handedness remains the architecture-critical path,
+  - no accessory/fitting persistence was introduced in this pass.
+- Implemented segment face offset:
+  - selected segments now expose `Offset m` in the top Raceway aid grid,
+  - the offset shifts the selected segment tray faces, rails, and cross members
+    laterally from the route centerline,
+  - node coordinates, route graph truth, schedule length, and topology remain
+    unchanged,
+  - offset-only segments keep the top `Orientation` selector on `Run default`
+    instead of pretending there is a segment orientation override.
+- Persistence:
+  - saved under `RacewayRun.metadata["segment_face_offset"]`,
+  - schema: `raceway.segment_face_offset.v0`,
+  - keyed by adjacent node UUID pairs,
+  - draft offsets re-key after first Save Draft,
+  - server validates finite offsets within +/-5 m and prunes stale offsets
+    after node replacement.
+- Warning-envelope integration:
+  - rough model clash/clearance envelopes now honor segment-level orientation
+    and segment face offset,
+  - added a regression test proving an offset segment changes model-clash
+    detection.
+- Bumped browser cache key:
+  - Raceway overlay: `20260715_raceway36`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/views.py raceway/warnings.py raceway/tests.py raceway/browser_tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayWarningProjectionTests.test_layer_warnings_use_saved_segment_face_offset_for_model_envelope raceway.tests.RacewayApiTests.test_run_accepts_segment_face_offset_overrides_by_adjacent_node_keys raceway.tests.RacewayApiTests.test_node_replace_prunes_stale_segment_face_offset_overrides raceway.tests.RacewayApiTests.test_run_rejects_invalid_segment_face_offset raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`
+- Verification note:
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput` against the local
+    PostgreSQL test DB still fails on an existing Plant3D fixture project id
+    longer than the database column permits
+    (`P3D-GATEWAY-INACCESSIBLE` > 20 chars). The same suite is green with
+    `USE_POSTGRES=false`; this is unrelated to the face-offset pass.
+- Next recommended pass:
+  - reducer handedness/one-edge matching metadata and preview foundation,
+  - then split/insert segment semantics needed for tee/accessory
+    materialization.

@@ -1036,3 +1036,40 @@ T-1 telemetry documentation gap for
 `raceway.warning.service_mismatch_at_junction` is closed in the telemetry
 design note. Face offset, reducer handedness, split/merge inheritance UI, and
 real accessory geometry remain next/deferred architecture work.
+
+Plant3D/Raceway note, 2026-07-15 orientation UI polish: KR manually confirmed
+segment orientation behavior but flagged the lower `Segment Orientation`
+dropdown as surprising and potentially confusing beside the top `Orientation`
+control. The overlay now reuses the top `Orientation` selector
+contextually: with no segment selected it edits run/default orientation; with
+a selected segment it edits that segment and offers `Run default (...)` to
+remove the override. The lower segment dropdown was removed, browser smoke
+locks this UX, and the overlay cache key is `20260715_raceway34`. Next
+architecture path remains face-offset foundation, reducer handedness, and
+split/merge inheritance.
+
+Plant3D/Raceway note, 2026-07-15 segment orientation save regression: KR
+found that contextual segment rotation previewed correctly but appeared to
+undo itself during Save Draft. Root cause was client-side only: saved metadata
+contained `segment_orientation`, but the browser reset
+`segmentOrientationOverrides` to an empty object and treated that empty cache as
+authoritative, masking the saved metadata. Fixed by rebuilding an empty cache
+from non-empty metadata, while using an explicit payload-from-current-map path
+so `Run default` deletion does not resurrect old metadata. Browser smoke now
+sets a draft segment override before first save, verifies it survives save, and
+verifies it survives reload. Overlay cache key is `20260715_raceway35`.
+
+Plant3D/Raceway note, 2026-07-15 segment face-offset foundation: implemented
+the first segment-level face-offset intent without a new table. A selected
+segment now exposes `Offset m` in the top Raceway aid grid; the edit shifts the
+selected segment's tray faces/rails laterally from the route centerline while
+leaving node coordinates and graph topology unchanged. Offset intent is
+undo/redo friendly, survives first save/reload, and is persisted under
+`RacewayRun.metadata["segment_face_offset"]` with schema
+`raceway.segment_face_offset.v0`, keyed by adjacent node UUID pairs. The server
+validates finite offsets within +/-5 m and prunes stale offsets when node
+replacement changes adjacency. Rough clash envelopes now honor both
+segment-level orientation and face offset, so warnings track the visible proxy.
+Overlay cache key is `20260715_raceway36`. Next architecture path: reducer
+handedness/one-edge matching, then split/insert semantics for tee/accessory
+materialization.

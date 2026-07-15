@@ -27,6 +27,7 @@ BEND_MIN_ANGLE_DEG = 5.0
 MODEL_CLASH_CLEARANCE_M = 0.10
 MODEL_CLASH_WARNING_LIMIT = 25
 MODEL_OBJECT_SCAN_LIMIT = 2000
+SEGMENT_FACE_OFFSET_EPSILON_M = 0.0005
 ORIENTATION_QUARTER_TURNS = {
     "open_up": 0,
     "roll_right": 1,
@@ -157,6 +158,7 @@ def build_layer_warnings(
                         },
                     )
                 )
+        warnings.extend(_face_offset_step_warnings(run, nodes, layer_obj.pk))
         if model_objects:
             remaining = max(MODEL_CLASH_WARNING_LIMIT - _model_warning_count(warnings), 0)
             if remaining > 0:
@@ -362,6 +364,47 @@ def _graph_node_run_members(graph_node, runs_by_id):
     return sorted(members, key=lambda item: (item["run_tag"], item["sequence"], item["node_key"]))
 
 
+def _face_offset_step_warnings(run, nodes, layer_id):
+    warnings = []
+    for index in range(1, len(nodes) - 1):
+        previous_node = nodes[index - 1]
+        node = nodes[index]
+        next_node = nodes[index + 1]
+        previous_offset_m = _segment_face_offset_m(run, previous_node, node)
+        next_offset_m = _segment_face_offset_m(run, node, next_node)
+        delta_m = next_offset_m - previous_offset_m
+        if abs(delta_m) < SEGMENT_FACE_OFFSET_EPSILON_M:
+            continue
+        warnings.append(
+            _warning(
+                "raceway.warning.face_offset_step_at_node",
+                "warning",
+                "Adjacent same-size raceway segments have different face offsets at a shared node.",
+                source="route",
+                object_type="node",
+                layer_id=layer_id,
+                run=run,
+                node_keys=[str(previous_node.key), str(node.key), str(next_node.key)],
+                segment_index=index,
+                source_point_m=point_from_node(node),
+                values={
+                    "node_key": str(node.key),
+                    "previous_segment_key": f"{previous_node.key}::{node.key}",
+                    "next_segment_key": f"{node.key}::{next_node.key}",
+                    "previous_face_offset_m": previous_offset_m,
+                    "next_face_offset_m": next_offset_m,
+                    "face_offset_delta_m": delta_m,
+                    "epsilon_m": SEGMENT_FACE_OFFSET_EPSILON_M,
+                    "recommended_action": (
+                        "Align adjacent segment offsets or accept a reducer/offset accessory "
+                        "when fitting materialization is available."
+                    ),
+                },
+            )
+        )
+    return warnings
+
+
 def _warning(
     code,
     severity,
@@ -514,10 +557,52 @@ def _segment_envelope_bounds(run, start_node, end_node, *, clearance_m):
             end,
             width_m=width_m,
             depth_m=depth_m,
-            quarter_turns=_run_orientation_quarter_turns(run),
+            quarter_turns=_segment_orientation_quarter_turns(run, start_node, end_node),
+            face_offset_m=_segment_face_offset_m(run, start_node, end_node),
         ),
         margin_m=max(float(clearance_m or 0.0), 0.0),
     )
+
+
+def _segment_override_for_nodes(run, metadata_key, start_node, end_node):
+    metadata = run.metadata if isinstance(run.metadata, dict) else {}
+    payload = metadata.get(metadata_key)
+    if not isinstance(payload, dict):
+        return None
+    overrides = payload.get("overrides", [])
+    if not isinstance(overrides, list):
+        return None
+    start_key = str(getattr(start_node, "key", "") or "")
+    end_key = str(getattr(end_node, "key", "") or "")
+    return next(
+        (
+            override for override in overrides
+            if str(override.get("start_node_key") or "") == start_key
+            and str(override.get("end_node_key") or "") == end_key
+        ),
+        None,
+    )
+
+
+def _segment_orientation_quarter_turns(run, start_node, end_node):
+    override = _segment_override_for_nodes(run, "segment_orientation", start_node, end_node)
+    if isinstance(override, dict):
+        try:
+            return int(override.get("quarter_turns")) % 4
+        except (TypeError, ValueError):
+            return ORIENTATION_QUARTER_TURNS.get(str(override.get("preset") or ""), _run_orientation_quarter_turns(run))
+    return _run_orientation_quarter_turns(run)
+
+
+def _segment_face_offset_m(run, start_node, end_node):
+    override = _segment_override_for_nodes(run, "segment_face_offset", start_node, end_node)
+    if not isinstance(override, dict):
+        return 0.0
+    try:
+        face_offset_m = float(override.get("face_offset_m") or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+    return face_offset_m if math.isfinite(face_offset_m) else 0.0
 
 
 def _run_orientation_quarter_turns(run):
@@ -531,12 +616,13 @@ def _run_orientation_quarter_turns(run):
         return ORIENTATION_QUARTER_TURNS.get(str(orientation.get("preset") or ""), 0)
 
 
-def _segment_proxy_corner_points(start, end, *, width_m, depth_m, quarter_turns):
+def _segment_proxy_corner_points(start, end, *, width_m, depth_m, quarter_turns, face_offset_m=0.0):
     basis = _oriented_segment_basis(start, end, quarter_turns=quarter_turns)
     half_width = width_m / 2.0
+    offset = float(face_offset_m or 0.0)
     points = []
     for source_point in (start, end):
-        for lateral_offset_m in (half_width, -half_width):
+        for lateral_offset_m in (offset + half_width, offset - half_width):
             bottom = _source_frame_offset_point(source_point, basis, lateral_offset_m, 0.0)
             top = _source_frame_offset_point(source_point, basis, lateral_offset_m, depth_m)
             points.extend([bottom, top])

@@ -1,5 +1,6 @@
 import csv
 import json
+import math
 import uuid
 
 from django.core.exceptions import ValidationError
@@ -27,6 +28,9 @@ RUN_ORIENTATION_PRESETS = {
 }
 RUN_ORIENTATION_SCHEMA = "raceway.orientation.v0"
 RUN_SEGMENT_ORIENTATION_SCHEMA = "raceway.segment_orientation.v0"
+RUN_SEGMENT_FACE_OFFSET_SCHEMA = "raceway.segment_face_offset.v0"
+RUN_SEGMENT_FACE_OFFSET_EPSILON_M = 0.0005
+RUN_SEGMENT_FACE_OFFSET_LIMIT_M = 5.0
 
 
 def raceway_home_view(request):
@@ -122,6 +126,9 @@ def _run_metadata_value(payload, field_name):
     segment_orientation = metadata.get("segment_orientation")
     if segment_orientation not in (None, ""):
         metadata["segment_orientation"] = _segment_orientation_payload(segment_orientation)
+    segment_face_offset = metadata.get("segment_face_offset")
+    if segment_face_offset not in (None, ""):
+        metadata["segment_face_offset"] = _segment_face_offset_payload(segment_face_offset)
     return metadata
 
 
@@ -186,6 +193,62 @@ def _segment_orientation_payload(segment_orientation):
     }
 
 
+def _segment_face_offset_payload(segment_face_offset):
+    if not isinstance(segment_face_offset, dict):
+        raise ValidationError({"metadata.segment_face_offset": "Segment face offset must be an object."})
+    raw_overrides = segment_face_offset.get("overrides", [])
+    if raw_overrides in (None, ""):
+        raw_overrides = []
+    if not isinstance(raw_overrides, list):
+        raise ValidationError({"metadata.segment_face_offset.overrides": "Overrides must be a list."})
+    overrides_by_pair = {}
+    for index, raw_override in enumerate(raw_overrides, start=1):
+        if not isinstance(raw_override, dict):
+            raise ValidationError({f"metadata.segment_face_offset.overrides.{index}": "Override must be an object."})
+        start_node_key = _segment_orientation_node_key(
+            raw_override.get("start_node_key"),
+            f"metadata.segment_face_offset.overrides.{index}.start_node_key",
+        )
+        end_node_key = _segment_orientation_node_key(
+            raw_override.get("end_node_key"),
+            f"metadata.segment_face_offset.overrides.{index}.end_node_key",
+        )
+        if start_node_key == end_node_key:
+            raise ValidationError({f"metadata.segment_face_offset.overrides.{index}": "Segment node keys must be different."})
+        try:
+            face_offset_m = float(raw_override.get("face_offset_m"))
+        except (TypeError, ValueError):
+            raise ValidationError({f"metadata.segment_face_offset.overrides.{index}.face_offset_m": "Face offset must be a number."})
+        if not math.isfinite(face_offset_m):
+            raise ValidationError({f"metadata.segment_face_offset.overrides.{index}.face_offset_m": "Face offset must be finite."})
+        if abs(face_offset_m) > RUN_SEGMENT_FACE_OFFSET_LIMIT_M:
+            raise ValidationError(
+                {
+                    f"metadata.segment_face_offset.overrides.{index}.face_offset_m":
+                    f"Face offset must be within +/-{RUN_SEGMENT_FACE_OFFSET_LIMIT_M:g} m."
+                }
+            )
+        if abs(face_offset_m) < RUN_SEGMENT_FACE_OFFSET_EPSILON_M:
+            continue
+        overrides_by_pair[(start_node_key, end_node_key)] = {
+            "start_node_key": start_node_key,
+            "end_node_key": end_node_key,
+            "face_offset_m": face_offset_m,
+        }
+    return {
+        "schema": RUN_SEGMENT_FACE_OFFSET_SCHEMA,
+        "overrides": list(overrides_by_pair.values()),
+    }
+
+
+def _adjacent_node_key_pairs(run):
+    nodes = list(run.nodes.order_by("sequence", "pk").values_list("key", flat=True))
+    return {
+        (str(nodes[index - 1]), str(nodes[index]))
+        for index in range(1, len(nodes))
+    }
+
+
 def _prune_stale_segment_orientation(run):
     metadata = dict(run.metadata or {})
     segment_orientation = metadata.get("segment_orientation")
@@ -197,11 +260,7 @@ def _prune_stale_segment_orientation(run):
         run.metadata = metadata
         run.save(update_fields=["metadata"])
         return True
-    nodes = list(run.nodes.order_by("sequence", "pk").values_list("key", flat=True))
-    adjacent_pairs = {
-        (str(nodes[index - 1]), str(nodes[index]))
-        for index in range(1, len(nodes))
-    }
+    adjacent_pairs = _adjacent_node_key_pairs(run)
     kept = [
         override
         for override in raw_overrides
@@ -215,6 +274,38 @@ def _prune_stale_segment_orientation(run):
         return False
     metadata["segment_orientation"] = {
         "schema": RUN_SEGMENT_ORIENTATION_SCHEMA,
+        "overrides": kept,
+    }
+    run.metadata = metadata
+    run.save(update_fields=["metadata"])
+    return True
+
+
+def _prune_stale_segment_face_offset(run):
+    metadata = dict(run.metadata or {})
+    segment_face_offset = metadata.get("segment_face_offset")
+    if not isinstance(segment_face_offset, dict):
+        return False
+    raw_overrides = segment_face_offset.get("overrides", [])
+    if not isinstance(raw_overrides, list):
+        metadata.pop("segment_face_offset", None)
+        run.metadata = metadata
+        run.save(update_fields=["metadata"])
+        return True
+    adjacent_pairs = _adjacent_node_key_pairs(run)
+    kept = [
+        override
+        for override in raw_overrides
+        if (
+            str(override.get("start_node_key") or ""),
+            str(override.get("end_node_key") or ""),
+        )
+        in adjacent_pairs
+    ]
+    if len(kept) == len(raw_overrides):
+        return False
+    metadata["segment_face_offset"] = {
+        "schema": RUN_SEGMENT_FACE_OFFSET_SCHEMA,
         "overrides": kept,
     }
     run.metadata = metadata
@@ -863,6 +954,7 @@ def run_detail_view(request, run_id):
         _apply_run_payload(run, payload, request.user)
         run.save()
         _prune_stale_segment_orientation(run)
+        _prune_stale_segment_face_offset(run)
     except ValidationError as exc:
         return _error_response("Invalid raceway run payload.", errors=_validation_payload(exc))
     return JsonResponse({"run": _run_payload(run)})
@@ -921,6 +1013,7 @@ def run_nodes_view(request, run_id):
             run.nodes.all().delete()
             RacewayNode.objects.bulk_create(nodes)
         _prune_stale_segment_orientation(run)
+        _prune_stale_segment_face_offset(run)
     except ValidationError as exc:
         return _error_response("Invalid raceway node payload.", errors=_validation_payload(exc))
     return JsonResponse({"nodes": [_node_payload(node) for node in run.nodes.order_by("sequence", "pk")]})

@@ -738,6 +738,60 @@ class RacewayWarningProjectionTests(TestCase):
         self.assertLessEqual(clash_warning["values"]["raceway_bounds"]["min_z"], -0.3)
         self.assertGreaterEqual(clash_warning["values"]["raceway_bounds"]["max_z"], 0.3)
 
+    def test_layer_warnings_use_saved_segment_face_offset_for_model_envelope(self):
+        project_id = "RWY-WARN-FACE-OFFSET"
+        source, package = create_source_and_package(project_id)
+        layer = RacewayLayer.objects.create(
+            project_id=project_id,
+            source_model_id=source.pk,
+            render_package_id=package.pk,
+            name="Face offset clash draft",
+        )
+        family = create_family("WARN-FACE-OFFSET-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        start_node, end_node = create_nodes(run, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            stable_id="ifc-offset-clash",
+            source_object_id="Pipe-offset",
+            object_type="IfcPipeSegment",
+            bounds={
+                "min_x": 0.9,
+                "max_x": 1.1,
+                "min_y": 0.42,
+                "max_y": 0.43,
+                "min_z": 0.02,
+                "max_z": 0.04,
+            },
+        )
+
+        default_warnings = build_layer_warnings(layer)
+        self.assertFalse(
+            any(warning["code"] == "raceway.warning.model_clash_aabb" for warning in default_warnings)
+        )
+
+        run.metadata = {
+            "segment_face_offset": {
+                "schema": "raceway.segment_face_offset.v0",
+                "overrides": [
+                    {
+                        "start_node_key": str(start_node.key),
+                        "end_node_key": str(end_node.key),
+                        "face_offset_m": 0.4,
+                    }
+                ],
+            }
+        }
+        run.save(update_fields=["metadata"])
+        warnings = build_layer_warnings(layer)
+        clash_warning = next(warning for warning in warnings if warning["code"] == "raceway.warning.model_clash_aabb")
+
+        self.assertEqual(clash_warning["values"]["object_stable_id"], "ifc-offset-clash")
+        self.assertLessEqual(clash_warning["values"]["raceway_bounds"]["min_y"], 0.25)
+        self.assertGreaterEqual(clash_warning["values"]["raceway_bounds"]["max_y"], 0.55)
+
     def test_layer_warnings_sort_by_explicit_severity_rank(self):
         layer = RacewayLayer.objects.create(project_id="RWY-WARN-SORT", name="Sort draft")
         family = create_family("WARN-SORT-LADDER")
@@ -949,6 +1003,88 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertEqual({group["width_mm"] for group in reducer["size_groups"]}, {300, 600})
         self.assertEqual({member["run_tag"] for member in reducer["members"]}, {"RWY-SMALL", "RWY-LARGE"})
         self.assertTrue(reducer["requires_face_alignment"])
+        self.assertEqual(reducer["face_alignment"]["basis"], "one_edge_matching")
+        self.assertEqual(reducer["face_alignment"]["recommended_handedness"], "left_edge")
+        self.assertEqual(reducer["face_alignment"]["current_status"], "edges_not_aligned")
+        suggested_offsets = {
+            item["run_tag"]: item
+            for item in reducer["face_alignment"]["recommended_offsets"]
+        }
+        self.assertAlmostEqual(suggested_offsets["RWY-SMALL"]["suggested_face_offset_m"], 0.15)
+        self.assertAlmostEqual(suggested_offsets["RWY-SMALL"]["delta_face_offset_m"], 0.15)
+        self.assertAlmostEqual(suggested_offsets["RWY-LARGE"]["suggested_face_offset_m"], 0.0)
+        self.assertEqual(projection["counts"]["one_edge_alignment_candidates"], 1)
+
+    def test_layer_fitting_projection_marks_reducer_alignment_resolved_by_offset(self):
+        layer = create_layer(project_id="RWY-FITTINGS-REDUCER-OFFSET")
+        family = create_family("FIT-RED-OFFSET-LADDER")
+        small = create_size(family=family, width_mm=300, depth_mm=100)
+        large = create_size(family=family, width_mm=600, depth_mm=100)
+        small_run = create_run(layer=layer, family=family, size=small)
+        small_run.tag = "RWY-SMALL-OFFSET"
+        small_run.save()
+        large_run = create_run(layer=layer, family=family, size=large)
+        large_run.tag = "RWY-LARGE-OFFSET"
+        large_run.save()
+        small_start, small_end = create_nodes(small_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(large_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+        small_run.metadata = {
+            "segment_face_offset": {
+                "schema": "raceway.segment_face_offset.v0",
+                "overrides": [
+                    {
+                        "start_node_key": str(small_start.key),
+                        "end_node_key": str(small_end.key),
+                        "face_offset_m": 0.15,
+                    }
+                ],
+            }
+        }
+        small_run.save(update_fields=["metadata"])
+
+        projection = build_layer_fitting_projection(layer)
+        reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
+
+        self.assertFalse(reducer["requires_face_alignment"])
+        self.assertEqual(reducer["face_alignment"]["status"], "offsets_match_recommended_edge")
+        self.assertEqual(reducer["face_alignment"]["current_status"], "left_edge_aligned")
+        self.assertEqual(projection["counts"]["face_alignment_resolved_by_offset"], 1)
+
+    def test_layer_fitting_projection_flags_same_size_face_offset_step(self):
+        layer = create_layer(project_id="RWY-FITTINGS-OFFSET-STEP")
+        family = create_family("FIT-OFFSET-STEP-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        run.tag = "RWY-OFFSET-STEP"
+        run.save()
+        node_a, node_b, node_c = create_nodes(run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+        run.metadata = {
+            "segment_face_offset": {
+                "schema": "raceway.segment_face_offset.v0",
+                "overrides": [
+                    {
+                        "start_node_key": str(node_b.key),
+                        "end_node_key": str(node_c.key),
+                        "face_offset_m": 0.2,
+                    }
+                ],
+            }
+        }
+        run.save(update_fields=["metadata"])
+
+        projection = build_layer_fitting_projection(layer)
+        step = next(item for item in projection["items"] if item["kind"] == "face_offset_step")
+        warnings = build_layer_warnings(layer)
+        step_warning = next(warning for warning in warnings if warning["code"] == "raceway.warning.face_offset_step_at_node")
+
+        self.assertEqual(step["category"], "same_size_face_offset_step")
+        self.assertAlmostEqual(step["previous_face_offset_m"], 0.0)
+        self.assertAlmostEqual(step["next_face_offset_m"], 0.2)
+        self.assertAlmostEqual(step["face_offset_delta_m"], 0.2)
+        self.assertEqual(step["face_alignment"]["status"], "offset_step_unresolved")
+        self.assertEqual(projection["counts"]["face_offset_steps"], 1)
+        self.assertEqual(step_warning["values"]["node_key"], str(node_b.key))
+        self.assertAlmostEqual(step_warning["values"]["face_offset_delta_m"], 0.2)
 
     def test_layer_fitting_projection_keeps_service_transition_taxonomy(self):
         layer = create_layer(project_id="RWY-FITTINGS-SERVICE")
@@ -1368,6 +1504,105 @@ class RacewayApiTests(TestCase):
         run.refresh_from_db()
         self.assertEqual(run.metadata["segment_orientation"]["overrides"], [])
 
+    def test_run_accepts_segment_face_offset_overrides_by_adjacent_node_keys(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        layer.source_model_id = self.source.pk
+        layer.render_package_id = self.package.pk
+        layer.save()
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.source_model_id = self.source.pk
+        run.render_package_id = self.package.pk
+        run.save()
+        start_node, end_node = create_nodes(run, [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0)])
+
+        response = self.client.patch(
+            reverse("raceway:run_detail", args=[run.pk]),
+            data=json_body(
+                {
+                    "metadata": {
+                        "segment_face_offset": {
+                            "overrides": [
+                                {
+                                    "start_node_key": str(start_node.key),
+                                    "end_node_key": str(end_node.key),
+                                    "face_offset_m": -0.15,
+                                }
+                            ]
+                        },
+                    }
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        metadata = response.json()["run"]["metadata"]
+        self.assertEqual(metadata["segment_face_offset"]["schema"], "raceway.segment_face_offset.v0")
+        override = metadata["segment_face_offset"]["overrides"][0]
+        self.assertEqual(override["start_node_key"], str(start_node.key))
+        self.assertEqual(override["end_node_key"], str(end_node.key))
+        self.assertEqual(override["face_offset_m"], -0.15)
+
+    def test_node_replace_prunes_stale_segment_face_offset_overrides(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        layer.source_model_id = self.source.pk
+        layer.render_package_id = self.package.pk
+        layer.save()
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.source_model_id = self.source.pk
+        run.render_package_id = self.package.pk
+        run.save()
+        node_a, node_b, node_c = create_nodes(run, [(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (8.0, 0.0, 0.0)])
+        run.metadata = {
+            "segment_face_offset": {
+                "schema": "raceway.segment_face_offset.v0",
+                "overrides": [
+                    {
+                        "start_node_key": str(node_a.key),
+                        "end_node_key": str(node_b.key),
+                        "face_offset_m": 0.25,
+                    },
+                    {
+                        "start_node_key": str(node_b.key),
+                        "end_node_key": str(node_c.key),
+                        "face_offset_m": -0.10,
+                    },
+                ],
+            }
+        }
+        run.save(update_fields=["metadata"])
+
+        response = self.client.put(
+            reverse("raceway:run_nodes", args=[run.pk]),
+            data=json_body(
+                {
+                    "nodes": [
+                        {
+                            "key": str(node_a.key),
+                            "sequence": 0,
+                            "node_kind": "endpoint",
+                            "source_x_m": 0.0,
+                            "source_y_m": 0.0,
+                            "source_z_m": 0.0,
+                        },
+                        {
+                            "key": str(node_c.key),
+                            "sequence": 1,
+                            "node_kind": "endpoint",
+                            "source_x_m": 8.0,
+                            "source_y_m": 0.0,
+                            "source_z_m": 0.0,
+                        },
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 200)
+        run.refresh_from_db()
+        self.assertEqual(run.metadata["segment_face_offset"]["overrides"], [])
+
     def test_run_rejects_unsupported_orientation_preset(self):
         layer = create_layer(project_id=self.project.proj_id)
         response = self.client.post(
@@ -1415,6 +1650,38 @@ class RacewayApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("metadata.segment_orientation.overrides.1.preset", response.json()["errors"])
+
+    def test_run_rejects_invalid_segment_face_offset(self):
+        layer = create_layer(project_id=self.project.proj_id)
+        layer.source_model_id = self.source.pk
+        layer.render_package_id = self.package.pk
+        layer.save()
+        response = self.client.post(
+            reverse("raceway:layer_runs", args=[layer.pk]),
+            data=json_body(
+                {
+                    "tag": "RWY-BAD-FACE-OFFSET",
+                    "family_id": self.family.pk,
+                    "size_id": self.size.pk,
+                    "service_class": "power",
+                    "metadata": {
+                        "segment_face_offset": {
+                            "overrides": [
+                                {
+                                    "start_node_key": str(uuid.uuid4()),
+                                    "end_node_key": str(uuid.uuid4()),
+                                    "face_offset_m": 12.0,
+                                }
+                            ]
+                        }
+                    },
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("metadata.segment_face_offset.overrides.1.face_offset_m", response.json()["errors"])
 
     def test_run_create_rejects_family_size_mismatch(self):
         layer = create_layer(project_id=self.project.proj_id)
@@ -1620,15 +1887,26 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("racewayOrientationSelect", content)
         self.assertIn("racewayElevationInput", content)
         self.assertIn("racewayOrthoInput", content)
+        self.assertIn("racewaySegmentFaceOffsetInput", content)
         self.assertIn("const ORIENTATION_SCHEMA = 'raceway.orientation.v0'", content)
         self.assertIn("const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0'", content)
+        self.assertIn("const SEGMENT_FACE_OFFSET_SCHEMA = 'raceway.segment_face_offset.v0'", content)
+        self.assertIn("const SEGMENT_ORIENTATION_INHERIT = '__run_default__'", content)
         self.assertIn("function normalizedOrientation", content)
         self.assertIn("function segmentOrientationPayload", content)
+        self.assertIn("function segmentFaceOffsetPayload", content)
         self.assertIn("function changeSelectedSegmentOrientation", content)
-        self.assertIn("racewaySegmentOrientationSelect", content)
+        self.assertIn("function changeSelectedSegmentFaceOffset", content)
+        self.assertIn("face_offset_step_at_node", content)
+        self.assertIn("edge-match candidate", content)
+        self.assertIn("function orientationSelectValue", content)
+        self.assertIn("function orientationSelectTitle", content)
+        self.assertIn("selectedSegment()", content)
+        self.assertNotIn("racewaySegmentOrientationSelect", content)
         self.assertIn("function rollBasisAroundTangent", content)
         self.assertIn("orientation: runOrientation(run)", content)
         self.assertIn("segment_orientation: segmentOrientationPayload(run)", content)
+        self.assertIn("segment_face_offset: segmentFaceOffsetPayload(run)", content)
         self.assertIn("if (node.key) payload.key = node.key", content)
         self.assertIn("selectedSegmentIndex", content)
         self.assertIn("function runSegments", content)

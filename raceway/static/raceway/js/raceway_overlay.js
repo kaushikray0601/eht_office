@@ -22,7 +22,10 @@ const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
 ]);
 const ORIENTATION_SCHEMA = 'raceway.orientation.v0';
 const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0';
+const SEGMENT_FACE_OFFSET_SCHEMA = 'raceway.segment_face_offset.v0';
 const SEGMENT_ORIENTATION_INHERIT = '__run_default__';
+const SEGMENT_FACE_OFFSET_EPSILON_M = 0.0005;
+const SEGMENT_FACE_OFFSET_LIMIT_M = 5;
 const orientationPresets = [
   { id: 'open_up', label: 'Open Up', quarterTurns: 0 },
   { id: 'roll_right', label: 'Roll Right', quarterTurns: 1 },
@@ -264,7 +267,10 @@ function normalizedSegmentOrientationOverride(rawOverride) {
 function ensureSegmentOrientationOverrides(run) {
   if (!run) return {};
   if (run.segmentOrientationOverrides && typeof run.segmentOrientationOverrides === 'object') {
-    return run.segmentOrientationOverrides;
+    const metadataOverrides = run.metadata?.segment_orientation?.overrides;
+    if (Object.keys(run.segmentOrientationOverrides).length || !Array.isArray(metadataOverrides) || !metadataOverrides.length) {
+      return run.segmentOrientationOverrides;
+    }
   }
   const overrides = {};
   const rawOverrides = run.metadata?.segment_orientation?.overrides || run.segmentOrientation?.overrides || [];
@@ -288,11 +294,10 @@ function segmentOrientationFor(run, segmentKey) {
 }
 
 function segmentIntentStatusFor(run, segmentKey) {
-  return segmentOrientationOverrideFor(run, segmentKey) ? 'segment_override' : 'run_default';
+  return segmentHasIntentOverride(run, segmentKey) ? 'segment_override' : 'run_default';
 }
 
-function segmentOrientationPayload(run) {
-  const overrides = ensureSegmentOrientationOverrides(run);
+function segmentOrientationPayloadFromOverrides(run, overrides) {
   const items = [];
   (run?.nodes || []).forEach((node, index) => {
     if (index < 1) return;
@@ -313,15 +318,136 @@ function segmentOrientationPayload(run) {
   };
 }
 
-function migrateDraftSegmentOrientationOverrides(run, oldSegments) {
+function segmentOrientationPayload(run) {
+  return segmentOrientationPayloadFromOverrides(run, ensureSegmentOrientationOverrides(run));
+}
+
+function normalizedFaceOffsetM(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.min(Math.max(parsed, -SEGMENT_FACE_OFFSET_LIMIT_M), SEGMENT_FACE_OFFSET_LIMIT_M);
+}
+
+function normalizedSegmentFaceOffsetOverride(rawOverride) {
+  if (!rawOverride || typeof rawOverride !== 'object') return null;
+  const startNodeKey = String(rawOverride.start_node_key || rawOverride.startNodeKey || '').trim();
+  const endNodeKey = String(rawOverride.end_node_key || rawOverride.endNodeKey || '').trim();
+  const faceOffsetM = normalizedFaceOffsetM(rawOverride.face_offset_m ?? rawOverride.faceOffsetM);
+  if (!startNodeKey || !endNodeKey || Math.abs(faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) return null;
+  return {
+    key: `${startNodeKey}::${endNodeKey}`,
+    start_node_key: startNodeKey,
+    end_node_key: endNodeKey,
+    face_offset_m: faceOffsetM,
+  };
+}
+
+function ensureSegmentFaceOffsetOverrides(run) {
+  if (!run) return {};
+  if (run.segmentFaceOffsetOverrides && typeof run.segmentFaceOffsetOverrides === 'object') {
+    const metadataOverrides = run.metadata?.segment_face_offset?.overrides;
+    if (Object.keys(run.segmentFaceOffsetOverrides).length || !Array.isArray(metadataOverrides) || !metadataOverrides.length) {
+      return run.segmentFaceOffsetOverrides;
+    }
+  }
+  const overrides = {};
+  const rawOverrides = run.metadata?.segment_face_offset?.overrides || run.segmentFaceOffset?.overrides || [];
+  if (Array.isArray(rawOverrides)) {
+    rawOverrides.forEach(rawOverride => {
+      const override = normalizedSegmentFaceOffsetOverride(rawOverride);
+      if (override) overrides[override.key] = override;
+    });
+  }
+  run.segmentFaceOffsetOverrides = overrides;
+  return overrides;
+}
+
+function segmentFaceOffsetOverrideFor(run, segmentKey) {
+  const overrides = ensureSegmentFaceOffsetOverrides(run);
+  return overrides[String(segmentKey || '')] || null;
+}
+
+function segmentFaceOffsetFor(run, segmentKey) {
+  return segmentFaceOffsetOverrideFor(run, segmentKey)?.face_offset_m || 0;
+}
+
+function segmentHasIntentOverride(run, segmentKey) {
+  return Boolean(segmentOrientationOverrideFor(run, segmentKey))
+    || Math.abs(segmentFaceOffsetFor(run, segmentKey)) >= SEGMENT_FACE_OFFSET_EPSILON_M;
+}
+
+function segmentFaceOffsetPayloadFromOverrides(run, overrides) {
+  const items = [];
+  (run?.nodes || []).forEach((node, index) => {
+    if (index < 1) return;
+    const key = segmentPairKey(run.nodes[index - 1], node);
+    const override = overrides[key];
+    if (!key || !override || Math.abs(Number(override.face_offset_m) || 0) < SEGMENT_FACE_OFFSET_EPSILON_M) return;
+    items.push({
+      start_node_key: override.start_node_key,
+      end_node_key: override.end_node_key,
+      face_offset_m: Number(override.face_offset_m) || 0,
+    });
+  });
+  return {
+    schema: SEGMENT_FACE_OFFSET_SCHEMA,
+    overrides: items,
+  };
+}
+
+function segmentFaceOffsetPayload(run) {
+  return segmentFaceOffsetPayloadFromOverrides(run, ensureSegmentFaceOffsetOverrides(run));
+}
+
+function segmentOrientationPresetByPreviousIndex(run, oldSegments) {
   const previousByIndex = new Map(
     (oldSegments || [])
       .filter(segment => segment.intentStatus === 'segment_override')
       .map(segment => [Number(segment.segmentIndex), segment.orientation.preset]),
   );
+  const oldSegmentsByKey = new Map((oldSegments || []).map(segment => [segment.key, segment]));
+  Object.values(ensureSegmentOrientationOverrides(run)).forEach(override => {
+    const draftMatch = String(override.key || '').match(/^draft:(\d+)$/);
+    if (draftMatch) {
+      previousByIndex.set(Number(draftMatch[1]), override.orientation?.preset);
+      return;
+    }
+    const previousSegment = oldSegmentsByKey.get(String(override.key || ''));
+    if (previousSegment) {
+      previousByIndex.set(Number(previousSegment.segmentIndex), override.orientation?.preset);
+    }
+  });
+  return previousByIndex;
+}
+
+function segmentFaceOffsetByPreviousIndex(run, oldSegments) {
+  const previousByIndex = new Map(
+    (oldSegments || [])
+      .filter(segment => Math.abs(Number(segment.faceOffsetM) || 0) >= SEGMENT_FACE_OFFSET_EPSILON_M)
+      .map(segment => [Number(segment.segmentIndex), Number(segment.faceOffsetM) || 0]),
+  );
+  const oldSegmentsByKey = new Map((oldSegments || []).map(segment => [segment.key, segment]));
+  Object.values(ensureSegmentFaceOffsetOverrides(run)).forEach(override => {
+    const draftMatch = String(override.key || '').match(/^draft:(\d+)$/);
+    if (draftMatch) {
+      previousByIndex.set(Number(draftMatch[1]), Number(override.face_offset_m) || 0);
+      return;
+    }
+    const previousSegment = oldSegmentsByKey.get(String(override.key || ''));
+    if (previousSegment) {
+      previousByIndex.set(Number(previousSegment.segmentIndex), Number(override.face_offset_m) || 0);
+    }
+  });
+  return previousByIndex;
+}
+
+function migrateDraftSegmentOrientationOverrides(run, oldSegments) {
+  const previousByIndex = segmentOrientationPresetByPreviousIndex(run, oldSegments);
+  const previousOverrides = ensureSegmentOrientationOverrides(run);
   const overrides = {};
   runSegments(run).forEach(segment => {
-    const preset = previousByIndex.get(Number(segment.segmentIndex));
+    const preset = previousOverrides[segment.key]?.orientation?.preset
+      || previousByIndex.get(Number(segment.segmentIndex));
     const presetConfig = orientationPresets.find(item => item.id === preset);
     if (!presetConfig || segment.keyStatus !== 'saved') return;
     overrides[segment.key] = {
@@ -334,7 +460,37 @@ function migrateDraftSegmentOrientationOverrides(run, oldSegments) {
   run.segmentOrientationOverrides = overrides;
   run.metadata = {
     ...(run.metadata || {}),
+    segment_orientation: segmentOrientationPayloadFromOverrides(run, overrides),
+  };
+}
+
+function migrateDraftSegmentFaceOffsetOverrides(run, oldSegments) {
+  const previousByIndex = segmentFaceOffsetByPreviousIndex(run, oldSegments);
+  const previousOverrides = ensureSegmentFaceOffsetOverrides(run);
+  const overrides = {};
+  runSegments(run).forEach(segment => {
+    const faceOffsetM = previousOverrides[segment.key]?.face_offset_m
+      ?? previousByIndex.get(Number(segment.segmentIndex))
+      ?? 0;
+    if (Math.abs(faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M || segment.keyStatus !== 'saved') return;
+    overrides[segment.key] = {
+      key: segment.key,
+      start_node_key: String(segment.startNode.key || ''),
+      end_node_key: String(segment.endNode.key || ''),
+      face_offset_m: normalizedFaceOffsetM(faceOffsetM),
+    };
+  });
+  run.segmentFaceOffsetOverrides = overrides;
+  run.metadata = {
+    ...(run.metadata || {}),
+    segment_face_offset: segmentFaceOffsetPayloadFromOverrides(run, overrides),
+  };
+}
+
+function segmentIntentPayloads(run) {
+  return {
     segment_orientation: segmentOrientationPayload(run),
+    segment_face_offset: segmentFaceOffsetPayload(run),
   };
 }
 
@@ -787,6 +943,7 @@ function makeRun() {
     orientation: normalizedOrientation(state.orientationPreset),
     metadata: {},
     segmentOrientationOverrides: {},
+    segmentFaceOffsetOverrides: {},
     nodes: [],
     dirty: true,
   };
@@ -1068,7 +1225,9 @@ function runSegments(run) {
     const lengthM = nodeDistance(startNode, endNode);
     const dz = Number(endNode?.z || 0) - Number(startNode?.z || 0);
     const identity = segmentIdentity(startNode, endNode, index);
-    const orientation = segmentOrientationFor(run, identity.key);
+    const orientationOverride = segmentOrientationOverrideFor(run, identity.key);
+    const orientation = orientationOverride?.orientation || runOrientation(run);
+    const faceOffsetM = segmentFaceOffsetFor(run, identity.key);
     segments.push({
       segmentIndex: index,
       startNodeIndex: index - 1,
@@ -1078,7 +1237,9 @@ function runSegments(run) {
       lengthM,
       isRiser: Math.abs(dz) > 0.001,
       orientation,
-      faceOffsetM: 0,
+      orientationOverride: Boolean(orientationOverride),
+      faceOffsetM,
+      faceOffsetOverride: Math.abs(faceOffsetM) >= SEGMENT_FACE_OFFSET_EPSILON_M,
       intentStatus: segmentIntentStatusFor(run, identity.key),
       key: identity.key,
       keyStatus: identity.status,
@@ -1441,21 +1602,23 @@ function sourceFrameOffsetPoint(point, basis, lateralOffsetM = 0, depthOffsetM =
   };
 }
 
-function segmentCornerPoints(run, start, end, orientation = runOrientation(run)) {
+function segmentCornerPoints(run, start, end, orientation = runOrientation(run), faceOffsetM = 0) {
   const basis = orientedSegmentBasis(run, start, end, orientation);
   if (basis.length < 0.001) return null;
   const halfWidth = runWidthM(run) / 2;
   const depth = runDepthM(run);
-  const leftStartBottom = sourceFrameOffsetPoint(start, basis, halfWidth, 0);
-  const leftEndBottom = sourceFrameOffsetPoint(end, basis, halfWidth, 0);
-  const rightStartBottom = sourceFrameOffsetPoint(start, basis, -halfWidth, 0);
-  const rightEndBottom = sourceFrameOffsetPoint(end, basis, -halfWidth, 0);
-  const leftStartTop = sourceFrameOffsetPoint(start, basis, halfWidth, depth);
-  const leftEndTop = sourceFrameOffsetPoint(end, basis, halfWidth, depth);
-  const rightStartTop = sourceFrameOffsetPoint(start, basis, -halfWidth, depth);
-  const rightEndTop = sourceFrameOffsetPoint(end, basis, -halfWidth, depth);
+  const offset = normalizedFaceOffsetM(faceOffsetM);
+  const leftStartBottom = sourceFrameOffsetPoint(start, basis, offset + halfWidth, 0);
+  const leftEndBottom = sourceFrameOffsetPoint(end, basis, offset + halfWidth, 0);
+  const rightStartBottom = sourceFrameOffsetPoint(start, basis, offset - halfWidth, 0);
+  const rightEndBottom = sourceFrameOffsetPoint(end, basis, offset - halfWidth, 0);
+  const leftStartTop = sourceFrameOffsetPoint(start, basis, offset + halfWidth, depth);
+  const leftEndTop = sourceFrameOffsetPoint(end, basis, offset + halfWidth, depth);
+  const rightStartTop = sourceFrameOffsetPoint(start, basis, offset - halfWidth, depth);
+  const rightEndTop = sourceFrameOffsetPoint(end, basis, offset - halfWidth, depth);
   return {
     basis,
+    faceOffsetM: offset,
     leftStartBottom,
     leftEndBottom,
     rightStartBottom,
@@ -1467,8 +1630,8 @@ function segmentCornerPoints(run, start, end, orientation = runOrientation(run))
   };
 }
 
-function addSegmentProxyFaces(positions, colors, run, start, end, faceColors, orientation = runOrientation(run)) {
-  const corners = segmentCornerPoints(run, start, end, orientation);
+function addSegmentProxyFaces(positions, colors, run, start, end, faceColors, orientation = runOrientation(run), faceOffsetM = 0) {
+  const corners = segmentCornerPoints(run, start, end, orientation, faceOffsetM);
   if (!corners) return;
   addProxyQuad(positions, colors, corners.leftStartBottom, corners.rightStartBottom, corners.rightEndBottom, corners.leftEndBottom, faceColors.bottom);
   addProxyQuad(positions, colors, corners.leftStartBottom, corners.leftEndBottom, corners.leftEndTop, corners.leftStartTop, faceColors.side);
@@ -1480,7 +1643,7 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   const colors = [];
   const faceColors = proxyFaceColors(color, selected);
   runSegments(run).forEach(segment => {
-    addSegmentProxyFaces(positions, colors, run, segment.startNode, segment.endNode, faceColors, segment.orientation);
+    addSegmentProxyFaces(positions, colors, run, segment.startNode, segment.endNode, faceColors, segment.orientation, segment.faceOffsetM);
   });
   if (positions.length < 18) return null;
   const geometry = setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors);
@@ -1493,8 +1656,8 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   return mesh;
 }
 
-function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial, orientation = runOrientation(run)) {
-  const corners = segmentCornerPoints(run, start, end, orientation);
+function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial, orientation = runOrientation(run), faceOffsetM = 0) {
+  const corners = segmentCornerPoints(run, start, end, orientation, faceOffsetM);
   if (!corners) return;
   const { basis } = corners;
   const halfWidth = runWidthM(run) / 2;
@@ -1514,8 +1677,8 @@ function addSegmentPreview(group, run, start, end, material, detailMaterial, bot
   for (let index = 0; index <= memberCount; index += 1) {
     const distance = (basis.length * index) / memberCount;
     const center = sourcePointAlongSegment(start, basis, distance);
-    const leftBottom = sourceFrameOffsetPoint(center, basis, halfWidth, 0);
-    const rightBottom = sourceFrameOffsetPoint(center, basis, -halfWidth, 0);
+    const leftBottom = sourceFrameOffsetPoint(center, basis, corners.faceOffsetM + halfWidth, 0);
+    const rightBottom = sourceFrameOffsetPoint(center, basis, corners.faceOffsetM - halfWidth, 0);
     addSourceLine(group, [leftBottom, rightBottom], detailMaterial, isLadderRun(run) ? 'rung' : 'tray-cross-member');
   }
 }
@@ -1773,7 +1936,7 @@ function renderTrayPreview(group, run, color) {
     group.add(guide);
   }
   runSegments(run).forEach(segment => {
-    addSegmentPreview(group, run, segment.startNode, segment.endNode, material, detailMaterial, bottomEdgeMaterial, segment.orientation);
+    addSegmentPreview(group, run, segment.startNode, segment.endNode, material, detailMaterial, bottomEdgeMaterial, segment.orientation, segment.faceOffsetM);
     addRiserPlaceholder(group, run, segment.startNode, segment.endNode, previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
     if (warningSegmentIsFocused(run, segment.segmentIndex)) {
       addWarningSegmentHighlight(group, run, segment.startNode, segment.endNode);
@@ -2327,6 +2490,7 @@ function runFromServer(payload) {
     metadata,
     orientation: normalizedOrientation(metadata.orientation),
     segmentOrientationOverrides: {},
+    segmentFaceOffsetOverrides: {},
     nodes: (Array.isArray(payload.nodes) ? payload.nodes : [])
       .slice()
       .sort((left, right) => Number(left.sequence) - Number(right.sequence))
@@ -2342,6 +2506,7 @@ function runFromServer(payload) {
     dirty: false,
   };
   run.segmentOrientationOverrides = ensureSegmentOrientationOverrides(run);
+  run.segmentFaceOffsetOverrides = ensureSegmentFaceOffsetOverrides(run);
   return run;
 }
 
@@ -2511,7 +2676,7 @@ function runPayload(run, context) {
       catalogue_family_code: run.familyCode || '',
       catalogue_size_code: run.sizeCode || '',
       orientation: runOrientation(run),
-      segment_orientation: segmentOrientationPayload(run),
+      ...segmentIntentPayloads(run),
     },
   };
 }
@@ -2580,8 +2745,10 @@ async function saveDrafts() {
           anchor: sanitizeAnchorForPersistence(node.anchor || {}),
         }));
         migrateDraftSegmentOrientationOverrides(run, preSaveSegments);
+        migrateDraftSegmentFaceOffsetOverrides(run, preSaveSegments);
         const finalSegmentOrientation = segmentOrientationPayload(run);
-        if (finalSegmentOrientation.overrides.length) {
+        const finalSegmentFaceOffset = segmentFaceOffsetPayload(run);
+        if (finalSegmentOrientation.overrides.length || finalSegmentFaceOffset.overrides.length) {
           const patchedRun = await apiFetch(`/raceway/runs/${run.serverRunId}/`, {
             method: 'PATCH',
             body: runPayload(run, context),
@@ -2589,7 +2756,9 @@ async function saveDrafts() {
           run.metadata = patchedRun.run?.metadata || run.metadata || {};
           run.orientation = normalizedOrientation(run.metadata.orientation);
           run.segmentOrientationOverrides = {};
+          run.segmentFaceOffsetOverrides = {};
           ensureSegmentOrientationOverrides(run);
+          ensureSegmentFaceOffsetOverrides(run);
         }
         run.dirty = false;
         savedCount += 1;
@@ -2675,12 +2844,27 @@ function serviceOptionsHtml() {
 }
 
 function orientationOptionsHtml() {
+  const segment = selectedSegment();
+  if (segment) return segmentOrientationOptionsHtml(segment);
   return orientationPresets.map(preset => `<option value="${escapeHtml(preset.id)}"${preset.id === state.orientationPreset ? ' selected' : ''}>${escapeHtml(preset.label)}</option>`).join('');
+}
+
+function orientationSelectValue() {
+  const segment = selectedSegment();
+  return segment?.orientationOverride
+    ? segment.orientation.preset
+    : (segment ? SEGMENT_ORIENTATION_INHERIT : state.orientationPreset);
+}
+
+function orientationSelectTitle() {
+  const segment = selectedSegment();
+  if (!segment) return 'Run orientation. Select a segment to edit one segment override from this control.';
+  return `Segment S${segment.segmentIndex} orientation. Choose Run default to remove the segment override.`;
 }
 
 function segmentOrientationOptionsHtml(segment) {
   const run = activeRun();
-  const selectedValue = segment?.intentStatus === 'segment_override'
+  const selectedValue = segment?.orientationOverride
     ? segment.orientation.preset
     : SEGMENT_ORIENTATION_INHERIT;
   const runDefaultLabel = run ? `Run default (${orientationLabel(run)})` : 'Run default';
@@ -2692,6 +2876,13 @@ function segmentOrientationOptionsHtml(segment) {
 
 function segmentDirectionOptionsHtml() {
   return segmentDirections.map(direction => `<option value="${escapeHtml(direction.id)}"${direction.id === state.segmentDirection ? ' selected' : ''}>${escapeHtml(direction.label)}</option>`).join('');
+}
+
+function segmentIntentText(segment) {
+  if (!segment) return '';
+  const parts = [segment.orientationOverride ? 'segment orientation' : 'run orientation'];
+  if (segment.faceOffsetOverride) parts.push(`offset ${formatM(segment.faceOffsetM)} m`);
+  return parts.join(' | ');
 }
 
 function runRowsHtml() {
@@ -2728,7 +2919,7 @@ function segmentRowsHtml() {
     return `
       <button type="button" class="raceway-row ${segment.segmentIndex === state.selectedSegmentIndex ? 'raceway-row-active' : ''}" data-raceway-action="select-segment" data-segment-index="${segment.segmentIndex}" title="${escapeHtml(title)}">
         <strong>S${segment.segmentIndex}</strong> N${segment.startNodeIndex + 1}->N${segment.endNodeIndex + 1} | ${formatM(segment.lengthM)} m | ${kind}<br>
-        ${escapeHtml(segment.orientation.label)} | ${escapeHtml(segment.intentStatus.replace('_', ' '))} | ${identityText}
+        ${escapeHtml(segment.orientation.label)} | ${escapeHtml(segmentIntentText(segment))} | ${identityText}
       </button>
     `;
   }).join('');
@@ -2764,6 +2955,9 @@ function validationWarningLabel(warning) {
   }
   if (warning?.code === 'raceway.warning.support_span_placeholder_basis') {
     return warning.message || 'Support quantities are placeholder basis only.';
+  }
+  if (warning?.code === 'raceway.warning.face_offset_step_at_node') {
+    return warning.message || 'Adjacent raceway segments have different face offsets at a shared node.';
   }
   if (warning?.code === 'raceway.warning.model_clash_aabb') {
     const label = warning?.values?.object_label || warning?.values?.object_stable_id || 'Plant3D object';
@@ -2910,6 +3104,7 @@ function fittingSummaryHtml() {
       <strong>Fittings</strong><br>
       ${counts.total || 0} placeholder(s) | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s) | ${byKind.reducer_candidate || 0} reducer candidate(s)<br>
       ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation | ${counts.non_standard_plan_bends || 0} non-standard bend(s)<br>
+      ${counts.one_edge_alignment_candidates || 0} edge-match candidate(s) | ${counts.face_offset_steps || 0} offset step(s) | ${counts.face_alignment_resolved_by_offset || 0} offset-resolved<br>
       ${graph.junction_node_count || 0} junction node(s) | ${graph.branch_node_count || 0} branch node(s)
       ${categoryRows}
       ${(projection.assumptions || []).length ? `<div class="meta">${projection.assumptions.length} fitting assumption(s) in JSON output.</div>` : ''}
@@ -2925,11 +3120,8 @@ function inspectorHtml() {
     return `
       <div class="meta">
         Segment S${segment.segmentIndex}: N${segment.startNodeIndex + 1}->N${segment.endNodeIndex + 1}<br>
-        ${formatM(segment.lengthM)} m | ${kind} | ${escapeHtml(segment.orientation.label)} | ${escapeHtml(segment.intentStatus.replace('_', ' '))}<br>
+        ${formatM(segment.lengthM)} m | ${kind} | ${escapeHtml(segment.orientation.label)} | ${escapeHtml(segmentIntentText(segment))}<br>
         ${segment.keyStatus === 'saved' ? 'Stable identity from node UUID pair' : 'Draft identity; save once to lock node UUIDs'}
-      </div>
-      <div class="raceway-node-editor" style="margin-top: 6px;">
-        <label>Segment Orientation<select id="racewaySegmentOrientationSelect">${segmentOrientationOptionsHtml(segment)}</select></label>
       </div>
       ${localWarningsHtml(activeRun())}
     `;
@@ -2963,13 +3155,14 @@ function ensurePanel() {
       <label>Family<select id="racewayFamilySelect">${familyOptionsHtml()}</select></label>
       <label>Size<select id="racewaySizeSelect">${sizeOptionsHtml()}</select></label>
       <label>Service<select id="racewayServiceSelect">${serviceOptionsHtml()}</select></label>
-      <label>Orientation<select id="racewayOrientationSelect">${orientationOptionsHtml()}</select></label>
+      <label>Orientation<select id="racewayOrientationSelect" title="${escapeHtml(orientationSelectTitle())}">${orientationOptionsHtml()}</select></label>
       <label>EL m<input id="racewayElevationInput" type="number" step="0.001" value="${formatM(state.elevationM)}"></label>
     </div>
     <div class="raceway-aid-grid">
       <label class="raceway-check" title="${escapeHtml(actionTooltip('toggle-ortho'))}"><input id="racewayOrthoInput" type="checkbox" title="${escapeHtml(actionTooltip('toggle-ortho'))}"${state.orthoMode ? ' checked' : ''}> Ortho</label>
       <label>Direction<select id="racewaySegmentDirectionSelect">${segmentDirectionOptionsHtml()}</select></label>
       <label>Length m<input id="racewaySegmentLengthInput" type="number" min="0.001" step="0.001" value="${formatM(state.segmentLengthM)}"></label>
+      <label>Offset m<input id="racewaySegmentFaceOffsetInput" type="number" step="0.001" value="0.000" title="Select a segment to shift its tray faces left/right from the route centerline."></label>
       <button type="button" data-raceway-action="add-segment" title="${escapeHtml(actionTooltip('add-segment'))}">Add Segment</button>
       <button id="racewaySurfaceToggleBtn" type="button" data-raceway-action="toggle-surfaces" title="${escapeHtml(actionTooltip('toggle-surfaces'))}" aria-pressed="${state.showProxyFaces ? 'true' : 'false'}">${state.showProxyFaces ? 'Surface On' : 'Wire Only'}</button>
     </div>
@@ -3072,6 +3265,8 @@ function renderPanel(options = {}) {
   const surfaceToggleBtn = panel.querySelector('#racewaySurfaceToggleBtn');
   const segmentDirectionSelect = panel.querySelector('#racewaySegmentDirectionSelect');
   const segmentLengthInput = panel.querySelector('#racewaySegmentLengthInput');
+  const segmentFaceOffsetInput = panel.querySelector('#racewaySegmentFaceOffsetInput');
+  const segment = selectedSegment();
   if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
   if (familySelect && familySelect !== document.activeElement) {
     familySelect.innerHTML = familyOptionsHtml();
@@ -3084,7 +3279,10 @@ function renderPanel(options = {}) {
   if (serviceSelect && serviceSelect !== document.activeElement) serviceSelect.value = state.serviceClass;
   if (orientationSelect && orientationSelect !== document.activeElement) {
     orientationSelect.innerHTML = orientationOptionsHtml();
-    orientationSelect.value = state.orientationPreset;
+    orientationSelect.value = orientationSelectValue();
+    orientationSelect.title = orientationSelectTitle();
+  } else if (orientationSelect) {
+    orientationSelect.title = orientationSelectTitle();
   }
   if (orthoInput && orthoInput !== document.activeElement) orthoInput.checked = Boolean(state.orthoMode);
   if (surfaceToggleBtn) {
@@ -3093,6 +3291,15 @@ function renderPanel(options = {}) {
   }
   if (segmentDirectionSelect && segmentDirectionSelect !== document.activeElement) segmentDirectionSelect.value = state.segmentDirection;
   if (segmentLengthInput && segmentLengthInput !== document.activeElement) segmentLengthInput.value = formatM(state.segmentLengthM);
+  if (segmentFaceOffsetInput) {
+    segmentFaceOffsetInput.disabled = !segment;
+    segmentFaceOffsetInput.title = segment
+      ? `Segment S${segment.segmentIndex} face offset in meters. Positive shifts toward the segment left edge; zero follows the centerline.`
+      : 'Select a segment to edit its tray face offset.';
+    if (segmentFaceOffsetInput !== document.activeElement) {
+      segmentFaceOffsetInput.value = formatM(segment?.faceOffsetM || 0);
+    }
+  }
   if (panel.querySelector('#racewayElevationInput') !== document.activeElement) {
     panel.querySelector('#racewayElevationInput').value = formatM(state.elevationM);
   }
@@ -3199,7 +3406,39 @@ function changeSelectedSegmentOrientation(value) {
   }
   run.metadata = {
     ...(run.metadata || {}),
-    segment_orientation: segmentOrientationPayload(run),
+    segment_orientation: segmentOrientationPayloadFromOverrides(run, overrides),
+  };
+  markRunDirty(run);
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
+function changeSelectedSegmentFaceOffset(value, options = {}) {
+  const run = activeRun();
+  const segment = selectedSegment();
+  if (!run || !segment) {
+    setStatus('Select a raceway segment before changing face offset.');
+    return false;
+  }
+  const faceOffsetM = normalizedFaceOffsetM(value);
+  const overrides = ensureSegmentFaceOffsetOverrides(run);
+  if (options.pushHistory !== false) pushUndo('Change segment face offset');
+  if (Math.abs(faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) {
+    delete overrides[segment.key];
+    setStatus(`${run.tag}: segment S${segment.segmentIndex} face offset cleared. Save Draft to persist.`);
+  } else {
+    overrides[segment.key] = {
+      key: segment.key,
+      start_node_key: String(segment.startNode.key || ''),
+      end_node_key: String(segment.endNode.key || ''),
+      face_offset_m: faceOffsetM,
+    };
+    setStatus(`${run.tag}: segment S${segment.segmentIndex} face offset set to ${formatM(faceOffsetM)} m. Save Draft to persist.`);
+  }
+  run.metadata = {
+    ...(run.metadata || {}),
+    segment_face_offset: segmentFaceOffsetPayloadFromOverrides(run, overrides),
   };
   markRunDirty(run);
   renderRaceway();
@@ -3317,6 +3556,10 @@ function handlePanelChange(event) {
     applyPaletteToActiveRun();
   }
   if (target.id === 'racewayOrientationSelect') {
+    if (selectedSegment()) {
+      changeSelectedSegmentOrientation(target.value);
+      return;
+    }
     const preset = orientationPresetFor(target.value);
     if (run) {
       pushUndo('Change raceway orientation');
@@ -3332,10 +3575,6 @@ function handlePanelChange(event) {
       setStatus(`Default raceway orientation set to ${preset.label}.`);
     }
     state.orientationPreset = preset.id;
-  }
-  if (target.id === 'racewaySegmentOrientationSelect') {
-    changeSelectedSegmentOrientation(target.value);
-    return;
   }
   if (target.id === 'racewayElevationInput') {
     if (run) pushUndo('Change raceway elevation');
@@ -3354,6 +3593,11 @@ function handlePanelChange(event) {
     const length = Number(target.value);
     if (Number.isFinite(length) && length > 0) state.segmentLengthM = length;
   }
+  if (target.id === 'racewaySegmentFaceOffsetInput') {
+    const value = Number(target.value);
+    if (Number.isFinite(value)) changeSelectedSegmentFaceOffset(value, { pushHistory: false });
+    return;
+  }
   renderRaceway();
   renderPanel();
 }
@@ -3363,6 +3607,16 @@ function handlePanelInput(event) {
     const length = Number(event.target.value);
     if (Number.isFinite(length) && length > 0) state.segmentLengthM = length;
     renderPanel();
+    return;
+  }
+  if (event.target.id === 'racewaySegmentFaceOffsetInput') {
+    const value = Number(event.target.value);
+    if (!Number.isFinite(value)) return;
+    if (event.target.dataset.racewayHistoryArmed !== '1') {
+      pushUndo('Edit segment face offset');
+      event.target.dataset.racewayHistoryArmed = '1';
+    }
+    changeSelectedSegmentFaceOffset(value, { pushHistory: false });
     return;
   }
   const axis = event.target.dataset?.racewayNodeAxis;
@@ -3389,6 +3643,9 @@ function handlePanelInput(event) {
 
 function handlePanelFocusOut(event) {
   if (event.target.dataset?.racewayNodeAxis) {
+    delete event.target.dataset.racewayHistoryArmed;
+  }
+  if (event.target.id === 'racewaySegmentFaceOffsetInput') {
     delete event.target.dataset.racewayHistoryArmed;
   }
 }

@@ -360,7 +360,7 @@ class Plant3DProjectGatewayTests(TestCase):
 
     def test_validate_project_id_rejects_inaccessible_project_for_user(self):
         user = get_user_model().objects.create_user(username="gateway-blocked-user", password="pw")
-        project = create_project("P3D-GATEWAY-INACCESSIBLE")
+        project = create_project("P3D-GATEWAY-BLOCK")
 
         self.assertEqual(validate_project_id(project.proj_id, user), "")
 

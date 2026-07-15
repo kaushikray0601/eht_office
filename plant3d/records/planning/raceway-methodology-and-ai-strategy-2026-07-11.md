@@ -30,7 +30,7 @@ Palette (family/size/service/EL) → Start → click centerline nodes on a locke
 Everything below fits the existing staging; none of it revives autorouting.
 
 | # | Improvement | Why | Effort/stage |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | M-1 | **Ortho/axis lock + angle snap while drawing** | Plant trays run orthogonal to plant grid; free clicking produces sloppy geometry every incumbent avoids. We already have ortho-assist concepts in the EHT tool — same optional-and-explicit rule. | Small; next UX pass |
 | M-2 | **Typed segment entry while drawing** (length + direction, or dx/dy) with per-segment dimension readout | Engineers think in distances ("6 m east, then riser"); E3D/S3D both allow coordinate/distance entry. Cheap and reads as professional-grade. | Small; next UX pass |
 | M-3 | **Junction/branch semantics** — snapping a run's end/start node onto an existing run creates a shared node (tee) and splits the target run's edge | **The most important one.** Real networks are graphs, not isolated polylines; without shared nodes, Phase H cable assignment has no network to traverse. E3D cableways and BRCM are network-first for this reason. Schema is ready (stable node keys exist precisely for this). | Medium; should be the next *authoring* mode |
@@ -62,7 +62,7 @@ Restating and extending the earlier analysis (cable-routing vision RFC §3), wit
 ### 2.1 Vendor AI status (verified 2026-07-11) — the "nobody has launched AI" assumption is now outdated
 
 | Vendor | Status (mid-2026) | Relevance to us |
-|---|---|---|
+| --- | --- | --- |
 | **Augmenta** (startup) | **Commercially shipped.** ACP 2.0 (June 2026): AI-native, browser-based, *agentic* electrical raceway/conduit design — overhead + underground, real-time clash vs. full 3D background, Revit-integrated; claims 25% faster design, 15% less material. | **The pace-setter and closest comp** — but targets commercial buildings / electrical contractors / NEC / prefab VDC, not industrial EPC plants |
 | **AVEVA** | **Commercially launched Jan 2026:** first AI wave in Unified Engineering — industrial AI assistant, **generative pipe routing** (Pre-FEED/FEED), AURA AI companion, AI drawing automation | Closest incumbent move in *our* plant domain; piping first, raceway/cable not yet |
 | **Bentley** | Bentley Copilot (LLM-agnostic) embedded in next-gen apps; OpenSite+ (civil) in limited availability; Copilot to OpenRoads/OpenRail early 2026 | Assistant-style AI, civil-first; nothing raceway |
@@ -242,7 +242,7 @@ create the graph an AI can safely learn from later.
 ## Status log (living document — append as items move)
 
 | Date | Item | Status |
-|---|---|---|
+| --- | --- | --- |
 | 2026-07-11 | Codex addendum C-1…C-6 appended | Converged; `evidence_bundle` seam and consequence-questions-first adopted into shared strategy (claude-notes §18) |
 | 2026-07-11 | M-1 ortho assist + M-2 typed segment entry (first slice) | **Shipped** (`a87115c`); ortho deliberately skips anchored points (training-data hygiene per C-5) |
 | 2026-07-11 | M-3 junctions | Adopted as **Stage 8A** in the execution plan (graph projection, crossings ≠ connections, explicit acceptance); pre-coding notes in claude-notes §18 (tolerance constant, riser-kind policy) |
@@ -262,4 +262,6 @@ create the graph an AI can safely learn from later.
 | 2026-07-13 | Node UUID preservation across saves | **Shipped**: PUT preserves run-owned echoed keys, rejects foreign keys non-destructively, payload uniqueness validated. Claude §33: approved — segment-intent substrate ready; split/merge inheritance semantics recorded for the design note; **N-17 slipped once, must ride segment pass** |
 | 2026-07-14 | Segment identity + oriented clash (`3e8238c`) + manual-feedback fixes | **Shipped**: N-17 closed (oriented AABB with regression test); derived segment identity from node-key pairs, persistence correctly withheld; measurement fallback cascade restored after KR-caught regression. Claude §34: clean; test-matrix rule added for snap-path changes |
 | 2026-07-14 | N-15 + N-16 signals (`3538046`) | **Shipped to spec**: non-standard bend-angle advisory (30/45/60/90°, 2.5° named tolerance, in fitting summary + CSV) and `service_mismatch_at_junction` through the canonical warning/telemetry path. Claude §35: clean; one T-1 event-dictionary row owed for the new code |
+| 2026-07-15 | Segment-level orientation intent (`9748e57` + fixes) | **Shipped per §33 five-rule spec**: node-key-pair keying, versioned metadata, server-side stale-override pruning; warning detail view (access-controlled); hydration regression correctly root-caused client-side and fixed — Claude §36 traced the resurrection edge, holds. Pattern rule recorded: *hydrate-from-response* for all future consumer caches. T-1 dictionary row closed |
+| 2026-07-16 | Segment face-offset foundation | **Shipped**: `segment_face_offset.v0` with the shared intent-persistence idiom (node-pair keys, ±5 m clamp, epsilon, stale pruning); **envelope consumes orientation + offset with regression test — N-17 lesson applied proactively**. Claude §37: approved; `face_offset_step` vocabulary rider for the reducer pass; N-18 PG fixture-id fix owed |
 | — | `ai_gateway` decision record (0007) | Open — write when first Tier-1 feature is scheduled |

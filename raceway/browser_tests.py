@@ -217,7 +217,10 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                                       message: 'Raceway segment envelope overlaps a Plant3D object bounds box.',
                                       run_key: 'run-key',
                                       run_tag: 'RWY-001',
-                                      node_keys: ['node-0', 'node-1'],
+                                      node_keys: [
+                                        '00000000-0000-4000-8000-000000000001',
+                                        '00000000-0000-4000-8000-000000000002',
+                                      ],
                                       segment_index: 1,
                                       values: { object_label: 'B-001' },
                                     },
@@ -697,6 +700,26 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("S1", page.text_content("#racewaySegmentList"))
                 page.click('[data-raceway-action="select-segment"][data-segment-index="1"]')
                 self.assertIn("segment S1 selected", page.text_content("#racewayToolStatus"))
+                self.assertEqual(page.locator("#racewaySegmentOrientationSelect").count(), 0)
+                self.assertIn("Run default", page.text_content("#racewayOrientationSelect"))
+                page.select_option("#racewayOrientationSelect", "open_down")
+                page.wait_for_function(
+                    """() => window.racewayViewerOverlay.getRuns()[0]
+                      ?.segmentOrientationOverrides?.[
+                        '00000000-0000-4000-8000-000000000001::00000000-0000-4000-8000-000000000002'
+                      ]?.orientation?.preset === 'open_down'
+                    """
+                )
+                self.assertIn("segment S1 orientation set to Open Down", page.text_content("#racewayToolStatus"))
+                self.assertIn("Open Down | segment", page.text_content("#racewaySegmentList"))
+                page.select_option("#racewayOrientationSelect", "__run_default__")
+                page.wait_for_function(
+                    """() => !window.racewayViewerOverlay.getRuns()[0]
+                      ?.segmentOrientationOverrides?.[
+                        '00000000-0000-4000-8000-000000000001::00000000-0000-4000-8000-000000000002'
+                      ]
+                    """
+                )
                 selected_segment_preview_kinds = page.evaluate(
                     """() => window.racewayViewerOverlay.layer.group.children
                         .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))
@@ -706,7 +729,17 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("selected-segment-highlight", selected_segment_preview_kinds)
                 page.click('[data-raceway-action="select-warning"][data-warning-index="0"]')
                 page.wait_for_function(
-                    "() => document.querySelector('[data-raceway-action=\"select-node\"][data-node-index=\"1\"]')?.classList.contains('raceway-row-active')"
+                    "() => document.querySelector('#racewayToolStatus')?.textContent.includes('selected from raceway.warning.model_clash_aabb')"
+                )
+                warning_selection_state = page.evaluate(
+                    """() => ({
+                      nodeActive: document.querySelector('[data-raceway-action="select-node"][data-node-index="1"]')?.classList.contains('raceway-row-active') || false,
+                      segmentActive: document.querySelector('[data-raceway-action="select-segment"][data-segment-index="1"]')?.classList.contains('raceway-row-active') || false,
+                    })"""
+                )
+                self.assertTrue(
+                    warning_selection_state["nodeActive"] or warning_selection_state["segmentActive"],
+                    warning_selection_state,
                 )
                 page.wait_for_function("() => window.__racewayFrameRequests.length === 1")
                 self.assertIn("selected from raceway.warning.model_clash_aabb", page.text_content("#racewayToolStatus"))
@@ -721,6 +754,17 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     """
                 )
                 self.assertIn("warning-segment-highlight", warning_preview_kinds)
+                self.assertEqual(page.input_value("#racewayOrientationSelect"), "__run_default__")
+                page.fill("#racewaySegmentFaceOffsetInput", "0.200")
+                page.wait_for_function(
+                    """() => Math.abs((window.racewayViewerOverlay.getRuns()[0]
+                      ?.segmentFaceOffsetOverrides?.[
+                        '00000000-0000-4000-8000-000000000001::00000000-0000-4000-8000-000000000002'
+                      ]?.face_offset_m || 0) - 0.2) < 0.0001
+                    """
+                )
+                self.assertIn("offset 0.200 m", page.text_content("#racewaySegmentList"))
+                self.assertEqual(page.input_value("#racewayOrientationSelect"), "__run_default__")
                 page.click('[data-raceway-action="open-schedule-csv"]')
                 self.assertEqual(
                     page.evaluate("() => window.__racewayOpenedUrls.at(-1)"),
@@ -834,10 +878,47 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                 canvas.click(position={"x": 580, "y": 280})
                 page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
                 page.click('[data-raceway-action="finish"]')
+                page.click('[data-raceway-action="select-segment"][data-segment-index="1"]')
+                page.select_option("#racewayOrientationSelect", "open_down")
+                page.wait_for_function(
+                    "() => Object.values(window.racewayViewerOverlay.getRuns()[0]?.segmentOrientationOverrides || {})"
+                    ".some((override) => override.orientation?.preset === 'open_down')"
+                )
+                page.fill("#racewaySegmentFaceOffsetInput", "0.250")
+                page.wait_for_function(
+                    "() => Object.values(window.racewayViewerOverlay.getRuns()[0]?.segmentFaceOffsetOverrides || {})"
+                    ".some((override) => Math.abs((override.face_offset_m || 0) - 0.25) < 0.0001)"
+                )
                 page.click('[data-raceway-action="save"]')
                 page.wait_for_function(
                     "() => document.querySelector('#racewayToolStatus')?.textContent.includes('saved to server')",
                     timeout=15000,
+                )
+                post_save_state = page.evaluate(
+                    """() => {
+                      const run = window.racewayViewerOverlay.getRuns()[0] || {};
+                      return {
+                        nodes: (run.nodes || []).map((node) => node.key || ''),
+                        overrides: run.segmentOrientationOverrides || {},
+                        faceOffsets: run.segmentFaceOffsetOverrides || {},
+                        metadata: run.metadata || {},
+                        status: document.querySelector('#racewayToolStatus')?.textContent || '',
+                      };
+                    }"""
+                )
+                self.assertTrue(
+                    any(
+                        override.get("orientation", {}).get("preset") == "open_down"
+                        for override in post_save_state["overrides"].values()
+                    ),
+                    post_save_state,
+                )
+                self.assertTrue(
+                    any(
+                        abs(override.get("face_offset_m", 0) - 0.25) < 0.0001
+                        for override in post_save_state["faceOffsets"].values()
+                    ),
+                    post_save_state,
                 )
 
                 page.reload(wait_until="domcontentloaded")
@@ -850,6 +931,20 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                 self.assertEqual(restored["tag"], "RWY-001")
                 self.assertEqual(len(restored["nodes"]), 3)
                 self.assertTrue(restored["serverRunId"])
+                self.assertIn(
+                    "open_down",
+                    {
+                        override["orientation"]["preset"]
+                        for override in restored.get("segmentOrientationOverrides", {}).values()
+                    },
+                )
+                self.assertTrue(
+                    any(
+                        abs(override.get("face_offset_m", 0) - 0.25) < 0.0001
+                        for override in restored.get("segmentFaceOffsetOverrides", {}).values()
+                    ),
+                    restored.get("segmentFaceOffsetOverrides", {}),
+                )
 
                 severe_messages = [
                     message for message in console_messages

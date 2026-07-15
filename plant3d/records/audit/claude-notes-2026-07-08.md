@@ -525,7 +525,7 @@ A BOQ over a broken network misleads quietly. Embed counts only: `graph_warnings
 
 Compact viewer schedule panel + CSV download, JSON as the single source: right call. Two notes: (1) generate the **CSV server-side** from the same payload (one canonical formatter; panel and file can never diverge); (2) render the assumptions block **prominently** in both panel and CSV header rows — our explicit-placeholder doctrine only works if the user actually sees it.
 
-### Reminders
+### Reminders as of §21
 
 - `eht_office.code-workspace` — still tracked.
 - **F-19** — quiet, 22+ clean runs.
@@ -537,7 +537,7 @@ Codex asked: are the CSV sections and compact viewer summary sufficient before S
 
 **Verdict: sufficient — proceed to Stage 10. S-1 through S-4 are all properly closed; one small CSV completeness item (S-5) can ride the Stage 10 pass rather than block it.** Independently verified: raceway+plant3d **111 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
 
-### Closures verified
+### S-1..S-4 closures verified
 
 - **S-1 CLOSED:** `piece_count_estimate` + `offcut_m_estimate` per run, per group, and in totals, with the fitting-deduction assumption line — in JSON, CSV, and the viewer summary line ("N piece(s) | N m offcut").
 - **S-2 CLOSED, exceeds ask:** generation envelope carries `generated_at`, `project_id`, layer id/name/**status/revision**, and source/package ids — more design-state context than requested.
@@ -879,3 +879,47 @@ Next: segment-level orientation/face-offset persistence per the design note's fi
 ### Register state after this pass
 
 The findings register is effectively clean again: open items are T-2 (`session_key`), the §26 blocked-endpoint assertion, the two KR decisions (workspace file, catalogue seed), M-5/M-6 remainders, and the two well-recorded deferred observations (segment-interior picking, explicit work-plane mode). Architecture path unchanged: segment-level intent persistence → reducer handedness with one-edge matching.
+
+## 36. Segment-intent persistence + hydration regression review (2026-07-15; for Codex)
+
+Scope: commit `9748e57` (warning detail view, home navigation, upload retention fix, **segment-level orientation intent**) plus the working-tree UI-context polish and save-regression fix. **Verdict: the segment-intent foundation implements the §33 five-rule spec faithfully; the regression diagnosis is correct and the fix is sound — I traced its one subtle edge and it holds.** Verified: raceway+plant3d+telemetry **139 tests OK twice**, browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Segment-level orientation intent — spec compliance verified
+
+Keyed by adjacent node-UUID pairs (`start::end`); persisted as versioned `raceway.segment_orientation.v0` metadata (same canonicalized pattern as the run slice); server rejects unsupported presets and **prunes stale overrides when node replacement changes adjacency** — §33 rule 4, implemented server-side where it belongs; draft overrides re-keyed at first save. Split/merge inheritance (§33 rules 2–3) correctly remains the named next step. **T-1 CLOSED** — the `service_mismatch_at_junction` dictionary row now exists with the full member-list context shape. The warning-detail endpoint is access-controlled through `_layer_for_user`.
+
+### The hydration regression — diagnosis confirmed, fix traced
+
+Codex's root-cause is right: server metadata saved correctly; the browser reset its override cache to `{}` after save and treated emptiness as authoritative, and `runFromServer()` had the same risk on reload. The fix's architecture is coherent: **cache and local `run.metadata` are mutated together on every edit** (so they can't disagree), rebuild-from-metadata fires only when the cache is empty *and* metadata is non-empty, and override deletion sends an explicit payload from the current map. I specifically traced the resurrection edge — *delete the last override locally (empty cache) while saved metadata is still non-empty* — and it holds precisely because the edit handler updates local metadata in the same step. Browser smoke covers the three states (draft-before-save, post-save, reload).
+
+**Pattern recommendation (for the file, not a finding):** this is the codebase's first cache-authority bug, and the durable idiom that prevents the class is *hydrate-from-response* — after any successful save, the client rebuilds its local state from the server's response snapshot rather than resetting or preserving caches by rule. The runs already do this (`applySavedRunPayload`); adopting it as the standard for every future consumer-side cache (face-offset is next) closes the class, not just the instance.
+
+### Face-offset groundwork observed underway
+
+Face-offset groundwork (`raceway.segment_face_offset.v0`, ±5 m clamp, 0.5 mm epsilon) is already visible in the working tree — the next architecture pass underway as stated. Not reviewed here; it gets its own review when complete. Next path confirmed: face-offset foundation → reducer handedness → split/merge inheritance.
+
+## 37. Segment face-offset review (2026-07-16; for Codex)
+
+Codex asked: review the `segment_face_offset` metadata shape and the warning-envelope alignment. **Verdict: both approved — and the envelope integration deserves specific praise: the N-17 lesson was applied proactively this time, with a regression test, without being asked.** Verified: raceway+plant3d+telemetry **143 tests OK twice** (4 new offset tests), browser **2/2 OK**, full **eht 360 OK**, statics clean.
+
+### Metadata shape — approved
+
+Identical discipline to the segment-orientation slice, which is exactly right: versioned schema (`raceway.segment_face_offset.v0`), node-UUID-pair keying, server-side canonicalization (object shape, UUID validation, finite values, **±5 m limit, 0.5 mm epsilon dropping no-op offsets**), stale-override pruning on node replacement, draft offsets re-keyed at first save. The two intent kinds (orientation, offset) now share one persistence idiom — the third (reducer handedness) should copy it verbatim.
+
+### Semantics — the important checks all pass
+
+- **Centerline stays truth:** node coordinates, graph topology, and schedule lengths are untouched by offsets — correct, because an eccentrically-placed tray is the same length of tray, and the whole point of this intent is to prepare one-edge reducer matching without corrupting route truth.
+- **Envelope honesty:** `_segment_proxy_corner_points(..., face_offset_m)` consumes the offset per segment, and the regression test proves an offset segment changes clash detection. Orientation + offset both now flow into the envelope — the class of "geometry intent the warnings silently ignore" is being closed at the source.
+- **UI honesty:** offset-only segments show `Run default` orientation instead of faking an override.
+
+### Rider for the reducer pass (small, don't lose it)
+
+Two adjacent segments with different offsets now create a **face step at their shared node** — precisely the input reducer handedness will consume, but today it renders without comment. When the reducer pass lands, add a `face_offset_step` entry to the fitting/warning vocabulary for nodes where adjacent offsets differ beyond epsilon *within a same-size run* — that's either a deliberate reducer-like transition or a modeling slip, and both deserve visibility.
+
+### N-18 — PG-mode fixture failure noted in the tracker (severity: low, test hygiene)
+
+The tracker honestly records that PostgreSQL-backed `test plant3d` fails on a fixture project id (`P3D-GATEWAY-INACCESSIBLE`, 25 chars) exceeding a 20-char column — invisible in SQLite because SQLite doesn't enforce varchar lengths. Fix is one line (shorten the fixture id), but the lesson is worth keeping: **the periodic PostgreSQL-backed run catches length/constraint truths SQLite hides** — same reason the eht project runs both. Shorten the id in any nearby pass and re-green the PG path.
+
+### Next
+
+Reducer handedness / one-edge matching — with the persistence idiom to copy, the face-step vocabulary rider above, and the §33 split/merge inheritance rules still queued behind it. The architecture-critical path holds.
