@@ -454,6 +454,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 )
                 self.assertIn("O", page.get_attribute("#racewayOrthoInput", "title"))
                 self.assertIn("Enter", page.get_attribute('[data-raceway-action="add-segment"]', "title"))
+                self.assertIn("Shift+X", page.get_attribute('[data-raceway-action="split-segment"]', "title"))
 
                 page.evaluate("() => { window.__racewayUseModelAnchor = false; }")
                 page.click('[data-raceway-action="start"]')
@@ -779,6 +780,49 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 )
                 self.assertIn("offset 0.200 m", page.text_content("#racewaySegmentList"))
                 self.assertEqual(page.input_value("#racewayOrientationSelect"), "__run_default__")
+                page.fill("#racewaySegmentSplitInput", "40")
+                page.click('[data-raceway-action="split-segment"]')
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 4")
+                split_state = page.evaluate(
+                    """() => {
+                      const run = window.racewayViewerOverlay.getRuns()[0] || {};
+                      return {
+                        nodeCount: (run.nodes || []).length,
+                        selectedRows: Array.from(document.querySelectorAll('[data-raceway-action="select-node"]'))
+                          .filter((row) => row.classList.contains('raceway-row-active'))
+                          .map((row) => row.dataset.nodeIndex),
+                        faceOffsets: Object.values(run.segmentFaceOffsetOverrides || {})
+                          .map((override) => override.face_offset_m || 0),
+                        status: document.querySelector('#racewayToolStatus')?.textContent || '',
+                      };
+                    }"""
+                )
+                self.assertEqual(split_state["nodeCount"], 4)
+                self.assertEqual(split_state["selectedRows"], ["1"])
+                self.assertEqual(
+                    sum(1 for offset in split_state["faceOffsets"] if abs(offset - 0.2) < 0.0001),
+                    2,
+                    split_state,
+                )
+                self.assertIn("split at 40%", split_state["status"])
+                page.click('[data-raceway-action="delete-node"]')
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3")
+                merge_state = page.evaluate(
+                    """() => {
+                      const run = window.racewayViewerOverlay.getRuns()[0] || {};
+                      return {
+                        faceOffsets: Object.values(run.segmentFaceOffsetOverrides || {})
+                          .map((override) => override.face_offset_m || 0),
+                        status: document.querySelector('#racewayToolStatus')?.textContent || '',
+                      };
+                    }"""
+                )
+                self.assertEqual(
+                    sum(1 for offset in merge_state["faceOffsets"] if abs(offset - 0.2) < 0.0001),
+                    1,
+                    merge_state,
+                )
+                self.assertIn("Matching segment intent carried", merge_state["status"])
                 page.click('[data-raceway-action="open-schedule-csv"]')
                 self.assertEqual(
                     page.evaluate("() => window.__racewayOpenedUrls.at(-1)"),
@@ -910,6 +954,9 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                     "() => Object.values(window.racewayViewerOverlay.getRuns()[0]?.segmentFaceOffsetOverrides || {})"
                     ".some((override) => Math.abs((override.face_offset_m || 0) - 0.25) < 0.0001)"
                 )
+                page.fill("#racewaySegmentSplitInput", "25")
+                page.click('[data-raceway-action="split-segment"]')
+                page.wait_for_function("() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 4")
                 page.click('[data-raceway-action="save"]')
                 page.wait_for_function(
                     "() => document.querySelector('#racewayToolStatus')?.textContent.includes('saved to server')",
@@ -927,11 +974,21 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                       };
                     }"""
                 )
+                self.assertEqual(len(post_save_state["nodes"]), 4)
                 self.assertTrue(
                     any(
                         override.get("orientation", {}).get("preset") == "open_down"
                         for override in post_save_state["overrides"].values()
                     ),
+                    post_save_state,
+                )
+                self.assertGreaterEqual(
+                    sum(
+                        1
+                        for override in post_save_state["overrides"].values()
+                        if override.get("orientation", {}).get("preset") == "open_down"
+                    ),
+                    2,
                     post_save_state,
                 )
                 self.assertTrue(
@@ -945,12 +1002,12 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                 page.reload(wait_until="domcontentloaded")
                 page.wait_for_selector("#racewayToolSection", timeout=REAL_VIEWER_READY_TIMEOUT_MS)
                 page.wait_for_function(
-                    "() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3",
+                    "() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 4",
                     timeout=REAL_VIEWER_READY_TIMEOUT_MS,
                 )
                 restored = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0]")
                 self.assertEqual(restored["tag"], "RWY-001")
-                self.assertEqual(len(restored["nodes"]), 3)
+                self.assertEqual(len(restored["nodes"]), 4)
                 self.assertTrue(restored["serverRunId"])
                 self.assertIn(
                     "open_down",

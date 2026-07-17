@@ -112,6 +112,24 @@ handedness:
 - `right_edge`: one right edge remains aligned; opposite edge tapers,
 - `center`: centerlines remain aligned; both edges taper symmetrically.
 
+Default handedness for MVP:
+
+- default to `left_edge`,
+- keep the selected handedness visible,
+- allow the user to change it to `right_edge` or `center`,
+- later move the default into a project/user preference panel.
+
+Port-frame convention:
+
+- handedness is expressed in the frame of the wider port,
+- the narrower port frame is flip-aligned so both port tangents point in the
+  same comparison direction before left/right edges are compared,
+- this avoids mirrored reducers when one segment tangent points into a node and
+  the other points out of it,
+- the current segment convention remains `left = +lateral normal` in ordered
+  node direction, but reducer comparison must normalize both ports to the wider
+  port frame before applying handedness.
+
 This is why `Shift+T` is only a preparatory action. It can set the segment face
 offsets that make a chosen edge match, but it does not create the reducer body.
 
@@ -133,10 +151,28 @@ or curve over a development length. For v0, use a simple smooth interpolation:
 
 Development length should initially be rule-derived:
 
-- if catalogue provides a length, use it,
-- else use a named heuristic such as
+- if a vendor catalogue or project/user preference provides a length, use it,
+- else use a named local heuristic such as
   `max(0.45 m, 2.0 * abs(width_delta_m))`,
-- always expose the assumption in fitting JSON/CSV.
+- always expose the assumption in fitting JSON/CSV,
+- later vendor-specific catalogue import can override this value.
+
+Scope for reducer proxy v0:
+
+- same-family unequal-width transitions only,
+- `family_transition` and `service_transition` remain warnings/advisories, not
+  generated reducer bodies,
+- auto-suggestion should be gated to near-collinear ports, with a named
+  tolerance such as `REDUCER_COLLINEARITY_MAX_ANGLE_DEG = 15`.
+
+Straight proxy cutback:
+
+- a reducer of development length `L` occupies centerline space that straight
+  tray proxies would otherwise also render,
+- reducer proxy v0 must trim the adjacent straight proxy extents by derived
+  cutback distances, initially `L / 2` on each side unless the catalogue gives
+  asymmetric data,
+- cutback is derived geometry and must not be persisted as design truth.
 
 ## Bends
 
@@ -176,6 +212,13 @@ Generic riser proxy v0:
 - keeps cable path curvature honest with a bend radius assumption,
 - renders the two side rails/walls through the vertical curve,
 - exposes unresolved inside/outside status when face orientation is ambiguous.
+
+Vertical orientation rider:
+
+- vertical-segment orientation should inherit from the nearest adjacent
+  non-vertical segment before or with riser proxy v0,
+- otherwise most risers will be correctly marked ambiguous but visually less
+  useful than they should be.
 
 ## Tee And Cross
 
@@ -217,6 +260,12 @@ Therefore the UI should eventually separate:
 
 - `Face Offset`: local left/right face alignment,
 - `Move Segment`: global route edit in six directions.
+
+KR answer recorded 2026-07-18:
+
+- `Face Offset` remains local and signed relative to segment width axis,
+- global six-direction movement is a future route-edit command and should not
+  be hidden inside `Offset m`.
 
 ## Rendering Strategy
 
@@ -298,15 +347,16 @@ Recommended next sequence:
 - Rough clash warning includes the reducer accessory envelope.
 - Browser/manual test proves the old `Shift+T` helper is not mistaken for final
   reducer geometry.
+- Reducer body trims or masks adjacent straight proxies at the accessory extents
+  so shaded geometry does not overlap visibly.
+- Fitting JSON states whether development length came from catalogue,
+  preference, or heuristic.
 
 ## Open Questions
 
-- KR: for the first reducer geometry, should default be `left_edge`, or should
-  the UI force the user to choose left/right/center whenever multiple options
-  are valid?
-- KR/Claude: should reducer development length default to a local heuristic, or
-  should we require a catalogue family table before rendering final-looking
-  geometry?
-- Claude/Fable: should strongly angled unequal-size junctions be blocked from
-  reducer auto-suggestion unless near-collinear within a named tolerance?
-
+- Closed 2026-07-18, KR: default to `left_edge`, expose override, later project
+  preference panel.
+- Closed 2026-07-18, KR and Claude: use local heuristic first; vendor catalogue
+  or project/user preference overrides later.
+- Closed 2026-07-18, Claude: gate reducer auto-suggestion on near-collinearity
+  using a named tolerance.

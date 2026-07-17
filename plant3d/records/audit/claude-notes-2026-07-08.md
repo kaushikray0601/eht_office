@@ -962,3 +962,51 @@ My §38 diagnosis was timeout margin; Codex implemented the 45 s readiness const
 ### Next pass — split/insert semantics with intent inheritance: endorsed, rules ready
 
 The §33 rules apply verbatim, now to **both** intent kinds: split → both children inherit orientation *and* face-offset; merge → keep only if parents agreed, else drop to run default *and warn*; stale-intent pruning already exists server-side and extends to the split path naturally. Two riders: the split point should cluster within the graph tolerance (10 mm) so an inserted node lands exactly on the segment; and the tee, once real, becomes the third fitting-vocabulary consumer of the same node — branch-width sanity (§29's parked third signal) rides in then.
+
+## 40. Accessory geometry note review (2026-07-18; for Codex + KR)
+
+Design review of `raceway-accessory-geometry-note-2026-07-17.md`. **Verdict: this is the best design note of the project so far — the Apply-Edge-Match ≠ reducer correction is exactly right, the port-based accessory model is the industry-correct abstraction, and the three-phase persistence plan applies our proven pattern with a better-stated criterion than I'd have written ("store only decisions that cannot be re-derived reliably"). Approved, with one must-decide gap (A-1), one must-address geometry problem (A-2), and answers to the three open questions.**
+
+### What the note gets right (keep all of it)
+
+Port-derived accessories (the same P-point/connector concept E3D, SP3D, and Revit all converged on — deriving ports from segment ends with full frame, dims, orientation, offset, and edge positions future-proofs vendor mapping for free); Offset-vs-Move as different commands with six-direction move gated behind split/insert; no vendor meshes for MVP with the parametric proxy retained for clash even after vendor visuals arrive (F-10/F-14 doctrine holding); "do not persist baked vertices"; the implementation order (split/insert first, again); and an acceptance list that includes a product-truth test — *proving Shift+T is not mistaken for final reducer geometry*.
+
+### A-1 — The port-frame handedness convention is unstated; pin it before any reducer geometry (must-decide)
+
+At a junction, two ports meet with **opposing tangents** — run A's segment points *into* the node, run B's points *out*. If each port defines "left" in its own direction sense, port A's left and port B's left are on *opposite sides*, and `left_edge` handedness is ambiguous — the exact ambiguity class that ships mirrored reducers. One paragraph fixes it; suggested convention: **handedness is expressed in the frame of the wider port**, and the narrower port's frame is flip-aligned so both tangents point the same way before edges are compared. Whatever the choice, it must be written before proxy v0, and the existing `_edge_offsets_m` convention (left = +lateral normal in node-order direction) must be reconciled with it explicitly.
+
+### A-2 — Straight-proxy cutback at accessory extents (must-address in proxy v0)
+
+A reducer body of development length L, or a bend of radius R, occupies centerline length that the straight tray proxies currently also occupy — without **cutback** (trimming each straight proxy by the accessory's occupied extent: L/2 per side for reducers, `R·tan(θ/2)` for bends), the bodies overlap: visually wrong in shaded mode and double-counted in the clash envelope. This is the classic fitting-trim problem every plant CAD kernel solves; for us it's a *derived* per-segment trim distance (never persisted). Add it to the reducer acceptance list.
+
+### Smaller riders
+
+- **A-3 (BOQ honesty line, Phase 1):** today's schedule reports gross centerline length; once accessories carry real development lengths, add the assumptions line "straight lengths are gross; fitting development lengths not yet deducted" — deduction itself can come later, silence about it cannot.
+- **A-4 (sequencing):** riser inside/outside derivation depends on face orientation, and vertical-segment orientation still falls back to an arbitrary axis (§25). The note's "expose unresolved status" is right, but **vertical-orientation inheritance from the adjacent horizontal segment should land before or with riser proxy v0**, or most risers will report ambiguous.
+- **A-5 (scope line):** reducer proxy v0 should cover **same-family unequal-width** transitions only; `family_transition` and `service_transition` categories stay warnings/advisories, not generated bodies.
+
+### Answers to the note's open questions
+
+1. **(KR's, my advice)** Default `left_edge`, deterministic, with the chosen handedness always visible and one-click switchable — do *not* force a modal choice per reducer; defaults-with-override is our pattern, and forced modals at every unequal junction would be Stage-6-v1-grade friction. A later refinement can make the default side-aware (keep the rack/wall-side edge straight).
+2. **(KR/Claude)** **Heuristic first, catalogue later — do not block rendering on catalogue tables.** Requiring vendor data before geometry inverts our generic-seed doctrine and re-opens the F-10 trap. The `max(0.45 m, 2·Δwidth)` heuristic is conservative versus real parts (straight reducers are commonly ~300 mm) — slightly long is the *safe* error direction for clash — and the note already requires exposing the assumption. Named constants + assumption line, ship it.
+3. **(Mine to answer) Yes — gate reducer auto-suggestion on near-collinearity.** Suggest `REDUCER_COLLINEARITY_MAX_ANGLE_DEG = 15` (named constant): beyond that, an unequal-size junction is really a bend-plus-reducer or a tee case, and the suggestion should stand down with an advisory ("unequal sizes at angled junction — resolve bend and reducer separately"). This also protects A-1, since frame alignment is only well-defined near-collinear.
+
+### Sequence confirmed
+
+Split/insert semantics → reducer handedness UI (with A-1 pinned) → reducer proxy v0 (with A-2 cutback) → bend/riser proxies (with A-4) → tee → cross. No reordering.
+
+## 41. Split/insert foundation review + the merge-rule answer (2026-07-18; for Codex)
+
+**Verdict: the split/insert foundation is approved — inheritance, remapping, and re-keying all match the §33/§40 rules, and the A-1 decisions were folded into the accessory note before coding. On the merge nuance Codex asked about: per-kind preservation is the right base rule, but there is a real frame-coupling exception (N-20) — small fix, genuine silent-meaning-change class.** Verified: raceway+plant3d+telemetry **145 tests OK twice**, browser **3/3 OK**, full **eht 360 OK**, statics clean.
+
+### Split/insert implementation verified
+
+Split at percentage with the inserted node immediately selected (right UX); **children inherit both intent kinds** (§33 rule 2 ✓ across orientation *and* offset); draft intent remaps on index shifts and re-keys through the node-UUID migration path at save; merge on intermediate-node delete carries agreeing intent and drops conflicts with a status message (§33 rule 3, per-kind); projections cleared on every topology change; undo/redo covers split context. A-1 decisions recorded in the accessory note as KR decisions: wider-port frame, `left_edge` default with override, heuristic development length, named collinearity gate — all four of §40's answers, adopted.
+
+### N-20 — Agreeing face offset must not survive a merge that changes its frame (severity: low-medium, few-line fix)
+
+Codex's nuance question, answered from the geometry: **the face offset is applied along the *oriented* width axis** (`_segment_proxy_corner_points` builds the oriented basis first, then offsets laterally within it — same in the JS `segmentCornerPoints`). So the offset's *physical direction depends on the orientation it was expressed under*. Concrete failure: parent A `Roll Right` + 0.15, parent B `Roll Left` + 0.15 — orientations conflict and drop to run default `Open Up`; offsets numerically agree and survive — but the merged segment is now displaced 0.15 m *horizontally*, when each parent's 0.15 was a *vertical* displacement (opposite verticals, in fact). The preserved number never meant what it now does. Rule to add: **an agreeing face offset survives a merge only if the effective orientation (override-or-run-default) is unchanged by the merge; otherwise drop it too, with one combined status message.** Parents agreeing on orientation are unaffected; only the conflict path triggers. Rare in practice, but it's the silent-meaning-change class our doctrine exists to forbid, and the fix is a few lines where the merge already compares intent.
+
+### Next-pass set — endorsed, matches §40's sequence exactly
+
+Reducer handedness UI (`left_edge` default, `right_edge`/`center` override — wider-port frame per A-1) → reducer proxy geometry v0 (tapered body, heuristic development length exposed as assumption, **A-2 straight-proxy cutback in the acceptance list**) → then click-on-segment split and the tee branch workflow on this foundation. Fold N-20 into whichever of these touches the merge code first.

@@ -112,6 +112,7 @@ const state = {
   orientationPreset: DEFAULT_ORIENTATION_PRESET,
   segmentDirection: segmentDirections[0].id,
   segmentLengthM: 6,
+  segmentSplitPercent: 50,
   connectSource: null,
   warningFocus: null,
 };
@@ -139,6 +140,7 @@ const actionLabels = {
   'open-schedule-csv': 'Download raceway schedule CSV',
   'delete-run': 'Delete active run',
   'add-segment': 'Add typed segment from the last node',
+  'split-segment': 'Split selected segment into two editable segments',
   'toggle-ortho': 'Toggle orthogonal drawing assist',
   'toggle-surfaces': 'Toggle shaded raceway faces',
 };
@@ -166,6 +168,7 @@ const actionShortcuts = {
   'open-schedule-csv': 'Shift+B',
   'delete-run': 'Shift+Del',
   'add-segment': 'Enter in segment fields',
+  'split-segment': 'Shift+X',
   'toggle-ortho': 'O',
   'toggle-surfaces': 'Shift+V',
 };
@@ -330,6 +333,12 @@ function normalizedFaceOffsetM(value) {
   return Math.min(Math.max(parsed, -SEGMENT_FACE_OFFSET_LIMIT_M), SEGMENT_FACE_OFFSET_LIMIT_M);
 }
 
+function normalizedSegmentSplitPercent(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.min(Math.max(parsed, 1), 99);
+}
+
 function normalizedSegmentFaceOffsetOverride(rawOverride) {
   if (!rawOverride || typeof rawOverride !== 'object') return null;
   const startNodeKey = String(rawOverride.start_node_key || rawOverride.startNodeKey || '').trim();
@@ -399,6 +408,100 @@ function segmentFaceOffsetPayloadFromOverrides(run, overrides) {
 
 function segmentFaceOffsetPayload(run) {
   return segmentFaceOffsetPayloadFromOverrides(run, ensureSegmentFaceOffsetOverrides(run));
+}
+
+function segmentIntentSnapshot(run) {
+  const intents = new Map();
+  runSegments(run).forEach(segment => {
+    const orientationPreset = segmentOrientationOverrideFor(run, segment.key)?.orientation?.preset || '';
+    const faceOffsetM = segmentFaceOffsetFor(run, segment.key);
+    if (!orientationPreset && Math.abs(faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) return;
+    intents.set(Number(segment.segmentIndex), {
+      orientationPreset,
+      faceOffsetM,
+    });
+  });
+  return intents;
+}
+
+function assignSegmentOrientationOverride(overrides, segment, presetId) {
+  const preset = orientationPresets.find(item => item.id === String(presetId || ''));
+  if (!preset || !segment?.key) return false;
+  overrides[segment.key] = {
+    key: segment.key,
+    start_node_key: String(segment.startNode?.key || ''),
+    end_node_key: String(segment.endNode?.key || ''),
+    orientation: normalizedOrientation(preset.id),
+  };
+  return true;
+}
+
+function assignSegmentFaceOffsetOverride(overrides, segment, faceOffsetM) {
+  const offsetM = normalizedFaceOffsetM(faceOffsetM);
+  if (!segment?.key || Math.abs(offsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) return false;
+  overrides[segment.key] = {
+    key: segment.key,
+    start_node_key: String(segment.startNode?.key || ''),
+    end_node_key: String(segment.endNode?.key || ''),
+    face_offset_m: offsetM,
+  };
+  return true;
+}
+
+function rewriteSegmentIntentOverrides(run, intentBySegmentIndex) {
+  const orientationOverrides = {};
+  const faceOffsetOverrides = {};
+  runSegments(run).forEach(segment => {
+    const intent = intentBySegmentIndex.get(Number(segment.segmentIndex));
+    if (!intent) return;
+    if (intent.orientationPreset) {
+      assignSegmentOrientationOverride(orientationOverrides, segment, intent.orientationPreset);
+    }
+    assignSegmentFaceOffsetOverride(faceOffsetOverrides, segment, intent.faceOffsetM);
+  });
+  run.segmentOrientationOverrides = orientationOverrides;
+  run.segmentFaceOffsetOverrides = faceOffsetOverrides;
+  run.metadata = {
+    ...(run.metadata || {}),
+    segment_orientation: segmentOrientationPayloadFromOverrides(run, orientationOverrides),
+    segment_face_offset: segmentFaceOffsetPayloadFromOverrides(run, faceOffsetOverrides),
+  };
+}
+
+function cloneSegmentIntent(intent) {
+  return intent
+    ? {
+        orientationPreset: intent.orientationPreset || '',
+        faceOffsetM: normalizedFaceOffsetM(intent.faceOffsetM),
+      }
+    : null;
+}
+
+function mergedSegmentIntent(leftIntent, rightIntent) {
+  const left = cloneSegmentIntent(leftIntent) || { orientationPreset: '', faceOffsetM: 0 };
+  const right = cloneSegmentIntent(rightIntent) || { orientationPreset: '', faceOffsetM: 0 };
+  const merged = {};
+  let conflict = false;
+  if (left.orientationPreset || right.orientationPreset) {
+    if (left.orientationPreset && left.orientationPreset === right.orientationPreset) {
+      merged.orientationPreset = left.orientationPreset;
+    } else {
+      conflict = true;
+    }
+  }
+  const leftHasOffset = Math.abs(left.faceOffsetM) >= SEGMENT_FACE_OFFSET_EPSILON_M;
+  const rightHasOffset = Math.abs(right.faceOffsetM) >= SEGMENT_FACE_OFFSET_EPSILON_M;
+  if (leftHasOffset || rightHasOffset) {
+    if (leftHasOffset && rightHasOffset && Math.abs(left.faceOffsetM - right.faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) {
+      merged.faceOffsetM = left.faceOffsetM;
+    } else {
+      conflict = true;
+    }
+  }
+  return {
+    intent: Object.keys(merged).length ? merged : null,
+    conflict,
+  };
 }
 
 function segmentOrientationPresetByPreviousIndex(run, oldSegments) {
@@ -531,6 +634,7 @@ function captureHistorySnapshot() {
     elevationM: state.elevationM,
     elevationInitialized: state.elevationInitialized,
     orientationPreset: state.orientationPreset,
+    segmentSplitPercent: state.segmentSplitPercent,
   };
 }
 
@@ -558,6 +662,7 @@ function restoreHistorySnapshot(snapshot) {
   state.elevationM = Number(snapshot.elevationM) || 0;
   state.elevationInitialized = Boolean(snapshot.elevationInitialized);
   state.orientationPreset = orientationPresetFor(snapshot.orientationPreset).id;
+  state.segmentSplitPercent = normalizedSegmentSplitPercent(snapshot.segmentSplitPercent);
   state.mode = snapshot.mode || 'idle';
   if (!run || state.mode === 'idle') {
     state.mode = 'idle';
@@ -635,6 +740,12 @@ function clearFittingProjection() {
   state.fittingsLoaded = false;
   state.fittingsLoading = false;
   state.fittingsError = '';
+}
+
+function clearDerivedProjections() {
+  clearGraphProjection();
+  clearScheduleProjection();
+  clearFittingProjection();
 }
 
 function graphWarnings() {
@@ -2165,20 +2276,111 @@ function addNodeFromEvent(event) {
   renderPanel();
 }
 
+function interpolatedRacewayNode(startNode, endNode, ratio) {
+  const t = Math.min(Math.max(Number(ratio) || 0, 0), 1);
+  return {
+    x: Number(startNode?.x || 0) + (Number(endNode?.x || 0) - Number(startNode?.x || 0)) * t,
+    y: Number(startNode?.y || 0) + (Number(endNode?.y || 0) - Number(startNode?.y || 0)) * t,
+    z: Number(startNode?.z || 0) + (Number(endNode?.z || 0) - Number(startNode?.z || 0)) * t,
+    coordinate_frame: SOURCE_COORDINATE_FRAME,
+    anchor: {},
+  };
+}
+
+function splitSelectedSegment() {
+  const run = activeRun();
+  const segment = selectedSegment();
+  if (!run || !segment) {
+    setStatus('Select a segment before splitting it.');
+    renderPanel();
+    return false;
+  }
+  const percent = normalizedSegmentSplitPercent(state.segmentSplitPercent);
+  const ratio = percent / 100;
+  const oldIntentByIndex = segmentIntentSnapshot(run);
+  const splitIndex = Number(segment.segmentIndex);
+  const remappedIntentByIndex = new Map();
+  oldIntentByIndex.forEach((intent, oldIndex) => {
+    const cloned = cloneSegmentIntent(intent);
+    if (!cloned) return;
+    if (oldIndex < splitIndex) {
+      remappedIntentByIndex.set(oldIndex, cloned);
+    } else if (oldIndex === splitIndex) {
+      remappedIntentByIndex.set(splitIndex, cloneSegmentIntent(cloned));
+      remappedIntentByIndex.set(splitIndex + 1, cloneSegmentIntent(cloned));
+    } else {
+      remappedIntentByIndex.set(oldIndex + 1, cloned);
+    }
+  });
+  const insertedNode = interpolatedRacewayNode(segment.startNode, segment.endNode, ratio);
+  pushUndo('Split segment');
+  run.nodes.splice(segment.endNodeIndex, 0, insertedNode);
+  rewriteSegmentIntentOverrides(run, remappedIntentByIndex);
+  state.segmentSplitPercent = percent;
+  state.selectedNodeIndex = segment.endNodeIndex;
+  state.selectedSegmentIndex = -1;
+  state.warningFocus = null;
+  adoptWorkingElevationFromPoint(run, insertedNode);
+  markRunDirty(run);
+  clearDerivedProjections();
+  activateNodeSelectionMode(run);
+  setStatus(`${run.tag}: segment S${splitIndex} split at ${percent}% into two editable segments. Save Draft to lock node UUIDs.`);
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
 function deleteSelectedNode() {
   const run = activeRun();
   if (!run || state.selectedNodeIndex < 0) return;
+  const deleteIndex = state.selectedNodeIndex;
+  const lastNodeIndex = run.nodes.length - 1;
+  const oldIntentByIndex = segmentIntentSnapshot(run);
+  const remappedIntentByIndex = new Map();
+  let mergedIntentResult = { intent: null, conflict: false };
+  if (deleteIndex === 0) {
+    oldIntentByIndex.forEach((intent, oldIndex) => {
+      const cloned = cloneSegmentIntent(intent);
+      if (cloned && oldIndex > 1) remappedIntentByIndex.set(oldIndex - 1, cloned);
+    });
+  } else if (deleteIndex === lastNodeIndex) {
+    oldIntentByIndex.forEach((intent, oldIndex) => {
+      const cloned = cloneSegmentIntent(intent);
+      if (cloned && oldIndex < deleteIndex) remappedIntentByIndex.set(oldIndex, cloned);
+    });
+  } else {
+    mergedIntentResult = mergedSegmentIntent(
+      oldIntentByIndex.get(deleteIndex),
+      oldIntentByIndex.get(deleteIndex + 1),
+    );
+    oldIntentByIndex.forEach((intent, oldIndex) => {
+      const cloned = cloneSegmentIntent(intent);
+      if (!cloned) return;
+      if (oldIndex < deleteIndex) remappedIntentByIndex.set(oldIndex, cloned);
+      if (oldIndex > deleteIndex + 1) remappedIntentByIndex.set(oldIndex - 1, cloned);
+    });
+    if (mergedIntentResult.intent) {
+      remappedIntentByIndex.set(deleteIndex, mergedIntentResult.intent);
+    }
+  }
   pushUndo('Delete node');
-  run.nodes.splice(state.selectedNodeIndex, 1);
-  state.selectedNodeIndex = Math.min(state.selectedNodeIndex, run.nodes.length - 1);
+  run.nodes.splice(deleteIndex, 1);
+  rewriteSegmentIntentOverrides(run, remappedIntentByIndex);
+  state.selectedNodeIndex = Math.min(deleteIndex, run.nodes.length - 1);
   state.selectedSegmentIndex = -1;
   markRunDirty(run);
+  clearDerivedProjections();
   if (run.nodes.length) {
     activateNodeSelectionMode(run);
   } else {
     deactivateCanvasMode();
   }
-  setStatus(`${run.tag}: node deleted.`);
+  const mergeNote = mergedIntentResult.conflict
+    ? ' Conflicting segment orientation/offset intent was dropped at the merged segment.'
+    : mergedIntentResult.intent
+      ? ' Matching segment intent carried to the merged segment.'
+      : '';
+  setStatus(`${run.tag}: node N${deleteIndex + 1} deleted.${mergeNote}`);
   renderRaceway();
   renderPanel();
 }
@@ -3347,7 +3549,9 @@ function ensurePanel() {
       <label>Direction<select id="racewaySegmentDirectionSelect">${segmentDirectionOptionsHtml()}</select></label>
       <label>Length m<input id="racewaySegmentLengthInput" type="number" min="0.001" step="0.001" value="${formatM(state.segmentLengthM)}"></label>
       <label>Offset m<input id="racewaySegmentFaceOffsetInput" type="number" step="0.001" value="0.000" title="Select a segment to shift its tray faces left/right from the route centerline."></label>
+      <label>Split %<input id="racewaySegmentSplitInput" type="number" min="1" max="99" step="1" value="${state.segmentSplitPercent}" title="Select a segment and split it at this percentage from its start node."></label>
       <button type="button" data-raceway-action="add-segment" title="${escapeHtml(actionTooltip('add-segment'))}">Add Segment</button>
+      <button type="button" data-raceway-action="split-segment" title="${escapeHtml(actionTooltip('split-segment'))}">Split Segment</button>
       <button id="racewaySurfaceToggleBtn" type="button" data-raceway-action="toggle-surfaces" title="${escapeHtml(actionTooltip('toggle-surfaces'))}" aria-pressed="${state.showProxyFaces ? 'true' : 'false'}">${state.showProxyFaces ? 'Surface On' : 'Wire Only'}</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 10px;">
@@ -3448,6 +3652,8 @@ function updateActionStates(run) {
   setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
   setActionState('add-segment', !run?.nodes?.length || !(Number(state.segmentLengthM) > 0), 'Add at least one node and enter a positive segment length.');
+  const splitPercent = normalizedSegmentSplitPercent(state.segmentSplitPercent);
+  setActionState('split-segment', !selectedSegment() || splitPercent <= 0 || splitPercent >= 100, 'Select a segment and enter a split percentage between 1 and 99.');
   setActionState('toggle-surfaces', false);
 }
 
@@ -3463,6 +3669,7 @@ function renderPanel(options = {}) {
   const segmentDirectionSelect = panel.querySelector('#racewaySegmentDirectionSelect');
   const segmentLengthInput = panel.querySelector('#racewaySegmentLengthInput');
   const segmentFaceOffsetInput = panel.querySelector('#racewaySegmentFaceOffsetInput');
+  const segmentSplitInput = panel.querySelector('#racewaySegmentSplitInput');
   const segment = selectedSegment();
   if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
   if (familySelect && familySelect !== document.activeElement) {
@@ -3488,6 +3695,15 @@ function renderPanel(options = {}) {
   }
   if (segmentDirectionSelect && segmentDirectionSelect !== document.activeElement) segmentDirectionSelect.value = state.segmentDirection;
   if (segmentLengthInput && segmentLengthInput !== document.activeElement) segmentLengthInput.value = formatM(state.segmentLengthM);
+  if (segmentSplitInput) {
+    segmentSplitInput.disabled = !segment;
+    segmentSplitInput.title = segment
+      ? `Split segment S${segment.segmentIndex} at this percentage from N${segment.startNodeIndex + 1}.`
+      : 'Select a segment before splitting it.';
+    if (segmentSplitInput !== document.activeElement) {
+      segmentSplitInput.value = String(normalizedSegmentSplitPercent(state.segmentSplitPercent));
+    }
+  }
   if (segmentFaceOffsetInput) {
     segmentFaceOffsetInput.disabled = !segment;
     segmentFaceOffsetInput.title = segment
@@ -3664,6 +3880,7 @@ function runPanelAction(action, button = null) {
   if (action === 'open-schedule-csv') openScheduleCsv();
   if (action === 'delete-run') deleteActiveRun();
   if (action === 'add-segment') addTypedSegment();
+  if (action === 'split-segment') splitSelectedSegment();
   if (action === 'toggle-ortho') {
     state.orthoMode = !state.orthoMode;
     setStatus(`Ortho drawing assist ${state.orthoMode ? 'on' : 'off'}.`);
@@ -3791,6 +4008,9 @@ function handlePanelChange(event) {
     const length = Number(target.value);
     if (Number.isFinite(length) && length > 0) state.segmentLengthM = length;
   }
+  if (target.id === 'racewaySegmentSplitInput') {
+    state.segmentSplitPercent = normalizedSegmentSplitPercent(target.value);
+  }
   if (target.id === 'racewaySegmentFaceOffsetInput') {
     const value = Number(target.value);
     if (Number.isFinite(value)) changeSelectedSegmentFaceOffset(value, { pushHistory: false });
@@ -3804,6 +4024,11 @@ function handlePanelInput(event) {
   if (event.target.id === 'racewaySegmentLengthInput') {
     const length = Number(event.target.value);
     if (Number.isFinite(length) && length > 0) state.segmentLengthM = length;
+    renderPanel();
+    return;
+  }
+  if (event.target.id === 'racewaySegmentSplitInput') {
+    state.segmentSplitPercent = normalizedSegmentSplitPercent(event.target.value);
     renderPanel();
     return;
   }
@@ -3846,6 +4071,10 @@ function handlePanelFocusOut(event) {
   if (event.target.id === 'racewaySegmentFaceOffsetInput') {
     delete event.target.dataset.racewayHistoryArmed;
   }
+  if (event.target.id === 'racewaySegmentSplitInput') {
+    state.segmentSplitPercent = normalizedSegmentSplitPercent(event.target.value);
+    event.target.value = String(state.segmentSplitPercent);
+  }
 }
 
 function isTypingTarget(target) {
@@ -3874,6 +4103,7 @@ function racewayShortcutActionForEvent(event, key) {
   if (key === 'a') return event.shiftKey ? 'clear-anchor' : 'anchor-node';
   if (key === 'b') return event.shiftKey ? 'open-schedule-csv' : 'refresh-schedule';
   if (key === 'w' && event.shiftKey) return 'open-warning-details';
+  if (key === 'x' && event.shiftKey) return 'split-segment';
   if (key === 'r' && !event.shiftKey) return 'reload';
   if (key === 'g' && !event.shiftKey) return 'refresh-graph';
   if (key === 't') return event.shiftKey ? 'apply-reducer-offsets' : 'refresh-fittings';
@@ -3920,6 +4150,11 @@ function handleRacewayKeyboardShortcut(event) {
     if (event.target.closest?.('#racewaySegmentLengthInput, #racewaySegmentDirectionSelect')) {
       event.preventDefault();
       triggerRacewayAction('add-segment');
+      return;
+    }
+    if (event.target.closest?.('#racewaySegmentSplitInput')) {
+      event.preventDefault();
+      triggerRacewayAction('split-segment');
       return;
     }
   }

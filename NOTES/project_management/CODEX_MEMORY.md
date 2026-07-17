@@ -1,6 +1,6 @@
 # Codex Memory
 
-Last updated: 2026-07-12
+Last updated: 2026-07-18
 
 Purpose: compact operating memory for Codex when resuming work after context
 compression, pauses, or new chats. Keep this file short and current.
@@ -1120,3 +1120,22 @@ is local face offset; global `+X/-X/+Y/-Y/+Z/-Z` movement is a separate route
 edit that needs segment split/insert boundaries. Next coding order should be
 segment split/insert semantics first, then reducer handedness UI and generic
 reducer proxy geometry v0.
+
+Plant3D/Raceway note, 2026-07-18 segment split foundation: KR answered the
+open reducer questions: default reducer handedness is `left_edge` with user
+override now and later project/user preference; reducer development length
+uses a local heuristic first, later overridden by vendor catalogue or
+preference. Claude §40 added the port-frame rule: handedness is evaluated in
+the wider-port frame, narrower port flip-aligned, and reducer suggestion should
+be near-collinear-gated. The accessory note records these decisions.
+`raceway_overlay.js` now has `Split %`, `Split Segment`, and `Shift+X`.
+Splitting a selected segment inserts a new node at the percentage, selects it
+for adjustment, clears derived graph/schedule/fitting projections, and keeps
+undo/redo context. Child segments inherit explicit segment orientation and
+face-offset intent; draft segment intent is remapped as indexes shift and is
+re-keyed through the existing save/node-UUID migration. Deleting an
+intermediate node now merges adjacent segments, preserving matching parent
+intent and dropping conflicting intent with a status warning. Overlay cache key
+is `20260718_raceway39`. Next path: reducer handedness UI using the same
+metadata idiom, then reducer proxy geometry v0 with development-length
+assumption and straight-proxy cutback.

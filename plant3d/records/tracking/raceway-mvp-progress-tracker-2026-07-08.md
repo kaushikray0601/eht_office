@@ -2155,3 +2155,74 @@ Append each pass here.
   - reducer proxy geometry v0,
   - bend/riser proxy geometry v0,
   - tee/cross once explicit branch topology exists.
+
+### 2026-07-18 - Segment Split/Insert Foundation
+
+- Read Claude/Fable notes before coding; §40 aligned with the next slice:
+  - split/merge semantics must preserve segment intent,
+  - reducer geometry must wait for explicit topology and port-frame rules,
+  - straight proxy cutback and development-length honesty remain for reducer
+    proxy v0.
+- Updated the accessory geometry note with KR decisions:
+  - reducer handedness defaults to `left_edge` with user override,
+  - reducer development length uses a local heuristic first, later overridden
+    by vendor catalogue or project/user preference,
+  - reducer handedness is evaluated in the wider-port frame,
+  - reducer auto-suggestion should be gated by a named near-collinearity
+    tolerance.
+- Implemented first segment split UI in `raceway_overlay.js`:
+  - added `Split %` and `Split Segment`,
+  - added `Shift+X` shortcut,
+  - selected segment is split into two segments at the entered percentage,
+  - inserted node is selected immediately for fine adjustment/anchoring,
+  - local undo/redo restores split edits and split percentage context,
+  - graph/schedule/fitting projections are cleared after topology changes.
+- Implemented segment intent remapping:
+  - split children inherit parent segment orientation override and face-offset
+    intent,
+  - draft segment intent is remapped when indexes shift before the first save,
+  - save/reload re-keys inherited draft intent through the existing node UUID
+    migration path.
+- Improved delete/merge semantics:
+  - deleting an intermediate node merges adjacent segments,
+  - matching parent intent is carried to the merged segment,
+  - conflicting orientation/offset intent is dropped with a status message,
+  - endpoint deletes and index shifts preserve unaffected segment intent.
+- Bumped browser cache key:
+  - Raceway overlay: `20260718_raceway39`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/tests.py raceway/browser_tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `git diff --check`
+- Verification note:
+  - non-escalated browser attempts failed due sandbox/browser socket limits,
+    then the escalated browser suite passed,
+  - a first telemetry run without `USE_POSTGRES=false` failed before tests due
+    local PostgreSQL connection state; the SQLite telemetry run passed.
+- Manual check:
+  - open the 3D viewer, create or load a run with at least two segments,
+  - select a segment row,
+  - enter a `Split %` such as `40`,
+  - click `Split Segment` or press `Shift+X`,
+  - confirm a new node appears at that percentage and can be moved/anchored,
+  - if the original segment had `Offset m` or segment orientation, confirm both
+    child segments inherit it,
+  - delete the inserted node and confirm matching intent is carried back to the
+    merged segment.
+- Notes to Claude/Fable:
+  - please review whether keeping per-intent-kind agreement on merge is enough:
+    current code preserves an agreeing face offset even if orientation conflicts
+    and drops only the conflicting kind while warning in status.
+- Next recommended pass:
+  - reducer handedness UI using the same segment-intent persistence idiom,
+  - then reducer proxy geometry v0 with development-length assumption and
+    straight-proxy cutback,
+  - keep click-on-segment insertion and branch tee workflow behind the current
+    percentage split foundation unless KR wants that UX accelerated.
