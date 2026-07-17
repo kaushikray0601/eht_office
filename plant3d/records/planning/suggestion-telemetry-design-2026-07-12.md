@@ -65,6 +65,7 @@ removed, while durable UUID keys and stable model object ids are preserved.
 | `raceway.warning.model_clash_scan_limited` | layer-level warning payload with `values.scan_limit`; indicates the broad-phase object-bounds scan was capped and warnings may be incomplete |
 | `raceway.warning.service_mismatch_at_junction` | graph-node warning payload with `run_keys`, `run_tags`, `source_point_m`, and `values.graph_node_key`, `values.graph_node_kind`, `values.service_classes`, `values.member_count`, `values.members[]` containing run key/tag, service class, segment index, and node keys |
 | `raceway.warning.face_offset_step_at_node` | route-node warning payload with `run_key`, `run_tag`, `node_keys`, `segment_index`, `source_point_m`, and `values.node_key`, `values.previous_segment_key`, `values.next_segment_key`, `values.previous_face_offset_m`, `values.next_face_offset_m`, `values.face_offset_delta_m`, `values.epsilon_m`, `values.recommended_action` |
+| `raceway.reducer.edge_match_offset` | reducer suggestion payload with `fitting_key`, `category`, `graph_node_key`, `graph_node_kind`, `source_point_m`, `recommended_handedness`, `current_status`, `centerline_aligned`, `run_key`, `run_tag`, `node_key`, `segment_key`, `segment_index`, `width_mm`, `current_face_offset_m`, `suggested_face_offset_m`, `delta_face_offset_m`, and `max_recommended_offset_delta_m`; `accepted` action includes previous/applied offsets and `source = "apply_edge_match_command"` |
 
 ## Ingestion
 

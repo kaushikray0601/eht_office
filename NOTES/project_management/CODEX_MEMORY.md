@@ -1073,3 +1073,50 @@ segment-level orientation and face offset, so warnings track the visible proxy.
 Overlay cache key is `20260715_raceway36`. Next architecture path: reducer
 handedness/one-edge matching, then split/insert semantics for tee/accessory
 materialization.
+
+Plant3D/Raceway note, 2026-07-16 reducer one-edge and offset-step foundation:
+kept the accessory work projection-only and added the first reducer/expander
+face-alignment intelligence to `raceway/fittings.py`. Unequal-width connected
+runs now default to left-edge matching, expose suggested per-segment
+`face_offset_m` values, and only mark face alignment resolved when a real edge
+matches; centerline coincidence is reported as diagnostic context, not treated
+as the preferred reducer solution. Same-size adjacent segments with different
+face offsets now emit a `face_offset_step` placeholder plus
+`raceway.warning.face_offset_step_at_node`, with telemetry vocabulary recorded.
+KR observed that shifted tray faces can look detached because centerline nodes
+remain route truth; keep that as a UI/visual-refinement backlog item, not a
+schema change. Claude N-18's PostgreSQL fixture-length issue was fixed by
+shortening the inaccessible-project test id. Overlay cache key is
+`20260716_raceway37`. Next architecture path: use the edge-match suggestions in
+the authoring UI, then segment split/insert/branch semantics for tee and
+accessory materialization.
+
+Plant3D/Raceway note, 2026-07-17 reducer edge-match authoring UI: added an
+`Apply Edge Match` command beside `Refresh Fittings` with `Shift+T`. The command
+loads the fitting projection if needed, refuses stale unsaved local edits,
+collects unresolved one-edge reducer recommendations, applies the suggested
+segment `face_offset_m` values into the normal `segment_face_offset.v0` intent
+map in one undo step, selects the first affected segment, marks runs dirty, and
+asks the user to Save Draft. This keeps reducer correction in the same
+route-truth/intent workflow instead of introducing accessory rows prematurely.
+Following Claude §38, the command now records the first suggestion-accept loop:
+`raceway.reducer.edge_match_offset` is logged as `shown` on fitting refresh and
+`accepted` when Apply Edge Match writes the offset. Browser smoke covers the
+actual path with 300 mm to 600 mm connected runs, expecting the small tray to
+receive the 0.15 m offset and an accepted telemetry row. Also fixed
+browser-suite reliability: real-viewer tests now create a tiny catalogue when
+migration seed rows have been flushed, and readiness waits use a 45 s cold-start
+ceiling. Overlay cache key is `20260717_raceway38`. Next architecture path:
+segment split/insert semantics for tee/cross/accessory materialization, with
+split inheritance preserving segment intent.
+
+Plant3D/Raceway note, 2026-07-17 accessory geometry doctrine: wrote
+`plant3d/records/planning/raceway-accessory-geometry-note-2026-07-17.md` after
+KR challenged the visual meaning of `Shift+T`. Key correction: `Apply Edge
+Match` is only an edge-alignment aid, not a reducer fitting. Real accessories
+are generated from connection ports, with reducers needing left/right/center
+handedness, development length, and a tapered/curved transition body. `Offset m`
+is local face offset; global `+X/-X/+Y/-Y/+Z/-Z` movement is a separate route
+edit that needs segment split/insert boundaries. Next coding order should be
+segment split/insert semantics first, then reducer handedness UI and generic
+reducer proxy geometry v0.

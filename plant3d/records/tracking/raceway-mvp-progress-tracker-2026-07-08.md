@@ -2003,3 +2003,155 @@ Append each pass here.
   - reducer handedness/one-edge matching metadata and preview foundation,
   - then split/insert segment semantics needed for tee/accessory
     materialization.
+
+### 2026-07-16 - Reducer One-Edge Matching and Offset-Step Signals
+
+- Read Claude/Fable notes before coding; no blocker found:
+  - Claude §37 endorsed the segment face-offset metadata direction,
+  - Claude requested that adjacent face-offset discontinuities be added to the
+    fitting/warning vocabulary,
+  - Claude N-18 PostgreSQL fixture-length issue was accepted as a cheap
+    housekeeping fix.
+- Implemented projection-only reducer/expander alignment intelligence:
+  - unequal-size connected graph members now default to one-edge matching
+    (`left_edge`) instead of centerline matching,
+  - reducer candidates expose current edge offsets and recommended
+    `face_offset_m` adjustments per member,
+  - reducer candidates only mark `requires_face_alignment = false` when the
+    recommended edge is already aligned by saved segment face offsets,
+  - centerline coincidence is kept as diagnostic context, but no longer hides a
+    missing one-edge reducer alignment.
+- Implemented same-size face-offset-step detection:
+  - adjacent same-size segments with different saved offsets now produce a
+    `face_offset_step` fitting placeholder,
+  - `raceway.warning.face_offset_step_at_node` is emitted with previous/next
+    segment keys, offsets, delta, epsilon, and recommended action,
+  - the warning is documented in the telemetry event dictionary.
+- UI/projection exposure:
+  - fitting summary now shows edge-match candidates, offset steps, and
+    offset-resolved alignments,
+  - warning labels now render the new face-offset-step warning in the Raceway
+    panel and warning-detail page,
+  - Raceway overlay cache key bumped to `20260716_raceway37`.
+- Housekeeping:
+  - fixed the PostgreSQL-mode Plant3D gateway fixture id by shortening
+    `P3D-GATEWAY-INACCESSIBLE` to `P3D-GATEWAY-BLOCK`.
+- Deferred/not yet implemented:
+  - real reducer/accessory model rows,
+  - reducer handedness editing from the authoring UI,
+  - visual bridge/annotation for face-offset segments where tray faces shift
+    while route centerline nodes remain unchanged,
+  - segment split/insert/branch semantics for tee/cross materialization.
+- KR manual observation recorded:
+  - shifted tray faces may look visually odd because the centerline and nodes
+    intentionally remain the route/topology truth. Treat this as a display and
+    UX problem to polish, not a reason to move the saved route nodes.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/warnings.py raceway/tests.py plant3d/tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayFittingProjectionTests.test_layer_fitting_projection_flags_unequal_size_reducer_candidate_at_connected_node raceway.tests.RacewayFittingProjectionTests.test_layer_fitting_projection_marks_reducer_alignment_resolved_by_offset raceway.tests.RacewayFittingProjectionTests.test_layer_fitting_projection_flags_same_size_face_offset_step raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer plant3d.tests.Plant3DProjectGatewayTests.test_validate_project_id_rejects_inaccessible_project_for_user --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`
+- Next recommended pass:
+  - surface reducer edge-match suggestions in the authoring workflow so the
+    user can apply the suggested offset instead of reading JSON,
+  - then implement segment split/insert/branch semantics as the foundation for
+    tee/cross/accessory materialization.
+
+### 2026-07-17 - Reducer Edge-Match Apply Command
+
+- Read Claude/Fable notes before coding; no blocker found:
+  - §37 reducer rider was already addressed in the prior projection pass,
+  - next useful slice was to make reducer edge-match suggestions actionable in
+    the authoring UI.
+- Implemented a viewer authoring command:
+  - added `Apply Edge Match` beside `Refresh Fittings`,
+  - added `Shift+T` shortcut,
+  - command loads the fitting projection if needed,
+  - refuses to run while unsaved local edits exist because suggestions are
+    derived from the last saved graph,
+  - collects unresolved one-edge reducer candidates,
+  - applies each recommended `suggested_face_offset_m` into the affected
+    segment's `segment_face_offset.v0` override,
+  - batches changes into one undo step,
+  - selects the first affected segment and marks affected runs dirty,
+  - clears stale fitting projection output and tells the user to Save Draft,
+    then refresh fittings.
+- Implemented first suggestion-accept telemetry loop:
+  - `raceway.reducer.edge_match_offset` is recorded as `shown` when reducer
+    suggestions are exposed through fitting refresh,
+  - `accepted` is recorded when `Apply Edge Match` applies a recommended offset,
+  - event dictionary updated with context and action-detail shape.
+- Kept accessory persistence deferred:
+  - no reducer/accessory rows introduced,
+  - reducer correction still lives as segment intent over route truth.
+- Test hardening:
+  - added static assertions for the new command,
+  - added a real-viewer browser smoke where 300 mm and 600 mm connected runs
+    produce an edge-match suggestion and the command applies the 0.15 m offset
+    to the small tray,
+  - the same browser smoke flushes telemetry and verifies an accepted
+    `raceway.reducer.edge_match_offset` row,
+  - fixed a browser-test order dependency by ensuring a minimal catalogue in
+    real-viewer test setup when migration seed rows have been flushed,
+  - raised real-viewer readiness waits to 45 s to avoid cold-start timeout
+    flakes becoming normalized red.
+- Bumped browser cache key:
+  - Raceway overlay: `20260717_raceway38`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/browser_tests.py raceway/tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayRealViewerBrowserSmokeTests.test_real_viewer_applies_reducer_edge_match_offsets --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayRealViewerBrowserSmokeTests.test_real_viewer_draw_save_and_reload_raceway_run --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test plant3d -v 2 --noinput`
+- Verification note:
+  - the first full browser-suite attempt exposed the test-order catalogue seed
+    dependency and failed before this setup fix; the focused draw test and full
+    browser suite are green after the fix.
+- Manual check:
+  - save two connected unequal-width raceways,
+  - use `Refresh Fittings` or directly click `Apply Edge Match`,
+  - confirm the suggested segment offset is applied,
+  - click Save Draft,
+  - refresh fittings again and confirm the reducer candidate no longer needs
+    face alignment when the intended edge matches.
+- Next recommended pass:
+  - implement segment split/insert semantics so tee/cross and accessory
+    materialization can be built on explicit branch topology,
+  - carry forward the split inheritance rule: child segments inherit parent
+    orientation and face-offset intent.
+
+### 2026-07-17 - Accessory Geometry Doctrine Note
+
+- Wrote the focused accessory geometry note:
+  - `plant3d/records/planning/raceway-accessory-geometry-note-2026-07-17.md`.
+- Reason:
+  - KR correctly observed that `Shift+T`/`Apply Edge Match` visually aligns a
+    tray edge but does not create a real reducer fitting.
+- Decisions recorded:
+  - `Apply Edge Match` is an alignment aid only,
+  - real accessories are generated from connection ports,
+  - reducers need left/right/center handedness,
+  - real reducer proxy geometry must be a tapered or curved transition body,
+  - route centerline and node keys remain design truth,
+  - `Offset m` is local face offset, while six-direction segment movement is a
+    separate route edit requiring split/insert semantics,
+  - generic parametric proxies come before vendor/model replacement.
+- Sources recorded:
+  - Eaton, Superior Tray, PohlCon, BIMobject, PlantCon, and OBO fitting/catalogue
+    references.
+- Next recommended coding order refined:
+  - segment split/insert semantics,
+  - reducer handedness UI,
+  - reducer proxy geometry v0,
+  - bend/riser proxy geometry v0,
+  - tee/cross once explicit branch topology exists.

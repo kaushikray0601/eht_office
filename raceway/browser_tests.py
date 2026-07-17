@@ -6,7 +6,21 @@ from django.test import SimpleTestCase
 from django.urls import reverse
 from playwright.sync_api import sync_playwright
 
-from .tests import assign_project, create_project, create_source_and_package
+from telemetry.models import SuggestionEvent
+
+from .models import RacewayFamily, RacewayLayer
+from .tests import (
+    assign_project,
+    create_family,
+    create_nodes,
+    create_project,
+    create_run,
+    create_size,
+    create_source_and_package,
+)
+
+
+REAL_VIEWER_READY_TIMEOUT_MS = 45000
 
 
 class RacewayBrowserSmokeTests(SimpleTestCase):
@@ -836,6 +850,13 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
         assign_project(self.user, self.project)
         self.source, self.package = create_source_and_package(self.project.proj_id)
         self.client.force_login(self.user)
+        if not RacewayFamily.objects.exists():
+            ladder = create_family("BROWSER-LADDER-HDG")
+            create_size(family=ladder, width_mm=300, depth_mm=100)
+            tray = create_family("BROWSER-TRAY-HDG")
+            tray.kind = "tray"
+            tray.save(update_fields=["kind"])
+            create_size(family=tray, width_mm=300, depth_mm=75)
 
     def add_client_cookies(self, context):
         for cookie in self.client.cookies.values():
@@ -860,15 +881,15 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                     f"{self.live_server_url}{reverse('plant3d_package_viewer', args=[self.package.pk])}",
                     wait_until="domcontentloaded",
                 )
-                page.wait_for_selector("#racewayToolSection", timeout=15000)
-                page.wait_for_selector("#viewer canvas", timeout=15000)
+                page.wait_for_selector("#racewayToolSection", timeout=REAL_VIEWER_READY_TIMEOUT_MS)
+                page.wait_for_selector("#viewer canvas", timeout=REAL_VIEWER_READY_TIMEOUT_MS)
                 page.wait_for_function(
                     "() => window.plant3dViewerRuntime?.getPackage?.()?.project_id === 'RWY-REAL-BROWSER'",
-                    timeout=15000,
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
                 )
                 page.wait_for_function(
                     "() => document.querySelectorAll('#racewayFamilySelect option').length >= 2",
-                    timeout=15000,
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
                 )
 
                 page.click('[data-raceway-action="start"]')
@@ -892,7 +913,7 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                 page.click('[data-raceway-action="save"]')
                 page.wait_for_function(
                     "() => document.querySelector('#racewayToolStatus')?.textContent.includes('saved to server')",
-                    timeout=15000,
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
                 )
                 post_save_state = page.evaluate(
                     """() => {
@@ -922,10 +943,10 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                 )
 
                 page.reload(wait_until="domcontentloaded")
-                page.wait_for_selector("#racewayToolSection", timeout=15000)
+                page.wait_for_selector("#racewayToolSection", timeout=REAL_VIEWER_READY_TIMEOUT_MS)
                 page.wait_for_function(
                     "() => window.racewayViewerOverlay.getRuns()[0]?.nodes.length === 3",
-                    timeout=15000,
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
                 )
                 restored = page.evaluate("() => window.racewayViewerOverlay.getRuns()[0]")
                 self.assertEqual(restored["tag"], "RWY-001")
@@ -953,3 +974,77 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
                 self.assertEqual(severe_messages, [])
             finally:
                 browser.close()
+
+    def test_real_viewer_applies_reducer_edge_match_offsets(self):
+        layer = RacewayLayer.objects.create(
+            project_id=self.project.proj_id,
+            source_model_id=self.source.pk,
+            render_package_id=self.package.pk,
+            name="Reducer edge-match test layer",
+        )
+        family = create_family("REAL-REDUCER-LADDER")
+        small = create_size(family=family, width_mm=300, depth_mm=100)
+        large = create_size(family=family, width_mm=600, depth_mm=100)
+        small_run = create_run(layer=layer, family=family, size=small)
+        small_run.tag = "RWY-SMALL"
+        small_run.source_model_id = self.source.pk
+        small_run.render_package_id = self.package.pk
+        small_run.save()
+        large_run = create_run(layer=layer, family=family, size=large)
+        large_run.tag = "RWY-LARGE"
+        large_run.source_model_id = self.source.pk
+        large_run.render_package_id = self.package.pk
+        large_run.save()
+        create_nodes(small_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(large_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+        console_messages = []
+        telemetry_flushed = False
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                context = browser.new_context(viewport={"width": 1280, "height": 850})
+                self.add_client_cookies(context)
+                page = context.new_page()
+                page.on("console", lambda message: console_messages.append(f"{message.type}: {message.text}"))
+                page.goto(
+                    f"{self.live_server_url}{reverse('plant3d_package_viewer', args=[self.package.pk])}",
+                    wait_until="domcontentloaded",
+                )
+                page.wait_for_selector("#racewayToolSection", timeout=REAL_VIEWER_READY_TIMEOUT_MS)
+                page.wait_for_function(
+                    "() => window.racewayViewerOverlay.getRuns().length === 2",
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
+                )
+
+                page.click('[data-raceway-action="apply-reducer-offsets"]')
+                page.wait_for_function(
+                    """() => {
+                      const run = window.racewayViewerOverlay.getRuns()
+                        .find((item) => item.tag === 'RWY-SMALL');
+                      return Object.values(run?.segmentFaceOffsetOverrides || {})
+                        .some((override) => Math.abs((override.face_offset_m || 0) - 0.15) < 0.0001);
+                    }""",
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
+                )
+                status = page.locator("#racewayToolStatus").inner_text()
+                self.assertIn("Applied reducer edge-match offsets", status)
+                page.evaluate("() => window.racewayViewerOverlay.flushTelemetry()")
+                telemetry_flushed = True
+
+                severe_messages = [
+                    message for message in console_messages
+                    if message.startswith("error:") and "favicon" not in message.lower()
+                ]
+                self.assertEqual(severe_messages, [])
+            finally:
+                browser.close()
+        self.assertTrue(telemetry_flushed)
+        event = SuggestionEvent.objects.filter(
+            suggestion_code="raceway.reducer.edge_match_offset",
+            action=SuggestionEvent.ACTION_ACCEPTED,
+        ).first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.context["run_tag"], "RWY-SMALL")
+        self.assertAlmostEqual(event.context["suggested_face_offset_m"], 0.15)
+        self.assertEqual(event.action_detail["source"], "apply_edge_match_command")

@@ -1,0 +1,312 @@
+# Raceway Accessory Geometry Note
+
+Date: 2026-07-17  
+Owner: Codex  
+Status: Short design note for KR and Claude/Fable review before accessory geometry coding
+
+## Purpose
+
+This note corrects one important product misunderstanding before we code real
+accessories:
+
+`Apply Edge Match` / `Shift+T` is not a reducer fitting. It is only an
+authoring aid that moves tray proxy faces into a constructible edge-alignment
+state. A real reducer is a separate physical transition accessory with its own
+length, handedness, tapered sides, connection ports, and later catalogue/vendor
+identity.
+
+The goal is to define the generic accessory geometry strategy before we add
+reducers, bends, risers, tees, or crosses to the rendered model.
+
+## Sources Checked
+
+The online product/catalogue references agree on the same practical family of
+parts:
+
+- reducers appear as concentric/straight, left-hand, and right-hand styles,
+- reducers are physical tapered transition pieces, not just shifted centerline
+  segments,
+- standard fitting families include horizontal bends, vertical inside/outside
+  bends or risers, tees, crosses, reducers, covers, couplers, and supports,
+- catalogue implementations are manufacturer-specific but the topology and
+  port logic is generic enough for our first parametric proxy.
+
+References:
+
+- Eaton B-Line imperial cable tray fittings:
+  https://www.eaton.com/jp/ja-jp/catalog/support-systems/imperial-cable-tray-and-ladder.html
+- Superior Tray ladder tray reducers:
+  https://www.superiortray.com/products/cable-tray/ladder-tray/reducers/
+- PohlCon reducer example and drawing:
+  https://pohlcon.com/en-de/products/rr-110/cable-tray-reducer-rr-110-30s-rr-110-30s
+- BIMobject curved mesh tray reducer example:
+  https://www.bimobject.com/en/solar-project/product/meshtraysystem_reducercurved
+- PlantCon PDMS cable tray catalogue component families:
+  https://www.plantcon.dk/uk/98008.htm
+- OBO standardized cable tray fittings:
+  https://www.obo.global/products/industrial-installations/product-highlights/obo-cable-trays/fittings/
+
+## Geometry Doctrine
+
+Persisted truth remains:
+
+- `RacewayRun`,
+- ordered `RacewayNode` centerline,
+- catalogue family and size,
+- segment orientation intent,
+- segment face-offset intent,
+- later branch/split intent.
+
+Derived geometry includes:
+
+- straight tray proxy faces and rails,
+- bend/riser/reducer/tee/cross proxy bodies,
+- fitting warnings,
+- schedule placeholders,
+- later vendor part projections.
+
+Do not move centerline nodes just to make a reducer look right. Instead:
+
+- the route remains the engineering path,
+- segment face offsets describe how the tray body is placed relative to that
+  path,
+- a reducer accessory spans between two tray ports and models the transition
+  body.
+
+## Accessory Ports
+
+Every accessory should be generated from connection ports, not from arbitrary
+mesh edits.
+
+A port is derived from a segment end and contains:
+
+- `run_key`,
+- `segment_key`,
+- `node_key`,
+- source point,
+- tangent direction,
+- width axis,
+- depth axis,
+- catalogue width/depth,
+- family kind: tray, ladder, mesh, trunking later,
+- service class,
+- orientation preset,
+- face offset,
+- left/right/center edge positions.
+
+Accessories connect one or more ports:
+
+- reducer: two ports,
+- bend: two ports on the same run around a route node,
+- riser: two ports where elevation direction changes,
+- tee: three ports after explicit segment split,
+- cross: four ports after explicit crossing acceptance,
+- coupler: two ports of same size/family with no direction change.
+
+## Reducer Geometry
+
+A reducer is a transition body between unequal-width ports. It needs a
+handedness:
+
+- `left_edge`: one left edge remains aligned; opposite edge tapers,
+- `right_edge`: one right edge remains aligned; opposite edge tapers,
+- `center`: centerlines remain aligned; both edges taper symmetrically.
+
+This is why `Shift+T` is only a preparatory action. It can set the segment face
+offsets that make a chosen edge match, but it does not create the reducer body.
+
+Generic reducer proxy v0 should generate:
+
+- bottom plate or ladder center plane between the two port rectangles,
+- two side rails/walls transitioning from large width to small width,
+- connection plates indicated at both ends,
+- optional ladder rungs/cross-bars sampled along the reducer length,
+- a rough clash envelope based on the generated accessory body.
+
+The unaligned side should not jump abruptly at the shared node. It should taper
+or curve over a development length. For v0, use a simple smooth interpolation:
+
+- straight linear taper is acceptable for solid/perforated tray proxies,
+- a low-segment Bezier or eased polyline can approximate curved reducers for
+  mesh/ladder visual quality,
+- catalogue radius and exact pressed/fabricated shapes are deferred.
+
+Development length should initially be rule-derived:
+
+- if catalogue provides a length, use it,
+- else use a named heuristic such as
+  `max(0.45 m, 2.0 * abs(width_delta_m))`,
+- always expose the assumption in fitting JSON/CSV.
+
+## Bends
+
+Horizontal bends are route-node accessories where plan direction changes.
+
+Generic bend proxy v0:
+
+- uses route tangent before and after the node,
+- carries catalogue width/depth and segment orientation,
+- has angle from the route,
+- snaps/report nearest standard angles already tracked: 30, 45, 60, 90 degrees,
+- uses a configurable bend radius,
+- generates curved side rails and bottom/ladder plane,
+- for ladder tray, places rungs radially or as simplified cross bars.
+
+Non-standard bend angles stay advisory until either:
+
+- user adjusts the route,
+- a variable/adjustable bend is selected,
+- a fabrication-specific custom fitting is accepted.
+
+## Risers
+
+Vertical bends/risers are route accessories where elevation changes.
+
+Catalogue language varies, but the engineering distinction we need is:
+
+- inside riser / inside vertical bend,
+- outside riser / outside vertical bend,
+- vertical tee up/down later.
+
+Generic riser proxy v0:
+
+- uses the same port model as bends,
+- derives inside/outside from the active tray face and direction of elevation
+  turn,
+- keeps cable path curvature honest with a bend radius assumption,
+- renders the two side rails/walls through the vertical curve,
+- exposes unresolved inside/outside status when face orientation is ambiguous.
+
+## Tee And Cross
+
+Tee and cross geometry must wait until topology is explicit.
+
+Before a tee can be generated:
+
+- the target segment must be split at the branch point,
+- the split node must be a real saved node,
+- one run/segment must be identified as the main tray,
+- the branch must connect through a graph node, not merely cross visually.
+
+Generic tee proxy v0:
+
+- three ports,
+- main port in/out plus branch port,
+- branch width sanity warning if branch is wider than main,
+- service segregation warning if services are mixed,
+- no cross until four-port semantics are explicit.
+
+## Offset And Move Are Different Commands
+
+The current `Offset m` is a local face offset:
+
+- positive/negative are relative to the segment left/right width axis,
+- it is useful for reducer edge alignment,
+- it does not move nodes,
+- it does not change route length or graph topology.
+
+KR's requested six-direction movement is a different operation:
+
+- move segment or sub-run in global `+X`, `-X`, `+Y`, `-Y`, `+Z`, `-Z`,
+- this changes route geometry,
+- it may need inserted nodes at both ends,
+- it may create bends, risers, reducers, or offset fittings at boundaries,
+- it should be implemented after segment split/insert semantics exist.
+
+Therefore the UI should eventually separate:
+
+- `Face Offset`: local left/right face alignment,
+- `Move Segment`: global route edit in six directions.
+
+## Rendering Strategy
+
+Do not import vendor meshes for MVP.
+
+First build a generic parametric accessory proxy engine:
+
+- one merged `BufferGeometry` per run/accessory group where possible,
+- low segment counts for curves,
+- wireframe always available,
+- shaded faces optional,
+- metadata snap targets generated from accessory ports/edges,
+- broad-phase AABB/OBB warnings generated from accessory proxy corners.
+
+Later vendor replacement:
+
+- if a manufacturer catalogue provides BIM/IFC/Revit/glTF data, map the
+  accessory projection to a vendor part,
+- use vendor mesh for visual/detail mode,
+- keep the generic parametric proxy for clash approximation, fallback, and
+  projects without vendor-specific catalogues.
+
+## Persistence Plan
+
+Phase 1: projection-only accessories.
+
+- extend `raceway/fittings.py` to emit richer accessory projections,
+- no new DB rows,
+- include `accessory_key`, ports, assumption block, geometry recipe, and
+  warnings.
+
+Phase 2: user-resolved accessory intent in metadata.
+
+- store only decisions that cannot be re-derived reliably:
+  - reducer handedness,
+  - selected bend radius/catalogue class,
+  - riser inside/outside override,
+  - tee main/branch decision,
+  - accepted variable/custom fitting.
+
+Phase 3: persisted accessory rows.
+
+- add only after projection semantics survive manual use:
+  - `RacewayAccessory`,
+  - `AccessoryPort`,
+  - optional `VendorPart`,
+  - optional source geometry reference.
+
+Do not persist baked vertices as authoritative design data.
+
+## Implementation Order
+
+Recommended next sequence:
+
+1. Segment split/insert semantics.
+   - Needed for tee/cross and for segment movement boundaries.
+   - Child segments inherit orientation and face-offset intent.
+2. Reducer handedness UI.
+   - User chooses left, right, or center.
+   - `Apply Edge Match` becomes one possible helper, not the accessory itself.
+3. Reducer proxy geometry v0.
+   - Generate tapered transition body between two ports.
+   - Expose assumptions and development length.
+4. Bend/riser proxy geometry v0.
+   - Replace simple markers with real bend/riser bodies.
+5. Tee proxy geometry v0.
+   - Requires split node and branch/main semantics.
+6. Cross and advanced accessories.
+   - Cross, wye, covers, dividers, couplers, supports, vendor models.
+
+## Acceptance For First Reducer Geometry Pass
+
+- Unequal-width connected runs produce an accessory projection with two ports.
+- User can choose `left_edge`, `right_edge`, or `center`.
+- The rendered reducer has a visible tapered body; no abrupt visual jump.
+- The wider and narrower tray faces connect to the reducer ports.
+- The route centerline and node keys remain unchanged.
+- Fitting JSON documents development-length assumptions.
+- Rough clash warning includes the reducer accessory envelope.
+- Browser/manual test proves the old `Shift+T` helper is not mistaken for final
+  reducer geometry.
+
+## Open Questions
+
+- KR: for the first reducer geometry, should default be `left_edge`, or should
+  the UI force the user to choose left/right/center whenever multiple options
+  are valid?
+- KR/Claude: should reducer development length default to a local heuristic, or
+  should we require a catalogue family table before rendering final-looking
+  geometry?
+- Claude/Fable: should strongly angled unequal-size junctions be blocked from
+  reducer auto-suggestion unless near-collinear within a named tolerance?
+

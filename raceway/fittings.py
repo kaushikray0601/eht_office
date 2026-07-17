@@ -421,6 +421,10 @@ def _reducer_face_alignment(category, members):
         "basis": "one_edge_matching",
         "status": status,
         "current_status": current_status,
+        "centerline_aligned": (
+            _spread_m(member["current_face_offset_m"] for member in alignment_members)
+            <= SEGMENT_FACE_OFFSET_EPSILON_M
+        ),
         "recommended_handedness": REDUCER_DEFAULT_HANDEDNESS,
         "options": list(REDUCER_HANDEDNESS_OPTIONS),
         "edge_reference": "left/right are relative to each adjacent segment's saved node order.",
@@ -462,8 +466,6 @@ def _current_alignment_status(alignment_members):
         return "left_edge_aligned"
     if _spread_m(member["edge_offsets_m"]["right_edge_m"] for member in alignment_members) <= SEGMENT_FACE_OFFSET_EPSILON_M:
         return "right_edge_aligned"
-    if _spread_m(member["current_face_offset_m"] for member in alignment_members) <= SEGMENT_FACE_OFFSET_EPSILON_M:
-        return "centerline_aligned"
     return "edges_not_aligned"
 
 

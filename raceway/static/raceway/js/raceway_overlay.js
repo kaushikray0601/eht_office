@@ -134,6 +134,7 @@ const actionLabels = {
   'refresh-graph': 'Refresh raceway graph warnings',
   'refresh-schedule': 'Refresh raceway schedule totals',
   'refresh-fittings': 'Refresh fitting placeholders',
+  'apply-reducer-offsets': 'Apply reducer edge-match offset suggestions',
   'open-warning-details': 'Open raceway warning details',
   'open-schedule-csv': 'Download raceway schedule CSV',
   'delete-run': 'Delete active run',
@@ -160,6 +161,7 @@ const actionShortcuts = {
   'refresh-graph': 'G',
   'refresh-schedule': 'B',
   'refresh-fittings': 'T',
+  'apply-reducer-offsets': 'Shift+T',
   'open-warning-details': 'Shift+W',
   'open-schedule-csv': 'Shift+B',
   'delete-run': 'Shift+Del',
@@ -1354,6 +1356,57 @@ function recordOrthoTelemetry(run, previousPoint, rawPoint, adjustedPoint) {
   });
 }
 
+function reducerEdgeMatchTelemetrySignature(candidate, offset) {
+  return [
+    'reducer-edge-match',
+    candidate?.fitting_key || '',
+    candidate?.graph_node_key || '',
+    offset?.run_key || '',
+    offset?.segment_key || '',
+  ].join('|');
+}
+
+function recordReducerEdgeMatchTelemetry(candidate, offset, action = 'shown', actionDetail = {}) {
+  if (!candidate || !offset) return;
+  const signature = reducerEdgeMatchTelemetrySignature(candidate, offset);
+  if (action === 'shown' && telemetryShownSignatures.has(signature)) return;
+  if (action === 'shown') telemetryShownSignatures.add(signature);
+  queueTelemetryEvent({
+    key: telemetryLifecycleKey(signature),
+    suggestionCode: 'raceway.reducer.edge_match_offset',
+    action,
+    context: {
+      fitting_key: candidate.fitting_key || '',
+      category: candidate.category || '',
+      graph_node_key: candidate.graph_node_key || '',
+      graph_node_kind: candidate.graph_node_kind || '',
+      source_point_m: candidate.source_point_m || {},
+      recommended_handedness: candidate.face_alignment?.recommended_handedness || '',
+      current_status: candidate.face_alignment?.current_status || '',
+      centerline_aligned: Boolean(candidate.face_alignment?.centerline_aligned),
+      run_key: offset.run_key || '',
+      run_tag: offset.run_tag || '',
+      node_key: offset.node_key || '',
+      segment_key: offset.segment_key || '',
+      segment_index: offset.segment_index,
+      width_mm: offset.width_mm,
+      current_face_offset_m: offset.current_face_offset_m,
+      suggested_face_offset_m: offset.suggested_face_offset_m,
+      delta_face_offset_m: offset.delta_face_offset_m,
+      max_recommended_offset_delta_m: candidate.face_alignment?.max_recommended_offset_delta_m,
+    },
+    actionDetail,
+  });
+}
+
+function recordReducerEdgeMatchProjectionTelemetry(projection, action = 'shown') {
+  reducerEdgeMatchCandidates(projection).forEach(candidate => {
+    (candidate.face_alignment?.recommended_offsets || []).forEach(offset => {
+      recordReducerEdgeMatchTelemetry(candidate, offset, action);
+    });
+  });
+}
+
 function clearLayerGroup() {
   if (!layer?.group) return;
   while (layer.group.children.length) {
@@ -2422,6 +2475,7 @@ async function loadFittingProjection(options = {}) {
     const payload = await apiFetch(url);
     state.fittingProjection = payload.fittings || null;
     state.fittingsLoaded = true;
+    if (!options.quiet) recordReducerEdgeMatchProjectionTelemetry(state.fittingProjection, 'shown');
     if (!options.quiet) {
       const counts = state.fittingProjection?.counts || {};
       const byKind = counts.by_kind || {};
@@ -2441,6 +2495,136 @@ async function loadFittingProjection(options = {}) {
     state.fittingsLoading = false;
     renderPanel();
   }
+}
+
+function reducerEdgeMatchCandidates(projection = state.fittingProjection) {
+  const items = Array.isArray(projection?.items) ? projection.items : [];
+  return items.filter(item => (
+    item?.kind === 'reducer_candidate'
+    && item?.requires_face_alignment
+    && item?.face_alignment?.basis === 'one_edge_matching'
+    && Array.isArray(item.face_alignment.recommended_offsets)
+    && item.face_alignment.recommended_offsets.length
+  ));
+}
+
+function collectReducerEdgeOffsetSuggestions(projection = state.fittingProjection) {
+  const suggestions = new Map();
+  const conflicts = [];
+  reducerEdgeMatchCandidates(projection).forEach(candidate => {
+    (candidate.face_alignment?.recommended_offsets || []).forEach(offset => {
+      const runKey = String(offset?.run_key || '').trim();
+      const segmentKey = String(offset?.segment_key || '').trim();
+      const rawSuggestedFaceOffsetM = Number(offset?.suggested_face_offset_m);
+      if (!runKey || !segmentKey || !Number.isFinite(rawSuggestedFaceOffsetM)) return;
+      const suggestedFaceOffsetM = normalizedFaceOffsetM(rawSuggestedFaceOffsetM);
+      const key = `${runKey}::${segmentKey}`;
+      const previous = suggestions.get(key);
+      if (previous && Math.abs(previous.suggestedFaceOffsetM - suggestedFaceOffsetM) >= SEGMENT_FACE_OFFSET_EPSILON_M) {
+        conflicts.push({ key, previous, candidate, offset });
+        return;
+      }
+      suggestions.set(key, {
+        runKey,
+        segmentKey,
+        runTag: offset.run_tag || '',
+        suggestedFaceOffsetM,
+        fittingKey: candidate.fitting_key || '',
+        candidate,
+        offset,
+      });
+    });
+  });
+  return { suggestions: Array.from(suggestions.values()), conflicts };
+}
+
+async function applyReducerEdgeMatchSuggestions() {
+  if (hasUnsavedLocalChanges()) {
+    setStatus('Save Draft before applying reducer edge-match suggestions; fitting suggestions use the last saved graph.');
+    renderPanel();
+    return false;
+  }
+  let projection = state.fittingProjection;
+  if (!state.fittingsLoaded || !projection) {
+    projection = await loadFittingProjection({ quiet: true });
+  }
+  if (!projection) {
+    setStatus('Unable to load reducer edge-match suggestions.');
+    return false;
+  }
+  const { suggestions, conflicts } = collectReducerEdgeOffsetSuggestions(projection);
+  if (!suggestions.length) {
+    setStatus('No unresolved reducer edge-match suggestions to apply.');
+    renderPanel();
+    return false;
+  }
+  const pending = [];
+  const missing = [];
+  suggestions.forEach(suggestion => {
+    const run = state.runs.find(item => String(item.key || '') === suggestion.runKey);
+    if (!run) {
+      missing.push(suggestion);
+      return;
+    }
+    const segment = runSegments(run).find(item => item.key === suggestion.segmentKey);
+    if (!segment) {
+      missing.push(suggestion);
+      return;
+    }
+    if (Math.abs(segmentFaceOffsetFor(run, segment.key) - suggestion.suggestedFaceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) {
+      return;
+    }
+    pending.push({
+      run,
+      segment,
+      suggestion,
+      previousFaceOffsetM: segmentFaceOffsetFor(run, segment.key),
+    });
+  });
+  if (!pending.length) {
+    const extra = conflicts.length ? ` ${conflicts.length} conflicting suggestion(s) were skipped.` : '';
+    setStatus(`Reducer edge-match offsets already match the current draft.${extra}`);
+    renderPanel();
+    return false;
+  }
+  pushUndo('Apply reducer edge-match offsets');
+  pending.forEach(({ run, segment, suggestion, previousFaceOffsetM }) => {
+    const overrides = ensureSegmentFaceOffsetOverrides(run);
+    if (Math.abs(suggestion.suggestedFaceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) {
+      delete overrides[segment.key];
+    } else {
+      overrides[segment.key] = {
+        key: segment.key,
+        start_node_key: String(segment.startNode.key || ''),
+        end_node_key: String(segment.endNode.key || ''),
+        face_offset_m: suggestion.suggestedFaceOffsetM,
+      };
+    }
+    run.metadata = {
+      ...(run.metadata || {}),
+      segment_face_offset: segmentFaceOffsetPayloadFromOverrides(run, overrides),
+    };
+    markRunDirty(run);
+    recordReducerEdgeMatchTelemetry(suggestion.candidate, suggestion.offset, 'accepted', {
+      previous_face_offset_m: previousFaceOffsetM,
+      applied_face_offset_m: suggestion.suggestedFaceOffsetM,
+      source: 'apply_edge_match_command',
+    });
+  });
+  const first = pending[0];
+  state.activeRunId = first.run.id;
+  state.selectedNodeIndex = -1;
+  state.selectedSegmentIndex = first.segment.segmentIndex;
+  syncPaletteFromRun(first.run);
+  clearFittingProjection();
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  const conflictText = conflicts.length ? ` ${conflicts.length} conflicting suggestion(s) skipped.` : '';
+  const missingText = missing.length ? ` ${missing.length} suggestion(s) no longer matched loaded segments.` : '';
+  setStatus(
+    `Applied reducer edge-match offsets to ${pending.length} segment(s). Save Draft to persist, then refresh fittings.${conflictText}${missingText}`
+  );
+  return true;
 }
 
 function openScheduleCsv() {
@@ -3190,6 +3374,7 @@ function ensurePanel() {
       <button type="button" data-raceway-action="refresh-graph" title="${escapeHtml(actionTooltip('refresh-graph'))}">Refresh Graph</button>
       <button type="button" data-raceway-action="refresh-schedule" title="${escapeHtml(actionTooltip('refresh-schedule'))}">Refresh Schedule</button>
       <button type="button" data-raceway-action="refresh-fittings" title="${escapeHtml(actionTooltip('refresh-fittings'))}">Refresh Fittings</button>
+      <button type="button" data-raceway-action="apply-reducer-offsets" title="${escapeHtml(actionTooltip('apply-reducer-offsets'))}">Apply Edge Match</button>
       <button type="button" data-raceway-action="open-warning-details" title="${escapeHtml(actionTooltip('open-warning-details'))}">Warnings</button>
       <button type="button" data-raceway-action="open-schedule-csv" title="${escapeHtml(actionTooltip('open-schedule-csv'))}">CSV</button>
       <button type="button" data-raceway-action="delete-run" title="${escapeHtml(actionTooltip('delete-run'))}">Delete Run</button>
@@ -3247,6 +3432,18 @@ function updateActionStates(run) {
   setActionState('refresh-graph', state.persistenceLoading || state.graphLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing graph warnings.');
   setActionState('refresh-schedule', state.persistenceLoading || state.scheduleLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing the schedule.');
   setActionState('refresh-fittings', state.persistenceLoading || state.fittingsLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing fittings.');
+  const edgeMatchCandidateCount = reducerEdgeMatchCandidates().length;
+  const edgeMatchDisabled = state.persistenceLoading
+    || state.fittingsLoading
+    || !state.layerId
+    || hasUnsavedLocalChanges()
+    || (state.fittingsLoaded && edgeMatchCandidateCount <= 0);
+  let edgeMatchReason = '';
+  if (!state.layerId) edgeMatchReason = 'Save a raceway layer before applying reducer edge-match suggestions.';
+  else if (state.persistenceLoading || state.fittingsLoading) edgeMatchReason = 'Raceway persistence or fittings are busy.';
+  else if (hasUnsavedLocalChanges()) edgeMatchReason = 'Save Draft before applying reducer suggestions from the saved fitting projection.';
+  else if (state.fittingsLoaded && edgeMatchCandidateCount <= 0) edgeMatchReason = 'Refresh fittings after creating unresolved unequal-size reducer candidates.';
+  setActionState('apply-reducer-offsets', edgeMatchDisabled, edgeMatchReason);
   setActionState('open-warning-details', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before opening warning details.');
   setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
@@ -3462,6 +3659,7 @@ function runPanelAction(action, button = null) {
   if (action === 'refresh-graph') loadGraphProjection({ quiet: false });
   if (action === 'refresh-schedule') loadScheduleProjection({ quiet: false });
   if (action === 'refresh-fittings') loadFittingProjection({ quiet: false });
+  if (action === 'apply-reducer-offsets') applyReducerEdgeMatchSuggestions();
   if (action === 'open-warning-details') openWarningDetails();
   if (action === 'open-schedule-csv') openScheduleCsv();
   if (action === 'delete-run') deleteActiveRun();
@@ -3678,7 +3876,7 @@ function racewayShortcutActionForEvent(event, key) {
   if (key === 'w' && event.shiftKey) return 'open-warning-details';
   if (key === 'r' && !event.shiftKey) return 'reload';
   if (key === 'g' && !event.shiftKey) return 'refresh-graph';
-  if (key === 't' && !event.shiftKey) return 'refresh-fittings';
+  if (key === 't') return event.shiftKey ? 'apply-reducer-offsets' : 'refresh-fittings';
   return '';
 }
 
@@ -3697,6 +3895,7 @@ function racewayShortcutAvailableForAction(action) {
     action === 'refresh-graph'
     || action === 'refresh-schedule'
     || action === 'refresh-fittings'
+    || action === 'apply-reducer-offsets'
     || action === 'open-warning-details'
     || action === 'open-schedule-csv'
   ) {

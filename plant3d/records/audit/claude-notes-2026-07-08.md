@@ -923,3 +923,42 @@ The tracker honestly records that PostgreSQL-backed `test plant3d` fails on a fi
 ### Next
 
 Reducer handedness / one-edge matching — with the persistence idiom to copy, the face-step vocabulary rider above, and the §33 split/merge inheritance rules still queued behind it. The architecture-critical path holds.
+
+## 38. Reducer one-edge matching + offset-step review (2026-07-16; for Codex)
+
+**Verdict: the reducer intelligence pass is approved — every §37 rider delivered, T-1 followed in-pass for the first time, N-18 fixed — and one new finding: the real-viewer browser suite has a cold-start timeout flake (N-19) that should be fixed before it teaches anyone to ignore red.** Verified: raceway+plant3d+telemetry **145 tests OK twice**, full **eht 360 OK**, statics clean. Browser suite: **flaky on cold start** (details below), green warm ×2 and green isolated ×2.
+
+### Verified in the pass
+
+- **One-edge matching as default, with the convention defined in math:** `_edge_offsets_m` fixes left/right relative to the segment's node-order direction (`left = offset + width/2`), and handedness is a named option set (`left_edge | right_edge | centerline`). One doctrine note: cross-member "left edge" is well-defined for near-collinear connections — which is precisely the reducer case — and reducers at strongly angled junctions aren't a real fitting anyway; if that ever needs guarding, gate the recommendation on approximate collinearity.
+- **Honest resolution semantics:** `requires_face_alignment` flips to false *only* when saved segment offsets already align the recommended edge; centerline coincidence remains diagnostic context and no longer masks a missing alignment. Recommended `face_offset_m` per member turns the finding into an actionable suggestion — and the suggestion-apply workflow already has its own real-viewer browser test.
+- **§37 rider delivered exactly:** `face_offset_step` placeholder + `raceway.warning.face_offset_step_at_node` with previous/next offsets, delta, epsilon, and recommended action — **with its T-1 event-dictionary row shipped in the same pass** (the rule is now being followed at source, not on reminder). **N-18 CLOSED** (fixture shortened; PG-mode plant3d in the verification list).
+- KR's visual observation (shifted faces look odd against unmoved centerline nodes) recorded with the correct doctrine: a display-polish problem, never a reason to move saved route nodes.
+
+### N-19 — Real-viewer browser suite cold-start flake (severity: low-medium, fix soon — flaky red is corrosive)
+
+`test_real_viewer_draw_save_and_reload_raceway_run` times out (15 s `wait_for_function` on package load) when the three browser tests run consecutively on a cold start (~19 s total run), and passes warm (~6 s) and isolated (~3 s). Root cause is margin, not product: three consecutive Chromium launches against the live server on this machine. Two standard fixes, either suffices: raise the runtime-ready timeouts in the real-viewer class (15 → 45 s — generous timeouts on *readiness* waits cost nothing when green), or share one Playwright browser per test class instead of launching per test (also faster). Worth doing promptly: we watched F-19 erode trust for weeks precisely because intermittent red trains people to re-run instead of investigate.
+
+### Next-pass advice — endorsed
+
+(1) Surface reducer edge-match suggestions in the authoring workflow (apply-the-offset instead of reading JSON) — already begun, and note it is the **first true suggestion-apply loop in the product**: wire the accept/reject telemetry events on it from day one (the Tier-0 machinery is waiting for exactly this). (2) Segment split/insert/branch semantics for tee/cross materialization — with the §33 inheritance rules ready to apply.
+
+## 39. Edge-match apply command review — the flywheel's first turn (2026-07-17; for Codex)
+
+**Verdict: milestone pass, approved on every axis. The product now records its first real engineering-suggestion acceptances, the loop is tested end-to-end including the telemetry row, and N-19 is closed beyond my own diagnosis.** Verified: browser suite **green four consecutive runs** (~6 s each — the flake is dead), raceway+plant3d+telemetry **145 tests OK twice**, full **eht 360 OK**, statics clean.
+
+### The apply command — semantics verified, one precedent worth naming
+
+`Apply Edge Match` (Shift+T) collects unresolved one-edge reducer candidates and writes each `suggested_face_offset_m` into the segment's `segment_face_offset.v0` override — batched into **one undo step**, affected runs marked dirty, stale projection cleared, user told to save-then-refresh. The guard that matters most: **the command refuses to run while unsaved local edits exist, because suggestions derive from the last saved graph.** Name that as doctrine now — *every* future apply-suggestion command (Dijkstra routes included) must carry the same saved-state precondition, or a suggestion computed against stale truth gets applied to different geometry. First instance sets the pattern; this one sets it correctly.
+
+### The telemetry loop — live, and tested end-to-end
+
+`raceway.reducer.edge_match_offset` records `shown` when suggestions surface via fitting refresh and `accepted` on apply, with previous/applied offsets and `source: "apply_edge_match_command"` in the action detail; the event dictionary was updated **in the same pass** (T-1 at source, second time running). The real-viewer browser smoke drives the whole loop — 300 mm and 600 mm connected runs → suggestion → apply → 0.15 m offset on the small tray → **telemetry flushed and the accepted row asserted**. The data flywheel's first turn has an end-to-end test. From this pass onward, the Tier-2 training corpus contains genuine labeled examples of exactly the shape future route suggestions will use.
+
+### N-19 CLOSED — beyond my diagnosis (calibration note)
+
+My §38 diagnosis was timeout margin; Codex implemented the 45 s readiness constant *and found a second, real root cause I had missed*: a *test-order catalogue-seed dependency* (real-viewer setup now ensures a minimal catalogue when earlier tests flushed the migration seed). The verification note honestly records the first full-suite attempt failing before the fix — the reporting discipline holding even when it documents a stumble. Verified dead: four consecutive green suite runs.
+
+### Next pass — split/insert semantics with intent inheritance: endorsed, rules ready
+
+The §33 rules apply verbatim, now to **both** intent kinds: split → both children inherit orientation *and* face-offset; merge → keep only if parents agreed, else drop to run default *and warn*; stale-intent pruning already exists server-side and extends to the split path naturally. Two riders: the split point should cluster within the graph tolerance (10 mm) so an inserted node lands exactly on the segment; and the tee, once real, becomes the third fitting-vocabulary consumer of the same node — branch-width sanity (§29's parked third signal) rides in then.

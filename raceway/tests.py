@@ -1006,6 +1006,7 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertEqual(reducer["face_alignment"]["basis"], "one_edge_matching")
         self.assertEqual(reducer["face_alignment"]["recommended_handedness"], "left_edge")
         self.assertEqual(reducer["face_alignment"]["current_status"], "edges_not_aligned")
+        self.assertTrue(reducer["face_alignment"]["centerline_aligned"])
         suggested_offsets = {
             item["run_tag"]: item
             for item in reducer["face_alignment"]["recommended_offsets"]
@@ -1048,6 +1049,7 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertFalse(reducer["requires_face_alignment"])
         self.assertEqual(reducer["face_alignment"]["status"], "offsets_match_recommended_edge")
         self.assertEqual(reducer["face_alignment"]["current_status"], "left_edge_aligned")
+        self.assertFalse(reducer["face_alignment"]["centerline_aligned"])
         self.assertEqual(projection["counts"]["face_alignment_resolved_by_offset"], 1)
 
     def test_layer_fitting_projection_flags_same_size_face_offset_step(self):
@@ -1897,6 +1899,11 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function segmentFaceOffsetPayload", content)
         self.assertIn("function changeSelectedSegmentOrientation", content)
         self.assertIn("function changeSelectedSegmentFaceOffset", content)
+        self.assertIn("function applyReducerEdgeMatchSuggestions", content)
+        self.assertIn("function recordReducerEdgeMatchTelemetry", content)
+        self.assertIn("Apply Edge Match", content)
+        self.assertIn("'apply-reducer-offsets': 'Shift+T'", content)
+        self.assertIn("raceway.reducer.edge_match_offset", content)
         self.assertIn("face_offset_step_at_node", content)
         self.assertIn("edge-match candidate", content)
         self.assertIn("function orientationSelectValue", content)
