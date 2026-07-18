@@ -1139,3 +1139,34 @@ intent and dropping conflicting intent with a status warning. Overlay cache key
 is `20260718_raceway39`. Next path: reducer handedness UI using the same
 metadata idiom, then reducer proxy geometry v0 with development-length
 assumption and straight-proxy cutback.
+
+Plant3D/Raceway note, 2026-07-18 synthetic accessory proxy foundation: KR asked
+to prioritize proxy accessory intelligence. Claude §41 approved split/insert
+and raised N-20; fixed in JS by preserving an agreeing face offset across merge
+only if the merged segment keeps the same effective orientation frame.
+`raceway/fittings.py` now emits `raceway.accessory_proxy.v0` recipes:
+plan-bend proxies include default radius, curve segments, and
+`radius*tan(theta/2)` cutback; riser proxies include radius/cutback and an
+honest inside/outside-orientation-unresolved status; explicit degree-3 graph
+nodes produce tee proxy records and degree-4 nodes produce cross proxy records.
+Counts include `synthetic_proxy_total`. The viewer now renders lightweight
+curved plan-bend rails/edges, riser turn/segment proxy guides, derived straight
+cutback near bend/riser proxies, and a `Radius m` control for bend/riser proxy
+radius. Accessory rails/edges/cross-members are measurement snap targets.
+Overlay cache key is `20260718_raceway40`. Deferred: reducer body/handedness
+rendering, detailed tee/cross bodies, persisted accessory decisions, vendor
+catalogue dimensions. Next path: reducer handedness UI/metadata, reducer body
+v0, then detailed tee/cross rendering from graph-node ports.
+
+Plant3D/Raceway note, 2026-07-18 direct vertical riser hardening: KR manually
+liked the visual accessory impact but found direct vertical-up tray/riser cases
+weak. `raceway_overlay.js` now renders direct vertical riser segments with
+side rails, lower edges, and cross-members, and riser-turn curves choose the
+adjacent non-riser segment as their orientation frame where possible. Browser
+smoke includes a two-node direct vertical riser assertion. Overlay cache key is
+`20260718_raceway41`. KR also raised the compound 270 degree vertical return
+case; recorded in the accessory geometry note as a future explicit
+`compound_vertical_return` / `vertical_return_270_candidate` advisory/proxy,
+with user-resolvable intent: continuous face return versus surface-reset or
+turnover landing. Next path remains reducer handedness UI/metadata, reducer
+body v0, then tee/cross body hardening.

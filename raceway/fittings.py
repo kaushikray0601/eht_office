@@ -15,6 +15,9 @@ from .models import RacewayLayer, RacewayRun
 BEND_MIN_ANGLE_DEG = 5.0
 BEND_STANDARD_ANGLES_DEG = (30.0, 45.0, 60.0, 90.0)
 BEND_STANDARD_ANGLE_TOLERANCE_DEG = 2.5
+ACCESSORY_PROXY_SCHEMA = "raceway.accessory_proxy.v0"
+ACCESSORY_DEFAULT_BEND_RADIUS_M = 0.6
+ACCESSORY_PROXY_CURVE_SEGMENTS = 8
 SEGMENT_FACE_OFFSET_EPSILON_M = 0.0005
 REDUCER_DEFAULT_HANDEDNESS = "left_edge"
 REDUCER_HANDEDNESS_OPTIONS = ("left_edge", "right_edge", "centerline")
@@ -46,6 +49,7 @@ def build_layer_fitting_projection(layer):
             if (step := face_offset_step_placeholder(run, nodes[index - 1], nodes[index], nodes[index + 1])) is not None
         )
         items.extend(riser_placeholder_from_segment(segment) for segment in segments if segment["is_riser"])
+    items.extend(_branch_accessory_placeholders(graph, runs))
     items.extend(_reducer_candidates(graph, runs))
     items = sorted(items, key=_fitting_sort_key)
     return {
@@ -102,12 +106,13 @@ def plan_bend_placeholder(run, previous_node, node, next_node):
     if angle_deg is None or angle_deg < BEND_MIN_ANGLE_DEG:
         return None
     standard_angle = bend_standard_angle_check(angle_deg)
+    cutback_m = _bend_cutback_m(angle_deg)
     return {
         **_run_fitting_basis(run),
         "fitting_key": f"fit:{run.key}:node:{node.key}:plan_bend",
         "kind": "plan_bend",
         "category": bend_angle_category(angle_deg),
-        "status": "placeholder",
+        "status": "synthetic_proxy",
         "derivation": "centerline_direction_change",
         "node_id": node.pk,
         "node_key": str(node.key),
@@ -120,11 +125,14 @@ def plan_bend_placeholder(run, previous_node, node, next_node):
         "standard_angle_tolerance_deg": BEND_STANDARD_ANGLE_TOLERANCE_DEG,
         "non_standard_angle": standard_angle["non_standard_angle"],
         "source_point_m": point_from_node(node),
+        "default_radius_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "cutback_m": cutback_m,
+        "geometry_recipe": _plan_bend_geometry_recipe(previous_node, node, next_node, angle_deg, cutback_m),
         "requires_catalogue_validation": True,
         "requires_face_alignment": False,
         "face_alignment": {
             "basis": "shared_centerline_node",
-            "status": "not_modelled",
+            "status": "proxy_modelled",
         },
     }
 
@@ -146,7 +154,7 @@ def riser_placeholder_from_segment(segment):
         "fitting_key": f"fit:{segment['run_key']}:seg:{segment['segment_index']}:riser",
         "kind": "riser",
         "category": "riser_up" if dz > 0 else "riser_down",
-        "status": "placeholder",
+        "status": "synthetic_proxy",
         "derivation": "centerline_elevation_change",
         "segment_index": segment["segment_index"],
         "start_node_id": segment["start_node_id"],
@@ -163,12 +171,15 @@ def riser_placeholder_from_segment(segment):
         "face_offset_m": segment.get("face_offset_m", 0.0),
         "edge_offsets_m": segment.get("edge_offsets_m", {}),
         "slope_angle_deg": slope_angle,
+        "default_radius_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "cutback_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "geometry_recipe": _riser_geometry_recipe(segment, slope_angle),
         "requires_catalogue_validation": True,
         "requires_face_alignment": True,
         "face_alignment": {
             "basis": "centerline_segment",
-            "status": "required_not_modelled",
-            "note": "Riser fitting orientation and inside/outside handedness need the face-offset workflow.",
+            "status": "proxy_modelled_orientation_unresolved",
+            "note": "Riser proxy is generated from centerline geometry; inside/outside handedness still needs orientation resolution.",
         },
     }
 
@@ -244,6 +255,7 @@ def fitting_item_counts(items):
         "by_category": dict(sorted(by_category.items())),
         "requires_catalogue_validation": sum(1 for item in items if item.get("requires_catalogue_validation")),
         "requires_face_alignment": sum(1 for item in items if item.get("requires_face_alignment")),
+        "synthetic_proxy_total": sum(1 for item in items if item.get("status") == "synthetic_proxy"),
         "one_edge_alignment_candidates": sum(
             1
             for item in items
@@ -279,6 +291,153 @@ def bend_standard_angle_check(angle_deg):
         "nearest_standard_angle_deg": nearest,
         "deviation_deg": deviation,
         "non_standard_angle": deviation > BEND_STANDARD_ANGLE_TOLERANCE_DEG,
+    }
+
+
+def _bend_cutback_m(angle_deg, radius_m=ACCESSORY_DEFAULT_BEND_RADIUS_M):
+    return float(radius_m) * math.tan(math.radians(float(angle_deg) / 2.0))
+
+
+def _point_from_center_toward(center_node, target_node, distance_m):
+    center = point_from_node(center_node)
+    target = point_from_node(target_node)
+    dx = target["x"] - center["x"]
+    dy = target["y"] - center["y"]
+    dz = target["z"] - center["z"]
+    length = math.sqrt((dx * dx) + (dy * dy) + (dz * dz))
+    if length < MIN_SEGMENT_LENGTH_M:
+        return center
+    distance = min(max(float(distance_m), 0.0), length)
+    return {
+        "x": center["x"] + (dx / length) * distance,
+        "y": center["y"] + (dy / length) * distance,
+        "z": center["z"] + (dz / length) * distance,
+    }
+
+
+def _plan_bend_geometry_recipe(previous_node, node, next_node, angle_deg, cutback_m):
+    return {
+        "schema": ACCESSORY_PROXY_SCHEMA,
+        "proxy_kind": "plan_bend_curve",
+        "radius_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "curve_segments": ACCESSORY_PROXY_CURVE_SEGMENTS,
+        "angle_deg": angle_deg,
+        "cutback_m": cutback_m,
+        "control_points_m": {
+            "incoming_tangent_point": _point_from_center_toward(node, previous_node, cutback_m),
+            "route_node": point_from_node(node),
+            "outgoing_tangent_point": _point_from_center_toward(node, next_node, cutback_m),
+        },
+        "straight_proxy_cutback": {
+            "incoming_m": cutback_m,
+            "outgoing_m": cutback_m,
+            "basis": "radius_tan_half_angle",
+        },
+    }
+
+
+def _riser_geometry_recipe(segment, slope_angle_deg):
+    return {
+        "schema": ACCESSORY_PROXY_SCHEMA,
+        "proxy_kind": "riser_curve",
+        "radius_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "curve_segments": ACCESSORY_PROXY_CURVE_SEGMENTS,
+        "cutback_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "slope_angle_deg": slope_angle_deg,
+        "start_point_m": segment["start_point_m"],
+        "end_point_m": segment["end_point_m"],
+        "straight_proxy_cutback": {
+            "start_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+            "end_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+            "basis": "default_riser_radius",
+        },
+    }
+
+
+def _branch_accessory_placeholders(graph, runs):
+    runs_by_id = {run.pk: run for run in runs}
+    placeholders = []
+    for graph_node in graph.get("nodes", []):
+        degree = int(graph_node.get("degree") or 0)
+        if degree < 3:
+            continue
+        members = _node_members_with_run_context(graph_node, runs_by_id)
+        if len(members) < 2:
+            continue
+        kind = "cross" if degree >= 4 else "tee"
+        category = "four_way_cross" if kind == "cross" else "three_way_tee"
+        size_groups = _size_groups(members)
+        mixed_physical_sizes = len({
+            (group["family_code"], group["width_mm"], group["depth_mm"])
+            for group in size_groups
+        }) > 1
+        placeholders.append(
+            {
+                "fitting_key": f"fit:graph:{graph_node['key']}:{kind}",
+                "kind": kind,
+                "category": category,
+                "status": "synthetic_proxy",
+                "derivation": "connected_graph_node_degree",
+                "graph_node_key": graph_node["key"],
+                "graph_node_kind": graph_node.get("derived_kind", ""),
+                "degree": degree,
+                "source_point_m": graph_node.get("source_point_m", {}),
+                "members": members,
+                "ports": _branch_ports(members),
+                "size_groups": size_groups,
+                "requires_catalogue_validation": True,
+                "requires_face_alignment": mixed_physical_sizes,
+                "geometry_recipe": _branch_geometry_recipe(graph_node, kind, members),
+                "face_alignment": {
+                    "basis": "branch_node_ports",
+                    "status": "proxy_modelled_size_review" if mixed_physical_sizes else "proxy_modelled",
+                    "note": (
+                        "Branch accessory proxy is generated from connected graph ports. "
+                        "Mixed widths/depths need reducer/branch-size review before catalogue selection."
+                    ),
+                },
+            }
+        )
+    return placeholders
+
+
+def _branch_ports(members):
+    ports = []
+    for member in members:
+        for segment in member.get("adjacent_segments") or []:
+            ports.append(
+                {
+                    "run_key": member["run_key"],
+                    "run_tag": member["run_tag"],
+                    "node_key": member["node_key"],
+                    "segment_key": segment["segment_key"],
+                    "segment_index": segment["segment_index"],
+                    "role_at_node": segment["role_at_node"],
+                    "family_code": member["family_code"],
+                    "family_kind": member["family_kind"],
+                    "width_mm": member["width_mm"],
+                    "depth_mm": member["depth_mm"],
+                    "service_class": member["service_class"],
+                    "face_offset_m": segment.get("face_offset_m", 0.0),
+                    "edge_offsets_m": segment.get("edge_offsets_m", {}),
+                }
+            )
+    return sorted(ports, key=lambda item: (item["run_tag"], item["segment_index"], item["role_at_node"]))
+
+
+def _branch_geometry_recipe(graph_node, kind, members):
+    return {
+        "schema": ACCESSORY_PROXY_SCHEMA,
+        "proxy_kind": f"{kind}_node_proxy",
+        "center_point_m": graph_node.get("source_point_m", {}),
+        "degree": int(graph_node.get("degree") or 0),
+        "default_radius_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+        "curve_segments": ACCESSORY_PROXY_CURVE_SEGMENTS,
+        "port_count": sum(len(member.get("adjacent_segments") or []) for member in members),
+        "straight_proxy_cutback": {
+            "default_each_port_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+            "basis": "default_branch_radius",
+        },
     }
 
 
@@ -617,6 +776,16 @@ def _fitting_assumptions():
             ),
         },
         {
+            "code": "raceway.fittings.synthetic_proxy_defaults",
+            "schema": ACCESSORY_PROXY_SCHEMA,
+            "default_bend_radius_m": ACCESSORY_DEFAULT_BEND_RADIUS_M,
+            "curve_segments": ACCESSORY_PROXY_CURVE_SEGMENTS,
+            "message": (
+                "Synthetic accessory proxies use project-neutral defaults until a project preference or vendor "
+                "catalogue overrides bend/riser radius and development dimensions."
+            ),
+        },
+        {
             "code": "raceway.fittings.standard_angle_check",
             "standard_angles_deg": list(BEND_STANDARD_ANGLES_DEG),
             "tolerance_deg": BEND_STANDARD_ANGLE_TOLERANCE_DEG,
@@ -645,8 +814,8 @@ def _fitting_assumptions():
         {
             "code": "raceway.fittings.tee_cross_deferred",
             "message": (
-                "Branch/junction graph nodes are visible in the graph projection, but tee/cross fitting materialization "
-                "is deferred until mid-run split and branch semantics are finalized."
+                "Tee/cross graph-node proxies are derived where explicit connected topology exists. Catalogue "
+                "selection, main/branch choice, and special branch-size fittings remain deferred."
             ),
         },
     ]

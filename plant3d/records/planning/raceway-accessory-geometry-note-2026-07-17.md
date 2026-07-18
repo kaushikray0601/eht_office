@@ -220,6 +220,50 @@ Vertical orientation rider:
 - otherwise most risers will be correctly marked ambiguous but visually less
   useful than they should be.
 
+### Compound Vertical Return / 270 Degree Riser Case
+
+KR raised a constructability case on 2026-07-18:
+
+- a tray runs horizontally at an upper elevation,
+- turns downward,
+- reverses direction at a lower elevation,
+- and the lower horizontal tray may appear geometrically parallel/opposite to
+  the upper tray while the cable-bearing surface continuity is not obvious.
+
+This must not be treated as a simple 90 degree riser plus a generic plan bend.
+The fitting logic must distinguish at least two engineering intents:
+
+- **continuous face return:** the physical tray face follows a compound
+  vertical return path; the lower run may inherit an inverted orientation unless
+  a turnover/landing fitting changes the cable-bearing surface,
+- **surface-reset return:** the cable leaves one bearing surface through a
+  vertical return/turnover fitting and lands on a lower tray intentionally
+  facing upward again.
+
+Future detection should look for:
+
+- two near-parallel horizontal segments with opposite tangents,
+- an elevation change between them,
+- one or more riser/vertical-bend nodes connecting the two levels,
+- a large cumulative vertical bend angle, approximately 180 to 270 degrees,
+- and a face-orientation discontinuity or ambiguity at the lower horizontal
+  segment.
+
+The derived fitting category should be explicit, for example
+`compound_vertical_return` or `vertical_return_270_candidate`, and must carry:
+
+- upper and lower horizontal ports,
+- riser/return ports,
+- effective orientation at each port,
+- cable-bearing-surface continuity status,
+- default radius/development assumptions,
+- and a user-resolvable intent: continuous return vs surface-reset/turnover.
+
+For MVP, keep this as a detected advisory/proxy candidate before trying to
+generate final catalogue geometry. The first implementation should warn and
+show the candidate; catalogue-grade geometry can follow once ordinary reducer,
+bend, riser, tee, and cross proxies are stable.
+
 ## Tee And Cross
 
 Tee and cross geometry must wait until topology is explicit.

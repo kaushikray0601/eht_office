@@ -11,6 +11,10 @@ const PROXY_FACE_OPACITY = 0.14;
 const PROXY_FACE_SELECTED_OPACITY = 0.24;
 const PROXY_BOTTOM_SHADE = 1.12;
 const PROXY_SIDE_SHADE = 0.72;
+const ACCESSORY_RADIUS_MIN_M = 0.05;
+const ACCESSORY_RADIUS_MAX_M = 5;
+const ACCESSORY_DEFAULT_RADIUS_M = 0.6;
+const ACCESSORY_CURVE_SEGMENTS = 8;
 const TELEMETRY_FLUSH_DELAY_MS = 750;
 const TELEMETRY_MAX_BATCH_SIZE = 50;
 const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
@@ -19,6 +23,9 @@ const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
   'depth-tick',
   'rung',
   'tray-cross-member',
+  'accessory-side-rail',
+  'accessory-lower-edge',
+  'accessory-cross-member',
 ]);
 const ORIENTATION_SCHEMA = 'raceway.orientation.v0';
 const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0';
@@ -113,6 +120,7 @@ const state = {
   segmentDirection: segmentDirections[0].id,
   segmentLengthM: 6,
   segmentSplitPercent: 50,
+  accessoryRadiusM: ACCESSORY_DEFAULT_RADIUS_M,
   connectSource: null,
   warningFocus: null,
 };
@@ -339,6 +347,12 @@ function normalizedSegmentSplitPercent(value) {
   return Math.min(Math.max(parsed, 1), 99);
 }
 
+function normalizedAccessoryRadiusM(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return ACCESSORY_DEFAULT_RADIUS_M;
+  return Math.min(Math.max(parsed, ACCESSORY_RADIUS_MIN_M), ACCESSORY_RADIUS_MAX_M);
+}
+
 function normalizedSegmentFaceOffsetOverride(rawOverride) {
   if (!rawOverride || typeof rawOverride !== 'object') return null;
   const startNodeKey = String(rawOverride.start_node_key || rawOverride.startNodeKey || '').trim();
@@ -418,6 +432,7 @@ function segmentIntentSnapshot(run) {
     if (!orientationPreset && Math.abs(faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) return;
     intents.set(Number(segment.segmentIndex), {
       orientationPreset,
+      effectiveOrientationPreset: segment.orientation?.preset || runOrientation(run).preset,
       faceOffsetM,
     });
   });
@@ -472,12 +487,13 @@ function cloneSegmentIntent(intent) {
   return intent
     ? {
         orientationPreset: intent.orientationPreset || '',
+        effectiveOrientationPreset: intent.effectiveOrientationPreset || intent.orientationPreset || '',
         faceOffsetM: normalizedFaceOffsetM(intent.faceOffsetM),
       }
     : null;
 }
 
-function mergedSegmentIntent(leftIntent, rightIntent) {
+function mergedSegmentIntent(leftIntent, rightIntent, runDefaultOrientationPreset = DEFAULT_ORIENTATION_PRESET) {
   const left = cloneSegmentIntent(leftIntent) || { orientationPreset: '', faceOffsetM: 0 };
   const right = cloneSegmentIntent(rightIntent) || { orientationPreset: '', faceOffsetM: 0 };
   const merged = {};
@@ -492,7 +508,15 @@ function mergedSegmentIntent(leftIntent, rightIntent) {
   const leftHasOffset = Math.abs(left.faceOffsetM) >= SEGMENT_FACE_OFFSET_EPSILON_M;
   const rightHasOffset = Math.abs(right.faceOffsetM) >= SEGMENT_FACE_OFFSET_EPSILON_M;
   if (leftHasOffset || rightHasOffset) {
-    if (leftHasOffset && rightHasOffset && Math.abs(left.faceOffsetM - right.faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M) {
+    const mergedOrientationPreset = merged.orientationPreset || runDefaultOrientationPreset || DEFAULT_ORIENTATION_PRESET;
+    const offsetFrameSurvives = left.effectiveOrientationPreset === mergedOrientationPreset
+      && right.effectiveOrientationPreset === mergedOrientationPreset;
+    if (
+      leftHasOffset
+      && rightHasOffset
+      && Math.abs(left.faceOffsetM - right.faceOffsetM) < SEGMENT_FACE_OFFSET_EPSILON_M
+      && offsetFrameSurvives
+    ) {
       merged.faceOffsetM = left.faceOffsetM;
     } else {
       conflict = true;
@@ -635,6 +659,7 @@ function captureHistorySnapshot() {
     elevationInitialized: state.elevationInitialized,
     orientationPreset: state.orientationPreset,
     segmentSplitPercent: state.segmentSplitPercent,
+    accessoryRadiusM: state.accessoryRadiusM,
   };
 }
 
@@ -663,6 +688,7 @@ function restoreHistorySnapshot(snapshot) {
   state.elevationInitialized = Boolean(snapshot.elevationInitialized);
   state.orientationPreset = orientationPresetFor(snapshot.orientationPreset).id;
   state.segmentSplitPercent = normalizedSegmentSplitPercent(snapshot.segmentSplitPercent);
+  state.accessoryRadiusM = normalizedAccessoryRadiusM(snapshot.accessoryRadiusM);
   state.mode = snapshot.mode || 'idle';
   if (!run || state.mode === 'idle') {
     state.mode = 'idle';
@@ -1766,6 +1792,103 @@ function sourceFrameOffsetPoint(point, basis, lateralOffsetM = 0, depthOffsetM =
   };
 }
 
+function pointTowardPoint(from, to, distanceM) {
+  const dx = Number(to?.x || 0) - Number(from?.x || 0);
+  const dy = Number(to?.y || 0) - Number(from?.y || 0);
+  const dz = Number(to?.z || 0) - Number(from?.z || 0);
+  const length = Math.sqrt((dx * dx) + (dy * dy) + (dz * dz));
+  if (length < 0.001) return { x: Number(from?.x || 0), y: Number(from?.y || 0), z: Number(from?.z || 0) };
+  const distance = Math.min(Math.max(Number(distanceM) || 0, 0), length);
+  return {
+    x: Number(from?.x || 0) + (dx / length) * distance,
+    y: Number(from?.y || 0) + (dy / length) * distance,
+    z: Number(from?.z || 0) + (dz / length) * distance,
+  };
+}
+
+function planBendInfoAtNode(run, nodeIndex) {
+  const nodes = run?.nodes || [];
+  if (nodeIndex < 1 || nodeIndex >= nodes.length - 1) return null;
+  const previous = nodes[nodeIndex - 1];
+  const node = nodes[nodeIndex];
+  const next = nodes[nodeIndex + 1];
+  const inX = Number(node.x || 0) - Number(previous.x || 0);
+  const inY = Number(node.y || 0) - Number(previous.y || 0);
+  const outX = Number(next.x || 0) - Number(node.x || 0);
+  const outY = Number(next.y || 0) - Number(node.y || 0);
+  const inPlan = Math.sqrt((inX * inX) + (inY * inY));
+  const outPlan = Math.sqrt((outX * outX) + (outY * outY));
+  if (inPlan < 0.05 || outPlan < 0.05) return null;
+  const cosine = Math.min(Math.max(((inX * outX) + (inY * outY)) / (inPlan * outPlan), -1), 1);
+  const angleDeg = Math.acos(cosine) * 180 / Math.PI;
+  if (angleDeg < 5) return null;
+  const radiusM = normalizedAccessoryRadiusM(state.accessoryRadiusM);
+  const rawCutbackM = radiusM * Math.tan((angleDeg * Math.PI / 180) / 2);
+  return {
+    previous,
+    node,
+    next,
+    angleDeg,
+    radiusM,
+    incomingCutbackM: Math.min(rawCutbackM, inPlan * 0.45),
+    outgoingCutbackM: Math.min(rawCutbackM, outPlan * 0.45),
+  };
+}
+
+function riserTurnInfoAtNode(run, nodeIndex) {
+  const nodes = run?.nodes || [];
+  if (nodeIndex < 1 || nodeIndex >= nodes.length - 1) return null;
+  const previous = nodes[nodeIndex - 1];
+  const node = nodes[nodeIndex];
+  const next = nodes[nodeIndex + 1];
+  const beforeDz = Number(node.z || 0) - Number(previous.z || 0);
+  const afterDz = Number(next.z || 0) - Number(node.z || 0);
+  const beforeIsRiser = Math.abs(beforeDz) > 0.001;
+  const afterIsRiser = Math.abs(afterDz) > 0.001;
+  if (beforeIsRiser === afterIsRiser) return null;
+  const beforeLength = nodeDistance(previous, node);
+  const afterLength = nodeDistance(node, next);
+  if (beforeLength < 0.05 || afterLength < 0.05) return null;
+  const radiusM = normalizedAccessoryRadiusM(state.accessoryRadiusM);
+  return {
+    previous,
+    node,
+    next,
+    radiusM,
+    incomingCutbackM: Math.min(radiusM, beforeLength * 0.45),
+    outgoingCutbackM: Math.min(radiusM, afterLength * 0.45),
+    incomingIsRiser: beforeIsRiser,
+    outgoingIsRiser: afterIsRiser,
+    category: (afterIsRiser ? afterDz : beforeDz) >= 0 ? 'riser-up' : 'riser-down',
+  };
+}
+
+function nodeAccessoryTrimM(run, nodeIndex, side) {
+  const planBend = planBendInfoAtNode(run, nodeIndex);
+  const riserTurn = riserTurnInfoAtNode(run, nodeIndex);
+  const trimCandidates = [];
+  if (planBend) trimCandidates.push(side === 'incoming' ? planBend.incomingCutbackM : planBend.outgoingCutbackM);
+  if (riserTurn) trimCandidates.push(side === 'incoming' ? riserTurn.incomingCutbackM : riserTurn.outgoingCutbackM);
+  return Math.max(...trimCandidates, 0);
+}
+
+function segmentTrimmedEndpoints(run, segment) {
+  const startTrim = nodeAccessoryTrimM(run, segment.startNodeIndex, 'outgoing');
+  const endTrim = nodeAccessoryTrimM(run, segment.endNodeIndex, 'incoming');
+  const basis = segmentPlanBasis(segment.startNode, segment.endNode);
+  if (basis.length < 0.001) return { start: segment.startNode, end: segment.endNode };
+  let trimStart = Math.min(startTrim, basis.length * 0.45);
+  let trimEnd = Math.min(endTrim, basis.length * 0.45);
+  if (trimStart + trimEnd > basis.length * 0.8) {
+    const scale = (basis.length * 0.8) / (trimStart + trimEnd);
+    trimStart *= scale;
+    trimEnd *= scale;
+  }
+  const start = sourcePointAlongSegment(segment.startNode, basis, trimStart);
+  const end = sourcePointAlongSegment(segment.startNode, basis, Math.max(basis.length - trimEnd, 0));
+  return { start, end, trimStartM: trimStart, trimEndM: trimEnd };
+}
+
 function segmentCornerPoints(run, start, end, orientation = runOrientation(run), faceOffsetM = 0) {
   const basis = orientedSegmentBasis(run, start, end, orientation);
   if (basis.length < 0.001) return null;
@@ -1807,7 +1930,8 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   const colors = [];
   const faceColors = proxyFaceColors(color, selected);
   runSegments(run).forEach(segment => {
-    addSegmentProxyFaces(positions, colors, run, segment.startNode, segment.endNode, faceColors, segment.orientation, segment.faceOffsetM);
+    const trimmed = segmentTrimmedEndpoints(run, segment);
+    addSegmentProxyFaces(positions, colors, run, trimmed.start, trimmed.end, faceColors, segment.orientation, segment.faceOffsetM);
   });
   if (positions.length < 18) return null;
   const geometry = setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors);
@@ -1845,6 +1969,138 @@ function addSegmentPreview(group, run, start, end, material, detailMaterial, bot
     const rightBottom = sourceFrameOffsetPoint(center, basis, corners.faceOffsetM - halfWidth, 0);
     addSourceLine(group, [leftBottom, rightBottom], detailMaterial, isLadderRun(run) ? 'rung' : 'tray-cross-member');
   }
+}
+
+function quadraticBezierPoint(start, control, end, t) {
+  const u = 1 - t;
+  return {
+    x: (u * u * Number(start.x || 0)) + (2 * u * t * Number(control.x || 0)) + (t * t * Number(end.x || 0)),
+    y: (u * u * Number(start.y || 0)) + (2 * u * t * Number(control.y || 0)) + (t * t * Number(end.y || 0)),
+    z: (u * u * Number(start.z || 0)) + (2 * u * t * Number(control.z || 0)) + (t * t * Number(end.z || 0)),
+  };
+}
+
+function curveBasisAt(points, index, orientation) {
+  const previous = points[Math.max(index - 1, 0)];
+  const next = points[Math.min(index + 1, points.length - 1)];
+  const basis = segmentPlanBasis(previous, next);
+  return rollBasisAroundTangent(basis, normalizedOrientation(orientation).quarter_turns);
+}
+
+function addAccessoryCurveRails(group, run, points, material, detailMaterial, kind, orientation = runOrientation(run), faceOffsetM = 0) {
+  if (!Array.isArray(points) || points.length < 2) return;
+  const halfWidth = runWidthM(run) / 2;
+  const depth = runDepthM(run);
+  const offset = normalizedFaceOffsetM(faceOffsetM);
+  const leftTop = [];
+  const rightTop = [];
+  const leftBottom = [];
+  const rightBottom = [];
+  points.forEach((point, index) => {
+    const basis = curveBasisAt(points, index, orientation);
+    leftTop.push(sourceFrameOffsetPoint(point, basis, offset + halfWidth, depth));
+    rightTop.push(sourceFrameOffsetPoint(point, basis, offset - halfWidth, depth));
+    leftBottom.push(sourceFrameOffsetPoint(point, basis, offset + halfWidth, 0));
+    rightBottom.push(sourceFrameOffsetPoint(point, basis, offset - halfWidth, 0));
+  });
+  addSourceLine(group, leftTop, material, 'accessory-side-rail');
+  addSourceLine(group, rightTop, material, 'accessory-side-rail');
+  addSourceLine(group, leftBottom, detailMaterial, 'accessory-lower-edge');
+  addSourceLine(group, rightBottom, detailMaterial, 'accessory-lower-edge');
+  const crossbarIndexes = [0, Math.floor((points.length - 1) / 2), points.length - 1];
+  Array.from(new Set(crossbarIndexes)).forEach(index => {
+    addSourceLine(group, [leftBottom[index], rightBottom[index]], detailMaterial, 'accessory-cross-member');
+  });
+  const guide = addSourceLine(group, points, material, kind);
+  if (guide) guide.renderOrder = 26;
+}
+
+function bendCurvePoints(start, control, end) {
+  const points = [];
+  for (let index = 0; index <= ACCESSORY_CURVE_SEGMENTS; index += 1) {
+    points.push(quadraticBezierPoint(start, control, end, index / ACCESSORY_CURVE_SEGMENTS));
+  }
+  return points;
+}
+
+function segmentNearNode(run, nodeIndex, side) {
+  const segmentIndex = side === 'incoming' ? nodeIndex : nodeIndex + 1;
+  return runSegments(run).find(segment => segment.segmentIndex === segmentIndex) || null;
+}
+
+function riserTurnReferenceSegment(run, nodeIndex, info) {
+  const incoming = segmentNearNode(run, nodeIndex, 'incoming');
+  const outgoing = segmentNearNode(run, nodeIndex, 'outgoing');
+  if (info?.incomingIsRiser && outgoing && !outgoing.isRiser) return outgoing;
+  if (info?.outgoingIsRiser && incoming && !incoming.isRiser) return incoming;
+  return incoming || outgoing || null;
+}
+
+function addPlanBendProxy(group, run, nodeIndex, material, detailMaterial) {
+  const info = planBendInfoAtNode(run, nodeIndex);
+  if (!info) return;
+  const incomingPoint = pointTowardPoint(info.node, info.previous, info.incomingCutbackM);
+  const outgoingPoint = pointTowardPoint(info.node, info.next, info.outgoingCutbackM);
+  const segment = segmentNearNode(run, nodeIndex, 'incoming') || segmentNearNode(run, nodeIndex, 'outgoing');
+  const points = bendCurvePoints(incomingPoint, info.node, outgoingPoint);
+  addAccessoryCurveRails(
+    group,
+    run,
+    points,
+    material,
+    detailMaterial,
+    'plan-bend-proxy',
+    segment?.orientation || runOrientation(run),
+    segment?.faceOffsetM || 0,
+  );
+}
+
+function addRiserTurnProxy(group, run, nodeIndex, material, detailMaterial) {
+  const info = riserTurnInfoAtNode(run, nodeIndex);
+  if (!info) return;
+  const incomingPoint = pointTowardPoint(info.node, info.previous, info.incomingCutbackM);
+  const outgoingPoint = pointTowardPoint(info.node, info.next, info.outgoingCutbackM);
+  const segment = riserTurnReferenceSegment(run, nodeIndex, info);
+  const points = bendCurvePoints(incomingPoint, info.node, outgoingPoint);
+  addAccessoryCurveRails(
+    group,
+    run,
+    points,
+    material,
+    detailMaterial,
+    'riser-proxy',
+    segment?.orientation || runOrientation(run),
+    segment?.faceOffsetM || 0,
+  );
+}
+
+function addRiserSegmentProxy(group, run, segment, material, detailMaterial) {
+  const line = addSourceLine(group, [segment.startNode, segment.endNode], material, 'riser-proxy');
+  if (line) line.renderOrder = 27;
+  const corners = segmentCornerPoints(run, segment.startNode, segment.endNode, segment.orientation, segment.faceOffsetM);
+  if (!corners) return;
+  addSourceLine(group, [corners.leftStartTop, corners.leftEndTop], material, 'accessory-side-rail');
+  addSourceLine(group, [corners.rightStartTop, corners.rightEndTop], material, 'accessory-side-rail');
+  addSourceLine(group, [corners.leftStartBottom, corners.leftEndBottom], detailMaterial, 'accessory-lower-edge');
+  addSourceLine(group, [corners.rightStartBottom, corners.rightEndBottom], detailMaterial, 'accessory-lower-edge');
+  [
+    [corners.leftStartBottom, corners.rightStartBottom],
+    [
+      {
+        x: (Number(corners.leftStartBottom.x || 0) + Number(corners.leftEndBottom.x || 0)) / 2,
+        y: (Number(corners.leftStartBottom.y || 0) + Number(corners.leftEndBottom.y || 0)) / 2,
+        z: (Number(corners.leftStartBottom.z || 0) + Number(corners.leftEndBottom.z || 0)) / 2,
+      },
+      {
+        x: (Number(corners.rightStartBottom.x || 0) + Number(corners.rightEndBottom.x || 0)) / 2,
+        y: (Number(corners.rightStartBottom.y || 0) + Number(corners.rightEndBottom.y || 0)) / 2,
+        z: (Number(corners.rightStartBottom.z || 0) + Number(corners.rightEndBottom.z || 0)) / 2,
+      },
+    ],
+    [corners.leftEndBottom, corners.rightEndBottom],
+  ].forEach(points => {
+    addSourceLine(group, points, detailMaterial, 'accessory-cross-member');
+  });
 }
 
 function addBendPlaceholder(group, run, node, material) {
@@ -2100,8 +2356,11 @@ function renderTrayPreview(group, run, color) {
     group.add(guide);
   }
   runSegments(run).forEach(segment => {
-    addSegmentPreview(group, run, segment.startNode, segment.endNode, material, detailMaterial, bottomEdgeMaterial, segment.orientation, segment.faceOffsetM);
-    addRiserPlaceholder(group, run, segment.startNode, segment.endNode, previewMaterial(0xbe123c, selected ? 0.95 : 0.65));
+    const trimmed = segmentTrimmedEndpoints(run, segment);
+    addSegmentPreview(group, run, trimmed.start, trimmed.end, material, detailMaterial, bottomEdgeMaterial, segment.orientation, segment.faceOffsetM);
+    if (segment.isRiser) {
+      addRiserSegmentProxy(group, run, segment, previewMaterial(0xbe123c, selected ? 0.95 : 0.65), detailMaterial);
+    }
     if (warningSegmentIsFocused(run, segment.segmentIndex)) {
       addWarningSegmentHighlight(group, run, segment.startNode, segment.endNode);
     } else if (selectedSegmentIsFocused(run, segment.segmentIndex)) {
@@ -2109,7 +2368,8 @@ function renderTrayPreview(group, run, color) {
     }
   });
   for (let index = 1; index < run.nodes.length - 1; index += 1) {
-    addBendPlaceholder(group, run, run.nodes[index], previewMaterial(0xf97316, selected ? 0.95 : 0.65));
+    addPlanBendProxy(group, run, index, previewMaterial(0xf97316, selected ? 0.95 : 0.65), detailMaterial);
+    addRiserTurnProxy(group, run, index, previewMaterial(0xbe123c, selected ? 0.95 : 0.65), detailMaterial);
   }
 }
 
@@ -2352,6 +2612,7 @@ function deleteSelectedNode() {
     mergedIntentResult = mergedSegmentIntent(
       oldIntentByIndex.get(deleteIndex),
       oldIntentByIndex.get(deleteIndex + 1),
+      runOrientation(run).preset,
     );
     oldIntentByIndex.forEach((intent, oldIndex) => {
       const cloned = cloneSegmentIntent(intent);
@@ -3488,7 +3749,8 @@ function fittingSummaryHtml() {
   return `
     <div>
       <strong>Fittings</strong><br>
-      ${counts.total || 0} placeholder(s) | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s) | ${byKind.reducer_candidate || 0} reducer candidate(s)<br>
+      ${counts.total || 0} item(s) | ${counts.synthetic_proxy_total || 0} synthetic proxy | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s)<br>
+      ${byKind.tee || 0} tee(s) | ${byKind.cross || 0} cross(es) | ${byKind.reducer_candidate || 0} reducer candidate(s)<br>
       ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation | ${counts.non_standard_plan_bends || 0} non-standard bend(s)<br>
       ${counts.one_edge_alignment_candidates || 0} edge-match candidate(s) | ${counts.face_offset_steps || 0} offset step(s) | ${counts.face_alignment_resolved_by_offset || 0} offset-resolved<br>
       ${graph.junction_node_count || 0} junction node(s) | ${graph.branch_node_count || 0} branch node(s)
@@ -3550,6 +3812,7 @@ function ensurePanel() {
       <label>Length m<input id="racewaySegmentLengthInput" type="number" min="0.001" step="0.001" value="${formatM(state.segmentLengthM)}"></label>
       <label>Offset m<input id="racewaySegmentFaceOffsetInput" type="number" step="0.001" value="0.000" title="Select a segment to shift its tray faces left/right from the route centerline."></label>
       <label>Split %<input id="racewaySegmentSplitInput" type="number" min="1" max="99" step="1" value="${state.segmentSplitPercent}" title="Select a segment and split it at this percentage from its start node."></label>
+      <label>Radius m<input id="racewayAccessoryRadiusInput" type="number" min="${ACCESSORY_RADIUS_MIN_M}" max="${ACCESSORY_RADIUS_MAX_M}" step="0.050" value="${formatM(state.accessoryRadiusM)}" title="Synthetic bend/riser proxy radius. Catalogue or project preference can override later."></label>
       <button type="button" data-raceway-action="add-segment" title="${escapeHtml(actionTooltip('add-segment'))}">Add Segment</button>
       <button type="button" data-raceway-action="split-segment" title="${escapeHtml(actionTooltip('split-segment'))}">Split Segment</button>
       <button id="racewaySurfaceToggleBtn" type="button" data-raceway-action="toggle-surfaces" title="${escapeHtml(actionTooltip('toggle-surfaces'))}" aria-pressed="${state.showProxyFaces ? 'true' : 'false'}">${state.showProxyFaces ? 'Surface On' : 'Wire Only'}</button>
@@ -3670,6 +3933,7 @@ function renderPanel(options = {}) {
   const segmentLengthInput = panel.querySelector('#racewaySegmentLengthInput');
   const segmentFaceOffsetInput = panel.querySelector('#racewaySegmentFaceOffsetInput');
   const segmentSplitInput = panel.querySelector('#racewaySegmentSplitInput');
+  const accessoryRadiusInput = panel.querySelector('#racewayAccessoryRadiusInput');
   const segment = selectedSegment();
   if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
   if (familySelect && familySelect !== document.activeElement) {
@@ -3695,6 +3959,9 @@ function renderPanel(options = {}) {
   }
   if (segmentDirectionSelect && segmentDirectionSelect !== document.activeElement) segmentDirectionSelect.value = state.segmentDirection;
   if (segmentLengthInput && segmentLengthInput !== document.activeElement) segmentLengthInput.value = formatM(state.segmentLengthM);
+  if (accessoryRadiusInput && accessoryRadiusInput !== document.activeElement) {
+    accessoryRadiusInput.value = formatM(state.accessoryRadiusM);
+  }
   if (segmentSplitInput) {
     segmentSplitInput.disabled = !segment;
     segmentSplitInput.title = segment
@@ -4011,6 +4278,10 @@ function handlePanelChange(event) {
   if (target.id === 'racewaySegmentSplitInput') {
     state.segmentSplitPercent = normalizedSegmentSplitPercent(target.value);
   }
+  if (target.id === 'racewayAccessoryRadiusInput') {
+    state.accessoryRadiusM = normalizedAccessoryRadiusM(target.value);
+    setStatus(`Synthetic accessory proxy radius set to ${formatM(state.accessoryRadiusM)} m.`);
+  }
   if (target.id === 'racewaySegmentFaceOffsetInput') {
     const value = Number(target.value);
     if (Number.isFinite(value)) changeSelectedSegmentFaceOffset(value, { pushHistory: false });
@@ -4029,6 +4300,12 @@ function handlePanelInput(event) {
   }
   if (event.target.id === 'racewaySegmentSplitInput') {
     state.segmentSplitPercent = normalizedSegmentSplitPercent(event.target.value);
+    renderPanel();
+    return;
+  }
+  if (event.target.id === 'racewayAccessoryRadiusInput') {
+    state.accessoryRadiusM = normalizedAccessoryRadiusM(event.target.value);
+    renderRaceway();
     renderPanel();
     return;
   }
@@ -4074,6 +4351,10 @@ function handlePanelFocusOut(event) {
   if (event.target.id === 'racewaySegmentSplitInput') {
     state.segmentSplitPercent = normalizedSegmentSplitPercent(event.target.value);
     event.target.value = String(state.segmentSplitPercent);
+  }
+  if (event.target.id === 'racewayAccessoryRadiusInput') {
+    state.accessoryRadiusM = normalizedAccessoryRadiusM(event.target.value);
+    event.target.value = formatM(state.accessoryRadiusM);
   }
 }
 

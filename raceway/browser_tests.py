@@ -302,7 +302,8 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                                   status: 'derived_placeholder',
                                   counts: {
                                     total: 4,
-                                    by_kind: { plan_bend: 2, riser: 1, reducer_candidate: 1 },
+                                    synthetic_proxy_total: 3,
+                                    by_kind: { plan_bend: 2, riser: 1, reducer_candidate: 1, tee: 0, cross: 0 },
                                     by_category: { plan_bend_46_90: 2, riser_up: 1, width_reducer: 1 },
                                     requires_catalogue_validation: 4,
                                     requires_face_alignment: 2,
@@ -542,10 +543,13 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("side-rail", preview_kinds)
                 self.assertIn("solid-3-plane-proxy", preview_kinds)
                 self.assertIn("rung", preview_kinds)
-                self.assertIn("bend-placeholder", preview_kinds)
+                self.assertIn("plan-bend-proxy", preview_kinds)
+                self.assertIn("riser-proxy", preview_kinds)
+                self.assertIn("accessory-side-rail", preview_kinds)
+                self.assertIn("accessory-lower-edge", preview_kinds)
+                self.assertIn("accessory-cross-member", preview_kinds)
                 self.assertIn("node-handle", preview_kinds)
                 self.assertIn("node-hit-target", preview_kinds)
-                self.assertIn("riser-placeholder", preview_kinds)
                 snap_kinds = page.evaluate(
                     """() => window.racewayViewerOverlay.layer.getMeasurementSnapObjects()
                         .map((child) => ({
@@ -558,8 +562,45 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("lower-edge", {item["kind"] for item in snap_kinds})
                 self.assertIn("depth-tick", {item["kind"] for item in snap_kinds})
                 self.assertIn("rung", {item["kind"] for item in snap_kinds})
+                self.assertIn("accessory-side-rail", {item["kind"] for item in snap_kinds})
+                self.assertIn("accessory-lower-edge", {item["kind"] for item in snap_kinds})
+                self.assertIn("accessory-cross-member", {item["kind"] for item in snap_kinds})
                 self.assertNotIn("node-handle", {item["kind"] for item in snap_kinds})
                 self.assertTrue(all(item["snap"] for item in snap_kinds))
+                page.evaluate(
+                    """() => {
+                    window.__racewaySavedRunsForDirectVertical = window.racewayViewerOverlay.getRuns();
+                    window.racewayViewerOverlay.setRuns([{
+                      id: 'direct-vertical-riser',
+                      tag: 'RWY-DIRECT-VERTICAL',
+                      familyId: '10',
+                      sizeId: '11',
+                      familyCode: 'B-001',
+                      familyKind: 'ladder',
+                      widthMm: 300,
+                      depthMm: 100,
+                      serviceClass: 'power',
+                      elevationM: 1,
+                      orientation: { schema: 'raceway.orientation.v0', preset: 'open_up', quarter_turns: 0, label: 'Open Up' },
+                      metadata: {},
+                      nodes: [
+                        { x: 12, y: 8, z: 1, coordinate_frame: 'source_xyz_m' },
+                        { x: 12, y: 8, z: 4, coordinate_frame: 'source_xyz_m' },
+                      ],
+                    }]);
+                    }"""
+                )
+                direct_riser_kinds = page.evaluate(
+                    """() => window.racewayViewerOverlay.layer.group.children
+                        .flatMap((runGroup) => runGroup.children.map((child) => child.userData?.racewayPreviewKind))
+                        .filter(Boolean)
+                    """
+                )
+                self.assertIn("riser-proxy", direct_riser_kinds)
+                self.assertIn("accessory-side-rail", direct_riser_kinds)
+                self.assertIn("accessory-lower-edge", direct_riser_kinds)
+                self.assertIn("accessory-cross-member", direct_riser_kinds)
+                page.evaluate("() => window.racewayViewerOverlay.setRuns(window.__racewaySavedRunsForDirectVertical || [])")
                 solid_proxy = page.evaluate(
                     """() => {
                         const proxy = window.racewayViewerOverlay.layer.group.children
@@ -650,7 +691,8 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 )
                 fitting_summary = page.text_content("#racewayFittingSummary")
                 self.assertIn("Fittings", fitting_summary)
-                self.assertIn("4 placeholder", fitting_summary)
+                self.assertIn("4 item", fitting_summary)
+                self.assertIn("3 synthetic proxy", fitting_summary)
                 self.assertIn("1 reducer candidate", fitting_summary)
                 self.assertIn("2 need face alignment", fitting_summary)
                 fitting_fetches_before = page.evaluate(

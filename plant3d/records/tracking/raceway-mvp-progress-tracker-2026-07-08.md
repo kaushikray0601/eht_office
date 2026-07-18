@@ -2226,3 +2226,131 @@ Append each pass here.
     straight-proxy cutback,
   - keep click-on-segment insertion and branch tee workflow behind the current
     percentage split foundation unless KR wants that UX accelerated.
+
+### 2026-07-18 - Synthetic Accessory Proxy Foundation
+
+- Read Claude/Fable notes before coding; §41 approved split/insert and raised
+  N-20:
+  - agreeing face offset must not survive a merge when an orientation conflict
+    changes the physical frame of the offset.
+- Closed N-20 in `raceway_overlay.js`:
+  - split/merge intent now records each segment's effective orientation frame,
+  - on merge, a face offset survives only when both parent offsets agree and
+    the merged orientation frame is unchanged,
+  - otherwise the conflicting intent is dropped with the existing status
+    warning path.
+- Added synthetic accessory proxy defaults in `raceway/fittings.py`:
+  - `raceway.accessory_proxy.v0`,
+  - default bend/riser/branch radius `0.6 m`,
+  - low curve segment count `8`,
+  - assumption row explaining project-neutral defaults until project preference
+    or vendor catalogue overrides.
+- Enriched server-side fitting projection:
+  - plan bends are now `synthetic_proxy` items with radius, cutback, and
+    `plan_bend_curve` geometry recipe,
+  - risers are now `synthetic_proxy` items with `riser_curve` geometry recipe
+    and honest inside/outside orientation unresolved status,
+  - explicit graph branch nodes now produce tee proxies,
+  - explicit degree-4 graph nodes now produce cross proxies,
+  - fitting counts now include `synthetic_proxy_total`.
+- Improved viewer proxy rendering:
+  - normal authoring now renders curved plan-bend proxy rails/edges,
+  - riser turns and riser segments get lightweight magenta proxy guides,
+  - straight tray faces/rails are trimmed near bend/riser proxies using derived
+    cutback distances,
+  - added `Radius m` control for synthetic bend/riser proxy radius,
+  - accessory rails/edges/cross-members are available as measurement snap
+    targets.
+- Bumped browser cache key:
+  - Raceway overlay: `20260718_raceway40`.
+- Deferred deliberately:
+  - reducer body rendering with handedness and tapered faces,
+  - detailed tee/cross body rendering in the viewer,
+  - persistence of user-selected radius/handedness/accessory decisions,
+  - catalogue/vendor-specific dimensions and meshes.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayFittingProjectionTests raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `git diff --check`
+- Manual check:
+  - draw a run with a horizontal bend and confirm the old diamond marker is
+    replaced by curved accessory rails/edges,
+  - draw or load an elevation-changing segment and confirm the riser proxy
+    guide is visible,
+  - change `Radius m` and confirm bend/riser visual curvature and straight
+    cutback update,
+  - save connected tee/cross topology, refresh fittings, and confirm fitting
+    summary/JSON shows tee or cross synthetic proxy items,
+  - confirm measurement snap can pick accessory rail/edge/cross-member points.
+- Notes to Claude/Fable:
+  - please review whether the first viewer-side straight cutback should remain
+    purely visual for now, or whether the fitting JSON should start reporting
+    gross-vs-deducted straight length before reducer body v0.
+- Next recommended pass:
+  - reducer handedness metadata/UI (`left_edge`, `right_edge`, `centerline`),
+  - reducer proxy body v0 using the existing accessory recipe pattern,
+  - then detailed tee/cross body rendering from the new graph-node port records.
+
+### 2026-07-18 - Direct Vertical Riser Hardening And 270 Return Doctrine
+
+- Read Claude/Fable notes before coding; latest §41 remains aligned:
+  - no new blocker against accessory hardening,
+  - N-20 frame-coupled merge rule was already closed in the synthetic accessory
+    foundation pass,
+  - reducer handedness/body v0 remains the next major accessory path.
+- Addressed KR manual feedback:
+  - direct vertical riser segments now render lightweight side rails, lower
+    edges, and cross-members instead of only a centerline guide,
+  - riser turns now prefer the adjacent non-riser segment as their orientation
+    reference, so exact horizontal-to-vertical turns inherit a meaningful tray
+    face frame instead of arbitrary vertical fallback,
+  - accessory snap targets are still exposed through the measurement layer.
+- Added a browser smoke assertion for a two-node direct vertical riser:
+  - confirms `riser-proxy`,
+  - confirms `accessory-side-rail`,
+  - confirms `accessory-lower-edge`,
+  - confirms `accessory-cross-member`.
+- Added a static guard for `riserTurnReferenceSegment`.
+- Recorded KR's compound vertical return / 270 degree riser case in the
+  accessory geometry note:
+  - do not treat this as just one generic 270 degree bend,
+  - detect it later as `compound_vertical_return` or
+    `vertical_return_270_candidate`,
+  - expose the engineering intent: continuous face return versus
+    surface-reset/turnover landing.
+- Bumped browser cache key:
+  - Raceway overlay: `20260718_raceway41`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+- Manual check:
+  - draw a two-node direct vertical riser and confirm the riser no longer looks
+    like only a single centerline/laminar guide,
+  - draw a horizontal tray, then a direct vertical up/down node at the same X/Y
+    point, and confirm the riser curve/rails show at the 90 degree turn,
+  - confirm changing `Radius m` still changes normal bend/riser proxy curvature,
+  - confirm measurement snap can still pick accessory rail/lower-edge points.
+- Notes to Claude/Fable:
+  - please review the `compound_vertical_return` doctrine before we implement
+    detection; I suggest keeping it advisory/proxy-only until ordinary reducer,
+    bend/riser, tee, and cross bodies are stable.
+- Next recommended pass:
+  - reducer handedness UI/metadata with `left_edge` default and user override,
+  - reducer proxy body v0 with tapered/curved unequal-width geometry and
+    straight-proxy cutback,
+  - keep detailed tee/cross proxy bodies behind reducer v0 unless KR redirects
+    toward branch authoring first.
