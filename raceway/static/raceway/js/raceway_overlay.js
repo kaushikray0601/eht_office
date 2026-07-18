@@ -1754,6 +1754,43 @@ function segmentPlanBasis(start, end) {
   };
 }
 
+function basisFromLateralReference(start, end, lateralReference) {
+  const sx = Number(start?.x || 0);
+  const sy = Number(start?.y || 0);
+  const sz = Number(start?.z || 0);
+  const dx = Number(end?.x || 0) - sx;
+  const dy = Number(end?.y || 0) - sy;
+  const dz = Number(end?.z || 0) - sz;
+  const length = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  if (length < 0.001) return null;
+
+  const tx = dx / length;
+  const ty = dy / length;
+  const tz = dz / length;
+  const rawNx = Number(lateralReference?.x || 0);
+  const rawNy = Number(lateralReference?.y || 0);
+  const rawNz = Number(lateralReference?.z || 0);
+  const dot = (rawNx * tx) + (rawNy * ty) + (rawNz * tz);
+  let nx = rawNx - (dot * tx);
+  let ny = rawNy - (dot * ty);
+  let nz = rawNz - (dot * tz);
+  let nLength = Math.sqrt((nx * nx) + (ny * ny) + (nz * nz));
+  if (nLength < 0.001) return null;
+  nx /= nLength;
+  ny /= nLength;
+  nz /= nLength;
+
+  let depthX = (ty * nz) - (tz * ny);
+  let depthY = (tz * nx) - (tx * nz);
+  let depthZ = (tx * ny) - (ty * nx);
+  let depthLength = Math.sqrt((depthX * depthX) + (depthY * depthY) + (depthZ * depthZ));
+  if (depthLength < 0.001) return null;
+  depthX /= depthLength;
+  depthY /= depthLength;
+  depthZ /= depthLength;
+  return { length, tx, ty, tz, nx, ny, nz, dx: depthX, dy: depthY, dz: depthZ };
+}
+
 function rollBasisAroundTangent(basis, quarterTurns = 0) {
   const turns = ((Number(quarterTurns) || 0) % 4 + 4) % 4;
   if (!turns) return basis;
@@ -1889,8 +1926,8 @@ function segmentTrimmedEndpoints(run, segment) {
   return { start, end, trimStartM: trimStart, trimEndM: trimEnd };
 }
 
-function segmentCornerPoints(run, start, end, orientation = runOrientation(run), faceOffsetM = 0) {
-  const basis = orientedSegmentBasis(run, start, end, orientation);
+function segmentCornerPoints(run, start, end, orientation = runOrientation(run), faceOffsetM = 0, basisOverride = null) {
+  const basis = basisOverride || orientedSegmentBasis(run, start, end, orientation);
   if (basis.length < 0.001) return null;
   const halfWidth = runWidthM(run) / 2;
   const depth = runDepthM(run);
@@ -1917,8 +1954,8 @@ function segmentCornerPoints(run, start, end, orientation = runOrientation(run),
   };
 }
 
-function addSegmentProxyFaces(positions, colors, run, start, end, faceColors, orientation = runOrientation(run), faceOffsetM = 0) {
-  const corners = segmentCornerPoints(run, start, end, orientation, faceOffsetM);
+function addSegmentProxyFaces(positions, colors, run, start, end, faceColors, orientation = runOrientation(run), faceOffsetM = 0, basisOverride = null) {
+  const corners = segmentCornerPoints(run, start, end, orientation, faceOffsetM, basisOverride);
   if (!corners) return;
   addProxyQuad(positions, colors, corners.leftStartBottom, corners.rightStartBottom, corners.rightEndBottom, corners.leftEndBottom, faceColors.bottom);
   addProxyQuad(positions, colors, corners.leftStartBottom, corners.leftEndBottom, corners.leftEndTop, corners.leftStartTop, faceColors.side);
@@ -1931,7 +1968,8 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   const faceColors = proxyFaceColors(color, selected);
   runSegments(run).forEach(segment => {
     const trimmed = segmentTrimmedEndpoints(run, segment);
-    addSegmentProxyFaces(positions, colors, run, trimmed.start, trimmed.end, faceColors, segment.orientation, segment.faceOffsetM);
+    const basis = segmentRenderBasis(run, segment, trimmed.start, trimmed.end);
+    addSegmentProxyFaces(positions, colors, run, trimmed.start, trimmed.end, faceColors, segment.orientation, segment.faceOffsetM, basis);
   });
   if (positions.length < 18) return null;
   const geometry = setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors);
@@ -1944,8 +1982,8 @@ function addRunProxyFaceMesh(group, run, color, selected) {
   return mesh;
 }
 
-function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial, orientation = runOrientation(run), faceOffsetM = 0) {
-  const corners = segmentCornerPoints(run, start, end, orientation, faceOffsetM);
+function addSegmentPreview(group, run, start, end, material, detailMaterial, bottomEdgeMaterial = detailMaterial, orientation = runOrientation(run), faceOffsetM = 0, basisOverride = null) {
+  const corners = segmentCornerPoints(run, start, end, orientation, faceOffsetM, basisOverride);
   if (!corners) return;
   const { basis } = corners;
   const halfWidth = runWidthM(run) / 2;
@@ -1980,14 +2018,22 @@ function quadraticBezierPoint(start, control, end, t) {
   };
 }
 
-function curveBasisAt(points, index, orientation) {
+function curveBasisAt(points, index, orientation, basisReference = null) {
   const previous = points[Math.max(index - 1, 0)];
   const next = points[Math.min(index + 1, points.length - 1)];
+  if (basisReference) {
+    const inherited = basisFromLateralReference(previous, next, {
+      x: basisReference.nx,
+      y: basisReference.ny,
+      z: basisReference.nz,
+    });
+    if (inherited) return inherited;
+  }
   const basis = segmentPlanBasis(previous, next);
   return rollBasisAroundTangent(basis, normalizedOrientation(orientation).quarter_turns);
 }
 
-function addAccessoryCurveRails(group, run, points, material, detailMaterial, kind, orientation = runOrientation(run), faceOffsetM = 0) {
+function accessoryCurveCornerPoints(run, points, orientation = runOrientation(run), faceOffsetM = 0, basisReference = null) {
   if (!Array.isArray(points) || points.length < 2) return;
   const halfWidth = runWidthM(run) / 2;
   const depth = runDepthM(run);
@@ -1997,12 +2043,67 @@ function addAccessoryCurveRails(group, run, points, material, detailMaterial, ki
   const leftBottom = [];
   const rightBottom = [];
   points.forEach((point, index) => {
-    const basis = curveBasisAt(points, index, orientation);
+    const basis = curveBasisAt(points, index, orientation, basisReference);
     leftTop.push(sourceFrameOffsetPoint(point, basis, offset + halfWidth, depth));
     rightTop.push(sourceFrameOffsetPoint(point, basis, offset - halfWidth, depth));
     leftBottom.push(sourceFrameOffsetPoint(point, basis, offset + halfWidth, 0));
     rightBottom.push(sourceFrameOffsetPoint(point, basis, offset - halfWidth, 0));
   });
+  return { leftTop, rightTop, leftBottom, rightBottom };
+}
+
+function addAccessoryCurveFaceMesh(group, curveCorners, color, selected, previewKind) {
+  if (!curveCorners || !Array.isArray(curveCorners.leftBottom) || curveCorners.leftBottom.length < 2) return null;
+  const positions = [];
+  const colors = [];
+  const faceColors = proxyFaceColors(color, selected);
+  for (let index = 1; index < curveCorners.leftBottom.length; index += 1) {
+    const previous = index - 1;
+    addProxyQuad(
+      positions,
+      colors,
+      curveCorners.leftBottom[previous],
+      curveCorners.rightBottom[previous],
+      curveCorners.rightBottom[index],
+      curveCorners.leftBottom[index],
+      faceColors.bottom,
+    );
+    addProxyQuad(
+      positions,
+      colors,
+      curveCorners.leftBottom[previous],
+      curveCorners.leftBottom[index],
+      curveCorners.leftTop[index],
+      curveCorners.leftTop[previous],
+      faceColors.side,
+    );
+    addProxyQuad(
+      positions,
+      colors,
+      curveCorners.rightBottom[previous],
+      curveCorners.rightTop[previous],
+      curveCorners.rightTop[index],
+      curveCorners.rightBottom[index],
+      faceColors.side,
+    );
+  }
+  if (positions.length < 18) return null;
+  const geometry = setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors);
+  const mesh = new runtime.THREE.Mesh(geometry, proxyFaceMaterial(color, selected));
+  mesh.userData.racewayPreviewKind = previewKind;
+  mesh.userData.faceCount = positions.length / 18;
+  mesh.renderOrder = 20;
+  group.add(mesh);
+  return mesh;
+}
+
+function addAccessoryCurveRails(group, run, points, material, detailMaterial, kind, orientation = runOrientation(run), faceOffsetM = 0, options = {}) {
+  const curveCorners = accessoryCurveCornerPoints(run, points, orientation, faceOffsetM, options.basisReference || null);
+  if (!curveCorners) return;
+  if (options.surfaceKind) {
+    addAccessoryCurveFaceMesh(group, curveCorners, options.color || 0xbe123c, Boolean(options.selected), options.surfaceKind);
+  }
+  const { leftTop, rightTop, leftBottom, rightBottom } = curveCorners;
   addSourceLine(group, leftTop, material, 'accessory-side-rail');
   addSourceLine(group, rightTop, material, 'accessory-side-rail');
   addSourceLine(group, leftBottom, detailMaterial, 'accessory-lower-edge');
@@ -2036,6 +2137,38 @@ function riserTurnReferenceSegment(run, nodeIndex, info) {
   return incoming || outgoing || null;
 }
 
+function riserSegmentReferenceSegment(run, segment) {
+  if (!segment?.isRiser) return null;
+  const segments = runSegments(run);
+  const incoming = segments.find(candidate => candidate.segmentIndex === segment.segmentIndex - 1) || null;
+  const outgoing = segments.find(candidate => candidate.segmentIndex === segment.segmentIndex + 1) || null;
+  if (incoming && !incoming.isRiser) return incoming;
+  if (outgoing && !outgoing.isRiser) return outgoing;
+  return null;
+}
+
+function segmentRenderBasis(run, segment, start = segment?.startNode, end = segment?.endNode) {
+  const orientation = segment?.orientation || runOrientation(run);
+  if (segment?.isRiser && !segment.orientationOverride) {
+    const referenceSegment = riserSegmentReferenceSegment(run, segment);
+    if (referenceSegment) {
+      const referenceBasis = orientedSegmentBasis(
+        run,
+        referenceSegment.startNode,
+        referenceSegment.endNode,
+        referenceSegment.orientation,
+      );
+      const inherited = basisFromLateralReference(start, end, {
+        x: referenceBasis.nx,
+        y: referenceBasis.ny,
+        z: referenceBasis.nz,
+      });
+      if (inherited) return inherited;
+    }
+  }
+  return orientedSegmentBasis(run, start, end, orientation);
+}
+
 function addPlanBendProxy(group, run, nodeIndex, material, detailMaterial) {
   const info = planBendInfoAtNode(run, nodeIndex);
   if (!info) return;
@@ -2061,6 +2194,7 @@ function addRiserTurnProxy(group, run, nodeIndex, material, detailMaterial) {
   const incomingPoint = pointTowardPoint(info.node, info.previous, info.incomingCutbackM);
   const outgoingPoint = pointTowardPoint(info.node, info.next, info.outgoingCutbackM);
   const segment = riserTurnReferenceSegment(run, nodeIndex, info);
+  const basisReference = segment ? segmentRenderBasis(run, segment, segment.startNode, segment.endNode) : null;
   const points = bendCurvePoints(incomingPoint, info.node, outgoingPoint);
   addAccessoryCurveRails(
     group,
@@ -2071,13 +2205,20 @@ function addRiserTurnProxy(group, run, nodeIndex, material, detailMaterial) {
     'riser-proxy',
     segment?.orientation || runOrientation(run),
     segment?.faceOffsetM || 0,
+    {
+      basisReference,
+      surfaceKind: 'riser-bend-surface',
+      color: 0xbe123c,
+      selected: run.id === state.activeRunId,
+    },
   );
 }
 
 function addRiserSegmentProxy(group, run, segment, material, detailMaterial) {
   const line = addSourceLine(group, [segment.startNode, segment.endNode], material, 'riser-proxy');
   if (line) line.renderOrder = 27;
-  const corners = segmentCornerPoints(run, segment.startNode, segment.endNode, segment.orientation, segment.faceOffsetM);
+  const basis = segmentRenderBasis(run, segment);
+  const corners = segmentCornerPoints(run, segment.startNode, segment.endNode, segment.orientation, segment.faceOffsetM, basis);
   if (!corners) return;
   addSourceLine(group, [corners.leftStartTop, corners.leftEndTop], material, 'accessory-side-rail');
   addSourceLine(group, [corners.rightStartTop, corners.rightEndTop], material, 'accessory-side-rail');
@@ -2357,7 +2498,8 @@ function renderTrayPreview(group, run, color) {
   }
   runSegments(run).forEach(segment => {
     const trimmed = segmentTrimmedEndpoints(run, segment);
-    addSegmentPreview(group, run, trimmed.start, trimmed.end, material, detailMaterial, bottomEdgeMaterial, segment.orientation, segment.faceOffsetM);
+    const basis = segmentRenderBasis(run, segment, trimmed.start, trimmed.end);
+    addSegmentPreview(group, run, trimmed.start, trimmed.end, material, detailMaterial, bottomEdgeMaterial, segment.orientation, segment.faceOffsetM, basis);
     if (segment.isRiser) {
       addRiserSegmentProxy(group, run, segment, previewMaterial(0xbe123c, selected ? 0.95 : 0.65), detailMaterial);
     }

@@ -1170,3 +1170,17 @@ case; recorded in the accessory geometry note as a future explicit
 with user-resolvable intent: continuous face return versus surface-reset or
 turnover landing. Next path remains reducer handedness UI/metadata, reducer
 body v0, then tee/cross body hardening.
+
+Plant3D/Raceway note, 2026-07-19 exact 90 degree riser bend hardening: KR found
+the vertical up/down riser bend still underdeveloped. Claude §42 added a queued
+vendor-catalogue sync command but no blocker to this pass. `raceway_overlay.js`
+now has `basisFromLateralReference` and `segmentRenderBasis`; vertical riser
+segments inherit the width axis of an adjacent non-riser tray unless the user
+has an explicit segment orientation override. Exact horizontal-to-vertical
+riser turns now render `riser-bend-surface`, a lightweight curved 3-face mesh
+using the existing accessory curve segmentation and vertex colors. Browser
+smoke asserts an exact 90 degree elbow mesh plus the existing direct vertical
+riser rails/edges/cross-members. Overlay cache key is `20260719_raceway42`.
+Next path: confirm manual feel, then reducer handedness UI/metadata and
+reducer proxy body v0; park Claude's vendor sync command for a nearby
+housekeeping pass unless KR prioritizes it.

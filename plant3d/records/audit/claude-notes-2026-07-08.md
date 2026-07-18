@@ -1010,3 +1010,29 @@ Codex's nuance question, answered from the geometry: **the face offset is applie
 ### Next-pass set — endorsed, matches §40's sequence exactly
 
 Reducer handedness UI (`left_edge` default, `right_edge`/`center` override — wider-port frame per A-1) → reducer proxy geometry v0 (tapered body, heuristic development length exposed as assumption, **A-2 straight-proxy cutback in the acceptance list**) → then click-on-segment split and the tee branch workflow on this foundation. Fold N-20 into whichever of these touches the merge code first.
+
+## 42. Scorecard established + one queued task for Codex (2026-07-18)
+
+- **Development scorecard created at KR's request:** `plant3d/records/audit/development-scorecard.md` — Claude-owned, honest 1–10 per category, with a written update policy (phase completions, every ~10 passes, score-moving events, monthly minimum), a drift-watch section, and an append-only history log. Baseline overall ≈ 7.9. Includes a correction: Claude's earlier "no remote/backup" flag was wrong — remote push discipline and vendor-data backup DBs (local WSL Docker + cloud Ubuntu Docker) exist; the true DevOps gap is the absence of an automated test pipeline (CI).
+- **Queued task for Codex (KR-assigned): vendor-catalogue sync command.** Sync the irreplaceable curated data from the dev database to KR's two backup databases. Suggested shape, consistent with house rules: a management command, **dry-run by default with `--execute`**, source strictly read-only, targets passed explicitly (env/URL), Database Safety Protocol wording in `--help`; scope = the curated/validated tables only — `ElecEHT_Vendor` (SR+legacy MI), the normalized MI catalogue tables, cold-cable catalogue, ASME B36 + thermal-conductivity references, and now also **`RacewayFamily`/`RacewaySize`** (the raceway seed is curated data too). Row-count report per table, no deletes on targets without a separate explicit flag.
+- Drift-watch note now lives in the scorecard: the accessory arc is at its timebox boundary — reducer v0 + tee close it; the strategic frontier is Phase H + durable EHT persistence.
+
+## 43. Synthetic accessory proxy review (2026-07-19, commit `579af3d`; for Codex)
+
+**Verdict: approved — N-20 closed with the exact §41 semantics, A-2 cutback delivered with textbook math, and the deferral list is disciplined.** Verified: raceway+plant3d+telemetry **146 tests OK twice**, browser **3/3 OK**, full **eht 360 OK**, statics clean.
+
+### Verified closures
+
+- **N-20 CLOSED precisely:** `mergedSegmentIntent` records each parent's *effective* orientation frame, and an agreeing face offset survives only when both parents' effective frames equal the merged frame (`offsetFrameSurvives`) — otherwise dropped with the existing warning path. This is the frame-coupling rule word for word.
+- **A-2 cutback delivered ahead of the reducer:** straight rails/faces trim near bend/riser proxies using `R·tan(θ/2)` (`_bend_cutback_m`) — the correct formula — with tangent points in the geometry recipe, so the future reducer inherits a solved problem.
+- Bend/riser proxies as `synthetic_proxy` items with radius, cutback, and geometry recipes under a versioned scheme (`raceway.accessory_proxy.v0`) plus an assumptions row for the project-neutral defaults (0.6 m radius, 8 curve segments) — honesty discipline intact; riser inside/outside still reports *unresolved* where orientation is ambiguous (A-4 pattern held rather than guessed).
+- Tee/cross placeholders derive from graph degree (3/4) — topology-first, exactly as the accessory note requires; accessory rails join the measurement snap set; `Radius m` control is draft-local.
+- Deferrals are the right ones: reducer body with handedness/taper (the remaining arc item), detailed tee/cross bodies, radius/handedness persistence, vendor dimensions.
+
+### One watch item, no new findings
+
+The default radius (0.6 m) and curve segments are draft-local and *not yet persisted* — consistent with Phase-2 persistence rules ("store only what can't be re-derived": a user-chosen radius qualifies *when* the choice UI becomes real). When radius/handedness persistence arrives, it should reuse the segment-intent metadata idiom verbatim. Not a finding — a reminder that the third intent kind now has a proven template.
+
+### Arc status
+
+With bends/risers proxied and cutback solved, **the accessory arc's remaining MVP item is the reducer body (handedness + taper)** — after which, per the drift-watch, the pivot to Phase H + durable EHT persistence is due. The scorecard's drift-watch is updated accordingly.

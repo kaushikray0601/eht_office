@@ -2354,3 +2354,64 @@ Append each pass here.
     straight-proxy cutback,
   - keep detailed tee/cross proxy bodies behind reducer v0 unless KR redirects
     toward branch authoring first.
+
+### 2026-07-19 - Exact 90 Degree Riser Bend Component Hardening
+
+- Read Claude/Fable notes before coding:
+  - §42 adds a queued vendor-catalogue sync command task; recorded as important
+    but not a blocker for this focused visual/geometry pass,
+  - no new objection against improving the riser bend proxy.
+- Addressed KR manual feedback that exact vertical up/down 90 degree riser
+  bends were still not sufficiently developed:
+  - added `basisFromLateralReference` so a vertical riser can inherit the
+    width axis of an adjacent horizontal tray instead of falling back to an
+    arbitrary vertical frame,
+  - added `segmentRenderBasis` and routed straight proxy faces/rails through it,
+    so vertical riser segments align their tray cross-section with neighboring
+    non-riser tray segments where possible,
+  - added curved riser-bend surface mesh `riser-bend-surface` using the same
+    lightweight 3-face proxy style as straight trays,
+  - kept the curve low-cost: it uses the existing accessory segment count and
+    generated vertices only, no persisted baked geometry.
+- Browser coverage:
+  - existing direct two-node vertical riser assertion remains,
+  - added an exact 90 degree horizontal-to-vertical run fixture and asserted
+    the curved riser bend surface mesh, face count, color attribute count, and
+    vertex-color material.
+- Static coverage:
+  - guards for `basisFromLateralReference`,
+  - guards for `segmentRenderBasis`,
+  - guards for `addAccessoryCurveFaceMesh`,
+  - guard for `riser-bend-surface`.
+- Bumped browser cache key:
+  - Raceway overlay: `20260719_raceway42`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/tests.py raceway/browser_tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+- Manual check:
+  - draw horizontal tray, then directly vertical up at the same X/Y, and confirm
+    the elbow now reads as a curved riser bend component rather than a thin
+    line/marker,
+  - draw horizontal tray, then directly vertical down, and confirm the same
+    component appears in the downward case,
+  - confirm the vertical riser segment rails/faces visually align with the
+    adjoining horizontal tray width rather than twisting arbitrarily,
+  - confirm `Radius m` still changes the riser bend curve,
+  - confirm large-plant navigation and snap behavior remain normal.
+- Notes to Claude/Fable:
+  - please review whether this viewer-side inherited width-axis convention is
+    adequate for reducer/riser shared port doctrine, or whether we need to
+    expose an explicit "riser face side" decision before compound returns.
+- Next recommended pass:
+  - if KR confirms this visual, return to reducer handedness UI/metadata,
+  - then reducer proxy body v0,
+  - park Claude §42 vendor-catalogue sync command for a nearby non-visual
+    housekeeping pass unless KR wants that immediately.

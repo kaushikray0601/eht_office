@@ -600,6 +600,46 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("accessory-side-rail", direct_riser_kinds)
                 self.assertIn("accessory-lower-edge", direct_riser_kinds)
                 self.assertIn("accessory-cross-member", direct_riser_kinds)
+                page.evaluate(
+                    """() => {
+                    window.racewayViewerOverlay.setRuns([{
+                      id: 'exact-90-riser-elbow',
+                      tag: 'RWY-EXACT-90-RISER',
+                      familyId: '10',
+                      sizeId: '11',
+                      familyCode: 'B-001',
+                      familyKind: 'ladder',
+                      widthMm: 300,
+                      depthMm: 100,
+                      serviceClass: 'power',
+                      elevationM: 2,
+                      orientation: { schema: 'raceway.orientation.v0', preset: 'open_up', quarter_turns: 0, label: 'Open Up' },
+                      metadata: {},
+                      nodes: [
+                        { x: 10, y: 10, z: 2, coordinate_frame: 'source_xyz_m' },
+                        { x: 14, y: 10, z: 2, coordinate_frame: 'source_xyz_m' },
+                        { x: 14, y: 10, z: 5, coordinate_frame: 'source_xyz_m' },
+                      ],
+                    }]);
+                    }"""
+                )
+                riser_bend_surface = page.evaluate(
+                    """() => {
+                        const surface = window.racewayViewerOverlay.layer.group.children
+                          .flatMap((runGroup) => runGroup.children)
+                          .find((child) => child.userData?.racewayPreviewKind === 'riser-bend-surface');
+                        return {
+                          faceCount: surface?.userData?.faceCount || 0,
+                          positionCount: surface?.geometry?.userData?.positionCount || 0,
+                          colorCount: surface?.geometry?.attributes?.color?.count || 0,
+                          vertexColors: Boolean(surface?.material?.config?.vertexColors),
+                        };
+                    }"""
+                )
+                self.assertGreaterEqual(riser_bend_surface["faceCount"], 12)
+                self.assertEqual(riser_bend_surface["positionCount"], riser_bend_surface["faceCount"] * 6)
+                self.assertEqual(riser_bend_surface["colorCount"], riser_bend_surface["positionCount"])
+                self.assertTrue(riser_bend_surface["vertexColors"])
                 page.evaluate("() => window.racewayViewerOverlay.setRuns(window.__racewaySavedRunsForDirectVertical || [])")
                 solid_proxy = page.evaluate(
                     """() => {
