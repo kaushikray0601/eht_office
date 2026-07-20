@@ -34,7 +34,7 @@ Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex execute
 | C7 🟢 | Segment-interior canvas picking; explicit work-plane mode messaging | tracker deferred list | small each |
 | C8 🟢 | A-3 BOQ assumptions line ("straight lengths gross; development lengths not deducted") | §40 | one line |
 | C9 🟢 | Radius/handedness persistence via the segment-intent idiom (when choice UI lands) | §43 | with reducer UI |
-| C10 🟢 | **JS engineering debt plan** — JSDoc/TS types, bundler, unit tests for pure geometry math | scorecard (JS=6) | mid-term; plan first |
+| C10 🟢 | **JS hardening pass** (upgraded from "plan" after the Apply Edge Match incident): Codex's 5 recommendations (pure command-state layer, JSDoc/@ts-check, geometry/DOM split, state invariants, workflow browser tests) **+ Claude B-1..B-4**. 2026-07-20 status: reducer B-1 contract pins, stronger B-2 fail-loud checks, Edge Match B-3 visible disabled reason, and B-4 context diagnostics/tests are landed; remaining work is pure command-state extraction, JSDoc/@ts-check, geometry/DOM split, broader graph/schedule pins, CI/B-5, and A-7 persistence decision | js-audit + claude-notes §44 | 2–3 passes |
 | C11 🟢 | Mark/retire stale legacy docs (idfviewer-era, NOTES June trackers) | scorecard | housekeeping |
 
 ## D. Gates (close before the named milestone)

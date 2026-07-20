@@ -1184,3 +1184,76 @@ riser rails/edges/cross-members. Overlay cache key is `20260719_raceway42`.
 Next path: confirm manual feel, then reducer handedness UI/metadata and
 reducer proxy body v0; park Claude's vendor sync command for a nearby
 housekeeping pass unless KR prioritizes it.
+
+Plant3D/Raceway note, 2026-07-19 reducer handedness/body v0: KR confirmed the
+riser bend pass and reminded that tee/cross are not yet built. Claude §43
+approved the synthetic accessory pass and confirmed reducer body as the
+remaining accessory-arc item before tee/cross close-out. `raceway/fittings.py`
+now exposes all three edge-match suggestions (`left_edge`, `right_edge`,
+`centerline`) and promotes resolved same-family width reducers to
+`synthetic_proxy` with `proxy_kind: reducer_taper`, heuristic development
+length `max(0.45m, 2 x width_delta)`, and half-development straight cutback.
+`raceway_overlay.js` adds a draft-local `Reducer side` dropdown; Apply Edge
+Match uses the selected side and telemetry records selected/accepted
+handedness. Resolved default-left reducers render `reducer-taper-surface`
+with reducer side rails/lower edges/cross-members exposed to measurement snap,
+and straight tray proxies trim at reducer ports. Overlay cache key is
+`20260719_raceway43`. Tee/cross graph records/counts exist, but detailed
+tee/cross body geometry is explicitly still open and should be the next
+branch-accessory pass. Vendor-catalogue sync command from Claude §42 remains
+queued for housekeeping.
+
+Plant3D/Raceway note, 2026-07-19 reducer command-state audit/fix: KR reported
+`Apply Edge Match` not activating reliably after connecting dissimilar trays
+and asked for a full audit of the large vanilla JS overlay. Audit recorded in
+`plant3d/records/audit/raceway-overlay-js-audit-2026-07-19.md`. Fixes:
+`Apply Edge Match` now blocks only on unsaved savable runs
+(`hasUnsavedSavableChanges`), so harmless one-node local drafts do not disable
+the saved-graph reducer workflow; reducer/transition candidates with no offset
+action now leave the command callable and report a diagnostic explaining
+already-edge-aligned, service, family/depth placeholder, or insufficient-context
+cases. Browser regressions cover both the one-node-draft case and same-width
+family/depth transition placeholder. Overlay cache key is
+`20260719_raceway44`. Architecture lesson: the overlay is now large enough
+that command availability should be extracted into a pure tested state layer
+before detailed tee/cross body geometry adds more complexity. Open items:
+right/center reducer handedness is draft-local until persisted accessory intent;
+family/service/depth adapters remain catalogue-validation placeholders.
+
+Plant3D/Raceway note, 2026-07-20 save reconciliation hardening: KR reported
+Save Draft had become additive after tray deletion, leaving deleted server
+runs superimposed after save/reload and corrupting the saved graph used by
+Apply Edge Match. Root cause: `saveDrafts` only POST/PATCHed local savable
+runs and did not reconcile loaded server run IDs that were removed locally or
+reduced below two nodes. Fix: overlay state now tracks `loadedServerRunIds`;
+Save Draft deletes loaded server runs not represented by current savable
+local runs, enables deletion-only saves, removes deleted IDs from local state,
+and treats pending server-run deletion as an unsaved graph change for
+Apply Edge Match. Added real-viewer browser regression:
+`test_real_viewer_save_reconciles_deleted_saved_runs`. Also started the
+hardening slice from Claude §44 by adding fitting projection contract/version
+validation (`EXPECTED_FITTING_PROJECTION`) and reducer-candidate exclusion
+console diagnostics when server candidates filter to zero edge-match actions.
+Overlay cache key is `20260720_raceway45`. KR also observed correctly that
+Apply Edge Match is still offset alignment, not a complete reducer geometry
+solution; keep next architecture work focused on persisted accessory intent
+for reducer handedness/development/radius, then true tee/cross body geometry.
+
+Plant3D/Raceway note, 2026-07-20 Claude B-list hardening slice: after KR
+shared Claude's B-1..B-5 balance list, landed the high-value non-CI guardrails
+before continuing tee/cross. B-1: `raceway/tests.py` now has explicit
+server-client fitting projection contract tests pinning reducer candidate
+strings/fields (`projection`, candidate `kind`/`status`/`category`,
+`face_alignment.basis == one_edge_matching`, handedness options,
+`member_offsets`, and `proxy_kind == reducer_taper`). B-2 expanded:
+`raceway_overlay.js` now warns on missing fitting projections, projection
+version mismatch, malformed `items`/`counts`, and malformed reducer candidate
+alignment payloads, plus the earlier per-candidate filter diagnostics. B-3:
+Edge Match disabled reason is now visible in `#racewayCommandHint`, not only
+in a tooltip, and keyboard shortcut feedback uses the raw disabled reason.
+B-4: the server's `insufficient_segment_context` fallback now emits
+`segment_context` diagnostics and tests prove healthy connected unequal trays
+do not enter that branch. Overlay cache key is `20260720_raceway46`. B-5/CI,
+pure command-state extraction, JSDoc/@ts-check, and geometry/DOM split remain
+open; next pass should extract tested command availability before adding more
+accessory bodies.

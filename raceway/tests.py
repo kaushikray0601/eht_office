@@ -1008,12 +1008,18 @@ class RacewayFittingProjectionTests(TestCase):
         reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
 
         self.assertEqual(reducer["category"], "width_reducer")
+        self.assertEqual(reducer["status"], "placeholder")
+        self.assertNotIn("geometry_recipe", reducer)
         self.assertEqual(reducer["graph_node_kind"], "junction")
         self.assertEqual({group["width_mm"] for group in reducer["size_groups"]}, {300, 600})
         self.assertEqual({member["run_tag"] for member in reducer["members"]}, {"RWY-SMALL", "RWY-LARGE"})
         self.assertTrue(reducer["requires_face_alignment"])
         self.assertEqual(reducer["face_alignment"]["basis"], "one_edge_matching")
         self.assertEqual(reducer["face_alignment"]["recommended_handedness"], "left_edge")
+        self.assertEqual(
+            set(reducer["face_alignment"]["suggestions_by_handedness"]),
+            {"left_edge", "right_edge", "centerline"},
+        )
         self.assertEqual(reducer["face_alignment"]["current_status"], "edges_not_aligned")
         self.assertTrue(reducer["face_alignment"]["centerline_aligned"])
         suggested_offsets = {
@@ -1023,7 +1029,65 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertAlmostEqual(suggested_offsets["RWY-SMALL"]["suggested_face_offset_m"], 0.15)
         self.assertAlmostEqual(suggested_offsets["RWY-SMALL"]["delta_face_offset_m"], 0.15)
         self.assertAlmostEqual(suggested_offsets["RWY-LARGE"]["suggested_face_offset_m"], 0.0)
+        right_suggestions = {
+            item["run_tag"]: item
+            for item in reducer["face_alignment"]["suggestions_by_handedness"]["right_edge"]["member_offsets"]
+        }
+        self.assertAlmostEqual(right_suggestions["RWY-SMALL"]["suggested_face_offset_m"], -0.15)
         self.assertEqual(projection["counts"]["one_edge_alignment_candidates"], 1)
+        self.assertEqual(projection["counts"]["reducer_proxy_total"], 0)
+
+    def test_fitting_projection_contract_pins_reducer_candidate_fields_used_by_js(self):
+        layer = create_layer(project_id="RWY-FITTINGS-CONTRACT")
+        family = create_family("FIT-CONTRACT-LADDER")
+        small = create_size(family=family, width_mm=300, depth_mm=100)
+        large = create_size(family=family, width_mm=600, depth_mm=100)
+        small_run = create_run(layer=layer, family=family, size=small)
+        small_run.tag = "RWY-CONTRACT-SMALL"
+        small_run.save()
+        large_run = create_run(layer=layer, family=family, size=large)
+        large_run.tag = "RWY-CONTRACT-LARGE"
+        large_run.save()
+        create_nodes(small_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(large_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+
+        projection = build_layer_fitting_projection(layer)
+        reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
+        face_alignment = reducer["face_alignment"]
+
+        self.assertEqual(projection["projection"], "raceway.fittings.v0")
+        self.assertEqual(projection["status"], "derived_placeholder")
+        self.assertEqual(reducer["kind"], "reducer_candidate")
+        self.assertEqual(reducer["status"], "placeholder")
+        self.assertEqual(reducer["category"], "width_reducer")
+        self.assertEqual(face_alignment["basis"], "one_edge_matching")
+        self.assertEqual(face_alignment["status"], "required_not_modelled")
+        self.assertEqual(face_alignment["current_status"], "edges_not_aligned")
+        self.assertEqual(face_alignment["recommended_handedness"], "left_edge")
+        self.assertEqual(face_alignment["options"], ["left_edge", "right_edge", "centerline"])
+        self.assertNotEqual(face_alignment["current_status"], "insufficient_segment_context")
+        self.assertNotIn("segment_context", face_alignment)
+        self.assertIn("suggestions_by_handedness", face_alignment)
+        self.assertEqual(
+            set(face_alignment["suggestions_by_handedness"]),
+            {"left_edge", "right_edge", "centerline"},
+        )
+        for handedness in ("left_edge", "right_edge", "centerline"):
+            suggestion = face_alignment["suggestions_by_handedness"][handedness]
+            self.assertEqual(suggestion["handedness"], handedness)
+            self.assertIn("member_offsets", suggestion)
+            self.assertEqual(len(suggestion["member_offsets"]), 2)
+            for member_offset in suggestion["member_offsets"]:
+                self.assertEqual(member_offset["handedness"], handedness)
+                self.assertIn("run_key", member_offset)
+                self.assertIn("segment_key", member_offset)
+                self.assertIn("current_face_offset_m", member_offset)
+                self.assertIn("suggested_face_offset_m", member_offset)
+                self.assertIn("delta_face_offset_m", member_offset)
+        self.assertEqual(face_alignment["recommended_offsets"], face_alignment["suggestions_by_handedness"]["left_edge"]["member_offsets"])
+        self.assertEqual(projection["counts"]["by_kind"]["reducer_candidate"], 1)
+        self.assertEqual(projection["counts"]["one_edge_alignment_candidates"], 1)
+        self.assertEqual(projection["counts"]["reducer_proxy_total"], 0)
 
     def test_layer_fitting_projection_marks_reducer_alignment_resolved_by_offset(self):
         layer = create_layer(project_id="RWY-FITTINGS-REDUCER-OFFSET")
@@ -1056,10 +1120,96 @@ class RacewayFittingProjectionTests(TestCase):
         reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
 
         self.assertFalse(reducer["requires_face_alignment"])
+        self.assertEqual(reducer["status"], "synthetic_proxy")
         self.assertEqual(reducer["face_alignment"]["status"], "offsets_match_recommended_edge")
         self.assertEqual(reducer["face_alignment"]["current_status"], "left_edge_aligned")
         self.assertFalse(reducer["face_alignment"]["centerline_aligned"])
+        self.assertEqual(reducer["geometry_recipe"]["schema"], "raceway.accessory_proxy.v0")
+        self.assertEqual(reducer["geometry_recipe"]["proxy_kind"], "reducer_taper")
+        self.assertEqual(reducer["geometry_recipe"]["handedness"], "left_edge")
+        self.assertAlmostEqual(reducer["geometry_recipe"]["development_length_m"], 0.6)
+        self.assertAlmostEqual(reducer["geometry_recipe"]["straight_proxy_cutback"]["each_port_m"], 0.3)
+        self.assertEqual(len(reducer["geometry_recipe"]["ports"]), 2)
         self.assertEqual(projection["counts"]["face_alignment_resolved_by_offset"], 1)
+        self.assertEqual(projection["counts"]["reducer_proxy_total"], 1)
+
+    def test_fitting_projection_contract_pins_reducer_proxy_fields_used_by_js(self):
+        layer = create_layer(project_id="RWY-FITTINGS-PROXY-CONTRACT")
+        family = create_family("FIT-PROXY-CONTRACT-LADDER")
+        small = create_size(family=family, width_mm=300, depth_mm=100)
+        large = create_size(family=family, width_mm=600, depth_mm=100)
+        small_run = create_run(layer=layer, family=family, size=small)
+        small_run.tag = "RWY-PROXY-SMALL"
+        small_run.save()
+        large_run = create_run(layer=layer, family=family, size=large)
+        large_run.tag = "RWY-PROXY-LARGE"
+        large_run.save()
+        small_start, small_end = create_nodes(small_run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0)])
+        create_nodes(large_run, [(3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+        small_run.metadata = {
+            "segment_face_offset": {
+                "schema": "raceway.segment_face_offset.v0",
+                "overrides": [
+                    {
+                        "start_node_key": str(small_start.key),
+                        "end_node_key": str(small_end.key),
+                        "face_offset_m": 0.15,
+                    }
+                ],
+            }
+        }
+        small_run.save(update_fields=["metadata"])
+
+        projection = build_layer_fitting_projection(layer)
+        reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
+        recipe = reducer["geometry_recipe"]
+
+        self.assertEqual(reducer["status"], "synthetic_proxy")
+        self.assertEqual(reducer["requires_face_alignment"], False)
+        self.assertEqual(reducer["face_alignment"]["basis"], "one_edge_matching")
+        self.assertEqual(reducer["face_alignment"]["status"], "offsets_match_recommended_edge")
+        self.assertEqual(recipe["schema"], "raceway.accessory_proxy.v0")
+        self.assertEqual(recipe["proxy_kind"], "reducer_taper")
+        self.assertEqual(recipe["handedness"], "left_edge")
+        self.assertEqual(recipe["straight_proxy_cutback"]["basis"], "half_reducer_development_length")
+        self.assertEqual(len(recipe["ports"]), 2)
+        for port in recipe["ports"]:
+            self.assertIn("run_key", port)
+            self.assertIn("segment_key", port)
+            self.assertIn("face_offset_m", port)
+            self.assertIn("edge_offsets_m", port)
+            self.assertIn("left_edge_m", port["edge_offsets_m"])
+            self.assertIn("right_edge_m", port["edge_offsets_m"])
+
+    def test_fitting_projection_contract_enriches_insufficient_segment_context_fallback(self):
+        layer = create_layer(project_id="RWY-FITTINGS-CONTEXT-FALLBACK")
+        family = create_family("FIT-CONTEXT-LADDER")
+        small = create_size(family=family, width_mm=300, depth_mm=100)
+        large = create_size(family=family, width_mm=600, depth_mm=100)
+        small_run = create_run(layer=layer, family=family, size=small)
+        small_run.tag = "RWY-CONTEXT-SMALL"
+        small_run.save()
+        large_run = create_run(layer=layer, family=family, size=large)
+        large_run.tag = "RWY-CONTEXT-LARGE"
+        large_run.save()
+        create_nodes(small_run, [(0.0, 0.0, 0.0)])
+        create_nodes(large_run, [(0.0, 0.0, 0.0)])
+
+        projection = build_layer_fitting_projection(layer)
+        reducer = next(item for item in projection["items"] if item["kind"] == "reducer_candidate")
+        segment_context = reducer["face_alignment"]["segment_context"]
+
+        self.assertEqual(reducer["status"], "placeholder")
+        self.assertEqual(reducer["face_alignment"]["basis"], "one_edge_matching")
+        self.assertEqual(reducer["face_alignment"]["status"], "required_not_modelled")
+        self.assertEqual(reducer["face_alignment"]["current_status"], "insufficient_segment_context")
+        self.assertEqual(segment_context["member_count"], 2)
+        self.assertEqual(segment_context["alignment_member_count"], 0)
+        self.assertEqual(segment_context["missing_adjacent_segment_count"], 2)
+        self.assertEqual(
+            {member["run_tag"] for member in segment_context["missing_members"]},
+            {"RWY-CONTEXT-SMALL", "RWY-CONTEXT-LARGE"},
+        )
 
     def test_layer_fitting_projection_flags_same_size_face_offset_step(self):
         layer = create_layer(project_id="RWY-FITTINGS-OFFSET-STEP")
@@ -1952,7 +2102,11 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("racewaySegmentFaceOffsetInput", content)
         self.assertIn("racewaySegmentSplitInput", content)
         self.assertIn("racewayAccessoryRadiusInput", content)
+        self.assertIn("racewayReducerHandednessSelect", content)
+        self.assertIn("racewayCommandHint", content)
         self.assertIn("ACCESSORY_DEFAULT_RADIUS_M = 0.6", content)
+        self.assertIn("DEFAULT_REDUCER_HANDEDNESS = 'left_edge'", content)
+        self.assertIn("EXPECTED_FITTING_PROJECTION = 'raceway.fittings.v0'", content)
         self.assertIn("const ORIENTATION_SCHEMA = 'raceway.orientation.v0'", content)
         self.assertIn("const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0'", content)
         self.assertIn("const SEGMENT_FACE_OFFSET_SCHEMA = 'raceway.segment_face_offset.v0'", content)
@@ -1960,6 +2114,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function normalizedOrientation", content)
         self.assertIn("function normalizedSegmentSplitPercent", content)
         self.assertIn("function normalizedAccessoryRadiusM", content)
+        self.assertIn("function normalizedReducerHandedness", content)
         self.assertIn("function segmentOrientationPayload", content)
         self.assertIn("function segmentFaceOffsetPayload", content)
         self.assertIn("function segmentIntentSnapshot", content)
@@ -1969,6 +2124,17 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function changeSelectedSegmentFaceOffset", content)
         self.assertIn("function splitSelectedSegment", content)
         self.assertIn("function applyReducerEdgeMatchSuggestions", content)
+        self.assertIn("function hasUnsavedSavableChanges", content)
+        self.assertIn("function serverRunIdsRemovedFromDraft", content)
+        self.assertIn("function deleteServerRunsRemovedFromDraft", content)
+        self.assertIn("function validateFittingProjectionContract", content)
+        self.assertIn("function reducerCandidateExclusionReasons", content)
+        self.assertIn("function disabledActionHint", content)
+        self.assertIn("dataset.disabledReason", content)
+        self.assertIn("Raceway fitting projection contract warning", content)
+        self.assertIn("Raceway reducer candidate one-edge alignment missing handedness suggestions", content)
+        self.assertIn("function reducerTransitionCandidates", content)
+        self.assertIn("function reducerNoEdgeMatchActionMessage", content)
         self.assertIn("function recordReducerEdgeMatchTelemetry", content)
         self.assertIn("function addAccessoryCurveRails", content)
         self.assertIn("function addPlanBendProxy", content)
@@ -2108,6 +2274,11 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function riserTurnReferenceSegment", content)
         self.assertIn("function addAccessoryCurveFaceMesh", content)
         self.assertIn("riser-bend-surface", content)
+        self.assertIn("function reducerTrimForSegmentNode", content)
+        self.assertIn("function addReducerTaperProxy", content)
+        self.assertIn("reducer-taper-surface", content)
+        self.assertIn("reducer-side-rail", content)
+        self.assertIn("reducer-lower-edge", content)
         self.assertNotIn("function applyRunElevation", content)
         self.assertIn("'side-rail'", content)
         self.assertIn("'solid-3-plane-proxy'", content)

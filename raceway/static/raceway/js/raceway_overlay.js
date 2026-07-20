@@ -2,6 +2,7 @@ const RACEWAY_LAYER_ID = 'raceway-overlay';
 const RACEWAY_INTERACTION_ID = 'raceway-centerline-authoring';
 const CATALOG_URL = '/raceway/catalog/';
 const TELEMETRY_EVENTS_URL = '/telemetry/events/';
+const EXPECTED_FITTING_PROJECTION = 'raceway.fittings.v0';
 const SOURCE_COORDINATE_FRAME = 'source_xyz_m';
 const HISTORY_LIMIT = 80;
 const NODE_HANDLE_SCREEN_PX = 5;
@@ -26,6 +27,9 @@ const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
   'accessory-side-rail',
   'accessory-lower-edge',
   'accessory-cross-member',
+  'reducer-side-rail',
+  'reducer-lower-edge',
+  'reducer-cross-member',
 ]);
 const ORIENTATION_SCHEMA = 'raceway.orientation.v0';
 const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0';
@@ -33,6 +37,7 @@ const SEGMENT_FACE_OFFSET_SCHEMA = 'raceway.segment_face_offset.v0';
 const SEGMENT_ORIENTATION_INHERIT = '__run_default__';
 const SEGMENT_FACE_OFFSET_EPSILON_M = 0.0005;
 const SEGMENT_FACE_OFFSET_LIMIT_M = 5;
+const DEFAULT_REDUCER_HANDEDNESS = 'left_edge';
 const orientationPresets = [
   { id: 'open_up', label: 'Open Up', quarterTurns: 0 },
   { id: 'roll_right', label: 'Roll Right', quarterTurns: 1 },
@@ -81,6 +86,12 @@ const segmentDirections = [
   { id: 'minus_z', label: '-EL Down', dx: 0, dy: 0, dz: -1 },
 ];
 
+const reducerHandednessOptions = [
+  { id: 'left_edge', label: 'Left Edge' },
+  { id: 'right_edge', label: 'Right Edge' },
+  { id: 'centerline', label: 'Centerline' },
+];
+
 const state = {
   runs: [],
   activeRunId: '',
@@ -100,6 +111,7 @@ const state = {
   layerId: null,
   layerUrl: '',
   runsUrl: '',
+  loadedServerRunIds: [],
   graphProjection: null,
   graphLoaded: false,
   graphLoading: false,
@@ -121,6 +133,7 @@ const state = {
   segmentLengthM: 6,
   segmentSplitPercent: 50,
   accessoryRadiusM: ACCESSORY_DEFAULT_RADIUS_M,
+  reducerHandedness: DEFAULT_REDUCER_HANDEDNESS,
   connectSource: null,
   warningFocus: null,
 };
@@ -186,6 +199,7 @@ let runtime = null;
 let interaction = null;
 let panel = null;
 let statusEl = null;
+let commandHintEl = null;
 let summaryEl = null;
 let graphWarningsEl = null;
 let scheduleSummaryEl = null;
@@ -351,6 +365,11 @@ function normalizedAccessoryRadiusM(value) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return ACCESSORY_DEFAULT_RADIUS_M;
   return Math.min(Math.max(parsed, ACCESSORY_RADIUS_MIN_M), ACCESSORY_RADIUS_MAX_M);
+}
+
+function normalizedReducerHandedness(value) {
+  const id = String(value || '').trim();
+  return reducerHandednessOptions.some(option => option.id === id) ? id : DEFAULT_REDUCER_HANDEDNESS;
 }
 
 function normalizedSegmentFaceOffsetOverride(rawOverride) {
@@ -632,7 +651,52 @@ function markRunDirty(run = activeRun()) {
 }
 
 function hasUnsavedLocalChanges() {
-  return state.runs.some(run => !run.serverRunId || run.dirty);
+  return state.runs.some(run => !run.serverRunId || run.dirty) || serverRunIdsRemovedFromDraft().length > 0;
+}
+
+function runHasUnsavedSavableChanges(run) {
+  return Boolean(run && run.nodes?.length >= 2 && (!run.serverRunId || run.dirty));
+}
+
+function normalizedServerRunId(value) {
+  const id = Number(value);
+  return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+function serverRunIdsFromRuns(runs) {
+  const ids = new Set();
+  (runs || []).forEach(run => {
+    const id = normalizedServerRunId(run?.serverRunId);
+    if (id !== null) ids.add(id);
+  });
+  return Array.from(ids).sort((left, right) => left - right);
+}
+
+function rememberLoadedServerRuns(runs = state.runs, options = {}) {
+  const ids = new Set(serverRunIdsFromRuns(runs));
+  if (options.merge) {
+    state.loadedServerRunIds.forEach(id => ids.add(id));
+  }
+  state.loadedServerRunIds = Array.from(ids).sort((left, right) => left - right);
+}
+
+function forgetLoadedServerRun(serverRunId) {
+  const id = normalizedServerRunId(serverRunId);
+  if (id === null) return;
+  state.loadedServerRunIds = state.loadedServerRunIds.filter(loadedId => loadedId !== id);
+}
+
+function savableRunsForPersistence() {
+  return state.runs.filter(run => run.nodes.length >= 2);
+}
+
+function serverRunIdsRemovedFromDraft(savableRuns = savableRunsForPersistence()) {
+  const keptIds = new Set(serverRunIdsFromRuns(savableRuns));
+  return state.loadedServerRunIds.filter(id => !keptIds.has(id));
+}
+
+function hasUnsavedSavableChanges() {
+  return state.runs.some(runHasUnsavedSavableChanges) || serverRunIdsRemovedFromDraft().length > 0;
 }
 
 function runPersistenceLabel(run) {
@@ -660,6 +724,7 @@ function captureHistorySnapshot() {
     orientationPreset: state.orientationPreset,
     segmentSplitPercent: state.segmentSplitPercent,
     accessoryRadiusM: state.accessoryRadiusM,
+    reducerHandedness: state.reducerHandedness,
   };
 }
 
@@ -689,6 +754,7 @@ function restoreHistorySnapshot(snapshot) {
   state.orientationPreset = orientationPresetFor(snapshot.orientationPreset).id;
   state.segmentSplitPercent = normalizedSegmentSplitPercent(snapshot.segmentSplitPercent);
   state.accessoryRadiusM = normalizedAccessoryRadiusM(snapshot.accessoryRadiusM);
+  state.reducerHandedness = normalizedReducerHandedness(snapshot.reducerHandedness);
   state.mode = snapshot.mode || 'idle';
   if (!run || state.mode === 'idle') {
     state.mode = 'idle';
@@ -1519,6 +1585,7 @@ function recordReducerEdgeMatchTelemetry(candidate, offset, action = 'shown', ac
       graph_node_kind: candidate.graph_node_kind || '',
       source_point_m: candidate.source_point_m || {},
       recommended_handedness: candidate.face_alignment?.recommended_handedness || '',
+      selected_handedness: state.reducerHandedness,
       current_status: candidate.face_alignment?.current_status || '',
       centerline_aligned: Boolean(candidate.face_alignment?.centerline_aligned),
       run_key: offset.run_key || '',
@@ -1538,7 +1605,8 @@ function recordReducerEdgeMatchTelemetry(candidate, offset, action = 'shown', ac
 
 function recordReducerEdgeMatchProjectionTelemetry(projection, action = 'shown') {
   reducerEdgeMatchCandidates(projection).forEach(candidate => {
-    (candidate.face_alignment?.recommended_offsets || []).forEach(offset => {
+    const alignmentSuggestion = reducerAlignmentSuggestion(candidate);
+    (alignmentSuggestion.member_offsets || []).forEach(offset => {
       recordReducerEdgeMatchTelemetry(candidate, offset, action);
     });
   });
@@ -1900,12 +1968,44 @@ function riserTurnInfoAtNode(run, nodeIndex) {
   };
 }
 
+function fittingProjectionItems() {
+  return Array.isArray(state.fittingProjection?.items) ? state.fittingProjection.items : [];
+}
+
+function reducerProxyItems() {
+  return fittingProjectionItems().filter(item => (
+    item?.kind === 'reducer_candidate'
+    && item?.status === 'synthetic_proxy'
+    && item?.geometry_recipe?.proxy_kind === 'reducer_taper'
+  ));
+}
+
+function reducerTrimForSegmentNode(run, segment, nodeIndex) {
+  if (!run || !segment || !state.fittingsLoaded) return 0;
+  const nodeKey = String(run.nodes?.[nodeIndex]?.key || '');
+  if (!nodeKey) return 0;
+  let trimM = 0;
+  reducerProxyItems().forEach(item => {
+    const cutback = Number(item.geometry_recipe?.straight_proxy_cutback?.each_port_m);
+    if (!Number.isFinite(cutback) || cutback <= 0) return;
+    const port = (item.geometry_recipe?.ports || []).find(candidate => (
+      String(candidate.run_key || '') === String(run.key || '')
+      && String(candidate.segment_key || '') === String(segment.key || '')
+      && String(candidate.node_key || '') === nodeKey
+    ));
+    if (port) trimM = Math.max(trimM, cutback);
+  });
+  return trimM;
+}
+
 function nodeAccessoryTrimM(run, nodeIndex, side) {
   const planBend = planBendInfoAtNode(run, nodeIndex);
   const riserTurn = riserTurnInfoAtNode(run, nodeIndex);
+  const segment = segmentNearNode(run, nodeIndex, side);
   const trimCandidates = [];
   if (planBend) trimCandidates.push(side === 'incoming' ? planBend.incomingCutbackM : planBend.outgoingCutbackM);
   if (riserTurn) trimCandidates.push(side === 'incoming' ? riserTurn.incomingCutbackM : riserTurn.outgoingCutbackM);
+  trimCandidates.push(reducerTrimForSegmentNode(run, segment, nodeIndex));
   return Math.max(...trimCandidates, 0);
 }
 
@@ -2244,6 +2344,75 @@ function addRiserSegmentProxy(group, run, segment, material, detailMaterial) {
   });
 }
 
+function reducerPortCrossSection(item, port) {
+  const run = runByKey(port?.run_key);
+  if (!run) return null;
+  const segment = runSegments(run).find(candidate => candidate.key === String(port?.segment_key || ''));
+  if (!segment) return null;
+  const cutback = Number(item.geometry_recipe?.straight_proxy_cutback?.each_port_m) || 0;
+  const center = item.source_point_m || item.geometry_recipe?.center_point_m || null;
+  const awayNode = port.role_at_node === 'incoming_to_node' ? segment.startNode : segment.endNode;
+  const tangentPoint = pointTowardPoint(center, awayNode, cutback);
+  const basis = segmentRenderBasis(run, segment, segment.startNode, segment.endNode);
+  if (!basis) return null;
+  const halfWidth = Math.max(Number(port.width_mm || 0) / 1000, runWidthM(run)) / 2;
+  const depth = Math.max(Number(port.depth_mm || 0) / 1000, runDepthM(run));
+  const offset = normalizedFaceOffsetM(port.face_offset_m ?? segment.faceOffsetM);
+  return {
+    run,
+    segment,
+    tangentPoint,
+    leftBottom: sourceFrameOffsetPoint(tangentPoint, basis, offset + halfWidth, 0),
+    rightBottom: sourceFrameOffsetPoint(tangentPoint, basis, offset - halfWidth, 0),
+    leftTop: sourceFrameOffsetPoint(tangentPoint, basis, offset + halfWidth, depth),
+    rightTop: sourceFrameOffsetPoint(tangentPoint, basis, offset - halfWidth, depth),
+  };
+}
+
+function addReducerTaperProxy(group, item) {
+  const ports = (item.geometry_recipe?.ports || [])
+    .map(port => reducerPortCrossSection(item, port))
+    .filter(Boolean);
+  if (ports.length !== 2) return;
+  const selected = ports.some(port => port.run.id === state.activeRunId);
+  const color = selected ? 0xf97316 : serviceFor(ports[0].run.serviceClass).color;
+  const positions = [];
+  const colors = [];
+  const faceColors = proxyFaceColors(color, selected);
+  const [first, second] = ports;
+  addProxyQuad(positions, colors, first.leftBottom, first.rightBottom, second.rightBottom, second.leftBottom, faceColors.bottom);
+  addProxyQuad(positions, colors, first.leftBottom, second.leftBottom, second.leftTop, first.leftTop, faceColors.side);
+  addProxyQuad(positions, colors, first.rightBottom, first.rightTop, second.rightTop, second.rightBottom, faceColors.side);
+  if (positions.length >= 18) {
+    const mesh = new runtime.THREE.Mesh(
+      setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors),
+      proxyFaceMaterial(color, selected),
+    );
+    mesh.userData.racewayPreviewKind = 'reducer-taper-surface';
+    mesh.userData.fittingKey = item.fitting_key || '';
+    mesh.userData.faceCount = positions.length / 18;
+    mesh.renderOrder = 21;
+    group.add(mesh);
+  }
+  const railMaterial = previewMaterial(0x16a34a, selected ? 0.95 : 0.72);
+  const detailMaterial = previewMaterial(0x15803d, selected ? 0.85 : 0.56);
+  addSourceLine(group, [first.leftTop, second.leftTop], railMaterial, 'reducer-side-rail');
+  addSourceLine(group, [first.rightTop, second.rightTop], railMaterial, 'reducer-side-rail');
+  addSourceLine(group, [first.leftBottom, second.leftBottom], detailMaterial, 'reducer-lower-edge');
+  addSourceLine(group, [first.rightBottom, second.rightBottom], detailMaterial, 'reducer-lower-edge');
+  addSourceLine(group, [first.leftBottom, first.rightBottom], detailMaterial, 'reducer-cross-member');
+  addSourceLine(group, [second.leftBottom, second.rightBottom], detailMaterial, 'reducer-cross-member');
+}
+
+function renderFittingProxyBodies() {
+  const items = reducerProxyItems();
+  if (!items.length) return;
+  const group = new runtime.THREE.Group();
+  group.userData.racewayPreviewKind = 'fitting-proxy-bodies';
+  items.forEach(item => addReducerTaperProxy(group, item));
+  if (group.children.length) layer.group.add(group);
+}
+
 function addBendPlaceholder(group, run, node, material) {
   const size = Math.max(Math.min(runWidthM(run) * 0.35, 0.35), 0.08);
   const diamond = [
@@ -2526,6 +2695,7 @@ function renderRaceway() {
     run.nodes.forEach((node, index) => addNodeHandle(group, run, node, index, color));
     layer.group.add(group);
   });
+  renderFittingProxyBodies();
   window.plant3dViewerLayers?.update?.(RACEWAY_LAYER_ID, {
     getElements: () => state.runs,
     getMeasurementSnapObjects: racewayMeasurementSnapObjects,
@@ -3079,14 +3249,15 @@ async function loadFittingProjection(options = {}) {
   try {
     const payload = await apiFetch(url);
     state.fittingProjection = payload.fittings || null;
+    validateFittingProjectionContract(state.fittingProjection);
     state.fittingsLoaded = true;
     if (!options.quiet) recordReducerEdgeMatchProjectionTelemetry(state.fittingProjection, 'shown');
     if (!options.quiet) {
       const counts = state.fittingProjection?.counts || {};
       const byKind = counts.by_kind || {};
       setStatus(
-        `Raceway fittings refreshed: ${counts.total || 0} placeholder(s), `
-        + `${byKind.reducer_candidate || 0} reducer candidate(s).`
+        `Raceway fittings refreshed: ${counts.total || 0} item(s), `
+        + `${byKind.reducer_candidate || 0} reducer candidate(s), ${counts.reducer_proxy_total || 0} reducer proxy.`
       );
     }
     return state.fittingProjection;
@@ -3098,26 +3269,143 @@ async function loadFittingProjection(options = {}) {
     return null;
   } finally {
     state.fittingsLoading = false;
+    renderRaceway();
     renderPanel();
   }
 }
 
 function reducerEdgeMatchCandidates(projection = state.fittingProjection) {
   const items = Array.isArray(projection?.items) ? projection.items : [];
-  return items.filter(item => (
-    item?.kind === 'reducer_candidate'
-    && item?.requires_face_alignment
-    && item?.face_alignment?.basis === 'one_edge_matching'
-    && Array.isArray(item.face_alignment.recommended_offsets)
-    && item.face_alignment.recommended_offsets.length
-  ));
+  return items.filter(item => {
+    if (
+      item?.kind !== 'reducer_candidate'
+      || !item?.requires_face_alignment
+      || item?.face_alignment?.basis !== 'one_edge_matching'
+    ) {
+      return false;
+    }
+    const suggestion = reducerAlignmentSuggestion(item);
+    return Array.isArray(suggestion.member_offsets) && suggestion.member_offsets.length;
+  });
+}
+
+function reducerAlignmentSuggestion(candidate, handedness = state.reducerHandedness) {
+  const selectedHandedness = normalizedReducerHandedness(handedness);
+  const suggestions = candidate?.face_alignment?.suggestions_by_handedness || {};
+  if (suggestions[selectedHandedness]) return suggestions[selectedHandedness];
+  return {
+    handedness: candidate?.face_alignment?.recommended_handedness || DEFAULT_REDUCER_HANDEDNESS,
+    member_offsets: candidate?.face_alignment?.recommended_offsets || [],
+  };
+}
+
+function reducerTransitionCandidates(projection = state.fittingProjection) {
+  const items = Array.isArray(projection?.items) ? projection.items : [];
+  return items.filter(item => item?.kind === 'reducer_candidate');
+}
+
+function reducerCandidateExclusionReasons(candidate) {
+  const reasons = [];
+  if (candidate?.kind !== 'reducer_candidate') reasons.push('not_reducer_candidate');
+  if (!candidate?.requires_face_alignment) reasons.push('face_alignment_not_required');
+  if (candidate?.face_alignment?.basis !== 'one_edge_matching') reasons.push('basis_not_one_edge_matching');
+  const suggestion = reducerAlignmentSuggestion(candidate);
+  if (!Array.isArray(suggestion.member_offsets) || !suggestion.member_offsets.length) {
+    reasons.push('no_member_offsets_for_selected_handedness');
+  }
+  return reasons;
+}
+
+function logReducerCandidateDiagnostics(projection = state.fittingProjection) {
+  const candidates = reducerTransitionCandidates(projection);
+  if (!candidates.length || reducerEdgeMatchCandidates(projection).length) return;
+  console.warn('Raceway reducer candidates produced no edge-match action.', candidates.map(candidate => ({
+    fitting_key: candidate?.fitting_key || '',
+    category: candidate?.category || '',
+    status: candidate?.status || '',
+    face_alignment_status: candidate?.face_alignment?.status || '',
+    current_status: candidate?.face_alignment?.current_status || '',
+    exclusion_reasons: reducerCandidateExclusionReasons(candidate),
+  })));
+}
+
+function validateFittingProjectionContract(projection) {
+  if (!projection) {
+    console.warn('Raceway fitting projection missing from response.');
+    return;
+  }
+  if (projection.projection !== EXPECTED_FITTING_PROJECTION) {
+    console.warn(
+      `Raceway fitting projection version mismatch: expected ${EXPECTED_FITTING_PROJECTION}, received ${projection.projection}.`
+    );
+  }
+  if (!Array.isArray(projection.items)) {
+    console.warn('Raceway fitting projection contract warning: items must be an array.');
+  }
+  if (!projection.counts || typeof projection.counts !== 'object') {
+    console.warn('Raceway fitting projection contract warning: counts must be an object.');
+  }
+  reducerTransitionCandidates(projection).forEach(candidate => {
+    if (!candidate.fitting_key) console.warn('Raceway reducer candidate missing fitting_key.', candidate);
+    if (!candidate.category) console.warn('Raceway reducer candidate missing category.', candidate);
+    if (!candidate.status) console.warn('Raceway reducer candidate missing status.', candidate);
+    if (!candidate.face_alignment || typeof candidate.face_alignment !== 'object') {
+      console.warn('Raceway reducer candidate missing face_alignment object.', candidate);
+    } else if (candidate.face_alignment.basis === 'one_edge_matching') {
+      const options = candidate.face_alignment.options || [];
+      const suggestions = candidate.face_alignment.suggestions_by_handedness || {};
+      if (!Array.isArray(options) || !options.length) {
+        console.warn('Raceway reducer candidate one-edge alignment missing options.', candidate);
+      }
+      if (candidate.requires_face_alignment && !Object.keys(suggestions).length) {
+        console.warn('Raceway reducer candidate one-edge alignment missing handedness suggestions.', candidate);
+      }
+    }
+  });
+  logReducerCandidateDiagnostics(projection);
+}
+
+function reducerCategorySummary(candidates) {
+  const counts = new Map();
+  candidates.forEach(candidate => {
+    const category = String(candidate?.category || 'unknown_transition');
+    counts.set(category, (counts.get(category) || 0) + 1);
+  });
+  return Array.from(counts.entries())
+    .map(([category, count]) => `${category.replace(/_/g, ' ')} x${count}`)
+    .join(', ');
+}
+
+function reducerNoEdgeMatchActionMessage(projection = state.fittingProjection) {
+  const candidates = reducerTransitionCandidates(projection);
+  if (!candidates.length) {
+    return 'No reducer or transition candidates were found. Save connected unequal trays, then refresh fittings.';
+  }
+  const resolved = candidates.filter(item => item?.face_alignment?.status === 'offsets_match_recommended_edge').length;
+  const serviceTransitions = candidates.filter(item => item?.category === 'service_transition').length;
+  const insufficientContext = candidates.filter(
+    item => item?.face_alignment?.current_status === 'insufficient_segment_context'
+  ).length;
+  const parts = [
+    `No reducer edge-offset changes are available for ${candidates.length} candidate(s)`,
+  ];
+  const categories = reducerCategorySummary(candidates);
+  if (categories) parts.push(`categories: ${categories}`);
+  if (resolved) parts.push(`${resolved} already edge-aligned`);
+  if (serviceTransitions) parts.push(`${serviceTransitions} service transition(s) do not need edge matching`);
+  if (insufficientContext) parts.push(`${insufficientContext} need adjacent segment context`);
+  parts.push(
+    'Reducer body v0 renders saved same-family unequal-width left-edge matches; family, service, and depth transitions remain catalogue-validation placeholders.'
+  );
+  return `${parts.join('. ')}.`;
 }
 
 function collectReducerEdgeOffsetSuggestions(projection = state.fittingProjection) {
   const suggestions = new Map();
   const conflicts = [];
   reducerEdgeMatchCandidates(projection).forEach(candidate => {
-    (candidate.face_alignment?.recommended_offsets || []).forEach(offset => {
+    const alignmentSuggestion = reducerAlignmentSuggestion(candidate);
+    (alignmentSuggestion.member_offsets || []).forEach(offset => {
       const runKey = String(offset?.run_key || '').trim();
       const segmentKey = String(offset?.segment_key || '').trim();
       const rawSuggestedFaceOffsetM = Number(offset?.suggested_face_offset_m);
@@ -3135,6 +3423,7 @@ function collectReducerEdgeOffsetSuggestions(projection = state.fittingProjectio
         runTag: offset.run_tag || '',
         suggestedFaceOffsetM,
         fittingKey: candidate.fitting_key || '',
+        handedness: alignmentSuggestion.handedness || state.reducerHandedness,
         candidate,
         offset,
       });
@@ -3144,7 +3433,7 @@ function collectReducerEdgeOffsetSuggestions(projection = state.fittingProjectio
 }
 
 async function applyReducerEdgeMatchSuggestions() {
-  if (hasUnsavedLocalChanges()) {
+  if (hasUnsavedSavableChanges()) {
     setStatus('Save Draft before applying reducer edge-match suggestions; fitting suggestions use the last saved graph.');
     renderPanel();
     return false;
@@ -3159,7 +3448,7 @@ async function applyReducerEdgeMatchSuggestions() {
   }
   const { suggestions, conflicts } = collectReducerEdgeOffsetSuggestions(projection);
   if (!suggestions.length) {
-    setStatus('No unresolved reducer edge-match suggestions to apply.');
+    setStatus(reducerNoEdgeMatchActionMessage(projection));
     renderPanel();
     return false;
   }
@@ -3213,6 +3502,7 @@ async function applyReducerEdgeMatchSuggestions() {
     recordReducerEdgeMatchTelemetry(suggestion.candidate, suggestion.offset, 'accepted', {
       previous_face_offset_m: previousFaceOffsetM,
       applied_face_offset_m: suggestion.suggestedFaceOffsetM,
+      handedness: suggestion.handedness,
       source: 'apply_edge_match_command',
     });
   });
@@ -3226,8 +3516,9 @@ async function applyReducerEdgeMatchSuggestions() {
   renderPanel({ forceInspector: true });
   const conflictText = conflicts.length ? ` ${conflicts.length} conflicting suggestion(s) skipped.` : '';
   const missingText = missing.length ? ` ${missing.length} suggestion(s) no longer matched loaded segments.` : '';
+  const handednessText = state.reducerHandedness.replace('_', ' ');
   setStatus(
-    `Applied reducer edge-match offsets to ${pending.length} segment(s). Save Draft to persist, then refresh fittings.${conflictText}${missingText}`
+    `Applied reducer edge-match offsets (${handednessText}) to ${pending.length} segment(s). Save Draft to persist, then refresh fittings.${conflictText}${missingText}`
   );
   return true;
 }
@@ -3324,10 +3615,12 @@ async function loadSavedRaceways({ force = false } = {}) {
       clearGraphProjection();
       clearScheduleProjection();
       clearFittingProjection();
+      state.loadedServerRunIds = [];
       if (force || !state.runs.length) {
         state.runs = [];
         state.activeRunId = '';
         state.selectedNodeIndex = -1;
+        state.selectedSegmentIndex = -1;
         clearHistory();
         renderRaceway();
       }
@@ -3336,8 +3629,10 @@ async function loadSavedRaceways({ force = false } = {}) {
     }
     const runPayload = await apiFetch(urlWithQuery(layerMatch.runs_url, { include_nodes: 1 }));
     state.runs = (Array.isArray(runPayload.runs) ? runPayload.runs : []).map(runFromServer);
+    rememberLoadedServerRuns();
     state.activeRunId = state.runs[0]?.id || '';
     state.selectedNodeIndex = -1;
+    state.selectedSegmentIndex = -1;
     clearHistory();
     syncPaletteFromRun(activeRun());
     renderRaceway();
@@ -3408,6 +3703,7 @@ async function deleteActiveRun() {
   renderPanel();
   try {
     await apiFetch(`/raceway/runs/${run.serverRunId}/`, { method: 'DELETE' });
+    forgetLoadedServerRun(run.serverRunId);
     removeRunFromState(run);
     await loadGraphProjection({ quiet: true });
     if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
@@ -3493,6 +3789,26 @@ function applySavedRunPayload(localRun, payload) {
   state.activeRunId = localRun.id;
 }
 
+async function deleteServerRunsRemovedFromDraft(savableRuns) {
+  const runIdsToDelete = serverRunIdsRemovedFromDraft(savableRuns);
+  const deletedIds = [];
+  for (const serverRunId of runIdsToDelete) {
+    await apiFetch(`/raceway/runs/${serverRunId}/`, { method: 'DELETE' });
+    deletedIds.push(serverRunId);
+  }
+  if (!deletedIds.length) return 0;
+  const deletedIdSet = new Set(deletedIds);
+  state.runs = state.runs.filter(run => !deletedIdSet.has(normalizedServerRunId(run.serverRunId)));
+  state.loadedServerRunIds = state.loadedServerRunIds.filter(serverRunId => !deletedIdSet.has(serverRunId));
+  if (!state.runs.some(run => run.id === state.activeRunId)) {
+    state.activeRunId = state.runs[0]?.id || '';
+  }
+  state.selectedNodeIndex = -1;
+  state.selectedSegmentIndex = -1;
+  syncPaletteFromRun(activeRun());
+  return deletedIds.length;
+}
+
 async function saveDrafts() {
   const context = packageContext();
   if (!context) {
@@ -3503,12 +3819,14 @@ async function saveDrafts() {
   renderPanel();
   try {
     await loadCatalog();
-    const savableRuns = state.runs.filter(run => run.nodes.length >= 2);
-    if (!savableRuns.length) {
+    const savableRuns = savableRunsForPersistence();
+    const pendingDeleteCount = serverRunIdsRemovedFromDraft(savableRuns).length;
+    if (!savableRuns.length && !pendingDeleteCount) {
       setStatus('Add at least two nodes before saving a raceway run.');
       return;
     }
     const persistentLayer = await ensureLayer(context);
+    const deletedCount = await deleteServerRunsRemovedFromDraft(savableRuns);
     let savedCount = 0;
     for (const run of savableRuns) {
       try {
@@ -3558,13 +3876,15 @@ async function saveDrafts() {
     state.persistenceLoaded = true;
     state.persistenceReady = true;
     state.contextKey = contextKey(context);
+    rememberLoadedServerRuns();
     clearHistory();
     await loadGraphProjection({ quiet: true });
     if (state.scheduleLoaded) await loadScheduleProjection({ quiet: true });
     if (state.fittingsLoaded) await loadFittingProjection({ quiet: true });
     recordVisibleWarningTelemetry('unresolved_at_save', { actionDetail: { trigger: 'save' } });
     flushTelemetryEvents();
-    setStatus(`${savedCount} raceway run(s) saved to server.`);
+    const deleteText = deletedCount ? `; ${deletedCount} removed from server` : '';
+    setStatus(`${savedCount} raceway run(s) saved to server${deleteText}.`);
     renderRaceway();
   } catch (error) {
     setStatus(error.message || 'Unable to save raceway drafts.');
@@ -3594,6 +3914,8 @@ function injectStyles() {
     .raceway-warning-badge[hidden] { display: none; }
     .raceway-status { margin: 8px 0; color: #475569; font-size: 12px; line-height: 1.35; }
     .raceway-status-busy { color: #1d4ed8; }
+    .raceway-command-hint { margin: -4px 0 8px; color: #92400e; font-size: 11px; line-height: 1.35; }
+    .raceway-command-hint[hidden] { display: none; }
     .raceway-run-list, .raceway-node-list, .raceway-segment-list { display: grid; gap: 6px; margin-top: 8px; }
     .raceway-row { width: 100%; justify-content: space-between; text-align: left; }
     .raceway-row-active { border-color: #2563eb; color: #1d4ed8; }
@@ -3665,6 +3987,12 @@ function segmentOrientationOptionsHtml(segment) {
 
 function segmentDirectionOptionsHtml() {
   return segmentDirections.map(direction => `<option value="${escapeHtml(direction.id)}"${direction.id === state.segmentDirection ? ' selected' : ''}>${escapeHtml(direction.label)}</option>`).join('');
+}
+
+function reducerHandednessOptionsHtml() {
+  return reducerHandednessOptions
+    .map(option => `<option value="${escapeHtml(option.id)}"${option.id === state.reducerHandedness ? ' selected' : ''}>${escapeHtml(option.label)}</option>`)
+    .join('');
 }
 
 function segmentIntentText(segment) {
@@ -3892,7 +4220,7 @@ function fittingSummaryHtml() {
     <div>
       <strong>Fittings</strong><br>
       ${counts.total || 0} item(s) | ${counts.synthetic_proxy_total || 0} synthetic proxy | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s)<br>
-      ${byKind.tee || 0} tee(s) | ${byKind.cross || 0} cross(es) | ${byKind.reducer_candidate || 0} reducer candidate(s)<br>
+      ${byKind.tee || 0} tee(s) | ${byKind.cross || 0} cross(es) | ${byKind.reducer_candidate || 0} reducer candidate(s) | ${counts.reducer_proxy_total || 0} reducer proxy<br>
       ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation | ${counts.non_standard_plan_bends || 0} non-standard bend(s)<br>
       ${counts.one_edge_alignment_candidates || 0} edge-match candidate(s) | ${counts.face_offset_steps || 0} offset step(s) | ${counts.face_alignment_resolved_by_offset || 0} offset-resolved<br>
       ${graph.junction_node_count || 0} junction node(s) | ${graph.branch_node_count || 0} branch node(s)
@@ -3941,6 +4269,7 @@ function ensurePanel() {
   panel.innerHTML = `
     <summary><span class="raceway-summary-row"><span>Raceway Draft</span><span id="racewayWarningBadge" class="raceway-warning-badge" hidden>0</span></span></summary>
     <div id="racewayToolStatus" class="raceway-status">Ready</div>
+    <div id="racewayCommandHint" class="raceway-command-hint" hidden></div>
     <div class="raceway-tool-grid">
       <label>Family<select id="racewayFamilySelect">${familyOptionsHtml()}</select></label>
       <label>Size<select id="racewaySizeSelect">${sizeOptionsHtml()}</select></label>
@@ -3955,6 +4284,7 @@ function ensurePanel() {
       <label>Offset m<input id="racewaySegmentFaceOffsetInput" type="number" step="0.001" value="0.000" title="Select a segment to shift its tray faces left/right from the route centerline."></label>
       <label>Split %<input id="racewaySegmentSplitInput" type="number" min="1" max="99" step="1" value="${state.segmentSplitPercent}" title="Select a segment and split it at this percentage from its start node."></label>
       <label>Radius m<input id="racewayAccessoryRadiusInput" type="number" min="${ACCESSORY_RADIUS_MIN_M}" max="${ACCESSORY_RADIUS_MAX_M}" step="0.050" value="${formatM(state.accessoryRadiusM)}" title="Synthetic bend/riser proxy radius. Catalogue or project preference can override later."></label>
+      <label>Reducer side<select id="racewayReducerHandednessSelect" title="Edge used by Apply Edge Match for unequal-width reducer candidates. Left/right are relative to each segment direction.">${reducerHandednessOptionsHtml()}</select></label>
       <button type="button" data-raceway-action="add-segment" title="${escapeHtml(actionTooltip('add-segment'))}">Add Segment</button>
       <button type="button" data-raceway-action="split-segment" title="${escapeHtml(actionTooltip('split-segment'))}">Split Segment</button>
       <button id="racewaySurfaceToggleBtn" type="button" data-raceway-action="toggle-surfaces" title="${escapeHtml(actionTooltip('toggle-surfaces'))}" aria-pressed="${state.showProxyFaces ? 'true' : 'false'}">${state.showProxyFaces ? 'Surface On' : 'Wire Only'}</button>
@@ -3999,6 +4329,7 @@ function ensurePanel() {
   `;
   layerPanel.parentNode.insertBefore(panel, layerPanel);
   statusEl = panel.querySelector('#racewayToolStatus');
+  commandHintEl = panel.querySelector('#racewayCommandHint');
   summaryEl = panel.querySelector('#racewaySummary');
   graphWarningsEl = panel.querySelector('#racewayGraphWarnings');
   scheduleSummaryEl = panel.querySelector('#racewayScheduleSummary');
@@ -4018,8 +4349,20 @@ function ensurePanel() {
 function setActionState(action, disabled, title = '') {
   panel?.querySelectorAll(`[data-raceway-action="${action}"]`).forEach(button => {
     button.disabled = Boolean(disabled);
+    button.dataset.disabledReason = disabled ? title : '';
     button.title = actionTooltip(action, disabled ? title : '');
   });
+}
+
+function setCommandHint(message = '') {
+  if (!commandHintEl) return;
+  commandHintEl.hidden = !message;
+  commandHintEl.textContent = message;
+}
+
+function disabledActionHint(action, reason) {
+  const label = actionLabels[action] || 'Raceway command';
+  return reason ? `${label} unavailable: ${reason}` : '';
 }
 
 function updateActionStates(run) {
@@ -4036,23 +4379,31 @@ function updateActionStates(run) {
   setActionState('connect-node', !canConnectSelectedEndpoint(run), 'Select the first or last node of a run before connecting it.');
   setActionState('anchor-node', !run, 'Start or select a run before anchoring.');
   setActionState('clear-anchor', !node || !anchorLabel(node.anchor), 'Select an anchored node first.');
-  setActionState('save', state.persistenceLoading || !state.runs.some(item => item.nodes.length >= 2), 'Add at least one two-node run before saving.');
+  const savableRuns = savableRunsForPersistence();
+  const pendingDraftDeleteCount = serverRunIdsRemovedFromDraft(savableRuns).length;
+  setActionState('save', state.persistenceLoading || (!savableRuns.length && !pendingDraftDeleteCount), 'Add at least one two-node run or remove a saved run before saving.');
   setActionState('reload', state.persistenceLoading, state.persistenceLoading ? 'Raceway persistence is busy.' : '');
   setActionState('refresh-graph', state.persistenceLoading || state.graphLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing graph warnings.');
   setActionState('refresh-schedule', state.persistenceLoading || state.scheduleLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing the schedule.');
   setActionState('refresh-fittings', state.persistenceLoading || state.fittingsLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing fittings.');
   const edgeMatchCandidateCount = reducerEdgeMatchCandidates().length;
+  const reducerCandidateCount = reducerTransitionCandidates().length;
   const edgeMatchDisabled = state.persistenceLoading
     || state.fittingsLoading
     || !state.layerId
-    || hasUnsavedLocalChanges()
-    || (state.fittingsLoaded && edgeMatchCandidateCount <= 0);
+    || hasUnsavedSavableChanges()
+    || (state.fittingsLoaded && edgeMatchCandidateCount <= 0 && reducerCandidateCount <= 0);
   let edgeMatchReason = '';
   if (!state.layerId) edgeMatchReason = 'Save a raceway layer before applying reducer edge-match suggestions.';
   else if (state.persistenceLoading || state.fittingsLoading) edgeMatchReason = 'Raceway persistence or fittings are busy.';
-  else if (hasUnsavedLocalChanges()) edgeMatchReason = 'Save Draft before applying reducer suggestions from the saved fitting projection.';
-  else if (state.fittingsLoaded && edgeMatchCandidateCount <= 0) edgeMatchReason = 'Refresh fittings after creating unresolved unequal-size reducer candidates.';
+  else if (hasUnsavedSavableChanges()) edgeMatchReason = 'Save Draft before applying reducer suggestions from the saved fitting projection.';
+  else if (state.fittingsLoaded && edgeMatchCandidateCount <= 0 && reducerCandidateCount <= 0) edgeMatchReason = 'Refresh fittings after creating unresolved unequal-size reducer candidates.';
   setActionState('apply-reducer-offsets', edgeMatchDisabled, edgeMatchReason);
+  setCommandHint(
+    edgeMatchDisabled && edgeMatchReason
+      ? disabledActionHint('apply-reducer-offsets', edgeMatchReason)
+      : ''
+  );
   setActionState('open-warning-details', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before opening warning details.');
   setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
   setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
@@ -4076,6 +4427,7 @@ function renderPanel(options = {}) {
   const segmentFaceOffsetInput = panel.querySelector('#racewaySegmentFaceOffsetInput');
   const segmentSplitInput = panel.querySelector('#racewaySegmentSplitInput');
   const accessoryRadiusInput = panel.querySelector('#racewayAccessoryRadiusInput');
+  const reducerHandednessSelect = panel.querySelector('#racewayReducerHandednessSelect');
   const segment = selectedSegment();
   if (statusEl) statusEl.classList.toggle('raceway-status-busy', state.persistenceLoading);
   if (familySelect && familySelect !== document.activeElement) {
@@ -4103,6 +4455,9 @@ function renderPanel(options = {}) {
   if (segmentLengthInput && segmentLengthInput !== document.activeElement) segmentLengthInput.value = formatM(state.segmentLengthM);
   if (accessoryRadiusInput && accessoryRadiusInput !== document.activeElement) {
     accessoryRadiusInput.value = formatM(state.accessoryRadiusM);
+  }
+  if (reducerHandednessSelect && reducerHandednessSelect !== document.activeElement) {
+    reducerHandednessSelect.value = state.reducerHandedness;
   }
   if (segmentSplitInput) {
     segmentSplitInput.disabled = !segment;
@@ -4346,7 +4701,7 @@ function triggerRacewayAction(action) {
   updateActionStates(activeRun());
   const button = panel?.querySelector(`[data-raceway-action="${action}"]`);
   if (button?.disabled) {
-    setStatus(button.title || 'Raceway command unavailable.');
+    setStatus(button.dataset.disabledReason || button.title || 'Raceway command unavailable.');
     return false;
   }
   return runPanelAction(action, button);
@@ -4423,6 +4778,11 @@ function handlePanelChange(event) {
   if (target.id === 'racewayAccessoryRadiusInput') {
     state.accessoryRadiusM = normalizedAccessoryRadiusM(target.value);
     setStatus(`Synthetic accessory proxy radius set to ${formatM(state.accessoryRadiusM)} m.`);
+  }
+  if (target.id === 'racewayReducerHandednessSelect') {
+    state.reducerHandedness = normalizedReducerHandedness(target.value);
+    const label = reducerHandednessOptions.find(option => option.id === state.reducerHandedness)?.label || 'Left Edge';
+    setStatus(`Reducer edge-match side set to ${label}. Apply Edge Match uses this side for unresolved reducer candidates.`);
   }
   if (target.id === 'racewaySegmentFaceOffsetInput') {
     const value = Number(target.value);
@@ -4605,6 +4965,7 @@ window.racewayViewerOverlay = {
     state.runs = Array.isArray(runs)
       ? runs.map(run => ({ ...run, nodes: Array.isArray(run.nodes) ? run.nodes.map(node => ({ ...node })) : [] }))
       : [];
+    rememberLoadedServerRuns(state.runs, { merge: true });
     state.activeRunId = state.runs[0]?.id || '';
     state.selectedNodeIndex = -1;
     state.selectedSegmentIndex = -1;

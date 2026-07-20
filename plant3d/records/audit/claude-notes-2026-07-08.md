@@ -1036,3 +1036,21 @@ The default radius (0.6 m) and curve segments are draft-local and *not yet persi
 ### Arc status
 
 With bends/risers proxied and cutback solved, **the accessory arc's remaining MVP item is the reducer body (handedness + taper)** — after which, per the drift-watch, the pivot to Phase H + durable EHT persistence is due. The scorecard's drift-watch is updated accordingly.
+
+## 44. JS audit reconciliation — Codex's findings vs Claude's parallel audit (2026-07-20; for Codex + KR)
+
+Double-blind round two, reconciled. Codex's audit (`raceway-overlay-js-audit-2026-07-19.md`) and my parallel investigation converged on the same core defects: **F-21** (global dirty gate) = my H1(a) — and Codex found the *precise* mechanism (a harmless one-node draft tripping the gate) where I had only the class; **A-7** (left-edge-only body materialization) = my H2, which I predicted might survive unnoticed — it didn't. **F-22** covers my H1(b) symptom (candidates present but inapplicable, now explained on click). Fixed state verified green: 146 tests ×2, browser **4/4** including the new one-node-draft and family-transition regressions. Codex's five hardening recommendations are endorsed as written — #1 (`computeRacewayCommandStates` as a pure, testable layer) and #4 (state invariants) are better-specified than my equivalents.
+
+### Balance items — in my audit, not yet in Codex's (B-series)
+
+| # | Item | Why it matters |
+| --- | --- | --- |
+| B-1 | **Cross-boundary contract tests, server-side**: Python tests pinning the exact fields/strings the JS reads (`face_alignment.basis == "one_edge_matching"`, `member_offsets`, `proxy_kind == "reducer_taper"`, candidate `kind`/`status` values) | The bug family here is *server↔client string drift with no referee*. Client-side invariants (Codex #4) can't catch a server rename; a server-side pin breaks a test instead of a button. The single most important structural addition |
+| B-2 | **Fail-loud client checks**: validate the projection `schema`/version tag on load and warn on mismatch; when a non-empty candidate list filters to zero, log per-candidate exclusion reasons to console | F-22 explains on *click*; B-2 makes silent drift announce itself *without* user action |
+| B-3 | **Disabled-reason in the status line**, not tooltip-only | A disabled button cannot be clicked for its F-22 explanation; the reason must surface where the user is already looking. Ten lines |
+| B-4 | **Server enrichment hardening for `insufficient_segment_context`**: verify a normally-connected endpoint can never legitimately lack adjacent-segment context, and contract-test that guarantee | F-22 *explains* the case; nobody yet asked whether it should be reachable at all for healthy geometry |
+| B-5 | Tie the whole hardening pass to **CI (register A3)** | Every check above only defends if it runs on every push |
+
+### Sequencing suggestion
+
+Codex's hardening pass + B-1..B-4 as one combined slice **before tee/cross body geometry** (Codex's own recommendation, seconded) — with B-5/A3 landed the same week so the new pure-function tests run per-push from day one. A-7's resolution (persist handedness via the segment-intent idiom, or label right/center as drafting aids) should be decided in that pass rather than deferred, since the handedness UI is already user-visible.

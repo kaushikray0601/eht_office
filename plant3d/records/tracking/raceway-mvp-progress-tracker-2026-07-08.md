@@ -2415,3 +2415,319 @@ Append each pass here.
   - then reducer proxy body v0,
   - park Claude §42 vendor-catalogue sync command for a nearby non-visual
     housekeeping pass unless KR wants that immediately.
+
+### 2026-07-19 - Reducer Handedness And Tapered Proxy Body V0
+
+- Read Claude/Fable notes before coding:
+  - §43 approves the synthetic accessory proxy pass,
+  - confirms reducer body with handedness/taper as the remaining accessory-arc
+    item before the tee/cross close-out,
+  - no blocker; Claude §42 vendor-catalogue sync command remains queued for a
+    nearby housekeeping pass.
+- Implemented server-side reducer proxy readiness in `raceway/fittings.py`:
+  - unresolved unequal-width connections remain `placeholder` reducer
+    candidates,
+  - resolved same-family width reducers become `synthetic_proxy` once saved
+    segment face offsets match the default recommended edge,
+  - geometry recipe uses `proxy_kind: reducer_taper`,
+  - default development length heuristic is `max(0.45 m, 2 x width_delta)`,
+  - straight tray cutback is half the reducer development length on each port,
+  - counts now include `reducer_proxy_total`.
+- Exposed all three edge-match options in the fitting projection:
+  - `left_edge`,
+  - `right_edge`,
+  - `centerline`.
+- Added browser-side reducer side selection:
+  - new `Reducer side` dropdown defaults to `left_edge`,
+  - `Apply Edge Match` uses the selected side,
+  - accepted reducer telemetry records `selected_handedness` and accepted
+    `handedness`.
+- Added viewer tapered reducer proxy body:
+  - resolved reducer fitting projection renders `reducer-taper-surface`,
+  - reducer side rails/lower edges/cross-members are rendered as line details,
+  - reducer edges are exposed as measurement snap targets,
+  - straight tray faces/rails trim at resolved reducer ports.
+- Kept scope disciplined:
+  - no reducer/accessory persistence table yet,
+  - no vendor catalogue dimensions yet,
+  - service/family transitions remain advisory placeholders,
+  - tee/cross body geometry is still open even though tee/cross graph-node
+    proxy records and counts already exist.
+- Bumped browser cache key:
+  - Raceway overlay: `20260719_raceway43`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayFittingProjectionTests.test_layer_fitting_projection_flags_unequal_size_reducer_candidate_at_connected_node raceway.tests.RacewayFittingProjectionTests.test_layer_fitting_projection_marks_reducer_alignment_resolved_by_offset raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+- Manual check:
+  - connect a 300 mm tray to a 600 mm tray at a shared node,
+  - save if needed, refresh fittings, and confirm it remains an unresolved
+    reducer candidate until edge match is applied,
+  - choose `Reducer side = Left Edge`, click `Apply Edge Match`, save, refresh
+    fittings, and confirm `1 reducer proxy` appears,
+  - visually confirm a green tapered reducer body appears between the two
+    trays and the straight tray proxies are cut back near the fitting,
+  - optionally repeat with `Right Edge` and confirm the offset direction flips;
+    final body v0 currently renders after saved default left-edge resolution.
+- Notes to Claude/Fable:
+  - please review whether `reducer_taper` should remain tied to resolved
+    default-left edge in v0, or whether we should introduce persisted reducer
+    handedness before drawing right-edge/centerline bodies,
+  - tee/cross are not forgotten: graph records exist, but detailed body
+    geometry remains the next branch-accessory task.
+- Next recommended pass:
+  - tee/cross proxy body geometry v0 from graph-node ports,
+  - then decide whether persisted accessory intent should include reducer
+    handedness/radius/development length before further fitting polish,
+  - keep Claude §42 vendor-catalogue sync command queued for housekeeping.
+
+### 2026-07-19 - Apply Edge Match Activation Audit And Command-State Fix
+
+- Read Claude/Fable notes before coding:
+  - §43 still has no blocker,
+  - it confirms reducer body v0 scope and tee/cross body geometry as the next
+    accessory frontier,
+  - Claude §42 vendor-catalogue sync command remains queued for housekeeping.
+- KR reported:
+  - `Apply Edge Match` did not reliably activate after connecting dissimilar
+    trays,
+  - the large vanilla JS overlay may now be vulnerable to small silent drift,
+  - requested a fuller JavaScript review before continuing.
+- Audit file created:
+  - `plant3d/records/audit/raceway-overlay-js-audit-2026-07-19.md`.
+- Root cause/fix:
+  - command enablement was using global `hasUnsavedLocalChanges`,
+  - this blocked reducer application if any local run was unsaved or dirty,
+    even a harmless one-node unfinished draft not present in the saved graph,
+  - added `hasUnsavedSavableChanges`,
+  - `Apply Edge Match` now blocks only if a two-node-or-longer run is unsaved
+    or dirty.
+- UX clarification/fix:
+  - reducer/transition candidates with no offset action now leave
+    `Apply Edge Match` callable,
+  - clicking it explains whether the case is already edge-aligned, a service
+    transition, a family/depth placeholder, or missing adjacent segment context,
+  - this makes the current v0 scope explicit: rendered reducer body is still
+    saved same-family unequal-width left-edge transition only.
+- Browser coverage:
+  - added regression where a one-node local draft exists beside two saved
+    unequal trays and the command must still be active,
+  - added regression for same-width ladder-to-tray family/depth transition,
+    expecting a clear placeholder/catalogue-validation status instead of a
+    mysterious disabled command.
+- Bumped browser cache key:
+  - Raceway overlay: `20260719_raceway44`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+- Manual check:
+  - same-family unequal-width case:
+    - connect two same-family trays with different widths,
+    - save and refresh fittings,
+    - click `Apply Edge Match`,
+    - save and refresh fittings again,
+    - confirm reducer proxy appears,
+  - family/depth transition case:
+    - connect ladder 300 x 100 to perforated tray 300 x 75,
+    - refresh fittings,
+    - click `Apply Edge Match`,
+    - expect a clear status message saying no edge-offset action is available
+      and the case remains a catalogue-validation placeholder.
+- Notes to Claude/Fable:
+  - please review audit note F-21/F-22/A-6/A-7/R-1,
+  - especially whether right/center reducer handedness should be persisted
+    before any further reducer polish,
+  - confirm or challenge the recommendation to extract command-state logic
+    before detailed tee/cross body geometry.
+- Next recommended pass:
+  - short architecture hardening pass: extract/test reducer/raceway command
+    availability as a pure state function,
+  - then tee proxy body geometry v0 from graph-node ports,
+  - cross body geometry after tee semantics are stable.
+
+### 2026-07-20 - Save Draft Reconciliation And First Hardening Slice
+
+- Read Claude/Fable notes before coding:
+  - §44 directly matched the current problem class,
+  - endorsed Codex's JS audit and added B-series hardening items,
+  - no blocker; B-1/B-2/B-3 should be folded into the hardening sequence.
+- KR reported:
+  - `Apply Edge Match` now works,
+  - `Save Draft` had become additive after deletions,
+  - deleted trays stayed in the saved layer and got superimposed with new
+    trays,
+  - this stale persistence also polluted `Apply Edge Match` behavior,
+  - the 5000-line vanilla JS concern is now serious enough to require steady
+    architectural hardening.
+- Root cause:
+  - `saveDrafts` saved local runs with at least two nodes using POST/PATCH,
+  - it did not reconcile server runs that were loaded but then removed locally
+    or reduced below two nodes by node deletion,
+  - therefore stale server runs survived and reappeared on reload/graph/fitting
+    refresh.
+- Implemented Save Draft reconciliation:
+  - viewer state now tracks `loadedServerRunIds`,
+  - Save Draft computes current savable local server IDs,
+  - loaded server IDs absent from the current savable draft are deleted through
+    the normal `DELETE /raceway/runs/<id>/` endpoint,
+  - deletion-only saves are now allowed,
+  - local zero-node stale server runs are removed from viewer state after
+    server deletion,
+  - save status reports deleted count, e.g. `1 removed from server`.
+- Edge-match stale graph protection:
+  - pending server-run deletion now counts as an unsaved graph change,
+  - `Apply Edge Match` remains blocked until those deletions are saved,
+  - harmless one-node *new* drafts still do not block edge-match.
+- First JS hardening slice:
+  - added `EXPECTED_FITTING_PROJECTION = 'raceway.fittings.v0'`,
+  - fitting projection load now warns on projection-version mismatch,
+  - reducer candidates that filter to zero edge-match actions now log
+    per-candidate exclusion reasons to the console,
+  - this implements a first piece of Claude §44 B-2 fail-loud diagnostics.
+- Added browser regression:
+  - `test_real_viewer_save_reconciles_deleted_saved_runs`,
+  - loads a saved run, deletes both nodes locally, injects a replacement local
+    two-node run, saves, and asserts the old DB run is gone and only one saved
+    run remains.
+- Bumped browser cache key:
+  - Raceway overlay: `20260720_raceway45`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/browser_tests.py raceway/tests.py`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+- Manual check:
+  - load an existing saved raceway layer,
+  - delete an old tray/run or delete its nodes,
+  - draw/add a new tray,
+  - click `Save Draft`,
+  - reload/refresh graph/fittings,
+  - confirm the deleted tray does not reappear under the new tray,
+  - confirm `Apply Edge Match` asks to save while deletion is pending, then
+    behaves normally after Save Draft.
+- Clarification to KR:
+  - current `Apply Edge Match` is still an edge/face-offset alignment helper,
+    not the final reducer accessory generator,
+  - the visible reducer taper body v0 exists only after saved same-family
+    unequal-width left-edge alignment,
+  - right/center handedness, depth/family adapters, smooth unmatched-side
+    curvature, and vendor/catalogue dimensions remain open.
+- Notes to Claude/Fable:
+  - please review whether the `loadedServerRunIds` reconciliation contract is
+    enough for MVP, or whether the server should expose an explicit layer-sync
+    endpoint before multi-user editing,
+  - B-2 started; B-1 server-client projection contract tests and B-3 disabled
+    reason/status UX remain high-priority hardening items.
+- Next recommended pass:
+  - extract command availability into a pure tested command-state layer,
+  - add B-1 server-client projection contract tests for all JS-consumed fitting
+    fields,
+  - add B-3 visible disabled-reason/status behavior,
+  - then persist reducer accessory intent before expanding tee/cross geometry.
+
+### 2026-07-20 - Claude B-List Contract And Disabled-Reason Hardening
+
+- Read Claude/Fable balance summary before coding:
+  - B-1 server-side contract tests,
+  - B-2 fail-loud client checks,
+  - B-3 disabled reason in status line,
+  - B-4 `insufficient_segment_context` hardening,
+  - B-5 CI wiring.
+- Proceeded because none required design discussion and all reduce the exact
+  silent-drift failure class KR is worried about.
+- Implemented B-1 reducer projection contract pins:
+  - unresolved reducer candidates now have explicit Python tests pinning:
+    - `projection == "raceway.fittings.v0"`,
+    - projection `status == "derived_placeholder"`,
+    - candidate `kind == "reducer_candidate"`,
+    - unresolved `status == "placeholder"`,
+    - `category == "width_reducer"`,
+    - `face_alignment.basis == "one_edge_matching"`,
+    - `face_alignment.status == "required_not_modelled"`,
+    - `current_status == "edges_not_aligned"`,
+    - handedness options `left_edge`, `right_edge`, `centerline`,
+    - `suggestions_by_handedness.*.member_offsets`,
+    - `recommended_offsets` mirrors the left-edge suggestion.
+  - resolved reducer proxy tests now pin:
+    - `status == "synthetic_proxy"`,
+    - `geometry_recipe.schema == "raceway.accessory_proxy.v0"`,
+    - `geometry_recipe.proxy_kind == "reducer_taper"`,
+    - `handedness == "left_edge"`,
+    - reducer ports expose `segment_key`, `face_offset_m`, and edge offsets.
+- Expanded B-2 fail-loud client checks:
+  - fitting load warns if the fitting projection object is missing,
+  - warns on projection-version mismatch,
+  - warns if `items` or `counts` have the wrong shape,
+  - warns if reducer candidates are missing `fitting_key`, `category`,
+    `status`, or a usable `face_alignment` object,
+  - retains the previous per-candidate exclusion diagnostics when reducer
+    candidates filter down to zero edge-match actions.
+- Implemented B-3 visible disabled reason:
+  - added `#racewayCommandHint` immediately below the Raceway status line,
+  - `Apply Edge Match` now shows its disabled reason visibly, not tooltip-only,
+  - shortcut-triggered disabled commands report the raw disabled reason rather
+    than the tooltip text with shortcut suffix,
+  - browser smoke asserts the initial Edge Match reason is visible before a
+    layer is saved.
+- Hardened B-4 insufficient segment context:
+  - the server fallback now includes `segment_context` diagnostics with member
+    count, alignment-member count, missing adjacent-segment count, and missing
+    member identities,
+  - contract tests prove normally connected unequal-size tray endpoints do not
+    fall into `insufficient_segment_context`,
+  - a malformed one-node-at-shared-point fallback test keeps the diagnostic
+    branch deliberate and visible.
+- Bumped browser cache key:
+  - Raceway overlay: `20260720_raceway46`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `git diff --check`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayFittingProjectionTests raceway.tests.RacewayStaticAssetTests --noinput -v 2`
+  - focused browser smoke first failed inside sandbox due Chromium
+    `Operation not permitted`, then passed unsandboxed:
+    `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayBrowserSmokeTests.test_raceway_authoring_uses_viewer_interaction_contract --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+- Manual check:
+  - open the viewer and look just below the Raceway status line,
+  - before a raceway layer is saved, `Apply Edge Match` should show a visible
+    disabled reason rather than hiding the reason only in the button tooltip,
+  - after saving, refreshing fittings, and creating an actionable same-family
+    width reducer, the hint should disappear when the button is enabled,
+  - if the draft is dirty, the hint should say to Save Draft before applying
+    reducer suggestions.
+- Notes to Claude/Fable:
+  - B-1 is now pinned for reducer candidate/proxy fields the JS consumes;
+    broader fitting/schedule/graph contract pins can still be added,
+  - B-2 is materially stronger but still console-based,
+  - B-3 is landed for Edge Match; we can generalize after command-state
+    extraction,
+  - B-4 is diagnostic/test-hardened; please review whether malformed
+    one-node reducer candidates should be suppressed entirely later,
+  - B-5/CI remains open.
+- Next recommended pass:
+  - extract `computeRacewayCommandStates(snapshot)` as a pure tested layer,
+  - use it to drive button disabled/enabled state and visible command hints,
+  - then persist reducer accessory intent before tee/cross body geometry.

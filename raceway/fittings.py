@@ -19,6 +19,8 @@ ACCESSORY_PROXY_SCHEMA = "raceway.accessory_proxy.v0"
 ACCESSORY_DEFAULT_BEND_RADIUS_M = 0.6
 ACCESSORY_PROXY_CURVE_SEGMENTS = 8
 SEGMENT_FACE_OFFSET_EPSILON_M = 0.0005
+REDUCER_DEFAULT_DEVELOPMENT_LENGTH_M = 0.45
+REDUCER_DEVELOPMENT_WIDTH_FACTOR = 2.0
 REDUCER_DEFAULT_HANDEDNESS = "left_edge"
 REDUCER_HANDEDNESS_OPTIONS = ("left_edge", "right_edge", "centerline")
 FITTING_PROJECTION_VERSION = "raceway.fittings.v0"
@@ -256,6 +258,11 @@ def fitting_item_counts(items):
         "requires_catalogue_validation": sum(1 for item in items if item.get("requires_catalogue_validation")),
         "requires_face_alignment": sum(1 for item in items if item.get("requires_face_alignment")),
         "synthetic_proxy_total": sum(1 for item in items if item.get("status") == "synthetic_proxy"),
+        "reducer_proxy_total": sum(
+            1
+            for item in items
+            if item.get("kind") == "reducer_candidate" and item.get("status") == "synthetic_proxy"
+        ),
         "one_edge_alignment_candidates": sum(
             1
             for item in items
@@ -453,12 +460,13 @@ def _reducer_candidates(graph, runs):
             continue
         category = _reducer_category(size_groups)
         face_alignment = _reducer_face_alignment(category, members)
+        geometry_recipe = _reducer_geometry_recipe(category, graph_node, members, face_alignment)
         candidates.append(
             {
                 "fitting_key": f"fit:graph:{graph_node['key']}:reducer",
                 "kind": "reducer_candidate",
                 "category": category,
-                "status": "placeholder",
+                "status": "synthetic_proxy" if geometry_recipe else "placeholder",
                 "derivation": "connected_graph_members_with_unequal_sizes",
                 "graph_node_key": graph_node["key"],
                 "graph_node_kind": graph_node.get("derived_kind", ""),
@@ -471,6 +479,7 @@ def _reducer_candidates(graph, runs):
                     and face_alignment.get("status") != "offsets_match_recommended_edge"
                 ),
                 "face_alignment": face_alignment,
+                **({"geometry_recipe": geometry_recipe} if geometry_recipe else {}),
             }
         )
     return candidates
@@ -561,16 +570,36 @@ def _reducer_face_alignment(category, members):
     alignment_members = [_alignment_member_payload(member) for member in members]
     alignment_members = [member for member in alignment_members if member is not None]
     if len(alignment_members) < 2:
+        missing_members = [
+            {
+                "run_key": member["run_key"],
+                "run_tag": member["run_tag"],
+                "node_key": member["node_key"],
+                "adjacent_segment_count": len(member.get("adjacent_segments") or []),
+            }
+            for member in members
+            if not member.get("adjacent_segments")
+        ]
         return {
             "basis": "one_edge_matching",
             "status": "required_not_modelled",
             "current_status": "insufficient_segment_context",
             "recommended_handedness": REDUCER_DEFAULT_HANDEDNESS,
             "options": list(REDUCER_HANDEDNESS_OPTIONS),
+            "segment_context": {
+                "member_count": len(members),
+                "alignment_member_count": len(alignment_members),
+                "missing_adjacent_segment_count": len(missing_members),
+                "missing_members": missing_members,
+            },
             "note": "Reducer handedness needs adjacent segment context at the shared graph node.",
         }
     current_status = _current_alignment_status(alignment_members)
-    recommended = _alignment_suggestion(alignment_members, REDUCER_DEFAULT_HANDEDNESS)
+    suggestions_by_handedness = {
+        handedness: _alignment_suggestion(alignment_members, handedness)
+        for handedness in REDUCER_HANDEDNESS_OPTIONS
+    }
+    recommended = suggestions_by_handedness[REDUCER_DEFAULT_HANDEDNESS]
     status = (
         "offsets_match_recommended_edge"
         if current_status == f"{REDUCER_DEFAULT_HANDEDNESS}_aligned"
@@ -586,6 +615,7 @@ def _reducer_face_alignment(category, members):
         ),
         "recommended_handedness": REDUCER_DEFAULT_HANDEDNESS,
         "options": list(REDUCER_HANDEDNESS_OPTIONS),
+        "suggestions_by_handedness": suggestions_by_handedness,
         "edge_reference": "left/right are relative to each adjacent segment's saved node order.",
         "epsilon_m": SEGMENT_FACE_OFFSET_EPSILON_M,
         "recommended_offsets": recommended["member_offsets"],
@@ -596,6 +626,51 @@ def _reducer_face_alignment(category, members):
             "Centerline matching remains an explicit uncommon option."
         ),
     }
+
+
+def _reducer_geometry_recipe(category, graph_node, members, face_alignment):
+    if category != "width_reducer":
+        return None
+    if face_alignment.get("status") != "offsets_match_recommended_edge":
+        return None
+    alignment_members = [_alignment_member_payload(member) for member in members]
+    alignment_members = [member for member in alignment_members if member is not None]
+    if len(alignment_members) != 2:
+        return None
+    development_length_m = _reducer_development_length_m(alignment_members)
+    return {
+        "schema": ACCESSORY_PROXY_SCHEMA,
+        "proxy_kind": "reducer_taper",
+        "handedness": face_alignment.get("recommended_handedness") or REDUCER_DEFAULT_HANDEDNESS,
+        "development_length_m": development_length_m,
+        "development_length_basis": "max(default_0_45m, 2x_width_delta)",
+        "center_point_m": graph_node.get("source_point_m", {}),
+        "ports": [
+            {
+                "run_key": member["run_key"],
+                "run_tag": member["run_tag"],
+                "node_key": member["node_key"],
+                "segment_key": member["segment_key"],
+                "segment_index": member["segment_index"],
+                "role_at_node": member["segment_role_at_node"],
+                "width_mm": member["width_mm"],
+                "depth_mm": member["depth_mm"],
+                "face_offset_m": member["current_face_offset_m"],
+                "edge_offsets_m": member["edge_offsets_m"],
+            }
+            for member in sorted(alignment_members, key=lambda item: (-item["width_mm"], item["run_tag"], item["segment_index"]))
+        ],
+        "straight_proxy_cutback": {
+            "each_port_m": development_length_m / 2.0,
+            "basis": "half_reducer_development_length",
+        },
+    }
+
+
+def _reducer_development_length_m(alignment_members):
+    widths_m = [max(float(member["width_mm"] or 0.0), 0.0) / 1000.0 for member in alignment_members]
+    width_delta_m = max(widths_m, default=0.0) - min(widths_m, default=0.0)
+    return max(REDUCER_DEFAULT_DEVELOPMENT_LENGTH_M, REDUCER_DEVELOPMENT_WIDTH_FACTOR * width_delta_m)
 
 
 def _alignment_member_payload(member):
