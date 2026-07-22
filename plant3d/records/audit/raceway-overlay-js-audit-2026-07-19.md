@@ -206,7 +206,44 @@ accessory geometry:
 Still open:
 
 - B-5/CI wiring.
-- Pure command-state extraction (`computeRacewayCommandStates(snapshot)`).
+- Pure command-state extraction beyond the first landed seam
+  (`computeRacewayCommandStates(snapshot)` now drives button state and command
+  hints, but still lives inside the overlay file).
 - JSDoc/`// @ts-check` shaping.
 - Geometry/DOM split.
 - Broader graph/schedule/fitting contract pins outside reducer-specific fields.
+
+## 2026-07-21 Amendment - Hybrid Accessory Doctrine And Command State
+
+KR challenged whether automatic accessory creation may be creating more
+complexity than MVP needs, and whether a user-selectable accessory library
+would be simpler.
+
+Conclusion:
+
+- manual-only accessory placement is simpler visually but unsafe for EPC
+  engineering truth,
+- full automatic catalogue selection is too brittle for MVP,
+- the selected path is hybrid: server-derived accessory candidates, user
+  accept/reject/override from a palette, persisted accessory intent, and
+  vendor catalogue replacement later.
+
+The accessory note now records this doctrine explicitly.
+
+Code hardening landed:
+
+- `computeRacewayCommandStates(snapshot)` is the first pure command-state
+  seam in `raceway_overlay.js`,
+- `updateActionStates()` now computes button state from that snapshot rather
+  than owning each condition inline,
+- the Edge Match visible disabled hint reads the computed command state,
+- browser smoke probes clean-vs-dirty Edge Match cases through the pure
+  function.
+
+Open after this amendment:
+
+- add JSDoc typedefs and `// @ts-check` compatibility around the command-state
+  snapshot/result,
+- decide whether to extract command-state into its own static JS file or keep
+  incremental seams until one more helper family is isolated,
+- split geometry/render helpers before tee/cross body complexity grows.

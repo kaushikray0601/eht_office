@@ -4365,52 +4365,129 @@ function disabledActionHint(action, reason) {
   return reason ? `${label} unavailable: ${reason}` : '';
 }
 
+function commandState(disabled, reason = '') {
+  return {
+    disabled: Boolean(disabled),
+    reason: disabled ? reason : '',
+  };
+}
+
+function computeRacewayCommandStates(snapshot = {}) {
+  const layerId = snapshot.layerId || null;
+  const persistenceLoading = Boolean(snapshot.persistenceLoading);
+  const fittingsLoading = Boolean(snapshot.fittingsLoading);
+  const graphLoading = Boolean(snapshot.graphLoading);
+  const scheduleLoading = Boolean(snapshot.scheduleLoading);
+  const edgeMatchCandidateCount = Number(snapshot.edgeMatchCandidateCount || 0);
+  const reducerCandidateCount = Number(snapshot.reducerCandidateCount || 0);
+  const splitPercent = Number(snapshot.splitPercent || 0);
+  const segmentLengthM = Number(snapshot.segmentLengthM || 0);
+  const hasUnsavedSavableChanges = Boolean(snapshot.hasUnsavedSavableChanges);
+  const fittingsLoaded = Boolean(snapshot.fittingsLoaded);
+  const edgeMatchDisabled = persistenceLoading
+    || fittingsLoading
+    || !layerId
+    || hasUnsavedSavableChanges
+    || (fittingsLoaded && edgeMatchCandidateCount <= 0 && reducerCandidateCount <= 0);
+  let edgeMatchReason = '';
+  if (!layerId) edgeMatchReason = 'Save a raceway layer before applying reducer edge-match suggestions.';
+  else if (persistenceLoading || fittingsLoading) edgeMatchReason = 'Raceway persistence or fittings are busy.';
+  else if (hasUnsavedSavableChanges) edgeMatchReason = 'Save Draft before applying reducer suggestions from the saved fitting projection.';
+  else if (fittingsLoaded && edgeMatchCandidateCount <= 0 && reducerCandidateCount <= 0) edgeMatchReason = 'Refresh fittings after creating unresolved unequal-size reducer candidates.';
+  const states = {
+    start: commandState(!(Number(snapshot.catalogCount || 0) > 0), 'Raceway catalogue is still loading.'),
+    'continue-run': commandState(!snapshot.hasRun, 'Select a run before continuing it.'),
+    finish: commandState(!snapshot.hasRun || Number(snapshot.runNodeCount || 0) < 2, 'Add at least two nodes before finishing.'),
+    undo: commandState(!(Number(snapshot.undoCount || 0) > 0), 'Nothing to undo.'),
+    redo: commandState(!(Number(snapshot.redoCount || 0) > 0), 'Nothing to redo.'),
+    cancel: commandState(!snapshot.hasRun && snapshot.mode === 'idle', 'No active raceway command.'),
+    'select-node-mode': commandState(!snapshot.hasRun, 'Select a run before selecting nodes on canvas.'),
+    'move-node': commandState(!snapshot.hasNode, 'Select a node before moving it.'),
+    'delete-node': commandState(!snapshot.hasNode, 'Select a node before deleting it.'),
+    'connect-node': commandState(!snapshot.canConnectEndpoint, 'Select the first or last node of a run before connecting it.'),
+    'anchor-node': commandState(!snapshot.hasRun, 'Start or select a run before anchoring.'),
+    'clear-anchor': commandState(!snapshot.hasAnchoredNode, 'Select an anchored node first.'),
+    save: commandState(
+      persistenceLoading || (!Number(snapshot.savableRunCount || 0) && !Number(snapshot.pendingDraftDeleteCount || 0)),
+      'Add at least one two-node run or remove a saved run before saving.'
+    ),
+    reload: commandState(persistenceLoading, persistenceLoading ? 'Raceway persistence is busy.' : ''),
+    'refresh-graph': commandState(
+      persistenceLoading || graphLoading || !layerId,
+      layerId ? 'Raceway persistence or graph refresh is busy.' : 'Save a raceway layer before refreshing graph warnings.'
+    ),
+    'refresh-schedule': commandState(
+      persistenceLoading || scheduleLoading || !layerId,
+      layerId ? 'Raceway persistence or schedule refresh is busy.' : 'Save a raceway layer before refreshing the schedule.'
+    ),
+    'refresh-fittings': commandState(
+      persistenceLoading || fittingsLoading || !layerId,
+      layerId ? 'Raceway persistence or fittings refresh is busy.' : 'Save a raceway layer before refreshing fittings.'
+    ),
+    'apply-reducer-offsets': commandState(edgeMatchDisabled, edgeMatchReason),
+    'open-warning-details': commandState(
+      persistenceLoading || !layerId,
+      layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before opening warning details.'
+    ),
+    'open-schedule-csv': commandState(
+      persistenceLoading || !layerId,
+      layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.'
+    ),
+    'delete-run': commandState(persistenceLoading || !snapshot.hasRun, 'Select a run before deleting it.'),
+    'add-segment': commandState(
+      !Number(snapshot.runNodeCount || 0) || !(segmentLengthM > 0),
+      'Add at least one node and enter a positive segment length.'
+    ),
+    'split-segment': commandState(
+      !snapshot.hasSelectedSegment || splitPercent <= 0 || splitPercent >= 100,
+      'Select a segment and enter a split percentage between 1 and 99.'
+    ),
+    'toggle-surfaces': commandState(false),
+  };
+  return states;
+}
+
 function updateActionStates(run) {
   const node = selectedNode();
-  setActionState('start', !catalog.length, 'Raceway catalogue is still loading.');
-  setActionState('continue-run', !run, 'Select a run before continuing it.');
-  setActionState('finish', !run || (run.nodes.length < 2), 'Add at least two nodes before finishing.');
-  setActionState('undo', !state.undoStack.length, 'Nothing to undo.');
-  setActionState('redo', !state.redoStack.length, 'Nothing to redo.');
-  setActionState('cancel', !run && state.mode === 'idle', 'No active raceway command.');
-  setActionState('select-node-mode', !run, 'Select a run before selecting nodes on canvas.');
-  setActionState('move-node', !node, 'Select a node before moving it.');
-  setActionState('delete-node', !node, 'Select a node before deleting it.');
-  setActionState('connect-node', !canConnectSelectedEndpoint(run), 'Select the first or last node of a run before connecting it.');
-  setActionState('anchor-node', !run, 'Start or select a run before anchoring.');
-  setActionState('clear-anchor', !node || !anchorLabel(node.anchor), 'Select an anchored node first.');
   const savableRuns = savableRunsForPersistence();
   const pendingDraftDeleteCount = serverRunIdsRemovedFromDraft(savableRuns).length;
-  setActionState('save', state.persistenceLoading || (!savableRuns.length && !pendingDraftDeleteCount), 'Add at least one two-node run or remove a saved run before saving.');
-  setActionState('reload', state.persistenceLoading, state.persistenceLoading ? 'Raceway persistence is busy.' : '');
-  setActionState('refresh-graph', state.persistenceLoading || state.graphLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing graph warnings.');
-  setActionState('refresh-schedule', state.persistenceLoading || state.scheduleLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing the schedule.');
-  setActionState('refresh-fittings', state.persistenceLoading || state.fittingsLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before refreshing fittings.');
   const edgeMatchCandidateCount = reducerEdgeMatchCandidates().length;
   const reducerCandidateCount = reducerTransitionCandidates().length;
-  const edgeMatchDisabled = state.persistenceLoading
-    || state.fittingsLoading
-    || !state.layerId
-    || hasUnsavedSavableChanges()
-    || (state.fittingsLoaded && edgeMatchCandidateCount <= 0 && reducerCandidateCount <= 0);
-  let edgeMatchReason = '';
-  if (!state.layerId) edgeMatchReason = 'Save a raceway layer before applying reducer edge-match suggestions.';
-  else if (state.persistenceLoading || state.fittingsLoading) edgeMatchReason = 'Raceway persistence or fittings are busy.';
-  else if (hasUnsavedSavableChanges()) edgeMatchReason = 'Save Draft before applying reducer suggestions from the saved fitting projection.';
-  else if (state.fittingsLoaded && edgeMatchCandidateCount <= 0 && reducerCandidateCount <= 0) edgeMatchReason = 'Refresh fittings after creating unresolved unequal-size reducer candidates.';
-  setActionState('apply-reducer-offsets', edgeMatchDisabled, edgeMatchReason);
+  const segment = selectedSegment();
+  const commandStates = computeRacewayCommandStates({
+    catalogCount: catalog.length,
+    hasRun: Boolean(run),
+    runNodeCount: run?.nodes?.length || 0,
+    hasNode: Boolean(node),
+    hasAnchoredNode: Boolean(node && anchorLabel(node.anchor)),
+    canConnectEndpoint: canConnectSelectedEndpoint(run),
+    mode: state.mode,
+    undoCount: state.undoStack.length,
+    redoCount: state.redoStack.length,
+    savableRunCount: savableRuns.length,
+    pendingDraftDeleteCount,
+    persistenceLoading: state.persistenceLoading,
+    graphLoading: state.graphLoading,
+    scheduleLoading: state.scheduleLoading,
+    fittingsLoading: state.fittingsLoading,
+    fittingsLoaded: state.fittingsLoaded,
+    layerId: state.layerId,
+    hasUnsavedSavableChanges: hasUnsavedSavableChanges(),
+    edgeMatchCandidateCount,
+    reducerCandidateCount,
+    hasSelectedSegment: Boolean(segment),
+    splitPercent: normalizedSegmentSplitPercent(state.segmentSplitPercent),
+    segmentLengthM: state.segmentLengthM,
+  });
+  Object.entries(commandStates).forEach(([action, status]) => {
+    setActionState(action, status.disabled, status.reason);
+  });
+  const edgeMatchState = commandStates['apply-reducer-offsets'];
   setCommandHint(
-    edgeMatchDisabled && edgeMatchReason
-      ? disabledActionHint('apply-reducer-offsets', edgeMatchReason)
+    edgeMatchState?.disabled && edgeMatchState.reason
+      ? disabledActionHint('apply-reducer-offsets', edgeMatchState.reason)
       : ''
   );
-  setActionState('open-warning-details', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before opening warning details.');
-  setActionState('open-schedule-csv', state.persistenceLoading || !state.layerId, state.layerId ? 'Raceway persistence is busy.' : 'Save a raceway layer before downloading CSV.');
-  setActionState('delete-run', state.persistenceLoading || !run, 'Select a run before deleting it.');
-  setActionState('add-segment', !run?.nodes?.length || !(Number(state.segmentLengthM) > 0), 'Add at least one node and enter a positive segment length.');
-  const splitPercent = normalizedSegmentSplitPercent(state.segmentSplitPercent);
-  setActionState('split-segment', !selectedSegment() || splitPercent <= 0 || splitPercent >= 100, 'Select a segment and enter a split percentage between 1 and 99.');
-  setActionState('toggle-surfaces', false);
 }
 
 function renderPanel(options = {}) {
@@ -4980,4 +5057,5 @@ window.racewayViewerOverlay = {
   },
   flushTelemetry: flushTelemetryEvents,
   telemetryQueueSize: () => telemetryQueue.length,
+  computeRacewayCommandStates,
 };

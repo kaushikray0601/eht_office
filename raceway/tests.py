@@ -2130,6 +2130,8 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function validateFittingProjectionContract", content)
         self.assertIn("function reducerCandidateExclusionReasons", content)
         self.assertIn("function disabledActionHint", content)
+        self.assertIn("function computeRacewayCommandStates", content)
+        self.assertIn("computeRacewayCommandStates,", content)
         self.assertIn("dataset.disabledReason", content)
         self.assertIn("Raceway fitting projection contract warning", content)
         self.assertIn("Raceway reducer candidate one-edge alignment missing handedness suggestions", content)

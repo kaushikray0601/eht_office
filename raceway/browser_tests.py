@@ -444,6 +444,47 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     "Save a raceway layer before applying reducer edge-match suggestions",
                     page.text_content("#racewayCommandHint"),
                 )
+                command_state_probe = page.evaluate(
+                    """() => {
+                      const base = {
+                        catalogCount: 1,
+                        hasRun: true,
+                        runNodeCount: 2,
+                        hasNode: false,
+                        hasAnchoredNode: false,
+                        canConnectEndpoint: false,
+                        mode: 'idle',
+                        undoCount: 0,
+                        redoCount: 0,
+                        savableRunCount: 1,
+                        pendingDraftDeleteCount: 0,
+                        persistenceLoading: false,
+                        graphLoading: false,
+                        scheduleLoading: false,
+                        fittingsLoading: false,
+                        fittingsLoaded: true,
+                        layerId: 91,
+                        edgeMatchCandidateCount: 1,
+                        reducerCandidateCount: 1,
+                        hasSelectedSegment: false,
+                        splitPercent: 50,
+                        segmentLengthM: 6,
+                      };
+                      return {
+                        clean: window.racewayViewerOverlay.computeRacewayCommandStates({
+                          ...base,
+                          hasUnsavedSavableChanges: false,
+                        })['apply-reducer-offsets'],
+                        dirty: window.racewayViewerOverlay.computeRacewayCommandStates({
+                          ...base,
+                          hasUnsavedSavableChanges: true,
+                        })['apply-reducer-offsets'],
+                      };
+                    }"""
+                )
+                self.assertFalse(command_state_probe["clean"]["disabled"])
+                self.assertTrue(command_state_probe["dirty"]["disabled"])
+                self.assertIn("Save Draft before applying reducer suggestions", command_state_probe["dirty"]["reason"])
                 self.assertIn("Ctrl+Z", page.get_attribute('[data-raceway-action="undo"]', "title"))
                 self.assertIn("Ctrl+Shift+Z", page.get_attribute('[data-raceway-action="redo"]', "title"))
                 self.assertIn("Ctrl+S", page.get_attribute('[data-raceway-action="save"]', "title"))

@@ -1257,3 +1257,20 @@ do not enter that branch. Overlay cache key is `20260720_raceway46`. B-5/CI,
 pure command-state extraction, JSDoc/@ts-check, and geometry/DOM split remain
 open; next pass should extract tested command availability before adding more
 accessory bodies.
+
+Plant3D/Raceway note, 2026-07-21 hybrid accessory doctrine + command-state
+seam: KR asked whether a user-selectable bend/reducer/tee/cross/riser library
+could simplify the system versus automatic accessory creation. Answer recorded
+in `raceway-accessory-geometry-note-2026-07-17.md`: use a hybrid model.
+Manual-only accessories are not robust enough for EPC because loose visual
+parts can drift from graph continuity, schedules, clash envelopes, and future
+pathfinding. Full automatic catalogue selection is too ambitious for MVP. The
+right pattern is server-derived accessory candidates plus user accept/reject/
+override from a palette, persisted as accessory intent rather than baked
+geometry. In code, `raceway_overlay.js` now has the first pure command-state
+seam: `computeRacewayCommandStates(snapshot)` drives button disabled/enabled
+state and the visible Edge Match command hint. Browser smoke calls this
+function directly for clean-vs-dirty Edge Match cases. Overlay cache key is
+`20260721_raceway47`. Next hardening: grow this seam toward JSDoc/@ts-check
+and begin splitting command/geometry helpers before adding persisted accessory
+intent and tee/cross bodies.

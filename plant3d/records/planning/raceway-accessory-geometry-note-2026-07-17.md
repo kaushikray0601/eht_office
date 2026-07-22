@@ -332,6 +332,59 @@ Later vendor replacement:
 - keep the generic parametric proxy for clash approximation, fallback, and
   projects without vendor-specific catalogues.
 
+## Accessory Library And Automation Doctrine
+
+KR question recorded 2026-07-21:
+
+- can a user-selectable accessory library/palette simplify bend, reducer,
+  riser, tee, and cross development compared with automatically creating every
+  accessory?
+- would manual routing be simpler and more robust for MVP?
+
+Decision:
+
+- use a hybrid model,
+- do not switch to manual-only accessories,
+- do not attempt full automatic catalogue selection for MVP.
+
+MVP doctrine:
+
+1. The saved route/graph remains the engineering truth.
+2. The server derives accessory candidates from topology, size transitions,
+   direction changes, elevation changes, and face alignment.
+3. The UI presents candidates as lightweight parametric proxies.
+4. The user can accept, reject, override, or replace a candidate from an
+   accessory palette/library.
+5. User decisions are stored as accessory intent, not baked mesh vertices.
+6. Vendor catalogue parts can later replace the generic proxy when selected.
+
+Why not manual-only:
+
+- manual placement may look simpler, but it risks drifting from cable route
+  continuity, schedule quantities, clash envelopes, and later pathfinding,
+- EPC users need traceability: each accessory must explain which route node,
+  segment pair, or graph junction caused it,
+- route optimization and cable routing need graph-aware fittings, not loose
+  visual blocks.
+
+Why not full automation-only:
+
+- catalogue selection depends on vendor, project preference, bend radius,
+  side/handedness, available parts, covers, dividers, branch orientation, and
+  construction practice,
+- forcing the system to decide all of that early will create brittle logic and
+  unnecessary UI complexity.
+
+Implementation implication:
+
+- accessory defaults, validation rules, assumptions, and schedule semantics
+  should live server-side,
+- JavaScript should become a renderer and command surface,
+- the palette should select or override projected accessory intent rather than
+  hand-place disconnected geometry,
+- command availability must be extracted into tested pure state functions
+  before the palette grows.
+
 ## Persistence Plan
 
 Phase 1: projection-only accessories.

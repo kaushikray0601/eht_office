@@ -273,7 +273,7 @@ PLANT3D_VIEWER_EXTENSIONS = [
         "owner": "raceway",
         "kind": "consumer-overlay",
         "script": "raceway/js/raceway_overlay.js",
-        "version": "20260720_raceway46",
+        "version": "20260721_raceway47",
     },
 ]
 

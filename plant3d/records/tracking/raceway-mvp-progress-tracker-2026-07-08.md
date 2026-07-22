@@ -2731,3 +2731,88 @@ Append each pass here.
   - extract `computeRacewayCommandStates(snapshot)` as a pure tested layer,
   - use it to drive button disabled/enabled state and visible command hints,
   - then persist reducer accessory intent before tee/cross body geometry.
+
+### 2026-07-21 - Hybrid Accessory Doctrine And Command-State Seam
+
+- Manual check from KR:
+  - previous B-list hardening pass passed manual testing.
+- Claude/Fable note review:
+  - latest available note remains §44,
+  - no blocker beyond the endorsed hardening sequence,
+  - B-5/CI and deeper JS extraction remain open.
+- KR asked before coding:
+  - would a user-selectable accessory library/palette be simpler than
+    automatically creating bends, reducers, tees, crosses, and risers?
+  - would manual routing be more robust for MVP?
+- Directional answer:
+  - use a hybrid model,
+  - do not switch to manual-only accessories,
+  - do not attempt full automatic catalogue selection for MVP.
+- Recorded accessory doctrine:
+  - route/graph remains engineering truth,
+  - server derives accessory candidates,
+  - UI presents lightweight proxy accessories,
+  - user accepts/rejects/overrides/replaces from a palette,
+  - user choices persist as accessory intent, not baked vertices,
+  - vendor catalogue parts can later replace generic proxies.
+- Rationale:
+  - manual-only visual fittings risk drifting from route continuity,
+    schedules, clash envelopes, and future cable pathfinding,
+  - full automation-only requires vendor/project/constructability choices too
+    early,
+  - hybrid keeps the EPC traceability engine while avoiding brittle
+    over-automation.
+- Documentation updated:
+  - added `Accessory Library And Automation Doctrine` to
+    `raceway-accessory-geometry-note-2026-07-17.md`.
+- Implemented first command-state extraction:
+  - added `computeRacewayCommandStates(snapshot)` in `raceway_overlay.js`,
+  - command state is now computed from a snapshot before mutating the DOM,
+  - `updateActionStates()` routes button enabled/disabled logic through that
+    function,
+  - the visible Edge Match disabled hint now reads from the computed command
+    state,
+  - exposed the pure function through `window.racewayViewerOverlay` for
+    browser probing.
+- Tests updated:
+  - static asset test now pins `computeRacewayCommandStates`,
+  - browser smoke calls the function directly and verifies:
+    - clean saved reducer candidate enables `Apply Edge Match`,
+    - dirty draft disables it with the Save Draft reason.
+- Bumped browser cache key:
+  - Raceway overlay: `20260721_raceway47`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `git diff --check`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayFittingProjectionTests --noinput -v 1`
+  - focused browser smoke first failed inside sandbox due Chromium
+    `Operation not permitted`, then passed unsandboxed:
+    `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayBrowserSmokeTests.test_raceway_authoring_uses_viewer_interaction_contract --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+- Manual check:
+  - open the viewer,
+  - confirm normal Raceway buttons behave as before,
+  - before saving a raceway layer, confirm the Edge Match reason is visible
+    below the Raceway status line,
+  - after saving/refreshing fittings for an actionable same-family width
+    reducer, confirm `Apply Edge Match` enables normally,
+  - dirty the draft and confirm the visible reason asks to Save Draft first.
+- Notes to Claude/Fable:
+  - please review the hybrid accessory doctrine; challenge only if you believe
+    MVP should allow loose manually placed accessory blocks,
+  - first command-state seam is intentionally still in the overlay file; next
+    pass should decide whether to extract a separate static module or continue
+    incremental pure-function seams,
+  - B-5/CI remains open.
+- Next recommended pass:
+  - add JSDoc typedefs around command-state snapshots/results,
+  - start extracting geometry recipe/render helpers behind pure functions,
+  - then add persisted accessory intent for reducer handedness/radius before
+    detailed tee/cross body geometry.
