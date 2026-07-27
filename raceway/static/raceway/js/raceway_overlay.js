@@ -4315,6 +4315,7 @@ function scheduleSummaryHtml() {
   if (!state.scheduleLoaded || !state.scheduleProjection) return '';
   const schedule = state.scheduleProjection;
   const totals = schedule.totals || {};
+  const fittingCounts = schedule.fitting_placeholders?.counts || {};
   const warnings = schedule.warning_summary || schedule.graph_warnings || {};
   const assumptions = Array.isArray(schedule.assumptions) ? schedule.assumptions : [];
   const groups = Array.isArray(schedule.groups) ? schedule.groups : [];
@@ -4332,7 +4333,8 @@ function scheduleSummaryHtml() {
     <div>
       <strong>Schedule</strong><br>
       ${totals.run_count || 0} run(s) | ${formatM(totals.length_m)} m | ${totals.piece_count_estimate || 0} piece(s) | ${formatM(totals.offcut_m_estimate)} m offcut<br>
-      ${totals.plan_bend_count || 0} bend(s) | ${totals.riser_count || 0} riser(s) | ${totals.support_placeholders || 0} support placeholder(s)
+      ${totals.plan_bend_count || 0} bend(s) | ${totals.riser_count || 0} riser(s) | ${fittingCounts.tee_total || 0} tee(s) | ${fittingCounts.cross_total || 0} cross(es)<br>
+      ${totals.support_placeholders || 0} support placeholder(s) | ${fittingCounts.branch_accessory_unresolved_total || 0} branch fitting(s) projection-only
       ${warningText ? `<br><span class="raceway-schedule-warning">${escapeHtml(warningText)}</span>` : ''}
       <br>${assumptions.length} assumption(s) included in JSON/CSV output.
       ${groupRows}

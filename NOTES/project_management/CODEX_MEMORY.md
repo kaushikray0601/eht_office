@@ -1294,3 +1294,18 @@ catalogue-grade main/branch selection, persisted branch intent, branch-size
 adapters, covers/dividers/couplers/vendor parts. Recommendation: manual check,
 then a focused C10 JS hardening slice, then pivot to cable
 assignment/pathfinding/graph use.
+
+Plant3D/Raceway note, 2026-07-27 Tee/Cross schedule placeholders: KR manually
+confirmed Tee/Cross can be created through explicit connected graph nodes and
+are visible/countable in fittings JSON. Implemented the next agreed slice:
+`build_layer_schedule` now consumes the fitting projection and includes
+projection-only branch accessory placeholders under
+`schedule.fitting_placeholders.branch_accessories`. Counts now include
+`tee_total`, `cross_total`, `branch_accessory_total`, and unresolved projection
+counts; `totals` includes tee/cross/branch accessory counts. CSV export now has
+Tee/Cross rows plus a `Branch Accessory Placeholders` section. Viewer schedule
+summary shows tee/cross counts after `Refresh Schedule`. Boundary remains:
+these are count placeholders only; no main-by-branch procurement sizing is
+printed until branch intent is unambiguous or user-confirmed. Overlay cache key
+is `20260727_raceway49`. Next pass should be the focused C10 hardening slice,
+then the more intuitive Make Tee/Make Cross authoring command.

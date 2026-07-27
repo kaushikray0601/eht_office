@@ -229,19 +229,31 @@ def face_offset_step_placeholder(run, previous_node, node, next_node):
     }
 
 
-def fitting_counts(plan_bends, risers):
+def fitting_counts(plan_bends, risers, branch_accessories=None):
+    branch_accessories = branch_accessories or []
     bend_counts = defaultdict(int)
     riser_counts = defaultdict(int)
+    branch_counts = defaultdict(int)
+    branch_status_counts = defaultdict(int)
     for bend in plan_bends:
         bend_counts[bend["category"]] += 1
     for riser in risers:
         riser_counts[riser["category"]] += 1
+    for accessory in branch_accessories:
+        branch_counts[accessory.get("category") or "unknown"] += 1
+        branch_status_counts[accessory.get("sizing_status") or accessory.get("status") or "unknown"] += 1
     return {
         "plan_bends": dict(sorted(bend_counts.items())),
         "risers": dict(sorted(riser_counts.items())),
+        "branch_accessories": dict(sorted(branch_counts.items())),
+        "branch_accessory_status": dict(sorted(branch_status_counts.items())),
         "plan_bend_total": len(plan_bends),
         "non_standard_plan_bend_total": sum(1 for bend in plan_bends if bend.get("non_standard_angle")),
         "riser_total": len(risers),
+        "tee_total": sum(1 for accessory in branch_accessories if accessory.get("kind") == "tee"),
+        "cross_total": sum(1 for accessory in branch_accessories if accessory.get("kind") == "cross"),
+        "branch_accessory_total": len(branch_accessories),
+        "branch_accessory_unresolved_total": branch_status_counts.get("projection_only_unresolved", 0),
     }
 
 

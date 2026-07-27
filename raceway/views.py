@@ -767,6 +767,9 @@ def _write_schedule_csv(response, layer, schedule):
         "Riser m",
         "Plan Bends",
         "Risers",
+        "Tees",
+        "Crosses",
+        "Branch Accessories",
         "Support Placeholders",
         "Piece Estimate",
         "Offcut Estimate m",
@@ -782,6 +785,9 @@ def _write_schedule_csv(response, layer, schedule):
         _csv_number(totals.get("riser_length_m")),
         totals.get("plan_bend_count", 0),
         totals.get("riser_count", 0),
+        totals.get("tee_count", 0),
+        totals.get("cross_count", 0),
+        totals.get("branch_accessory_count", 0),
         totals.get("support_placeholders", 0),
         totals.get("piece_count_estimate", 0),
         _csv_number(totals.get("offcut_m_estimate")),
@@ -799,6 +805,47 @@ def _write_schedule_csv(response, layer, schedule):
     writer.writerow(["riser", "total", fitting_counts.get("riser_total", 0)])
     for category, count in sorted(fitting_counts.get("risers", {}).items()):
         writer.writerow(["riser", category, count])
+    writer.writerow(["branch_accessory", "total", fitting_counts.get("branch_accessory_total", 0)])
+    writer.writerow(["tee", "projection_only_total", fitting_counts.get("tee_total", 0)])
+    writer.writerow(["cross", "projection_only_total", fitting_counts.get("cross_total", 0)])
+    writer.writerow([
+        "branch_accessory",
+        "projection_only_unresolved",
+        fitting_counts.get("branch_accessory_unresolved_total", 0),
+    ])
+    for category, count in sorted(fitting_counts.get("branch_accessories", {}).items()):
+        writer.writerow(["branch_accessory", category, count])
+    writer.writerow([])
+    writer.writerow(["Branch Accessory Placeholders"])
+    writer.writerow([
+        "Kind",
+        "Category",
+        "Graph Node",
+        "Degree",
+        "Port Count",
+        "Run Tags",
+        "Sizing Status",
+        "Branch Intent",
+        "Intent Persistence",
+        "Needs Catalogue Validation",
+        "Needs Face Alignment",
+        "Message",
+    ])
+    for accessory in schedule.get("fitting_placeholders", {}).get("branch_accessories", []):
+        writer.writerow([
+            accessory.get("kind", ""),
+            accessory.get("category", ""),
+            accessory.get("graph_node_key", ""),
+            accessory.get("degree", 0),
+            accessory.get("port_count", 0),
+            "; ".join(accessory.get("run_tags", [])),
+            accessory.get("sizing_status", ""),
+            accessory.get("branch_intent_status", ""),
+            accessory.get("branch_intent_persistence", ""),
+            "yes" if accessory.get("requires_catalogue_validation") else "no",
+            "yes" if accessory.get("requires_face_alignment") else "no",
+            accessory.get("message", ""),
+        ])
     writer.writerow([])
     writer.writerow(["Validation Warnings"])
     writer.writerow(["Severity", "Code", "Source", "Object", "Run Tag", "Segment", "Message"])

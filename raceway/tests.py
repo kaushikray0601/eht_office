@@ -879,7 +879,7 @@ class RacewayScheduleProjectionTests(TestCase):
         self.assertIn("raceway.schedule.traceability", assumption_codes)
         self.assertIn("raceway.schedule.support_placeholder", assumption_codes)
         self.assertIn("raceway.schedule.standard_length_piece_estimate", assumption_codes)
-        self.assertIn("raceway.schedule.junction_placeholder_deferred", assumption_codes)
+        self.assertIn("raceway.schedule.tee_cross_projection_only", assumption_codes)
         self.assertEqual(schedule["project_id"], "RWY-SCHEDULE")
         self.assertEqual(schedule["layer_id"], layer.pk)
         self.assertTrue(schedule["generated_at"])
@@ -890,6 +890,58 @@ class RacewayScheduleProjectionTests(TestCase):
             schedule["warning_summary"]["by_code"]["raceway.warning.support_span_placeholder_basis"],
             1,
         )
+
+    def test_layer_schedule_counts_projection_only_tee_and_cross_placeholders(self):
+        layer = create_layer(project_id="RWY-SCHEDULE-BRANCH")
+        family = create_family("SCHED-BRANCH-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        main = create_run(layer=layer, family=family, size=size)
+        main.tag = "RWY-SCHED-MAIN"
+        main.save()
+        tee_branch = create_run(layer=layer, family=family, size=size)
+        tee_branch.tag = "RWY-SCHED-TEE"
+        tee_branch.save()
+        cross_low = create_run(layer=layer, family=family, size=size)
+        cross_low.tag = "RWY-SCHED-CROSS-LOW"
+        cross_low.save()
+        cross_high = create_run(layer=layer, family=family, size=size)
+        cross_high.tag = "RWY-SCHED-CROSS-HIGH"
+        cross_high.save()
+        create_nodes(main, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (6.0, 0.0, 0.0), (9.0, 0.0, 0.0)])
+        create_nodes(tee_branch, [(3.0, 0.0, 0.0), (3.0, 3.0, 0.0)])
+        create_nodes(cross_low, [(6.0, -3.0, 0.0), (6.0, 0.0, 0.0)])
+        create_nodes(cross_high, [(6.0, 0.0, 0.0), (6.0, 3.0, 0.0)])
+
+        schedule = build_layer_schedule(layer)
+
+        branch_accessories = schedule["fitting_placeholders"]["branch_accessories"]
+        counts = schedule["fitting_placeholders"]["counts"]
+
+        self.assertEqual(len(branch_accessories), 2)
+        self.assertEqual(counts["tee_total"], 1)
+        self.assertEqual(counts["cross_total"], 1)
+        self.assertEqual(counts["branch_accessory_total"], 2)
+        self.assertEqual(counts["branch_accessory_unresolved_total"], 2)
+        self.assertEqual(
+            counts["branch_accessories"],
+            {"four_way_cross": 1, "three_way_tee": 1},
+        )
+        self.assertEqual(schedule["totals"]["tee_count"], 1)
+        self.assertEqual(schedule["totals"]["cross_count"], 1)
+        self.assertEqual(schedule["totals"]["branch_accessory_count"], 2)
+        tee = next(item for item in branch_accessories if item["kind"] == "tee")
+        cross = next(item for item in branch_accessories if item["kind"] == "cross")
+        self.assertEqual(tee["sizing_status"], "projection_only_unresolved")
+        self.assertEqual(tee["branch_intent_status"], "main_inferred")
+        self.assertEqual(tee["branch_intent_persistence"], "projection_only")
+        self.assertEqual(tee["port_count"], 3)
+        self.assertEqual(cross["sizing_status"], "projection_only_unresolved")
+        self.assertEqual(cross["branch_intent_status"], "main_inferred_branch_review")
+        self.assertEqual(cross["port_count"], 4)
+        self.assertTrue(tee["requires_catalogue_validation"])
+        self.assertIn("RWY-SCHED-MAIN", tee["run_tags"])
+        assumption_codes = {assumption["code"] for assumption in schedule["assumptions"]}
+        self.assertIn("raceway.schedule.tee_cross_projection_only", assumption_codes)
 
     def test_layer_schedule_groups_by_family_size_and_service(self):
         layer = create_layer(project_id="RWY-SCHEDULE-GROUP")
@@ -1546,6 +1598,22 @@ class RacewayApiTests(TestCase):
         run.tag = "RWY-CSV"
         run.save()
         create_nodes(run, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 3.0, 0.0)])
+        branch_main = create_run(layer=layer, family=self.family, size=self.size)
+        branch_main.tag = "RWY-CSV-MAIN"
+        branch_main.save()
+        tee_branch = create_run(layer=layer, family=self.family, size=self.size)
+        tee_branch.tag = "RWY-CSV-TEE"
+        tee_branch.save()
+        cross_low = create_run(layer=layer, family=self.family, size=self.size)
+        cross_low.tag = "RWY-CSV-CROSS-LOW"
+        cross_low.save()
+        cross_high = create_run(layer=layer, family=self.family, size=self.size)
+        cross_high.tag = "RWY-CSV-CROSS-HIGH"
+        cross_high.save()
+        create_nodes(branch_main, [(10.0, 0.0, 0.0), (13.0, 0.0, 0.0), (16.0, 0.0, 0.0), (19.0, 0.0, 0.0)])
+        create_nodes(tee_branch, [(13.0, 0.0, 0.0), (13.0, 2.0, 0.0)])
+        create_nodes(cross_low, [(16.0, -2.0, 0.0), (16.0, 0.0, 0.0)])
+        create_nodes(cross_high, [(16.0, 0.0, 0.0), (16.0, 2.0, 0.0)])
 
         response = self.client.get(reverse("raceway:layer_schedule_csv", args=[layer.pk]))
 
@@ -1557,13 +1625,18 @@ class RacewayApiTests(TestCase):
         self.assertIn("Assumptions", csv_text)
         self.assertIn("Totals", csv_text)
         self.assertIn("Fitting Placeholders", csv_text)
+        self.assertIn("Branch Accessory Placeholders", csv_text)
         self.assertIn("Validation Warnings", csv_text)
         self.assertIn("Warning Summary", csv_text)
         self.assertIn("Graph Warning Counts", csv_text)
         self.assertIn("Grouped Quantities", csv_text)
         self.assertIn("RWY-CSV", csv_text)
+        self.assertIn("RWY-CSV-MAIN", csv_text)
         self.assertIn("Piece Estimate", csv_text)
         self.assertIn("non_standard_angle", csv_text)
+        self.assertIn("tee,projection_only_total,1", csv_text)
+        self.assertIn("cross,projection_only_total,1", csv_text)
+        self.assertIn("projection_only_unresolved", csv_text)
 
     def test_run_create_update_delete_and_node_replace_workflow(self):
         layer = create_layer(project_id=self.project.proj_id)

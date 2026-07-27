@@ -7,6 +7,7 @@ from .geometry import (
     MIN_SEGMENT_LENGTH_M,
 )
 from .fittings import (
+    build_layer_fitting_projection,
     fitting_counts,
     plan_bend_placeholder,
     riser_placeholder_from_segment,
@@ -33,11 +34,13 @@ def build_layer_schedule(layer, *, support_span_m=PLACEHOLDER_SUPPORT_SPAN_M):
     )
     graph = build_layer_graph(layer_obj).to_payload()
     warnings = build_layer_warnings(layer_obj, graph_payload=graph, support_span_m=support_span_m)
+    fitting_projection = build_layer_fitting_projection(layer_obj)
     return build_schedule_for_runs(
         runs,
         layer=layer_obj,
         graph_warnings=graph.get("warnings", []),
         warnings=warnings,
+        fitting_projection=fitting_projection,
         support_span_m=support_span_m,
     )
 
@@ -48,6 +51,7 @@ def build_schedule_for_runs(
     layer=None,
     graph_warnings=None,
     warnings=None,
+    fitting_projection=None,
     support_span_m=PLACEHOLDER_SUPPORT_SPAN_M,
 ):
     run_payloads = []
@@ -84,6 +88,8 @@ def build_schedule_for_runs(
         _add_to_group(groups, run, run_payload)
 
     group_payloads = sorted(groups.values(), key=lambda item: item["group_key"])
+    branch_accessories = _branch_accessory_placeholders(fitting_projection)
+    fitting_placeholder_counts = fitting_counts(plan_bends, risers, branch_accessories)
     return {
         **_generation_envelope(layer),
         "assumptions": _schedule_assumptions(support_span_m),
@@ -95,10 +101,11 @@ def build_schedule_for_runs(
         "fitting_placeholders": {
             "plan_bends": plan_bends,
             "risers": risers,
-            "counts": fitting_counts(plan_bends, risers),
+            "branch_accessories": branch_accessories,
+            "counts": fitting_placeholder_counts,
         },
         "groups": group_payloads,
-        "totals": _totals_payload(run_payloads, segment_payloads, plan_bends, risers),
+        "totals": _totals_payload(run_payloads, segment_payloads, plan_bends, risers, branch_accessories),
     }
 
 
@@ -122,8 +129,8 @@ def _schedule_assumptions(support_span_m):
         {
             "code": "raceway.schedule.fitting_placeholder",
             "message": (
-                "Fitting placeholders are geometry-derived counts only. Vendor fittings, bend radii, "
-                "tees, crosses, and fabrication geometry are deferred."
+                "Fitting placeholders are geometry-derived counts only. Vendor fittings, exact bend radii, "
+                "accessory development dimensions, and fabrication geometry are deferred."
             ),
         },
         {
@@ -134,10 +141,10 @@ def _schedule_assumptions(support_span_m):
             ),
         },
         {
-            "code": "raceway.schedule.junction_placeholder_deferred",
+            "code": "raceway.schedule.tee_cross_projection_only",
             "message": (
-                "Junction, tee, and cross placeholder counts are deferred. Branch/junction graph nodes exist, "
-                "but this schedule currently counts only plan-bend and riser placeholders."
+                "Tee/cross counts are projection-only branch accessory placeholders. Main/branch catalogue "
+                "designation and procurement sizing remain unresolved unless later user-confirmed."
             ),
         },
     ]
@@ -220,7 +227,8 @@ def _add_to_group(groups, run, run_payload):
         group["known_weight_kg"] += run_payload["weight_kg"]
 
 
-def _totals_payload(runs, segments, plan_bends, risers):
+def _totals_payload(runs, segments, plan_bends, risers, branch_accessories=None):
+    branch_accessories = branch_accessories or []
     known_weight = sum(run["weight_kg"] for run in runs if run["weight_kg"] is not None)
     return {
         "run_count": len(runs),
@@ -230,12 +238,51 @@ def _totals_payload(runs, segments, plan_bends, risers):
         "riser_length_m": sum(run["riser_length_m"] for run in runs),
         "plan_bend_count": len(plan_bends),
         "riser_count": len(risers),
+        "tee_count": sum(1 for item in branch_accessories if item.get("kind") == "tee"),
+        "cross_count": sum(1 for item in branch_accessories if item.get("kind") == "cross"),
+        "branch_accessory_count": len(branch_accessories),
         "support_placeholders": sum(run["support_placeholders"] for run in runs),
         "piece_count_estimate": sum(run["piece_count_estimate"] for run in runs),
         "offcut_m_estimate": sum(run["offcut_m_estimate"] for run in runs),
         "known_weight_kg": known_weight,
         "has_unknown_weight": any(run["weight_kg"] is None for run in runs),
     }
+
+
+def _branch_accessory_placeholders(fitting_projection):
+    if not fitting_projection:
+        return []
+    placeholders = []
+    for item in fitting_projection.get("items", []):
+        if item.get("kind") not in {"tee", "cross"}:
+            continue
+        branch_intent = item.get("branch_intent") or {}
+        ports = item.get("ports") or []
+        placeholders.append(
+            {
+                "fitting_key": item.get("fitting_key", ""),
+                "kind": item.get("kind", ""),
+                "category": item.get("category", ""),
+                "status": item.get("status", ""),
+                "graph_node_key": item.get("graph_node_key", ""),
+                "graph_node_kind": item.get("graph_node_kind", ""),
+                "degree": item.get("degree", 0),
+                "source_point_m": item.get("source_point_m", {}),
+                "port_count": len(ports),
+                "run_tags": sorted({port.get("run_tag", "") for port in ports if port.get("run_tag")}),
+                "branch_intent_status": branch_intent.get("status", ""),
+                "branch_intent_persistence": branch_intent.get("persistence", "projection_only"),
+                "branch_intent_ambiguous": bool(branch_intent.get("ambiguous")),
+                "requires_catalogue_validation": bool(item.get("requires_catalogue_validation")),
+                "requires_face_alignment": bool(item.get("requires_face_alignment")),
+                "sizing_status": "projection_only_unresolved",
+                "message": (
+                    "Projection-only branch fitting count. Catalogue main/branch sizing is not designated "
+                    "until the branch intent is unambiguous or user-confirmed."
+                ),
+            }
+        )
+    return sorted(placeholders, key=lambda item: (item["kind"], item["graph_node_key"], item["fitting_key"]))
 
 
 def _generation_envelope(layer):

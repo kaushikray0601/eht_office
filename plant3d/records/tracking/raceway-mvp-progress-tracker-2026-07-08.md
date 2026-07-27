@@ -2910,3 +2910,81 @@ Append each pass here.
     - expose a routeable raceway graph for cable assignment,
     - define cable-to-raceway assignment records or projection,
     - begin shortest-path/manual-assignment workflow from equipment endpoints.
+
+### 2026-07-27 - Tee/Cross Schedule And CSV Placeholder Counts
+
+- Manual check from KR:
+  - explicit connected-node Tee/Cross workflow works,
+  - fittings JSON shows correct Tee/Cross counts,
+  - current authoring is usable but not intuitive enough for average users.
+- Claude/Fable note review:
+  - §45 remains aligned,
+  - no blocker,
+  - boundary retained: inferred branch intent may drive counts, visuals, and
+    warnings, but not exportable procurement sizing.
+- Implemented schedule integration:
+  - `build_layer_schedule()` now consumes the fitting projection,
+  - schedule JSON includes
+    `fitting_placeholders.branch_accessories`,
+  - counts now include:
+    - `tee_total`,
+    - `cross_total`,
+    - `branch_accessory_total`,
+    - `branch_accessory_unresolved_total`,
+    - `branch_accessories` by category.
+  - totals now include:
+    - `tee_count`,
+    - `cross_count`,
+    - `branch_accessory_count`.
+- Implemented CSV integration:
+  - `Fitting Placeholders` section includes projection-only Tee/Cross rows,
+  - new `Branch Accessory Placeholders` section prints:
+    - kind,
+    - category,
+    - graph node,
+    - degree,
+    - port count,
+    - run tags,
+    - sizing status,
+    - branch intent status,
+    - validation flags,
+    - projection-only message.
+- Viewer polish:
+  - schedule summary now shows Tee/Cross counts after `Refresh Schedule`,
+  - browser cache key bumped to `20260727_raceway49`.
+- Verification passed so far:
+  - `venv/bin/python -m py_compile raceway/schedule.py raceway/fittings.py raceway/views.py raceway/tests.py`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayScheduleProjectionTests.test_layer_schedule_counts_projection_only_tee_and_cross_placeholders raceway.tests.RacewayApiTests.test_layer_schedule_csv_endpoint_uses_same_schedule_payload_shape --noinput -v 2`
+  - `git diff --check`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+- Manual check:
+  - use the already confirmed Tee/Cross creation method,
+  - click `Refresh Fittings` and confirm fittings count still shows Tee/Cross,
+  - click `Refresh Schedule` and confirm schedule summary now shows Tee/Cross
+    counts,
+  - download CSV and confirm:
+    - `tee,projection_only_total`,
+    - `cross,projection_only_total`,
+    - `Branch Accessory Placeholders`,
+    - `projection_only_unresolved`.
+- Notes to Claude/Fable:
+  - schedule now includes Tee/Cross count placeholders but no guessed
+    main-by-branch procurement sizes,
+  - please challenge only if this still violates the §45 boundary,
+  - otherwise next slice remains C10 hardening before Make Tee/Make Cross.
+- Next recommended pass:
+  - focused C10 hardening slice:
+    - add typed/JSDoc shape around command-state schedule/fitting projection
+      snapshots,
+    - extract first pure schedule/fitting summary helpers from DOM rendering,
+    - add contract pins for the schedule fields Phase H will consume.
+  - after that, implement intuitive authoring:
+    - Make Tee: endpoint to target segment with automatic target split,
+    - Make Cross: from unconnected-crossing warning with both segments split.
