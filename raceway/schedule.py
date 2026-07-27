@@ -141,6 +141,13 @@ def _schedule_assumptions(support_span_m):
             ),
         },
         {
+            "code": "raceway.schedule.gross_straight_length_basis",
+            "message": (
+                "Straight raceway lengths are gross centerline segment lengths. Bend, riser, reducer, tee, and cross "
+                "development lengths are not deducted from straight lengths in this MVP schedule basis."
+            ),
+        },
+        {
             "code": "raceway.schedule.tee_cross_projection_only",
             "message": (
                 "Tee/cross counts are projection-only branch accessory placeholders. Main/branch catalogue "

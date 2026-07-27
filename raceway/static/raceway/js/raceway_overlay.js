@@ -858,6 +858,40 @@ function graphWarnings() {
   return Array.isArray(warnings) ? warnings : [];
 }
 
+function validateGraphProjectionContract(graph) {
+  if (!graph) {
+    console.warn('Raceway graph projection missing from response.');
+    return;
+  }
+  if (!Array.isArray(graph.nodes)) {
+    console.warn('Raceway graph projection contract warning: nodes must be an array.');
+  }
+  if (!Array.isArray(graph.edges)) {
+    console.warn('Raceway graph projection contract warning: edges must be an array.');
+  }
+  if (!Array.isArray(graph.warnings)) {
+    console.warn('Raceway graph projection contract warning: warnings must be an array.');
+  }
+  (Array.isArray(graph.edges) ? graph.edges : []).forEach(edge => {
+    if (!edge.key) console.warn('Raceway graph edge missing key.', edge);
+    if (!edge.run_key && !edge.run_id) console.warn('Raceway graph edge missing run identity.', edge);
+    if (!Number.isInteger(Number(edge.start_sequence))) console.warn('Raceway graph edge missing start_sequence.', edge);
+    if (!Number.isInteger(Number(edge.end_sequence))) console.warn('Raceway graph edge missing end_sequence.', edge);
+    if (!edge.start_point_m || typeof edge.start_point_m !== 'object') console.warn('Raceway graph edge missing start_point_m.', edge);
+    if (!edge.end_point_m || typeof edge.end_point_m !== 'object') console.warn('Raceway graph edge missing end_point_m.', edge);
+  });
+  (Array.isArray(graph.warnings) ? graph.warnings : [])
+    .filter(warning => warning?.code === 'raceway.graph.unconnected_crossing')
+    .forEach(warning => {
+      if (!Array.isArray(warning.edge_keys) || warning.edge_keys.length < 2) {
+        console.warn('Raceway unconnected-crossing warning missing edge_keys.', warning);
+      }
+      if (!sourcePointFromGraphWarning(warning)) {
+        console.warn('Raceway unconnected-crossing warning missing source_point_m.', warning);
+      }
+    });
+}
+
 function scheduleWarnings() {
   const warnings = state.scheduleProjection?.warnings;
   return Array.isArray(warnings) ? warnings : [];
@@ -3672,6 +3706,7 @@ async function loadGraphProjection(options = {}) {
   try {
     const payload = await apiFetch(url);
     state.graphProjection = payload.graph || null;
+    validateGraphProjectionContract(state.graphProjection);
     state.graphLoaded = true;
     recordWarningTelemetry(graphWarnings(), 'shown');
     if (!options.quiet) {

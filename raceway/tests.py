@@ -442,6 +442,46 @@ class RacewayGraphProjectionTests(TestCase):
         self.assertAlmostEqual(warnings[0]["source_point_m"]["x"], 2.0)
         self.assertAlmostEqual(warnings[0]["source_point_m"]["y"], 0.0)
 
+    def test_graph_projection_contract_pins_make_cross_fields_used_by_js(self):
+        layer = create_layer(project_id="RWY-GRAPH-CROSS-CONTRACT")
+        family = create_family("GRAPH-CROSS-CONTRACT-LADDER")
+        size = create_size(family=family)
+        east_west = create_run(layer=layer, family=family, size=size)
+        east_west.tag = "RWY-EW"
+        east_west.save()
+        north_south = create_run(layer=layer, family=family, size=size)
+        north_south.tag = "RWY-NS"
+        north_south.save()
+        create_nodes(east_west, [(0.0, 2.0, 0.0), (4.0, 2.0, 0.0)])
+        create_nodes(north_south, [(2.0, 0.0, 0.0), (2.0, 4.0, 0.0)])
+
+        payload = build_layer_graph(layer).to_payload()
+        warning = next(item for item in payload["warnings"] if item["code"] == "raceway.graph.unconnected_crossing")
+        edges = {edge["key"]: edge for edge in payload["edges"]}
+
+        self.assertEqual(warning["severity"], "warning")
+        self.assertEqual(set(warning["edge_keys"]), set(edges.keys()))
+        self.assertEqual(set(warning["run_ids"]), {east_west.pk, north_south.pk})
+        self.assertAlmostEqual(warning["source_point_m"]["x"], 2.0)
+        self.assertAlmostEqual(warning["source_point_m"]["y"], 2.0)
+        self.assertAlmostEqual(warning["source_point_m"]["z"], 0.0)
+        self.assertEqual(warning["tolerance_m"], GRAPH_NODE_TOLERANCE_M)
+
+        for edge in edges.values():
+            self.assertIn("run_id", edge)
+            self.assertIn("run_key", edge)
+            self.assertIn("start_sequence", edge)
+            self.assertIn("end_sequence", edge)
+            self.assertIn("start_point_m", edge)
+            self.assertIn("end_point_m", edge)
+            self.assertEqual(edge["start_sequence"], 0)
+            self.assertEqual(edge["end_sequence"], 1)
+            self.assertIn(edge["run_key"], {str(east_west.key), str(north_south.key)})
+            self.assertFalse(edge["is_riser"])
+            self.assertGreater(edge["length_m"], 0)
+            for endpoint in (edge["start_point_m"], edge["end_point_m"]):
+                self.assertEqual(set(endpoint), {"x", "y", "z"})
+
     def test_graph_projection_derives_riser_from_geometry_not_persisted_kind(self):
         layer = create_layer(project_id="RWY-RISER")
         family = create_family("GRAPH-RISER-LADDER")
@@ -879,6 +919,7 @@ class RacewayScheduleProjectionTests(TestCase):
         self.assertIn("raceway.schedule.traceability", assumption_codes)
         self.assertIn("raceway.schedule.support_placeholder", assumption_codes)
         self.assertIn("raceway.schedule.standard_length_piece_estimate", assumption_codes)
+        self.assertIn("raceway.schedule.gross_straight_length_basis", assumption_codes)
         self.assertIn("raceway.schedule.tee_cross_projection_only", assumption_codes)
         self.assertEqual(schedule["project_id"], "RWY-SCHEDULE")
         self.assertEqual(schedule["layer_id"], layer.pk)
@@ -942,6 +983,7 @@ class RacewayScheduleProjectionTests(TestCase):
         self.assertIn("RWY-SCHED-MAIN", tee["run_tags"])
         assumption_codes = {assumption["code"] for assumption in schedule["assumptions"]}
         self.assertIn("raceway.schedule.tee_cross_projection_only", assumption_codes)
+        self.assertIn("raceway.schedule.gross_straight_length_basis", assumption_codes)
 
     def test_layer_schedule_contract_pins_phase_h_route_and_branch_fields(self):
         layer = create_layer(project_id="RWY-SCHEDULE-PHASE-H")
@@ -1463,6 +1505,52 @@ class RacewayFittingProjectionTests(TestCase):
         self.assertEqual(tee["branch_intent"]["branch_run_tags"], ["RWY-TEE-BRANCH"])
         self.assertEqual(projection["counts"]["by_kind"]["tee"], 1)
 
+    def test_fitting_projection_summary_contract_pins_fields_used_by_viewer_summary(self):
+        layer = create_layer(project_id="RWY-FITTINGS-SUMMARY-CONTRACT")
+        family = create_family("FIT-SUMMARY-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        main = create_run(layer=layer, family=family, size=size)
+        main.tag = "RWY-SUM-MAIN"
+        main.save()
+        branch = create_run(layer=layer, family=family, size=size)
+        branch.tag = "RWY-SUM-BRANCH"
+        branch.save()
+        riser = create_run(layer=layer, family=family, size=size)
+        riser.tag = "RWY-SUM-RISER"
+        riser.save()
+        create_nodes(main, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (3.0, 3.0, 0.0)])
+        create_nodes(branch, [(3.0, 0.0, 0.0), (3.0, -3.0, 0.0)])
+        create_nodes(riser, [(10.0, 0.0, 0.0), (10.0, 0.0, 2.0)])
+
+        projection = build_layer_fitting_projection(layer)
+        counts = projection["counts"]
+        graph_summary = projection["graph_summary"]
+
+        for key in [
+            "total",
+            "by_kind",
+            "by_category",
+            "synthetic_proxy_total",
+            "reducer_proxy_total",
+            "requires_face_alignment",
+            "requires_catalogue_validation",
+            "one_edge_alignment_candidates",
+            "face_offset_steps",
+            "face_alignment_resolved_by_offset",
+            "non_standard_plan_bends",
+        ]:
+            self.assertIn(key, counts)
+        self.assertGreaterEqual(counts["by_kind"]["plan_bend"], 1)
+        self.assertGreaterEqual(counts["by_kind"]["riser"], 1)
+        self.assertEqual(counts["by_kind"]["tee"], 1)
+        self.assertEqual(counts["synthetic_proxy_total"], counts["total"])
+        self.assertIn("three_way_tee", counts["by_category"])
+        self.assertIn("riser_up", counts["by_category"])
+        self.assertEqual(graph_summary["branch_node_count"], 1)
+        self.assertEqual(graph_summary["warning_count"], 0)
+        for key in ["node_count", "edge_count", "branch_node_count", "junction_node_count", "warning_count"]:
+            self.assertIn(key, graph_summary)
+
     def test_fitting_projection_contract_pins_branch_proxy_fields_used_by_js(self):
         layer = create_layer(project_id="RWY-FITTINGS-BRANCH-CONTRACT")
         family = create_family("FIT-BRANCH-CONTRACT-LADDER")
@@ -1613,7 +1701,9 @@ class RacewayApiTests(TestCase):
         self.assertAlmostEqual(payload["schedule"]["totals"]["offcut_m_estimate"], 1.0)
         self.assertEqual(payload["schedule"]["groups"][0]["family_code"], "API-LADDER")
         self.assertEqual(payload["schedule"]["project_id"], self.project.proj_id)
-        self.assertIn("raceway.schedule.support_placeholder", {item["code"] for item in payload["schedule"]["assumptions"]})
+        api_assumption_codes = {item["code"] for item in payload["schedule"]["assumptions"]}
+        self.assertIn("raceway.schedule.support_placeholder", api_assumption_codes)
+        self.assertIn("raceway.schedule.gross_straight_length_basis", api_assumption_codes)
 
         other_user = get_user_model().objects.create_user(username="raceway-schedule-blocked", password="pw")
         self.client.force_login(other_user)
@@ -2342,6 +2432,7 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function hasUnsavedSavableChanges", content)
         self.assertIn("function serverRunIdsRemovedFromDraft", content)
         self.assertIn("function deleteServerRunsRemovedFromDraft", content)
+        self.assertIn("function validateGraphProjectionContract", content)
         self.assertIn("function validateFittingProjectionContract", content)
         self.assertIn("function reducerCandidateExclusionReasons", content)
         self.assertIn("function disabledActionHint", content)
@@ -2355,6 +2446,8 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("buildScheduleSummaryViewModel,", content)
         self.assertIn("buildFittingSummaryViewModel,", content)
         self.assertIn("dataset.disabledReason", content)
+        self.assertIn("Raceway graph projection contract warning", content)
+        self.assertIn("Raceway unconnected-crossing warning missing edge_keys", content)
         self.assertIn("Raceway fitting projection contract warning", content)
         self.assertIn("Raceway reducer candidate one-edge alignment missing handedness suggestions", content)
         self.assertIn("function reducerTransitionCandidates", content)

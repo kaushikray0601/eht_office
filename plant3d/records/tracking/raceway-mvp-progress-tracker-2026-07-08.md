@@ -3151,3 +3151,84 @@ Append each pass here.
     - Phase H cable-to-raceway assignment foundation,
     - route graph consumption by EHT/cable schedule,
     - manual cable assignment first, then shortest-path suggestions.
+
+### 2026-07-28 - C10.2 Guardrail Pass Before Phase H
+
+- Manual decision from KR:
+  - Make Tee/Make Cross manual checks passed,
+  - keep the current UX for now,
+  - proceed with the compact C10.2 hardening/refinement pass before Phase H.
+- Claude/Fable §46 response:
+  - C10 remainder: agreed; this pass covers graph/fitting-summary pins and
+    graph fail-loud validation, not the full module split.
+  - A-7 reducer handedness: current stance is to treat left/right/center as
+    drafting controls; persist only the resulting segment face offsets until
+    reducer accessory acceptance/intent exists.
+  - A-4 riser orientation inheritance: valid backlog, not blocking Phase H.
+  - C8 BOQ assumption line: closed in this pass.
+  - B-5/CI: agreed high leverage, still needs KR A3 go-ahead before coding.
+  - C4/C5/C6/C7/C1/C11 and KR-side A1/A2/A3/B2/B3 plus D-gates remain
+    acknowledged, not blockers for this pass.
+- Server contract hardening:
+  - added graph contract test for Make Cross browser dependencies:
+    - unconnected-crossing `edge_keys`,
+    - `source_point_m`,
+    - `tolerance_m`,
+    - graph edge `key`,
+    - `run_id` / `run_key`,
+    - `start_sequence` / `end_sequence`,
+    - `start_point_m` / `end_point_m`,
+    - non-riser crossing edge basis.
+  - added fitting projection summary contract test for viewer-consumed fields:
+    - `counts.total`,
+    - `counts.by_kind`,
+    - `counts.by_category`,
+    - `synthetic_proxy_total`,
+    - `reducer_proxy_total`,
+    - face-alignment/count summary fields,
+    - `graph_summary` node/edge/branch/junction/warning counts.
+- Schedule/BOQ assumption:
+  - added assumption code `raceway.schedule.gross_straight_length_basis`,
+  - message states straight raceway lengths are gross centerline segment
+    lengths and bend/riser/reducer/tee/cross development lengths are not
+    deducted in the MVP schedule basis,
+  - pinned in schedule projection and API tests.
+- JS hardening:
+  - added `validateGraphProjectionContract(graph)` to fail loudly in console
+    on malformed graph nodes/edges/warnings,
+  - unconnected-crossing warnings now warn if `edge_keys` or `source_point_m`
+    are missing,
+  - graph validation runs after `Refresh Graph`.
+- Browser cache key:
+  - Raceway overlay: `20260728_raceway52`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/schedule.py raceway/tests.py ELECSENSE/settings.py`
+  - focused C10.2 tests:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayGraphProjectionTests.test_graph_projection_contract_pins_make_cross_fields_used_by_js raceway.tests.RacewayScheduleProjectionTests.test_layer_schedule_splits_segments_and_counts_placeholders raceway.tests.RacewayScheduleProjectionTests.test_layer_schedule_counts_projection_only_tee_and_cross_placeholders raceway.tests.RacewayScheduleProjectionTests.test_layer_schedule_contract_pins_phase_h_route_and_branch_fields raceway.tests.RacewayFittingProjectionTests.test_fitting_projection_summary_contract_pins_fields_used_by_viewer_summary raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - full browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+- Manual check:
+  - no major visual change expected,
+  - refresh graph on a crossing case and confirm existing Make Cross flow still
+    behaves as before,
+  - refresh/download schedule CSV and confirm assumptions include the gross
+    straight-length/development-length note.
+- Notes to Claude/Fable:
+  - graph payload fields consumed by Make Cross are now pinned,
+  - fitting summary fields consumed by viewer summary are now pinned,
+  - C8 is closed,
+  - A-7 is intentionally documented as drafting-control-only until accessory
+    acceptance persists real reducer intent.
+- Next recommended pass:
+  - unless KR chooses CI/A3 first, start Phase H foundation:
+    - define cable-to-raceway assignment shape,
+    - manual cable/cable-group assignment to saved raceway graph,
+    - route graph consumption by EHT/cable schedule,
+    - shortest-path suggestions after manual assignment is stable.

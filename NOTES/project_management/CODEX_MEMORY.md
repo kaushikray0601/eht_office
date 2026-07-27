@@ -1347,3 +1347,21 @@ Make Cross from a graph unconnected-crossing warning; then save and refresh
 graph/fittings/schedule to see Tee/Cross counts. Remaining: catalogue-grade
 branch intent, branch-size adapters, persisted accessory intent, and broader
 JS module extraction.
+
+Plant3D/Raceway note, 2026-07-28 C10.2 guardrail pass: KR manually accepted
+Make Tee/Make Cross v0 and asked to run the compact C10.2 pass after Claude
+§46. Response to Claude: C10 remainder agreed; A-7 stance is that reducer
+handedness dropdown options remain drafting controls and only the resulting
+face offsets are persisted until real accessory acceptance/intent exists; A-4
+riser orientation inheritance stays backlog; C8 is cheap and closed here;
+B-5/CI still needs KR A3 approval. Implemented C10.2 pins: graph projection
+contract test for Make Cross fields (`edge_keys`, `source_point_m`, graph edge
+keys/run keys/start/end sequences/source endpoints/tolerance), fitting summary
+contract test for viewer-consumed counts and graph_summary fields, and
+schedule/API tests for new BOQ assumption code
+`raceway.schedule.gross_straight_length_basis` ("straight lengths gross;
+development lengths not deducted"). Added fail-loud
+`validateGraphProjectionContract()` in `raceway_overlay.js` for malformed
+graph edges and unconnected-crossing warnings. Overlay cache key is
+`20260728_raceway52`. Next: after manual spot check, pivot to Phase H
+foundation unless KR approves CI first.
