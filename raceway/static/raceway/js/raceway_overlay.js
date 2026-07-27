@@ -4309,37 +4309,196 @@ function racewayNoticeBadgeCount() {
   return scheduleCount + graphCount + draftCount;
 }
 
+/**
+ * @typedef {Object} RacewayCommandState
+ * @property {boolean} disabled
+ * @property {string} reason
+ */
+
+/**
+ * @typedef {Object} RacewayCommandStateSnapshot
+ * @property {number=} catalogCount
+ * @property {boolean=} hasRun
+ * @property {number=} runNodeCount
+ * @property {boolean=} hasNode
+ * @property {boolean=} hasAnchoredNode
+ * @property {boolean=} canConnectEndpoint
+ * @property {string=} mode
+ * @property {number=} undoCount
+ * @property {number=} redoCount
+ * @property {number=} savableRunCount
+ * @property {number=} pendingDraftDeleteCount
+ * @property {boolean=} persistenceLoading
+ * @property {boolean=} graphLoading
+ * @property {boolean=} scheduleLoading
+ * @property {boolean=} fittingsLoading
+ * @property {boolean=} fittingsLoaded
+ * @property {(number|string|null)=} layerId
+ * @property {boolean=} hasUnsavedSavableChanges
+ * @property {number=} edgeMatchCandidateCount
+ * @property {number=} reducerCandidateCount
+ * @property {boolean=} hasSelectedSegment
+ * @property {number=} splitPercent
+ * @property {number=} segmentLengthM
+ */
+
+/**
+ * @typedef {Object} RacewayGroupSummaryRow
+ * @property {string} familyCode
+ * @property {string} sizeLabel
+ * @property {string} serviceClass
+ * @property {number} lengthM
+ * @property {number} pieceCountEstimate
+ */
+
+/**
+ * @typedef {Object} RacewayScheduleSummaryViewModel
+ * @property {number} runCount
+ * @property {number} lengthM
+ * @property {number} pieceCountEstimate
+ * @property {number} offcutM
+ * @property {number} planBendCount
+ * @property {number} riserCount
+ * @property {number} teeCount
+ * @property {number} crossCount
+ * @property {number} supportPlaceholderCount
+ * @property {number} branchProjectionOnlyCount
+ * @property {string} warningText
+ * @property {number} assumptionCount
+ * @property {RacewayGroupSummaryRow[]} groupRows
+ * @property {number} hiddenGroupCount
+ */
+
+/**
+ * @typedef {Object} RacewayCategorySummaryRow
+ * @property {string} category
+ * @property {number} count
+ */
+
+/**
+ * @typedef {Object} RacewayFittingSummaryViewModel
+ * @property {number} totalCount
+ * @property {number} syntheticProxyCount
+ * @property {number} planBendCount
+ * @property {number} riserCount
+ * @property {number} teeCount
+ * @property {number} crossCount
+ * @property {number} reducerCandidateCount
+ * @property {number} reducerProxyCount
+ * @property {number} requiresFaceAlignmentCount
+ * @property {number} requiresCatalogueValidationCount
+ * @property {number} nonStandardPlanBendCount
+ * @property {number} edgeMatchCandidateCount
+ * @property {number} faceOffsetStepCount
+ * @property {number} faceAlignmentResolvedCount
+ * @property {number} junctionNodeCount
+ * @property {number} branchNodeCount
+ * @property {number} assumptionCount
+ * @property {RacewayCategorySummaryRow[]} categoryRows
+ */
+
+function warningSummaryText(warnings = {}) {
+  if (!Number(warnings.total || 0)) return '';
+  return `${warnings.total} validation notice(s) affect this schedule`
+    + (warnings.by_severity ? ` (${warnings.warning || 0} warning, ${warnings.info || 0} info).` : '.');
+}
+
+/**
+ * Build a DOM-free summary of the schedule projection. Phase H should consume
+ * this kind of typed summary contract rather than scraping rendered HTML.
+ *
+ * @param {Object|null|undefined} schedule
+ * @returns {RacewayScheduleSummaryViewModel}
+ */
+function buildScheduleSummaryViewModel(schedule) {
+  const totals = schedule?.totals || {};
+  const fittingCounts = schedule?.fitting_placeholders?.counts || {};
+  const warnings = schedule?.warning_summary || schedule?.graph_warnings || {};
+  const assumptions = Array.isArray(schedule?.assumptions) ? schedule.assumptions : [];
+  const groups = Array.isArray(schedule?.groups) ? schedule.groups : [];
+  return {
+    runCount: Number(totals.run_count || 0),
+    lengthM: Number(totals.length_m || 0),
+    pieceCountEstimate: Number(totals.piece_count_estimate || 0),
+    offcutM: Number(totals.offcut_m_estimate || 0),
+    planBendCount: Number(totals.plan_bend_count || 0),
+    riserCount: Number(totals.riser_count || 0),
+    teeCount: Number(fittingCounts.tee_total ?? totals.tee_count ?? 0),
+    crossCount: Number(fittingCounts.cross_total ?? totals.cross_count ?? 0),
+    supportPlaceholderCount: Number(totals.support_placeholders || 0),
+    branchProjectionOnlyCount: Number(fittingCounts.branch_accessory_unresolved_total || 0),
+    warningText: warningSummaryText(warnings),
+    assumptionCount: assumptions.length,
+    groupRows: groups.slice(0, 3).map(group => ({
+      familyCode: String(group.family_code || ''),
+      sizeLabel: String(group.size_label || ''),
+      serviceClass: String(group.service_class || ''),
+      lengthM: Number(group.length_m || 0),
+      pieceCountEstimate: Number(group.piece_count_estimate || 0),
+    })),
+    hiddenGroupCount: Math.max(groups.length - 3, 0),
+  };
+}
+
+/**
+ * Build a DOM-free summary of the fitting projection. This keeps server/client
+ * projection field usage centralized instead of scattered through HTML.
+ *
+ * @param {Object|null|undefined} projection
+ * @returns {RacewayFittingSummaryViewModel}
+ */
+function buildFittingSummaryViewModel(projection) {
+  const counts = projection?.counts || {};
+  const byKind = counts.by_kind || {};
+  const byCategory = counts.by_category || {};
+  const graph = projection?.graph_summary || {};
+  return {
+    totalCount: Number(counts.total || 0),
+    syntheticProxyCount: Number(counts.synthetic_proxy_total || 0),
+    planBendCount: Number(byKind.plan_bend || 0),
+    riserCount: Number(byKind.riser || 0),
+    teeCount: Number(byKind.tee || 0),
+    crossCount: Number(byKind.cross || 0),
+    reducerCandidateCount: Number(byKind.reducer_candidate || 0),
+    reducerProxyCount: Number(counts.reducer_proxy_total || 0),
+    requiresFaceAlignmentCount: Number(counts.requires_face_alignment || 0),
+    requiresCatalogueValidationCount: Number(counts.requires_catalogue_validation || 0),
+    nonStandardPlanBendCount: Number(counts.non_standard_plan_bends || 0),
+    edgeMatchCandidateCount: Number(counts.one_edge_alignment_candidates || 0),
+    faceOffsetStepCount: Number(counts.face_offset_steps || 0),
+    faceAlignmentResolvedCount: Number(counts.face_alignment_resolved_by_offset || 0),
+    junctionNodeCount: Number(graph.junction_node_count || 0),
+    branchNodeCount: Number(graph.branch_node_count || 0),
+    assumptionCount: Array.isArray(projection?.assumptions) ? projection.assumptions.length : 0,
+    categoryRows: Object.entries(byCategory).slice(0, 4).map(([category, count]) => ({
+      category: String(category),
+      count: Number(count || 0),
+    })),
+  };
+}
+
 function scheduleSummaryHtml() {
   if (state.scheduleLoading) return '<div class="meta">Refreshing schedule...</div>';
   if (state.scheduleError) return `<div class="raceway-graph-error">${escapeHtml(state.scheduleError)}</div>`;
   if (!state.scheduleLoaded || !state.scheduleProjection) return '';
-  const schedule = state.scheduleProjection;
-  const totals = schedule.totals || {};
-  const fittingCounts = schedule.fitting_placeholders?.counts || {};
-  const warnings = schedule.warning_summary || schedule.graph_warnings || {};
-  const assumptions = Array.isArray(schedule.assumptions) ? schedule.assumptions : [];
-  const groups = Array.isArray(schedule.groups) ? schedule.groups : [];
-  const warningText = warnings.total
-    ? `${warnings.total} validation notice(s) affect this schedule`
-      + (warnings.by_severity ? ` (${warnings.warning || 0} warning, ${warnings.info || 0} info).` : '.')
-    : '';
-  const groupRows = groups.slice(0, 3).map(group => `
+  const summary = buildScheduleSummaryViewModel(state.scheduleProjection);
+  const groupRows = summary.groupRows.map(group => `
     <div class="raceway-schedule-row">
-      <span>${escapeHtml(group.family_code)} ${escapeHtml(group.size_label)} ${escapeHtml(group.service_class)}</span>
-      <span>${formatM(group.length_m)} m | ${group.piece_count_estimate || 0} pcs</span>
+      <span>${escapeHtml(group.familyCode)} ${escapeHtml(group.sizeLabel)} ${escapeHtml(group.serviceClass)}</span>
+      <span>${formatM(group.lengthM)} m | ${group.pieceCountEstimate} pcs</span>
     </div>
   `).join('');
   return `
     <div>
       <strong>Schedule</strong><br>
-      ${totals.run_count || 0} run(s) | ${formatM(totals.length_m)} m | ${totals.piece_count_estimate || 0} piece(s) | ${formatM(totals.offcut_m_estimate)} m offcut<br>
-      ${totals.plan_bend_count || 0} bend(s) | ${totals.riser_count || 0} riser(s) | ${fittingCounts.tee_total || 0} tee(s) | ${fittingCounts.cross_total || 0} cross(es)<br>
-      ${totals.support_placeholders || 0} support placeholder(s) | ${fittingCounts.branch_accessory_unresolved_total || 0} branch fitting(s) projection-only
-      ${warningText ? `<br><span class="raceway-schedule-warning">${escapeHtml(warningText)}</span>` : ''}
-      <br>${assumptions.length} assumption(s) included in JSON/CSV output.
+      ${summary.runCount} run(s) | ${formatM(summary.lengthM)} m | ${summary.pieceCountEstimate} piece(s) | ${formatM(summary.offcutM)} m offcut<br>
+      ${summary.planBendCount} bend(s) | ${summary.riserCount} riser(s) | ${summary.teeCount} tee(s) | ${summary.crossCount} cross(es)<br>
+      ${summary.supportPlaceholderCount} support placeholder(s) | ${summary.branchProjectionOnlyCount} branch fitting(s) projection-only
+      ${summary.warningText ? `<br><span class="raceway-schedule-warning">${escapeHtml(summary.warningText)}</span>` : ''}
+      <br>${summary.assumptionCount} assumption(s) included in JSON/CSV output.
       ${groupRows}
-      ${groups.length > 3 ? `<div class="meta">+${groups.length - 3} more group(s)</div>` : ''}
-      ${scheduleWarningRowsHtml(schedule)}
+      ${summary.hiddenGroupCount ? `<div class="meta">+${summary.hiddenGroupCount} more group(s)</div>` : ''}
+      ${scheduleWarningRowsHtml(state.scheduleProjection)}
     </div>
   `;
 }
@@ -4348,27 +4507,23 @@ function fittingSummaryHtml() {
   if (state.fittingsLoading) return '<div class="meta">Refreshing fittings...</div>';
   if (state.fittingsError) return `<div class="raceway-graph-error">${escapeHtml(state.fittingsError)}</div>`;
   if (!state.fittingsLoaded || !state.fittingProjection) return '';
-  const projection = state.fittingProjection;
-  const counts = projection.counts || {};
-  const byKind = counts.by_kind || {};
-  const byCategory = counts.by_category || {};
-  const graph = projection.graph_summary || {};
-  const categoryRows = Object.entries(byCategory).slice(0, 4).map(([category, count]) => `
+  const summary = buildFittingSummaryViewModel(state.fittingProjection);
+  const categoryRows = summary.categoryRows.map(row => `
     <div class="raceway-schedule-row">
-      <span>${escapeHtml(category)}</span>
-      <span>${count}</span>
+      <span>${escapeHtml(row.category)}</span>
+      <span>${row.count}</span>
     </div>
   `).join('');
   return `
     <div>
       <strong>Fittings</strong><br>
-      ${counts.total || 0} item(s) | ${counts.synthetic_proxy_total || 0} synthetic proxy | ${byKind.plan_bend || 0} bend(s) | ${byKind.riser || 0} riser(s)<br>
-      ${byKind.tee || 0} tee(s) | ${byKind.cross || 0} cross(es) | ${byKind.reducer_candidate || 0} reducer candidate(s) | ${counts.reducer_proxy_total || 0} reducer proxy<br>
-      ${counts.requires_face_alignment || 0} need face alignment | ${counts.requires_catalogue_validation || 0} need catalogue validation | ${counts.non_standard_plan_bends || 0} non-standard bend(s)<br>
-      ${counts.one_edge_alignment_candidates || 0} edge-match candidate(s) | ${counts.face_offset_steps || 0} offset step(s) | ${counts.face_alignment_resolved_by_offset || 0} offset-resolved<br>
-      ${graph.junction_node_count || 0} junction node(s) | ${graph.branch_node_count || 0} branch node(s)
+      ${summary.totalCount} item(s) | ${summary.syntheticProxyCount} synthetic proxy | ${summary.planBendCount} bend(s) | ${summary.riserCount} riser(s)<br>
+      ${summary.teeCount} tee(s) | ${summary.crossCount} cross(es) | ${summary.reducerCandidateCount} reducer candidate(s) | ${summary.reducerProxyCount} reducer proxy<br>
+      ${summary.requiresFaceAlignmentCount} need face alignment | ${summary.requiresCatalogueValidationCount} need catalogue validation | ${summary.nonStandardPlanBendCount} non-standard bend(s)<br>
+      ${summary.edgeMatchCandidateCount} edge-match candidate(s) | ${summary.faceOffsetStepCount} offset step(s) | ${summary.faceAlignmentResolvedCount} offset-resolved<br>
+      ${summary.junctionNodeCount} junction node(s) | ${summary.branchNodeCount} branch node(s)
       ${categoryRows}
-      ${(projection.assumptions || []).length ? `<div class="meta">${projection.assumptions.length} fitting assumption(s) in JSON output.</div>` : ''}
+      ${summary.assumptionCount ? `<div class="meta">${summary.assumptionCount} fitting assumption(s) in JSON output.</div>` : ''}
     </div>
   `;
 }
@@ -4508,6 +4663,11 @@ function disabledActionHint(action, reason) {
   return reason ? `${label} unavailable: ${reason}` : '';
 }
 
+/**
+ * @param {boolean} disabled
+ * @param {string=} reason
+ * @returns {RacewayCommandState}
+ */
 function commandState(disabled, reason = '') {
   return {
     disabled: Boolean(disabled),
@@ -4515,6 +4675,10 @@ function commandState(disabled, reason = '') {
   };
 }
 
+/**
+ * @param {RacewayCommandStateSnapshot} snapshot
+ * @returns {Object.<string, RacewayCommandState>}
+ */
 function computeRacewayCommandStates(snapshot = {}) {
   const layerId = snapshot.layerId || null;
   const persistenceLoading = Boolean(snapshot.persistenceLoading);
@@ -5201,4 +5365,6 @@ window.racewayViewerOverlay = {
   flushTelemetry: flushTelemetryEvents,
   telemetryQueueSize: () => telemetryQueue.length,
   computeRacewayCommandStates,
+  buildScheduleSummaryViewModel,
+  buildFittingSummaryViewModel,
 };

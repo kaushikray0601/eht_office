@@ -485,6 +485,62 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertFalse(command_state_probe["clean"]["disabled"])
                 self.assertTrue(command_state_probe["dirty"]["disabled"])
                 self.assertIn("Save Draft before applying reducer suggestions", command_state_probe["dirty"]["reason"])
+                summary_probe = page.evaluate(
+                    """() => ({
+                      schedule: window.racewayViewerOverlay.buildScheduleSummaryViewModel({
+                        warning_summary: { total: 2, by_severity: { warning: 1, info: 1 }, warning: 1, info: 1 },
+                        assumptions: [{ code: 'a' }, { code: 'b' }],
+                        fitting_placeholders: {
+                          counts: {
+                            tee_total: 1,
+                            cross_total: 2,
+                            branch_accessory_unresolved_total: 3,
+                          },
+                        },
+                        groups: [
+                          { family_code: 'LADDER-HDG', size_label: '300 x 100 mm', service_class: 'power', length_m: 12.5, piece_count_estimate: 5 },
+                          { family_code: 'PERF-HDG', size_label: '150 x 75 mm', service_class: 'control', length_m: 4.5, piece_count_estimate: 2 },
+                          { family_code: 'PERF-HDG', size_label: '300 x 75 mm', service_class: 'instrument', length_m: 7.5, piece_count_estimate: 3 },
+                          { family_code: 'LADDER-HDG', size_label: '600 x 150 mm', service_class: 'telecom', length_m: 2.5, piece_count_estimate: 1 },
+                        ],
+                        totals: {
+                          run_count: 4,
+                          length_m: 27,
+                          piece_count_estimate: 11,
+                          offcut_m_estimate: 3,
+                          plan_bend_count: 5,
+                          riser_count: 6,
+                          support_placeholders: 14,
+                        },
+                      }),
+                      fittings: window.racewayViewerOverlay.buildFittingSummaryViewModel({
+                        counts: {
+                          total: 9,
+                          synthetic_proxy_total: 6,
+                          reducer_proxy_total: 1,
+                          requires_face_alignment: 2,
+                          requires_catalogue_validation: 5,
+                          non_standard_plan_bends: 1,
+                          one_edge_alignment_candidates: 1,
+                          face_offset_steps: 1,
+                          face_alignment_resolved_by_offset: 1,
+                          by_kind: { plan_bend: 2, riser: 1, tee: 1, cross: 1, reducer_candidate: 2 },
+                          by_category: { three_way_tee: 1, four_way_cross: 1, width_reducer: 2, riser_up: 1, extra: 99 },
+                        },
+                        graph_summary: { junction_node_count: 2, branch_node_count: 1 },
+                        assumptions: [{ code: 'route' }],
+                      }),
+                    })"""
+                )
+                self.assertEqual(summary_probe["schedule"]["teeCount"], 1)
+                self.assertEqual(summary_probe["schedule"]["crossCount"], 2)
+                self.assertEqual(summary_probe["schedule"]["branchProjectionOnlyCount"], 3)
+                self.assertEqual(summary_probe["schedule"]["hiddenGroupCount"], 1)
+                self.assertIn("2 validation notice", summary_probe["schedule"]["warningText"])
+                self.assertEqual(summary_probe["fittings"]["teeCount"], 1)
+                self.assertEqual(summary_probe["fittings"]["crossCount"], 1)
+                self.assertEqual(summary_probe["fittings"]["reducerCandidateCount"], 2)
+                self.assertEqual(summary_probe["fittings"]["categoryRows"][0]["category"], "three_way_tee")
                 self.assertIn("Ctrl+Z", page.get_attribute('[data-raceway-action="undo"]', "title"))
                 self.assertIn("Ctrl+Shift+Z", page.get_attribute('[data-raceway-action="redo"]', "title"))
                 self.assertIn("Ctrl+S", page.get_attribute('[data-raceway-action="save"]', "title"))

@@ -1309,3 +1309,20 @@ these are count placeholders only; no main-by-branch procurement sizing is
 printed until branch intent is unambiguous or user-confirmed. Overlay cache key
 is `20260727_raceway49`. Next pass should be the focused C10 hardening slice,
 then the more intuitive Make Tee/Make Cross authoring command.
+
+Plant3D/Raceway note, 2026-07-27 C10 hardening slice: KR approved the C10
+pass before Make Tee/Make Cross. Claude §45 had no blocker. Implemented a
+small but important JS seam in `raceway_overlay.js`: JSDoc typedefs now cover
+`RacewayCommandStateSnapshot`, command-state results, and schedule/fitting
+summary view models. Added pure `buildScheduleSummaryViewModel(schedule)` and
+`buildFittingSummaryViewModel(projection)` helpers; `scheduleSummaryHtml()` and
+`fittingSummaryHtml()` now render from those helpers instead of reading the
+projection shape directly. Exposed the helpers through the existing
+`window.racewayViewerOverlay` browser-test seam. Added a Phase-H route/schedule
+contract test pinning durable `run_key`/`node_key`, segment `coordinate_frame`,
+source points, edge offsets, and branch accessory placeholder fields. Added
+`coordinate_frame` to `segment_payload` as an additive JSON field. Browser
+smoke now calls the pure helpers directly. Overlay cache key is
+`20260727_raceway50`. Next pass can safely start intuitive authoring:
+Make Tee = endpoint-to-segment with target split; Make Cross =
+unconnected-crossing warning to split both segments.

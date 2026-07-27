@@ -9,7 +9,7 @@ from .geometry import (
     point_from_node,
 )
 from .graph import RISER_ELEVATION_DELTA_M, build_layer_graph
-from .models import RacewayLayer, RacewayRun
+from .models import SOURCE_COORDINATE_FRAME, RacewayLayer, RacewayRun
 
 
 BEND_MIN_ANGLE_DEG = 5.0
@@ -85,6 +85,10 @@ def segment_payload(run, start_node, end_node, segment_index):
         "width_mm": run.size.width_mm,
         "depth_mm": run.size.depth_mm,
         "service_class": run.service_class,
+        "coordinate_frame": (
+            getattr(start_node, "coordinate_frame", SOURCE_COORDINATE_FRAME)
+            or SOURCE_COORDINATE_FRAME
+        ),
         "start_node_id": start_node.pk,
         "start_node_key": str(start_node.key),
         "start_sequence": start_node.sequence,

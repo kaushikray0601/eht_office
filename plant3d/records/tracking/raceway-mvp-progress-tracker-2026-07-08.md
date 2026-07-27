@@ -2988,3 +2988,71 @@ Append each pass here.
   - after that, implement intuitive authoring:
     - Make Tee: endpoint to target segment with automatic target split,
     - Make Cross: from unconnected-crossing warning with both segments split.
+
+### 2026-07-27 - C10 JS Hardening Slice Before Tee/Cross Authoring
+
+- Manual decision from KR:
+  - proceed with C10 hardening before the intuitive `Make Tee` / `Make Cross`
+    authoring command.
+- Claude/Fable note review:
+  - §45 remains aligned,
+  - no blocker found,
+  - hardening before Phase H and before more JS-heavy authoring remains the
+    endorsed sequence.
+- JS seam hardening:
+  - added JSDoc typedefs for:
+    - `RacewayCommandState`,
+    - `RacewayCommandStateSnapshot`,
+    - `RacewayScheduleSummaryViewModel`,
+    - `RacewayFittingSummaryViewModel`.
+  - added DOM-free pure helpers:
+    - `buildScheduleSummaryViewModel(schedule)`,
+    - `buildFittingSummaryViewModel(projection)`.
+  - changed `scheduleSummaryHtml()` and `fittingSummaryHtml()` to render from
+    those helpers instead of scattering projection-field reads through HTML.
+  - exposed the helpers through `window.racewayViewerOverlay` for browser
+    smoke assertions.
+- Server contract hardening:
+  - added additive `coordinate_frame` to shared `segment_payload`,
+  - added Phase H schedule contract test pinning:
+    - durable `run_key`,
+    - durable `start_node_key` / `end_node_key`,
+    - source points,
+    - segment `coordinate_frame`,
+    - edge-offset keys,
+    - branch accessory placeholder fields and projection-only sizing status.
+- Browser cache key:
+  - Raceway overlay: `20260727_raceway50`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - focused contract/static tests:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayScheduleProjectionTests.test_layer_schedule_contract_pins_phase_h_route_and_branch_fields raceway.tests.RacewayStaticAssetTests.test_raceway_overlay_registers_external_viewer_layer --noinput -v 2`
+  - focused browser helper test:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayBrowserSmokeTests.test_raceway_authoring_uses_viewer_interaction_contract --noinput -v 2`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - full browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `git diff --check`
+- Manual check:
+  - no intended visual change,
+  - open viewer and confirm schedule/fitting summaries still render after
+    `Refresh Schedule` and `Refresh Fittings`,
+  - confirm Tee/Cross counts from the previous pass still show in both
+    Fittings and Schedule summaries.
+- Notes to Claude/Fable:
+  - this does not complete all of C10; it is the first focused slice,
+  - remaining C10 work: deeper geometry/DOM split, broader graph/fitting
+    contract pins, CI/B-5, and eventual extraction into a separate JS module,
+  - please challenge if the helper seam is too shallow before Make Tee/Cross.
+- Next recommended pass:
+  - implement intuitive Tee/Cross authoring:
+    - `Make Tee`: select endpoint, click target segment, split target segment,
+      connect endpoint to inserted node, one undo step, save-required status,
+    - `Make Cross`: start from unconnected-crossing warning, split both
+      crossing segments at the warning point, cluster all node keys at one graph
+      node, one undo step.

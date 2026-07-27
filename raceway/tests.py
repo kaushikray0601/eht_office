@@ -943,6 +943,88 @@ class RacewayScheduleProjectionTests(TestCase):
         assumption_codes = {assumption["code"] for assumption in schedule["assumptions"]}
         self.assertIn("raceway.schedule.tee_cross_projection_only", assumption_codes)
 
+    def test_layer_schedule_contract_pins_phase_h_route_and_branch_fields(self):
+        layer = create_layer(project_id="RWY-SCHEDULE-PHASE-H")
+        family = create_family("SCHED-PHASE-H-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        main = create_run(layer=layer, family=family, size=size)
+        main.tag = "RWY-PHASE-H-MAIN"
+        main.save()
+        branch = create_run(layer=layer, family=family, size=size)
+        branch.tag = "RWY-PHASE-H-BRANCH"
+        branch.save()
+        create_nodes(main, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (6.0, 0.0, 0.0)])
+        create_nodes(branch, [(3.0, 0.0, 0.0), (3.0, 3.0, 0.0)])
+
+        schedule = build_layer_schedule(layer)
+
+        self.assertEqual(schedule["project_id"], "RWY-SCHEDULE-PHASE-H")
+        self.assertEqual(schedule["layer_id"], layer.pk)
+        self.assertIn("generated_at", schedule)
+        self.assertIn("graph_warnings", schedule)
+        self.assertIn("warning_summary", schedule)
+        self.assertIn("fitting_placeholders", schedule)
+
+        segment = next(item for item in schedule["segments"] if item["run_tag"] == "RWY-PHASE-H-MAIN")
+        for key in [
+            "run_key",
+            "run_tag",
+            "segment_index",
+            "coordinate_frame",
+            "start_node_key",
+            "end_node_key",
+            "start_point_m",
+            "end_point_m",
+            "length_m",
+            "horizontal_length_m",
+            "dz_m",
+            "is_riser",
+            "face_offset_m",
+            "edge_offsets_m",
+        ]:
+            self.assertIn(key, segment)
+        self.assertEqual(segment["coordinate_frame"], "source_xyz_m")
+        self.assertIn("x", segment["start_point_m"])
+        self.assertIn("y", segment["start_point_m"])
+        self.assertIn("z", segment["start_point_m"])
+        self.assertIn("left_edge_m", segment["edge_offsets_m"])
+        self.assertIn("right_edge_m", segment["edge_offsets_m"])
+        self.assertIn("centerline_offset_m", segment["edge_offsets_m"])
+
+        counts = schedule["fitting_placeholders"]["counts"]
+        for key in [
+            "plan_bend_total",
+            "riser_total",
+            "tee_total",
+            "cross_total",
+            "branch_accessory_total",
+            "branch_accessory_unresolved_total",
+            "branch_accessories",
+        ]:
+            self.assertIn(key, counts)
+        self.assertEqual(counts["tee_total"], 1)
+
+        branch_accessory = schedule["fitting_placeholders"]["branch_accessories"][0]
+        for key in [
+            "fitting_key",
+            "kind",
+            "category",
+            "graph_node_key",
+            "graph_node_kind",
+            "degree",
+            "port_count",
+            "run_tags",
+            "branch_intent_status",
+            "branch_intent_persistence",
+            "sizing_status",
+            "requires_catalogue_validation",
+            "requires_face_alignment",
+        ]:
+            self.assertIn(key, branch_accessory)
+        self.assertEqual(branch_accessory["kind"], "tee")
+        self.assertEqual(branch_accessory["sizing_status"], "projection_only_unresolved")
+        self.assertEqual(branch_accessory["branch_intent_persistence"], "projection_only")
+
     def test_layer_schedule_groups_by_family_size_and_service(self):
         layer = create_layer(project_id="RWY-SCHEDULE-GROUP")
         family = create_family("SCHED-GROUP-LADDER")
@@ -2257,8 +2339,15 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function validateFittingProjectionContract", content)
         self.assertIn("function reducerCandidateExclusionReasons", content)
         self.assertIn("function disabledActionHint", content)
+        self.assertIn("@typedef {Object} RacewayCommandStateSnapshot", content)
+        self.assertIn("@typedef {Object} RacewayScheduleSummaryViewModel", content)
+        self.assertIn("@typedef {Object} RacewayFittingSummaryViewModel", content)
         self.assertIn("function computeRacewayCommandStates", content)
+        self.assertIn("function buildScheduleSummaryViewModel", content)
+        self.assertIn("function buildFittingSummaryViewModel", content)
         self.assertIn("computeRacewayCommandStates,", content)
+        self.assertIn("buildScheduleSummaryViewModel,", content)
+        self.assertIn("buildFittingSummaryViewModel,", content)
         self.assertIn("dataset.disabledReason", content)
         self.assertIn("Raceway fitting projection contract warning", content)
         self.assertIn("Raceway reducer candidate one-edge alignment missing handedness suggestions", content)
