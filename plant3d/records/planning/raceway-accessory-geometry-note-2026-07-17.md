@@ -283,6 +283,19 @@ Generic tee proxy v0:
 - service segregation warning if services are mixed,
 - no cross until four-port semantics are explicit.
 
+Implementation update 2026-07-27:
+
+- projection-only Tee/Cross proxy v0 is coded,
+- tee/cross records are derived from connected graph node degree,
+- each record carries `branch_intent` with inferred/ambiguous status,
+  `persistence: projection_only`, and main/branch run evidence,
+- browser rendering creates lightweight port-stub proxy bodies at the graph
+  node with branch rail/lower-edge/cross-member snap targets,
+- straight tray proxies are cut back around the branch fitting proxy,
+- inferred main/branch may drive proxy visuals and warnings only,
+- exportable procurement sizing must stay unresolved unless the branch intent
+  is unambiguous or later user-confirmed.
+
 ## Offset And Move Are Different Commands
 
 The current `Offset m` is a local face offset:
@@ -417,21 +430,22 @@ Do not persist baked vertices as authoritative design data.
 
 Recommended next sequence:
 
-1. Segment split/insert semantics.
+1. Segment split/insert semantics. `coded enough for current branch nodes`
    - Needed for tee/cross and for segment movement boundaries.
    - Child segments inherit orientation and face-offset intent.
-2. Reducer handedness UI.
+2. Reducer handedness UI. `coded v0`
    - User chooses left, right, or center.
    - `Apply Edge Match` becomes one possible helper, not the accessory itself.
-3. Reducer proxy geometry v0.
+3. Reducer proxy geometry v0. `coded v0`
    - Generate tapered transition body between two ports.
    - Expose assumptions and development length.
-4. Bend/riser proxy geometry v0.
+4. Bend/riser proxy geometry v0. `coded v0`
    - Replace simple markers with real bend/riser bodies.
-5. Tee proxy geometry v0.
+5. Tee/Cross proxy geometry v0. `coded projection-only v0`
    - Requires split node and branch/main semantics.
-6. Cross and advanced accessories.
-   - Cross, wye, covers, dividers, couplers, supports, vendor models.
+6. Advanced accessories.
+   - Wye, covers, dividers, couplers, supports, vendor models, and
+     catalogue-grade persisted accessory intent.
 
 ## Acceptance For First Reducer Geometry Pass
 

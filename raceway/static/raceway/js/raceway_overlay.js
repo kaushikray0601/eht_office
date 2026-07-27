@@ -30,6 +30,9 @@ const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
   'reducer-side-rail',
   'reducer-lower-edge',
   'reducer-cross-member',
+  'branch-side-rail',
+  'branch-lower-edge',
+  'branch-cross-member',
 ]);
 const ORIENTATION_SCHEMA = 'raceway.orientation.v0';
 const SEGMENT_ORIENTATION_SCHEMA = 'raceway.segment_orientation.v0';
@@ -1980,6 +1983,14 @@ function reducerProxyItems() {
   ));
 }
 
+function branchProxyItems() {
+  return fittingProjectionItems().filter(item => (
+    (item?.kind === 'tee' || item?.kind === 'cross')
+    && item?.status === 'synthetic_proxy'
+    && (item?.geometry_recipe?.proxy_kind === 'tee_node_proxy' || item?.geometry_recipe?.proxy_kind === 'cross_node_proxy')
+  ));
+}
+
 function reducerTrimForSegmentNode(run, segment, nodeIndex) {
   if (!run || !segment || !state.fittingsLoaded) return 0;
   const nodeKey = String(run.nodes?.[nodeIndex]?.key || '');
@@ -1998,6 +2009,24 @@ function reducerTrimForSegmentNode(run, segment, nodeIndex) {
   return trimM;
 }
 
+function branchTrimForSegmentNode(run, segment, nodeIndex) {
+  if (!run || !segment || !state.fittingsLoaded) return 0;
+  const nodeKey = String(run.nodes?.[nodeIndex]?.key || '');
+  if (!nodeKey) return 0;
+  let trimM = 0;
+  branchProxyItems().forEach(item => {
+    const cutback = Number(item.geometry_recipe?.straight_proxy_cutback?.default_each_port_m);
+    if (!Number.isFinite(cutback) || cutback <= 0) return;
+    const port = (item.ports || []).find(candidate => (
+      String(candidate.run_key || '') === String(run.key || '')
+      && String(candidate.segment_key || '') === String(segment.key || '')
+      && String(candidate.node_key || '') === nodeKey
+    ));
+    if (port) trimM = Math.max(trimM, cutback);
+  });
+  return trimM;
+}
+
 function nodeAccessoryTrimM(run, nodeIndex, side) {
   const planBend = planBendInfoAtNode(run, nodeIndex);
   const riserTurn = riserTurnInfoAtNode(run, nodeIndex);
@@ -2006,6 +2035,7 @@ function nodeAccessoryTrimM(run, nodeIndex, side) {
   if (planBend) trimCandidates.push(side === 'incoming' ? planBend.incomingCutbackM : planBend.outgoingCutbackM);
   if (riserTurn) trimCandidates.push(side === 'incoming' ? riserTurn.incomingCutbackM : riserTurn.outgoingCutbackM);
   trimCandidates.push(reducerTrimForSegmentNode(run, segment, nodeIndex));
+  trimCandidates.push(branchTrimForSegmentNode(run, segment, nodeIndex));
   return Math.max(...trimCandidates, 0);
 }
 
@@ -2404,12 +2434,123 @@ function addReducerTaperProxy(group, item) {
   addSourceLine(group, [second.leftBottom, second.rightBottom], detailMaterial, 'reducer-cross-member');
 }
 
+function branchPortCrossSection(point, basis, widthM, depthM, faceOffsetM = 0) {
+  const halfWidth = Math.max(Number(widthM) || 0, 0.05) / 2;
+  const depth = Math.max(Number(depthM) || 0, 0.025);
+  const offset = normalizedFaceOffsetM(faceOffsetM);
+  return {
+    leftBottom: sourceFrameOffsetPoint(point, basis, offset + halfWidth, 0),
+    rightBottom: sourceFrameOffsetPoint(point, basis, offset - halfWidth, 0),
+    leftTop: sourceFrameOffsetPoint(point, basis, offset + halfWidth, depth),
+    rightTop: sourceFrameOffsetPoint(point, basis, offset - halfWidth, depth),
+  };
+}
+
+function branchPortStub(item, port) {
+  const run = runByKey(port?.run_key);
+  if (!run) return null;
+  const segment = runSegments(run).find(candidate => candidate.key === String(port?.segment_key || ''));
+  if (!segment) return null;
+  const center = item.source_point_m || item.geometry_recipe?.center_point_m || null;
+  if (!center) return null;
+  const rawCutback = Number(item.geometry_recipe?.straight_proxy_cutback?.default_each_port_m) || ACCESSORY_DEFAULT_RADIUS_M;
+  const cutback = Math.min(rawCutback, Math.max(segment.lengthM * 0.45, 0.05));
+  const awayNode = port.role_at_node === 'incoming_to_node' ? segment.startNode : segment.endNode;
+  const tangentPoint = pointTowardPoint(center, awayNode, cutback);
+  const basis = segmentRenderBasis(run, segment, segment.startNode, segment.endNode);
+  if (!basis) return null;
+  const widthM = Math.max(Number(port.width_mm || 0) / 1000, runWidthM(run));
+  const depthM = Math.max(Number(port.depth_mm || 0) / 1000, runDepthM(run));
+  const faceOffsetM = normalizedFaceOffsetM(port.face_offset_m ?? segment.faceOffsetM);
+  return {
+    run,
+    segment,
+    port,
+    centerPoint: center,
+    tangentPoint,
+    center: branchPortCrossSection(center, basis, widthM, depthM, faceOffsetM),
+    tangent: branchPortCrossSection(tangentPoint, basis, widthM, depthM, faceOffsetM),
+  };
+}
+
+function addBranchNodeProxy(group, item) {
+  const stubs = (item.ports || [])
+    .map(port => branchPortStub(item, port))
+    .filter(Boolean);
+  if (stubs.length < 3) return;
+  const selected = stubs.some(stub => stub.run.id === state.activeRunId);
+  const color = selected ? 0xf97316 : (item.kind === 'cross' ? 0x7c3aed : 0x0ea5e9);
+  const positions = [];
+  const colors = [];
+  const faceColors = proxyFaceColors(color, selected);
+  stubs.forEach(stub => {
+    addProxyQuad(
+      positions,
+      colors,
+      stub.center.leftBottom,
+      stub.center.rightBottom,
+      stub.tangent.rightBottom,
+      stub.tangent.leftBottom,
+      faceColors.bottom,
+    );
+    addProxyQuad(
+      positions,
+      colors,
+      stub.center.leftBottom,
+      stub.tangent.leftBottom,
+      stub.tangent.leftTop,
+      stub.center.leftTop,
+      faceColors.side,
+    );
+    addProxyQuad(
+      positions,
+      colors,
+      stub.center.rightBottom,
+      stub.center.rightTop,
+      stub.tangent.rightTop,
+      stub.tangent.rightBottom,
+      faceColors.side,
+    );
+  });
+  if (positions.length >= 18) {
+    const mesh = new runtime.THREE.Mesh(
+      setGeometryPositions(new runtime.THREE.BufferGeometry(), positions, colors),
+      proxyFaceMaterial(color, selected),
+    );
+    mesh.userData.racewayPreviewKind = item.kind === 'cross' ? 'cross-node-surface' : 'tee-node-surface';
+    mesh.userData.fittingKey = item.fitting_key || '';
+    mesh.userData.branchIntentStatus = item.branch_intent?.status || '';
+    mesh.userData.faceCount = positions.length / 18;
+    mesh.renderOrder = 22;
+    group.add(mesh);
+  }
+  const railMaterial = previewMaterial(color, selected ? 0.95 : 0.72);
+  const detailMaterial = previewMaterial(item.kind === 'cross' ? 0x5b21b6 : 0x0369a1, selected ? 0.85 : 0.58);
+  stubs.forEach(stub => {
+    addSourceLine(group, [stub.center.leftTop, stub.tangent.leftTop], railMaterial, 'branch-side-rail');
+    addSourceLine(group, [stub.center.rightTop, stub.tangent.rightTop], railMaterial, 'branch-side-rail');
+    addSourceLine(group, [stub.center.leftBottom, stub.tangent.leftBottom], detailMaterial, 'branch-lower-edge');
+    addSourceLine(group, [stub.center.rightBottom, stub.tangent.rightBottom], detailMaterial, 'branch-lower-edge');
+    addSourceLine(group, [stub.tangent.leftBottom, stub.tangent.rightBottom], detailMaterial, 'branch-cross-member');
+  });
+  const centerPairs = [];
+  stubs.forEach(stub => {
+    centerPairs.push([stub.center.leftBottom, stub.center.rightBottom]);
+  });
+  centerPairs.slice(0, 4).forEach(points => {
+    addSourceLine(group, points, detailMaterial, 'branch-cross-member');
+  });
+}
+
 function renderFittingProxyBodies() {
-  const items = reducerProxyItems();
+  const items = [...reducerProxyItems(), ...branchProxyItems()];
   if (!items.length) return;
   const group = new runtime.THREE.Group();
   group.userData.racewayPreviewKind = 'fitting-proxy-bodies';
-  items.forEach(item => addReducerTaperProxy(group, item));
+  items.forEach(item => {
+    if (item.kind === 'reducer_candidate') addReducerTaperProxy(group, item);
+    if (item.kind === 'tee' || item.kind === 'cross') addBranchNodeProxy(group, item);
+  });
   if (group.children.length) layer.group.add(group);
 }
 

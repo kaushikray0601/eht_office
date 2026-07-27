@@ -27,7 +27,7 @@ Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex execute
 | --- | --- | --- | --- |
 | C1 🟢 | **Vendor-catalogue sync command** (dev → two backup DBs; dry-run default; incl. `RacewayFamily`/`Size`) — KR-assigned | §42 | small pass |
 | C2 🟢 | L1 **CI workflow file** (after A3) | CI course | small pass |
-| C3 🟢 | **Reducer body proxy** (handedness + taper, wider-port frame, A-2 cutback already solved) — last accessory-arc MVP item | §40–§43 | 1–2 passes |
+| C3 🟢 | **Accessory v0 acceptance sweep** — reducer body, bend/riser proxies, and Tee/Cross branch proxies are coded; after KR manual acceptance, archive the accessory arc and leave vendor-grade/accessory-intent work for later | §40–§45 | tiny |
 | C4 🟢 | T-2 `session_key` column on telemetry | telemetry note T-2 | one column |
 | C5 🟢 | §26 blocked-telemetry-endpoint browser assertion | §26 | tiny |
 | C6 🟢 | M-5 copy-run-with-offset; M-6 remainder (EL grid while drawing) | RFC M-table | small each |
@@ -41,7 +41,7 @@ Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex execute
 
 | # | Gate | Blocks | Ref |
 | --- | --- | --- | --- |
-| D1 ⚪ | **Accessory-arc timebox** — reducer body + tee close the arc; then **pivot to Phase H cable assignment + durable EHT persistence** (the integrated-chain demo) | The strategic milestone | scorecard drift-watch |
+| D1 ⚪ | **Accessory-arc timebox** — reducer/bend/riser and Tee/Cross v0 are coded, pending KR manual acceptance. Then **C10 hardening slice**, then **pivot to Phase H cable assignment + durable EHT persistence** (the integrated-chain demo). Boundary rule recorded: inferred tee main/branch never drives exportable part sizing while unresolved | The strategic milestone | claude-notes §45 |
 | D2 ⚪ | **Georeferenced/plant-global IFC precision proof** | Any demo on a real plant-global file | reset tracker carry-forward |
 | D3 ⚪ | **Larger real EPC model test** (beyond 15 MB IFC) | Same; also the biggest technical unknown | reset tracker carry-forward |
 | D4 ⚪ | eht dependency-hygiene + deployment-hardening leftovers (SEC-P1b) | Production deployment | eht tracker |
@@ -50,4 +50,4 @@ Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex execute
 
 ## Recently closed (kept one cycle for visibility)
 
-- N-20 frame-coupled merge rule — closed `579af3d` (§43). A-2 cutback — delivered for bends/risers (§43). N-18 PG fixture — closed (§38). N-19 browser flake — closed (§39). T-1 event dictionary — being followed at source since §38.
+- Reducer body proxy v0 — coded 2026-07-19 (§43-era tracker). N-20 frame-coupled merge rule — closed `579af3d` (§43). A-2 cutback — delivered for bends/risers (§43). N-18 PG fixture — closed (§38). N-19 browser flake — closed (§39). T-1 event dictionary — being followed at source since §38.

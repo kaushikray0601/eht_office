@@ -2816,3 +2816,97 @@ Append each pass here.
   - start extracting geometry recipe/render helpers behind pure functions,
   - then add persisted accessory intent for reducer handedness/radius before
     detailed tee/cross body geometry.
+
+### 2026-07-27 - Tee/Cross Proxy v0 And Branch Intent Projection
+
+- Manual check from KR:
+  - previous command-state/accessory-doctrine pass passed manual testing.
+- Claude/Fable note review:
+  - §45 is now present locally,
+  - no blocker found,
+  - Claude agrees projection-only Tee/Cross main/branch intent is right for MVP,
+  - important boundary adopted: inferred main/branch may drive proxy visuals and
+    warnings, but not exportable procurement sizing until unambiguous or
+    user-confirmed.
+- Decision for this pass:
+  - proceed projection-only,
+  - do not wait for persisted main/branch intent,
+  - keep this as an MVP branch accessory closure pass.
+- Server projection hardening:
+  - added `branch_intent` to tee/cross fitting projection items:
+    - `basis: connected_graph_node_degree`,
+    - `status: main_inferred`, `main_inferred_branch_review`,
+      `cross_axes_inferred`, or `main_ambiguous`,
+    - `persistence: projection_only`,
+    - main/branch run keys and tags,
+    - ambiguity note.
+  - added contract tests pinning Tee/Cross fields consumed by JS:
+    - `kind`,
+    - `category`,
+    - `status`,
+    - `ports`,
+    - `geometry_recipe.proxy_kind`,
+    - `straight_proxy_cutback`,
+    - `branch_intent`.
+- Browser rendering:
+  - added `branchProxyItems()`,
+  - added branch-port cutback trimming so straight tray proxies do not overlap
+    branch fitting proxies at the graph node,
+  - added lightweight branch port-stub geometry:
+    - `tee-node-surface`,
+    - `cross-node-surface`,
+    - branch side rails,
+    - branch lower edges,
+    - branch cross-members.
+  - added branch measurement snap kinds:
+    - `branch-side-rail`,
+    - `branch-lower-edge`,
+    - `branch-cross-member`.
+- Tests:
+  - static asset test pins branch render functions and preview kinds,
+  - real-viewer browser test creates one tee and one cross in the same saved
+    layer, refreshes fittings, and asserts both surfaces plus snap targets are
+    present.
+- Bumped browser cache key:
+  - Raceway overlay: `20260727_raceway48`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/fittings.py raceway/tests.py raceway/browser_tests.py`
+  - `git diff --check`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayFittingProjectionTests raceway.tests.RacewayStaticAssetTests --noinput -v 2`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - focused real-viewer branch proxy test:
+    `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayRealViewerBrowserSmokeTests.test_real_viewer_renders_tee_and_cross_branch_proxy_bodies --noinput -v 2`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+- Manual check:
+  - create or load a saved topology where:
+    - a main tray passes through a connected branch node,
+    - another branch/crossing creates a four-port node,
+  - click `Refresh Fittings`,
+  - confirm the fitting summary shows tee/cross counts,
+  - confirm cyan/purple branch proxy bodies appear at the connected graph
+    nodes,
+  - confirm shaded straight trays are cut back near these branch fittings,
+  - with measurement snap on, check that branch rails/lower edges can be
+    snapped like other accessory rails.
+- Notes to Claude/Fable:
+  - §45 answer incorporated,
+  - please challenge only if the coded `branch_intent` statuses or boundary rule
+    still leave a procurement/schedule leakage risk,
+  - otherwise the accessory arc should move to manual acceptance and the next
+    slice should be C10 hardening before Phase H.
+- Next recommended pass:
+  - after KR manual acceptance, close the accessory arc in records,
+  - take one focused C10 hardening slice:
+    - JSDoc/@ts-check or equivalent typed documentation around command-state
+      snapshots,
+    - extract first geometry/projection helpers away from DOM command code,
+    - add broader contract pins for graph/schedule fields Phase H will consume,
+  - then start Phase H foundation:
+    - expose a routeable raceway graph for cable assignment,
+    - define cable-to-raceway assignment records or projection,
+    - begin shortest-path/manual-assignment workflow from equipment endpoints.

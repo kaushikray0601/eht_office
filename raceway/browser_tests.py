@@ -1263,6 +1263,94 @@ class RacewayRealViewerBrowserSmokeTests(StaticLiveServerTestCase):
         self.assertFalse(layer.runs.filter(pk=stale_run.pk).exists())
         self.assertEqual(layer.runs.count(), 1)
 
+    def test_real_viewer_renders_tee_and_cross_branch_proxy_bodies(self):
+        layer = RacewayLayer.objects.create(
+            project_id=self.project.proj_id,
+            source_model_id=self.source.pk,
+            render_package_id=self.package.pk,
+            name="Branch accessory render test layer",
+        )
+        family = create_family("REAL-BRANCH-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        main = create_run(layer=layer, family=family, size=size)
+        main.tag = "RWY-BRANCH-MAIN"
+        main.source_model_id = self.source.pk
+        main.render_package_id = self.package.pk
+        main.save()
+        tee_branch = create_run(layer=layer, family=family, size=size)
+        tee_branch.tag = "RWY-TEE-SPUR"
+        tee_branch.source_model_id = self.source.pk
+        tee_branch.render_package_id = self.package.pk
+        tee_branch.save()
+        cross_low = create_run(layer=layer, family=family, size=size)
+        cross_low.tag = "RWY-CROSS-LOW"
+        cross_low.source_model_id = self.source.pk
+        cross_low.render_package_id = self.package.pk
+        cross_low.save()
+        cross_high = create_run(layer=layer, family=family, size=size)
+        cross_high.tag = "RWY-CROSS-HIGH"
+        cross_high.source_model_id = self.source.pk
+        cross_high.render_package_id = self.package.pk
+        cross_high.save()
+        create_nodes(main, [(0.0, 0.0, 0.0), (3.0, 0.0, 0.0), (6.0, 0.0, 0.0), (9.0, 0.0, 0.0)])
+        create_nodes(tee_branch, [(3.0, 0.0, 0.0), (3.0, 3.0, 0.0)])
+        create_nodes(cross_low, [(6.0, -3.0, 0.0), (6.0, 0.0, 0.0)])
+        create_nodes(cross_high, [(6.0, 0.0, 0.0), (6.0, 3.0, 0.0)])
+
+        console_messages = []
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch()
+            try:
+                context = browser.new_context(viewport={"width": 1280, "height": 850})
+                self.add_client_cookies(context)
+                page = context.new_page()
+                page.on("console", lambda message: console_messages.append(f"{message.type}: {message.text}"))
+                page.goto(
+                    f"{self.live_server_url}{reverse('plant3d_package_viewer', args=[self.package.pk])}",
+                    wait_until="domcontentloaded",
+                )
+                page.wait_for_selector("#racewayToolSection", timeout=REAL_VIEWER_READY_TIMEOUT_MS)
+                page.wait_for_function(
+                    "() => window.racewayViewerOverlay.getRuns().length === 4",
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
+                )
+                page.click('[data-raceway-action="refresh-fittings"]')
+                page.wait_for_function(
+                    "() => document.querySelector('#racewayFittingSummary')?.textContent.includes('1 tee(s) | 1 cross(es)')",
+                    timeout=REAL_VIEWER_READY_TIMEOUT_MS,
+                )
+                branch_proxy = page.evaluate(
+                    """() => {
+                      const previewKinds = [];
+                      window.racewayViewerOverlay.layer.group.traverse((child) => {
+                        if (child.userData?.racewayPreviewKind) previewKinds.push(child.userData.racewayPreviewKind);
+                      });
+                      const snapKinds = window.racewayViewerOverlay.layer.getMeasurementSnapObjects()
+                        .map((child) => child.userData?.racewayPreviewKind)
+                        .filter(Boolean);
+                      return {
+                        hasTeeSurface: previewKinds.includes('tee-node-surface'),
+                        hasCrossSurface: previewKinds.includes('cross-node-surface'),
+                        hasBranchRailSnap: snapKinds.includes('branch-side-rail'),
+                        hasBranchLowerSnap: snapKinds.includes('branch-lower-edge'),
+                        hasBranchCrossSnap: snapKinds.includes('branch-cross-member'),
+                      };
+                    }"""
+                )
+                self.assertTrue(branch_proxy["hasTeeSurface"], branch_proxy)
+                self.assertTrue(branch_proxy["hasCrossSurface"], branch_proxy)
+                self.assertTrue(branch_proxy["hasBranchRailSnap"], branch_proxy)
+                self.assertTrue(branch_proxy["hasBranchLowerSnap"], branch_proxy)
+                self.assertTrue(branch_proxy["hasBranchCrossSnap"], branch_proxy)
+
+                severe_messages = [
+                    message for message in console_messages
+                    if message.startswith("error:") and "favicon" not in message.lower()
+                ]
+                self.assertEqual(severe_messages, [])
+            finally:
+                browser.close()
+
     def test_real_viewer_applies_reducer_edge_match_offsets(self):
         layer = RacewayLayer.objects.create(
             project_id=self.project.proj_id,

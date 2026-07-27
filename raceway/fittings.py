@@ -392,6 +392,7 @@ def _branch_accessory_placeholders(graph, runs):
                 "members": members,
                 "ports": _branch_ports(members),
                 "size_groups": size_groups,
+                "branch_intent": _branch_intent(kind, members),
                 "requires_catalogue_validation": True,
                 "requires_face_alignment": mixed_physical_sizes,
                 "geometry_recipe": _branch_geometry_recipe(graph_node, kind, members),
@@ -430,6 +431,43 @@ def _branch_ports(members):
                 }
             )
     return sorted(ports, key=lambda item: (item["run_tag"], item["segment_index"], item["role_at_node"]))
+
+
+def _branch_intent(kind, members):
+    through_members = [
+        member
+        for member in members
+        if len(member.get("adjacent_segments") or []) >= 2
+    ]
+    through_run_keys = [member["run_key"] for member in through_members]
+    through_run_tags = [member["run_tag"] for member in through_members]
+    branch_members = [
+        member
+        for member in members
+        if member["run_key"] not in set(through_run_keys)
+    ]
+    status = "main_ambiguous"
+    note = "Main/branch selection is projection-only and needs user review."
+    if kind == "tee" and len(through_members) == 1:
+        status = "main_inferred"
+        note = "Tee main is inferred from the member that passes through the graph node."
+    elif kind == "cross" and len(through_members) >= 2:
+        status = "cross_axes_inferred"
+        note = "Cross axes are inferred from members that pass through the graph node."
+    elif kind == "cross" and len(through_members) == 1:
+        status = "main_inferred_branch_review"
+        note = "Cross has one through member; secondary branch axis still needs user/catalogue review."
+    return {
+        "basis": "connected_graph_node_degree",
+        "status": status,
+        "persistence": "projection_only",
+        "ambiguous": status == "main_ambiguous",
+        "main_run_keys": through_run_keys,
+        "main_run_tags": through_run_tags,
+        "branch_run_keys": [member["run_key"] for member in branch_members],
+        "branch_run_tags": [member["run_tag"] for member in branch_members],
+        "note": note,
+    }
 
 
 def _branch_geometry_recipe(graph_node, kind, members):

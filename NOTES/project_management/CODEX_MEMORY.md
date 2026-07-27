@@ -1274,3 +1274,23 @@ function directly for clean-vs-dirty Edge Match cases. Overlay cache key is
 `20260721_raceway47`. Next hardening: grow this seam toward JSDoc/@ts-check
 and begin splitting command/geometry helpers before adding persisted accessory
 intent and tee/cross bodies.
+
+Plant3D/Raceway note, 2026-07-27 Tee/Cross proxy v0: KR confirmed the
+command-state/accessory doctrine pass and approved closing the accessory arc
+with Tee/Cross before pivoting. Claude §45 agrees projection-only
+main/branch intent is right for MVP, with the boundary that inferred intent
+can drive proxy visuals/warnings but not exportable procurement sizing until
+unambiguous or user-confirmed. Implemented projection-only branch intent in
+`raceway/fittings.py` (`branch_intent`: inferred/ambiguous status,
+projection_only persistence, main/branch run keys/tags). Browser now renders
+`tee-node-surface` and `cross-node-surface` from fitting projection ports,
+using lightweight port-stub bodies, branch side rails, lower edges, and
+cross-member snap targets. Straight tray proxies trim at branch ports using
+the branch cutback, same doctrine as reducer/bend trim. Added server contract
+test for Tee/Cross fields and real-viewer browser test that creates one tee
+and one cross, refreshes fittings, and asserts both surfaces plus branch snap
+targets. Overlay cache key is `20260727_raceway48`. Remaining accessory work:
+catalogue-grade main/branch selection, persisted branch intent, branch-size
+adapters, covers/dividers/couplers/vendor parts. Recommendation: manual check,
+then a focused C10 JS hardening slice, then pivot to cable
+assignment/pathfinding/graph use.
