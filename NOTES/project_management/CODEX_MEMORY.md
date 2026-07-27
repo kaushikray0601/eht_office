@@ -1326,3 +1326,24 @@ smoke now calls the pure helpers directly. Overlay cache key is
 `20260727_raceway50`. Next pass can safely start intuitive authoring:
 Make Tee = endpoint-to-segment with target split; Make Cross =
 unconnected-crossing warning to split both segments.
+
+Plant3D/Raceway note, 2026-07-28 intuitive Tee/Cross authoring v0: KR
+approved the intuitive authoring pass after C10. Claude §45 still has no
+blocker: projection-only branch intent remains acceptable for MVP and
+inferred main/branch intent must not drive exportable procurement sizing.
+Implemented `Make Tee` and `Make Cross` in `raceway_overlay.js`. Make Tee:
+select an endpoint on a branch run, click a horizontal segment on another run;
+the target segment is split at the picked point and the source endpoint is
+moved onto the inserted node in one undoable topology edit. Make Cross:
+refresh/select a saved `raceway.graph.unconnected_crossing` graph warning,
+then split both saved segments at the warning source point in one undoable
+edit. Graph warning rows are now selectable and frame the warning point.
+Added a shared `splitRunSegment()` helper so Split Segment, Make Tee, and Make
+Cross use one segment-intent remap path. Browser smoke now exercises Make Tee
+through the viewer interaction contract and undo; command-state/static tests
+pin Make Tee/Cross buttons, shortcuts, and disabled reasons. Overlay cache key
+is `20260728_raceway51`. Manual check next: Make Tee by endpoint-to-segment;
+Make Cross from a graph unconnected-crossing warning; then save and refresh
+graph/fittings/schedule to see Tee/Cross counts. Remaining: catalogue-grade
+branch intent, branch-size adapters, persisted accessory intent, and broader
+JS module extraction.

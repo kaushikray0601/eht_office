@@ -8,6 +8,8 @@ const HISTORY_LIMIT = 80;
 const NODE_HANDLE_SCREEN_PX = 5;
 const NODE_HANDLE_SELECTED_SCREEN_PX = 6;
 const NODE_HIT_TARGET_SCREEN_PX = 18;
+const SEGMENT_PICK_SCREEN_PX = 14;
+const TOPOLOGY_SPLIT_EDGE_GUARD_RATIO = 0.01;
 const PROXY_FACE_OPACITY = 0.14;
 const PROXY_FACE_SELECTED_OPACITY = 0.24;
 const PROXY_BOTTOM_SHADE = 1.12;
@@ -138,6 +140,7 @@ const state = {
   accessoryRadiusM: ACCESSORY_DEFAULT_RADIUS_M,
   reducerHandedness: DEFAULT_REDUCER_HANDEDNESS,
   connectSource: null,
+  teeSource: null,
   warningFocus: null,
 };
 
@@ -152,6 +155,8 @@ const actionLabels = {
   'move-node': 'Move selected node',
   'delete-node': 'Delete selected node',
   'connect-node': 'Connect selected endpoint to an existing raceway node',
+  'make-tee': 'Make tee from selected endpoint to a clicked segment',
+  'make-cross': 'Make cross from selected unconnected crossing warning',
   'anchor-node': 'Anchor selected node to selected plant object',
   'clear-anchor': 'Clear selected node anchor',
   save: 'Save draft raceways',
@@ -180,6 +185,8 @@ const actionShortcuts = {
   'move-node': 'M',
   'delete-node': 'Del',
   'connect-node': 'J',
+  'make-tee': 'Shift+J',
+  'make-cross': 'Shift+K',
   'anchor-node': 'A',
   'clear-anchor': 'Shift+A',
   save: 'Ctrl+S',
@@ -733,6 +740,7 @@ function captureHistorySnapshot() {
 
 function restoreHistorySnapshot(snapshot) {
   state.connectSource = null;
+  state.teeSource = null;
   state.runs = clonePlain(snapshot.runs || []);
   state.activeRunId = snapshot.activeRunId || state.runs[0]?.id || '';
   if (!state.runs.some(run => run.id === state.activeRunId)) {
@@ -821,6 +829,7 @@ function clearGraphProjection() {
   state.graphLoaded = false;
   state.graphLoading = false;
   state.graphError = '';
+  if (state.warningFocus?.source === 'graph') state.warningFocus = null;
 }
 
 function clearScheduleProjection() {
@@ -828,6 +837,7 @@ function clearScheduleProjection() {
   state.scheduleLoaded = false;
   state.scheduleLoading = false;
   state.scheduleError = '';
+  if (state.warningFocus?.source === 'schedule') state.warningFocus = null;
 }
 
 function clearFittingProjection() {
@@ -1070,6 +1080,10 @@ function ensureInteraction() {
         connectSelectedNodeFromEvent(event);
         return true;
       }
+      if (state.mode === 'make-tee') {
+        makeTeeFromEvent(event);
+        return true;
+      }
       if (state.mode === 'draw') {
         if (selectRacewayNodeFromEvent(event)) return true;
         addNodeFromEvent(event);
@@ -1113,11 +1127,13 @@ function ensureInteraction() {
 function activateCanvasMode(mode) {
   state.mode = mode;
   if (mode !== 'connect') state.connectSource = null;
+  if (mode !== 'make-tee') state.teeSource = null;
   interaction?.activate?.();
 }
 
 function deactivateCanvasMode() {
   state.connectSource = null;
+  state.teeSource = null;
   state.mode = 'idle';
   interaction?.deactivate?.();
 }
@@ -1201,16 +1217,95 @@ function sourcePointFromEvent(event) {
   const anchor = runtime?.modelAnchorFromViewerEvent?.(event) || null;
   const modelPoint = pointFromModelAnchor(anchor);
   if (modelPoint) return modelPoint;
+  return sourcePointOnElevationFromEvent(event, Number(state.elevationM) || 0);
+}
+
+function sourcePointOnElevationFromEvent(event, elevationM) {
   if (!runtime?.pointOnSourceElevationFromViewerEvent) return null;
-  const renderPoint = runtime.pointOnSourceElevationFromViewerEvent(event, Number(state.elevationM) || 0);
+  const sourceElevationM = Number(elevationM) || 0;
+  const renderPoint = runtime.pointOnSourceElevationFromViewerEvent(event, sourceElevationM);
   if (!renderPoint) return null;
   const sourcePoint = runtime.renderPointToSourcePoint(renderPoint);
   return {
     x: Number(sourcePoint.x) || 0,
     y: Number(sourcePoint.y) || 0,
-    z: Number(state.elevationM) || 0,
+    z: sourceElevationM,
     coordinate_frame: SOURCE_COORDINATE_FRAME,
   };
+}
+
+function sourcePointFromGraphWarning(warning) {
+  const point = warning?.source_point_m || warning?.sourcePointM || null;
+  const x = Number(point?.x);
+  const y = Number(point?.y);
+  const z = Number(point?.z);
+  if (![x, y, z].every(Number.isFinite)) return null;
+  return { x, y, z, coordinate_frame: SOURCE_COORDINATE_FRAME };
+}
+
+function closestPointOnSegment(startNode, endNode, point) {
+  const start = nodeSourcePoint(startNode);
+  const end = nodeSourcePoint(endNode);
+  const target = nodeSourcePoint(point);
+  if (!start || !end || !target) return null;
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dz = end.z - start.z;
+  const lengthSq = (dx * dx) + (dy * dy) + (dz * dz);
+  if (lengthSq < 0.000000001) {
+    return {
+      ratio: 0,
+      point: start,
+      distanceM: nodeDistance(start, target),
+    };
+  }
+  const rawRatio = (((target.x - start.x) * dx) + ((target.y - start.y) * dy) + ((target.z - start.z) * dz)) / lengthSq;
+  const ratio = Math.min(Math.max(rawRatio, 0), 1);
+  const closest = {
+    x: start.x + dx * ratio,
+    y: start.y + dy * ratio,
+    z: start.z + dz * ratio,
+    coordinate_frame: SOURCE_COORDINATE_FRAME,
+  };
+  return {
+    ratio,
+    point: closest,
+    distanceM: nodeDistance(closest, target),
+  };
+}
+
+function segmentPickRadiusM(point) {
+  const renderPoint = point ? renderSourcePoint(point) : null;
+  if (!renderPoint) return 0.25;
+  return Math.max(runtime?.worldUnitsForScreenPixels?.(renderPoint, SEGMENT_PICK_SCREEN_PX, 0.05, 0.45) || 0.25, 0.05);
+}
+
+function pickRacewaySegmentFromEvent(event, options = {}) {
+  const excludeRunId = options.excludeRunId || '';
+  const allowRisers = options.allowRisers !== false;
+  let best = null;
+  state.runs.forEach(run => {
+    if (!run || run.id === excludeRunId) return;
+    runSegments(run).forEach(segment => {
+      if (!allowRisers && segment.isRiser) return;
+      const segmentElevation = (Number(segment.startNode?.z || 0) + Number(segment.endNode?.z || 0)) / 2;
+      const eventPoint = sourcePointOnElevationFromEvent(event, segmentElevation);
+      const closest = closestPointOnSegment(segment.startNode, segment.endNode, eventPoint);
+      if (!closest) return;
+      const radius = segmentPickRadiusM(closest.point);
+      if (closest.distanceM > radius) return;
+      if (
+        closest.ratio <= TOPOLOGY_SPLIT_EDGE_GUARD_RATIO
+        || closest.ratio >= 1 - TOPOLOGY_SPLIT_EDGE_GUARD_RATIO
+      ) {
+        return;
+      }
+      if (!best || closest.distanceM < best.distanceM) {
+        best = { run, segment, ratio: closest.ratio, point: closest.point, distanceM: closest.distanceM };
+      }
+    });
+  });
+  return best;
 }
 
 function orthoAdjustedPoint(run, point, previousPoint = null) {
@@ -2790,6 +2885,239 @@ function connectSelectedNodeFromEvent(event) {
   renderPanel({ forceInspector: true });
 }
 
+function beginMakeTee() {
+  const run = activeRun();
+  const node = selectedNode();
+  if (!run || !node) {
+    setStatus('Select an endpoint node before making a tee.');
+    renderPanel();
+    return false;
+  }
+  if (!selectedNodeIsEndpoint(run)) {
+    setStatus('Make Tee starts from the first or last node of a branch run. Split the run first if the branch point is mid-run.');
+    renderPanel();
+    return false;
+  }
+  const targetSegmentCount = state.runs
+    .filter(item => item.id !== run.id)
+    .reduce((count, item) => count + runSegments(item).filter(segment => !segment.isRiser).length, 0);
+  if (!targetSegmentCount) {
+    setStatus('Make Tee needs another horizontal raceway segment as the target.');
+    renderPanel();
+    return false;
+  }
+  state.teeSource = { runId: run.id, nodeIndex: state.selectedNodeIndex };
+  activateCanvasMode('make-tee');
+  setStatus(`${run.tag}: click the target segment where endpoint N${state.selectedNodeIndex + 1} should tee in.`);
+  renderPanel();
+  return true;
+}
+
+function makeTeeFromEvent(event) {
+  const source = state.teeSource || { runId: state.activeRunId, nodeIndex: state.selectedNodeIndex };
+  const sourceRun = runById(source.runId);
+  const sourceNode = sourceRun?.nodes?.[source.nodeIndex] || null;
+  if (!sourceRun || !sourceNode) {
+    state.teeSource = null;
+    setStatus('Tee source node is no longer available.');
+    renderPanel();
+    return false;
+  }
+  state.activeRunId = sourceRun.id;
+  state.selectedNodeIndex = source.nodeIndex;
+  if (!selectedNodeIsEndpoint(sourceRun)) {
+    setStatus('Make Tee starts from the first or last node of a branch run.');
+    renderPanel();
+    return false;
+  }
+  const target = pickRacewaySegmentFromEvent(event, { excludeRunId: sourceRun.id, allowRisers: false });
+  if (!target) {
+    setStatus(`${sourceRun.tag}: click near a horizontal segment from another raceway run to make a tee.`);
+    return false;
+  }
+  pushUndo('Make tee');
+  const { node: insertedNode, nodeIndex: targetNodeIndex } = splitRunSegment(
+    target.run,
+    target.segment,
+    target.ratio,
+    target.point,
+  );
+  sourceRun.nodes[source.nodeIndex] = connectedNodeCopy(sourceNode, insertedNode);
+  markRunDirty(target.run);
+  markRunDirty(sourceRun);
+  clearDerivedProjections();
+  state.activeRunId = sourceRun.id;
+  state.selectedNodeIndex = source.nodeIndex;
+  state.selectedSegmentIndex = -1;
+  state.warningFocus = null;
+  state.teeSource = null;
+  adoptWorkingElevationFromPoint(sourceRun, insertedNode);
+  activateNodeSelectionMode(sourceRun);
+  setStatus(
+    `${sourceRun.tag}: endpoint N${source.nodeIndex + 1} teed into ${target.run.tag} at new N${targetNodeIndex + 1}. `
+    + 'Save Draft, then refresh graph/fittings to derive the tee.'
+  );
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
+function graphEdges() {
+  const edges = state.graphProjection?.edges;
+  return Array.isArray(edges) ? edges : [];
+}
+
+function graphEdgesForWarning(warning) {
+  const edgeKeys = new Set((Array.isArray(warning?.edge_keys) ? warning.edge_keys : []).map(String));
+  return graphEdges().filter(edge => edgeKeys.has(String(edge.key || '')));
+}
+
+function runByGraphEdge(edge) {
+  return runByKey(edge?.run_key || '') || state.runs.find(run => (
+    normalizedServerRunId(run.serverRunId) === normalizedServerRunId(edge?.run_id)
+  )) || null;
+}
+
+function localSegmentForGraphEdge(edge) {
+  const run = runByGraphEdge(edge);
+  if (!run) return null;
+  const startSequence = Number(edge?.start_sequence);
+  const endSequence = Number(edge?.end_sequence);
+  let segment = null;
+  if (Number.isInteger(startSequence) && Number.isInteger(endSequence)) {
+    segment = runSegments(run).find(item => (
+      Number(item.startNodeIndex) === startSequence && Number(item.endNodeIndex) === endSequence
+    )) || null;
+  }
+  if (!segment && edge?.start_point_m && edge?.end_point_m) {
+    segment = runSegments(run).find(item => (
+      nodeDistance(item.startNode, edge.start_point_m) < 0.02
+      && nodeDistance(item.endNode, edge.end_point_m) < 0.02
+    )) || null;
+  }
+  return segment ? { run, segment } : null;
+}
+
+function selectedGraphWarning() {
+  const focus = state.warningFocus;
+  if (focus?.source !== 'graph') return null;
+  return graphWarnings()[Number(focus.warningIndex)] || null;
+}
+
+function selectedGraphCrossingWarning() {
+  const warning = selectedGraphWarning();
+  return warning?.code === 'raceway.graph.unconnected_crossing' ? warning : null;
+}
+
+function focusGraphWarningTarget(warning) {
+  const point = sourcePointFromGraphWarning(warning);
+  if (!runtime?.frameSourcePoints || !point) return false;
+  return runtime.frameSourcePoints([point], {
+    paddingM: 1,
+    minRadiusM: 2,
+  }) === true;
+}
+
+function selectGraphWarning(index) {
+  const warningIndex = Number(index);
+  const warning = graphWarnings()[warningIndex];
+  if (!warning) {
+    setStatus('This graph warning is no longer available.');
+    return false;
+  }
+  const localEdges = graphEdgesForWarning(warning).map(localSegmentForGraphEdge).filter(Boolean);
+  const first = localEdges[0] || null;
+  if (first) {
+    state.activeRunId = first.run.id;
+    state.selectedNodeIndex = -1;
+    state.selectedSegmentIndex = first.segment.segmentIndex;
+    syncPaletteFromRun(first.run);
+  }
+  state.warningFocus = {
+    source: 'graph',
+    warningIndex,
+    runId: first?.run?.id || '',
+    segmentIndex: first?.segment?.segmentIndex ?? null,
+    code: warning.code || '',
+  };
+  activateNodeSelectionMode(activeRun());
+  const framed = focusGraphWarningTarget(warning);
+  setStatus(`${warning.code || 'Graph warning'} selected${framed ? ' and framed in viewer' : ''}.`);
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
+function applyMakeCrossFromSelectedWarning() {
+  if (hasUnsavedSavableChanges()) {
+    setStatus('Save Draft before making a cross from graph warnings; crossing evidence comes from the saved graph.');
+    renderPanel();
+    return false;
+  }
+  const warning = selectedGraphCrossingWarning();
+  const sourcePoint = sourcePointFromGraphWarning(warning);
+  if (!warning || !sourcePoint) {
+    setStatus('Select an unconnected crossing graph warning before making a cross.');
+    renderPanel();
+    return false;
+  }
+  const targets = graphEdgesForWarning(warning).map(localSegmentForGraphEdge).filter(Boolean);
+  if (targets.length < 2) {
+    setStatus('The selected crossing warning no longer matches two loaded saved segments. Refresh graph and try again.');
+    renderPanel();
+    return false;
+  }
+  const uniqueTargets = [];
+  const seen = new Set();
+  targets.forEach(target => {
+    const key = `${target.run.id}:${target.segment.segmentIndex}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    uniqueTargets.push(target);
+  });
+  if (uniqueTargets.length < 2) {
+    setStatus('The selected crossing warning does not describe two distinct loaded segments.');
+    renderPanel();
+    return false;
+  }
+  const splitTargets = uniqueTargets.slice(0, 2).map(target => {
+    const closest = closestPointOnSegment(target.segment.startNode, target.segment.endNode, sourcePoint);
+    return { ...target, closest };
+  });
+  const invalid = splitTargets.find(item => (
+    !item.closest
+    || item.closest.ratio <= TOPOLOGY_SPLIT_EDGE_GUARD_RATIO
+    || item.closest.ratio >= 1 - TOPOLOGY_SPLIT_EDGE_GUARD_RATIO
+  ));
+  if (invalid) {
+    setStatus('The selected crossing is too close to an existing node. Use Connect Node at the endpoint, or move/split the segment first.');
+    renderPanel();
+    return false;
+  }
+  pushUndo('Make cross');
+  const inserted = splitTargets.map(target => {
+    const result = splitRunSegment(target.run, target.segment, target.closest.ratio, sourcePoint);
+    markRunDirty(target.run);
+    return { ...target, ...result };
+  });
+  clearDerivedProjections();
+  const first = inserted[0];
+  state.activeRunId = first.run.id;
+  state.selectedNodeIndex = first.nodeIndex;
+  state.selectedSegmentIndex = -1;
+  state.warningFocus = null;
+  syncPaletteFromRun(first.run);
+  adoptWorkingElevationFromPoint(first.run, first.node);
+  activateNodeSelectionMode(first.run);
+  setStatus(
+    `Cross authored at X ${formatM(sourcePoint.x)} Y ${formatM(sourcePoint.y)} EL ${formatM(sourcePoint.z)}. `
+    + 'Save Draft, then refresh graph/fittings to derive the cross.'
+  );
+  renderRaceway();
+  renderPanel({ forceInspector: true });
+  return true;
+}
+
 function renderTrayPreview(group, run, color) {
   const selected = run.id === state.activeRunId;
   const material = previewMaterial(selected ? 0xf97316 : color, selected ? 1 : 0.92);
@@ -2989,8 +3317,17 @@ function addNodeFromEvent(event) {
   renderPanel();
 }
 
-function interpolatedRacewayNode(startNode, endNode, ratio) {
+function interpolatedRacewayNode(startNode, endNode, ratio, sourcePoint = null) {
   const t = Math.min(Math.max(Number(ratio) || 0, 0), 1);
+  if (sourcePoint) {
+    return {
+      x: Number(sourcePoint.x) || 0,
+      y: Number(sourcePoint.y) || 0,
+      z: Number(sourcePoint.z) || 0,
+      coordinate_frame: SOURCE_COORDINATE_FRAME,
+      anchor: {},
+    };
+  }
   return {
     x: Number(startNode?.x || 0) + (Number(endNode?.x || 0) - Number(startNode?.x || 0)) * t,
     y: Number(startNode?.y || 0) + (Number(endNode?.y || 0) - Number(startNode?.y || 0)) * t,
@@ -3000,16 +3337,7 @@ function interpolatedRacewayNode(startNode, endNode, ratio) {
   };
 }
 
-function splitSelectedSegment() {
-  const run = activeRun();
-  const segment = selectedSegment();
-  if (!run || !segment) {
-    setStatus('Select a segment before splitting it.');
-    renderPanel();
-    return false;
-  }
-  const percent = normalizedSegmentSplitPercent(state.segmentSplitPercent);
-  const ratio = percent / 100;
+function splitRunSegment(run, segment, ratio, sourcePoint = null) {
   const oldIntentByIndex = segmentIntentSnapshot(run);
   const splitIndex = Number(segment.segmentIndex);
   const remappedIntentByIndex = new Map();
@@ -3025,12 +3353,30 @@ function splitSelectedSegment() {
       remappedIntentByIndex.set(oldIndex + 1, cloned);
     }
   });
-  const insertedNode = interpolatedRacewayNode(segment.startNode, segment.endNode, ratio);
-  pushUndo('Split segment');
+  const insertedNode = interpolatedRacewayNode(segment.startNode, segment.endNode, ratio, sourcePoint);
   run.nodes.splice(segment.endNodeIndex, 0, insertedNode);
   rewriteSegmentIntentOverrides(run, remappedIntentByIndex);
+  return {
+    node: insertedNode,
+    nodeIndex: segment.endNodeIndex,
+  };
+}
+
+function splitSelectedSegment() {
+  const run = activeRun();
+  const segment = selectedSegment();
+  if (!run || !segment) {
+    setStatus('Select a segment before splitting it.');
+    renderPanel();
+    return false;
+  }
+  const percent = normalizedSegmentSplitPercent(state.segmentSplitPercent);
+  const ratio = percent / 100;
+  const splitIndex = Number(segment.segmentIndex);
+  pushUndo('Split segment');
+  const { node: insertedNode, nodeIndex } = splitRunSegment(run, segment, ratio);
   state.segmentSplitPercent = percent;
-  state.selectedNodeIndex = segment.endNodeIndex;
+  state.selectedNodeIndex = nodeIndex;
   state.selectedSegmentIndex = -1;
   state.warningFocus = null;
   adoptWorkingElevationFromPoint(run, insertedNode);
@@ -4062,6 +4408,8 @@ function injectStyles() {
     .raceway-row-active { border-color: #2563eb; color: #1d4ed8; }
     .raceway-graph-warnings { display: grid; gap: 5px; margin-top: 8px; }
     .raceway-graph-warning { border-left: 3px solid #ca8a04; padding-left: 7px; color: #713f12; font-size: 11px; line-height: 1.35; }
+    button.raceway-graph-warning { width: 100%; border-top: 0; border-right: 0; border-bottom: 0; background: transparent; cursor: pointer; font: inherit; text-align: left; }
+    button.raceway-graph-warning:hover { background: rgba(202, 138, 4, 0.08); }
     .raceway-graph-ok { color: #166534; font-size: 11px; }
     .raceway-graph-error { color: #991b1b; font-size: 11px; }
     .raceway-schedule-summary { margin-top: 8px; color: #334155; font-size: 11px; line-height: 1.4; }
@@ -4188,7 +4536,11 @@ function warningClass(warning) {
 }
 
 function warningFocusClass(index) {
-  return state.warningFocus?.warningIndex === index ? ' raceway-warning-active' : '';
+  return state.warningFocus?.source !== 'graph' && state.warningFocus?.warningIndex === index ? ' raceway-warning-active' : '';
+}
+
+function graphWarningFocusClass(index) {
+  return state.warningFocus?.source === 'graph' && state.warningFocus?.warningIndex === index ? ' raceway-warning-active' : '';
 }
 
 function localWarningLabel(warning) {
@@ -4273,7 +4625,7 @@ function graphWarningLabel(warning) {
     ? ` at X ${formatM(point.x)} Y ${formatM(point.y)} EL ${formatM(point.z)}`
     : '';
   if (warning?.code === 'raceway.graph.unconnected_crossing') {
-    return `Unconnected crossing${location}. Use Connect Node only where this is an intended tee/junction.`;
+    return `Unconnected crossing${location}. Select this warning and use Make Cross where this is an intended crossing junction.`;
   }
   if (warning?.code === 'raceway.graph.near_miss_endpoint') {
     const distance = Number.isFinite(Number(warning.distance_m)) ? ` (${formatM(warning.distance_m)} m gap)` : '';
@@ -4292,10 +4644,10 @@ function graphWarningsHtml() {
   if (!state.graphLoaded) return '<div class="meta">Graph not refreshed yet.</div>';
   const warnings = graphWarnings();
   if (!warnings.length) return '<div class="raceway-graph-ok">Graph: no warnings in saved raceways.</div>';
-  return warnings.map(warning => `
-    <div class="raceway-graph-warning">
+  return warnings.map((warning, index) => `
+    <button type="button" class="raceway-graph-warning${graphWarningFocusClass(index)}" data-raceway-action="select-graph-warning" data-warning-index="${index}" title="Select graph warning">
       ${escapeHtml(graphWarningLabel(warning))}
-    </div>
+    </button>
   `).join('');
 }
 
@@ -4338,6 +4690,8 @@ function racewayNoticeBadgeCount() {
  * @property {number=} edgeMatchCandidateCount
  * @property {number=} reducerCandidateCount
  * @property {boolean=} hasSelectedSegment
+ * @property {boolean=} hasSelectedGraphCrossingWarning
+ * @property {number=} targetSegmentCount
  * @property {number=} splitPercent
  * @property {number=} segmentLengthM
  */
@@ -4600,6 +4954,8 @@ function ensurePanel() {
       <button type="button" data-raceway-action="move-node" title="${escapeHtml(actionTooltip('move-node'))}">Move Node</button>
       <button type="button" data-raceway-action="delete-node" title="${escapeHtml(actionTooltip('delete-node'))}">Delete Node</button>
       <button type="button" data-raceway-action="connect-node" title="${escapeHtml(actionTooltip('connect-node'))}">Connect Node</button>
+      <button type="button" data-raceway-action="make-tee" title="${escapeHtml(actionTooltip('make-tee'))}">Make Tee</button>
+      <button type="button" data-raceway-action="make-cross" title="${escapeHtml(actionTooltip('make-cross'))}">Make Cross</button>
     </div>
     <div class="p3d-toolbar" style="margin-top: 8px;">
       <button type="button" data-raceway-action="anchor-node" title="${escapeHtml(actionTooltip('anchor-node'))}">Anchor Node</button>
@@ -4687,6 +5043,7 @@ function computeRacewayCommandStates(snapshot = {}) {
   const scheduleLoading = Boolean(snapshot.scheduleLoading);
   const edgeMatchCandidateCount = Number(snapshot.edgeMatchCandidateCount || 0);
   const reducerCandidateCount = Number(snapshot.reducerCandidateCount || 0);
+  const targetSegmentCount = Number(snapshot.targetSegmentCount || 0);
   const splitPercent = Number(snapshot.splitPercent || 0);
   const segmentLengthM = Number(snapshot.segmentLengthM || 0);
   const hasUnsavedSavableChanges = Boolean(snapshot.hasUnsavedSavableChanges);
@@ -4712,6 +5069,20 @@ function computeRacewayCommandStates(snapshot = {}) {
     'move-node': commandState(!snapshot.hasNode, 'Select a node before moving it.'),
     'delete-node': commandState(!snapshot.hasNode, 'Select a node before deleting it.'),
     'connect-node': commandState(!snapshot.canConnectEndpoint, 'Select the first or last node of a run before connecting it.'),
+    'make-tee': commandState(
+      !snapshot.canConnectEndpoint || targetSegmentCount <= 0,
+      !snapshot.canConnectEndpoint
+        ? 'Select the first or last node of a branch run before making a tee.'
+        : 'Create another horizontal raceway segment before making a tee.'
+    ),
+    'make-cross': commandState(
+      persistenceLoading || graphLoading || hasUnsavedSavableChanges || !snapshot.hasSelectedGraphCrossingWarning,
+      persistenceLoading || graphLoading
+        ? 'Raceway persistence or graph refresh is busy.'
+        : hasUnsavedSavableChanges
+          ? 'Save Draft before making a cross from saved graph warnings.'
+          : 'Refresh graph and select an unconnected crossing warning.'
+    ),
     'anchor-node': commandState(!snapshot.hasRun, 'Start or select a run before anchoring.'),
     'clear-anchor': commandState(!snapshot.hasAnchoredNode, 'Select an anchored node first.'),
     save: commandState(
@@ -4761,6 +5132,9 @@ function updateActionStates(run) {
   const edgeMatchCandidateCount = reducerEdgeMatchCandidates().length;
   const reducerCandidateCount = reducerTransitionCandidates().length;
   const segment = selectedSegment();
+  const targetSegmentCount = state.runs
+    .filter(item => item.id !== run?.id)
+    .reduce((count, item) => count + runSegments(item).filter(segmentItem => !segmentItem.isRiser).length, 0);
   const commandStates = computeRacewayCommandStates({
     catalogCount: catalog.length,
     hasRun: Boolean(run),
@@ -4783,6 +5157,8 @@ function updateActionStates(run) {
     edgeMatchCandidateCount,
     reducerCandidateCount,
     hasSelectedSegment: Boolean(segment),
+    hasSelectedGraphCrossingWarning: Boolean(selectedGraphCrossingWarning()),
+    targetSegmentCount,
     splitPercent: normalizedSegmentSplitPercent(state.segmentSplitPercent),
     segmentLengthM: state.segmentLengthM,
   });
@@ -4902,6 +5278,7 @@ function selectScheduleWarning(index) {
   state.selectedNodeIndex = warningTargetNodeIndex(run, warning);
   state.selectedSegmentIndex = Number.isInteger(segmentIndex) ? segmentIndex : -1;
   state.warningFocus = {
+    source: 'schedule',
     warningIndex,
     runId: run.id,
     segmentIndex: Number.isInteger(segmentIndex) ? segmentIndex : null,
@@ -5016,6 +5393,8 @@ function runPanelAction(action, button = null) {
   if (action === 'cancel') cancelRun();
   if (action === 'delete-node') deleteSelectedNode();
   if (action === 'connect-node') beginConnectNode();
+  if (action === 'make-tee') beginMakeTee();
+  if (action === 'make-cross') applyMakeCrossFromSelectedWarning();
   if (action === 'anchor-node') attachSelectedModelToNode();
   if (action === 'clear-anchor') clearSelectedNodeAnchor();
   if (action === 'save') saveDrafts();
@@ -5076,6 +5455,9 @@ function runPanelAction(action, button = null) {
   }
   if (action === 'select-warning') {
     selectScheduleWarning(button?.dataset.warningIndex);
+  }
+  if (action === 'select-graph-warning') {
+    selectGraphWarning(button?.dataset.warningIndex);
   }
   return true;
 }
@@ -5264,7 +5646,8 @@ function racewayShortcutActionForEvent(event, key) {
   if (key === 'f' && !event.shiftKey) return 'finish';
   if (key === 'n' && !event.shiftKey) return 'select-node-mode';
   if (key === 'm' && !event.shiftKey) return 'move-node';
-  if (key === 'j' && !event.shiftKey) return 'connect-node';
+  if (key === 'j') return event.shiftKey ? 'make-tee' : 'connect-node';
+  if (key === 'k' && event.shiftKey) return 'make-cross';
   if (key === 'o' && !event.shiftKey) return 'toggle-ortho';
   if (key === 'v' && event.shiftKey) return 'toggle-surfaces';
   if (key === 'a') return event.shiftKey ? 'clear-anchor' : 'anchor-node';
@@ -5293,6 +5676,7 @@ function racewayShortcutAvailableForAction(action) {
     || action === 'refresh-schedule'
     || action === 'refresh-fittings'
     || action === 'apply-reducer-offsets'
+    || action === 'make-cross'
     || action === 'open-warning-details'
     || action === 'open-schedule-csv'
   ) {

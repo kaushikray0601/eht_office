@@ -31,7 +31,7 @@ Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex execute
 | C4 🟢 | T-2 `session_key` column on telemetry | telemetry note T-2 | one column |
 | C5 🟢 | §26 blocked-telemetry-endpoint browser assertion | §26 | tiny |
 | C6 🟢 | M-5 copy-run-with-offset; M-6 remainder (EL grid while drawing) | RFC M-table | small each |
-| C7 🟢 | Segment-interior canvas picking; explicit work-plane mode messaging | tracker deferred list | small each |
+| C7 🟢 | Segment-interior canvas picking is partly landed for `Make Tee`; remaining: explicit work-plane mode messaging and broader segment-pick reuse outside Tee authoring | tracker deferred list | small each |
 | C8 🟢 | A-3 BOQ assumptions line ("straight lengths gross; development lengths not deducted") | §40 | one line |
 | C9 🟢 | Radius/handedness persistence via the segment-intent idiom (when choice UI lands) | §43 | with reducer UI |
 | C10 🟢 | **JS hardening pass** (upgraded from "plan" after the Apply Edge Match incident): Codex's 5 recommendations (pure command-state layer, JSDoc/@ts-check, geometry/DOM split, state invariants, workflow browser tests) **+ Claude B-1..B-4**. 2026-07-27 status: reducer B-1 pins, B-2/B-3/B-4 reducer diagnostics, first `computeRacewayCommandStates(snapshot)` seam, schedule/fitting summary view-model helpers, JSDoc typedefs, browser helper assertions, and Phase-H schedule/route contract pins are landed. Remaining work: deeper geometry/DOM split, broader graph/fitting pins, CI/B-5, eventual separate JS module, and A-7 persistence decision | js-audit + claude-notes §44 | 1–2 passes |
@@ -50,4 +50,4 @@ Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex execute
 
 ## Recently closed (kept one cycle for visibility)
 
-- Reducer body proxy v0 — coded 2026-07-19 (§43-era tracker). N-20 frame-coupled merge rule — closed `579af3d` (§43). A-2 cutback — delivered for bends/risers (§43). N-18 PG fixture — closed (§38). N-19 browser flake — closed (§39). T-1 event dictionary — being followed at source since §38.
+- **B-1..B-4 — all closed** (2026-07-20 pass; §46 verified): reducer contract pins, fail-loud client checks, visible disabled reasons (`#racewayCommandHint`), `insufficient_segment_context` hardened with a healthy-geometry impossibility test. §45 tee boundary rule **verified honored** via the Phase-H schedule contract pin (projection-only sizing status). Hybrid accessory doctrine recorded. `computeRacewayCommandStates` pure seam live. Tee/Cross v0 projection-only shipped. Scorecard: JS 6→7, Testing 7.5→8, overall ≈ 8.0.

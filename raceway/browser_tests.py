@@ -467,6 +467,8 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                         edgeMatchCandidateCount: 1,
                         reducerCandidateCount: 1,
                         hasSelectedSegment: false,
+                        hasSelectedGraphCrossingWarning: false,
+                        targetSegmentCount: 1,
                         splitPercent: 50,
                         segmentLengthM: 6,
                       };
@@ -479,12 +481,30 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                           ...base,
                           hasUnsavedSavableChanges: true,
                         })['apply-reducer-offsets'],
+                        teeReady: window.racewayViewerOverlay.computeRacewayCommandStates({
+                          ...base,
+                          canConnectEndpoint: true,
+                          hasUnsavedSavableChanges: false,
+                        })['make-tee'],
+                        crossNoWarning: window.racewayViewerOverlay.computeRacewayCommandStates({
+                          ...base,
+                          hasUnsavedSavableChanges: false,
+                        })['make-cross'],
+                        crossReady: window.racewayViewerOverlay.computeRacewayCommandStates({
+                          ...base,
+                          hasSelectedGraphCrossingWarning: true,
+                          hasUnsavedSavableChanges: false,
+                        })['make-cross'],
                       };
                     }"""
                 )
                 self.assertFalse(command_state_probe["clean"]["disabled"])
                 self.assertTrue(command_state_probe["dirty"]["disabled"])
                 self.assertIn("Save Draft before applying reducer suggestions", command_state_probe["dirty"]["reason"])
+                self.assertFalse(command_state_probe["teeReady"]["disabled"])
+                self.assertTrue(command_state_probe["crossNoWarning"]["disabled"])
+                self.assertIn("select an unconnected crossing warning", command_state_probe["crossNoWarning"]["reason"])
+                self.assertFalse(command_state_probe["crossReady"]["disabled"])
                 summary_probe = page.evaluate(
                     """() => ({
                       schedule: window.racewayViewerOverlay.buildScheduleSummaryViewModel({
@@ -545,6 +565,8 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("Ctrl+Shift+Z", page.get_attribute('[data-raceway-action="redo"]', "title"))
                 self.assertIn("Ctrl+S", page.get_attribute('[data-raceway-action="save"]', "title"))
                 self.assertIn("J", page.get_attribute('[data-raceway-action="connect-node"]', "title"))
+                self.assertIn("Shift+J", page.get_attribute('[data-raceway-action="make-tee"]', "title"))
+                self.assertIn("Shift+K", page.get_attribute('[data-raceway-action="make-cross"]', "title"))
                 self.assertIn("G", page.get_attribute('[data-raceway-action="refresh-graph"]', "title"))
                 self.assertIn("B", page.get_attribute('[data-raceway-action="refresh-schedule"]', "title"))
                 self.assertIn("T", page.get_attribute('[data-raceway-action="refresh-fittings"]', "title"))
@@ -567,6 +589,97 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 self.assertIn("O", page.get_attribute("#racewayOrthoInput", "title"))
                 self.assertIn("Enter", page.get_attribute('[data-raceway-action="add-segment"]', "title"))
                 self.assertIn("Shift+X", page.get_attribute('[data-raceway-action="split-segment"]', "title"))
+
+                page.evaluate(
+                    """() => {
+                      window.__racewayUseModelAnchor = false;
+                      window.racewayViewerOverlay.setRuns([
+                        {
+                          id: 'branch-run',
+                          tag: 'RWY-BRANCH',
+                          familyId: '1',
+                          familyCode: 'LADDER-HDG',
+                          familyKind: 'ladder',
+                          familyLabel: 'Ladder HDG',
+                          sizeId: '11',
+                          sizeCode: 'LADDER-HDG-300x100',
+                          sizeLabel: '300 x 100 mm',
+                          widthMm: 300,
+                          depthMm: 100,
+                          serviceClass: 'power',
+                          elevationM: 0,
+                          metadata: {},
+                          orientation: { preset: 'open_up', label: 'Open Up', quarter_turns: 0 },
+                          segmentOrientationOverrides: {},
+                          segmentFaceOffsetOverrides: {},
+                          nodes: [
+                            { x: 15, y: 20, z: 0, coordinate_frame: 'source_xyz_m', anchor: {} },
+                            { x: 16, y: 20, z: 0, coordinate_frame: 'source_xyz_m', anchor: {} },
+                          ],
+                          dirty: false,
+                        },
+                        {
+                          id: 'trunk-run',
+                          tag: 'RWY-TRUNK',
+                          familyId: '1',
+                          familyCode: 'LADDER-HDG',
+                          familyKind: 'ladder',
+                          familyLabel: 'Ladder HDG',
+                          sizeId: '11',
+                          sizeCode: 'LADDER-HDG-300x100',
+                          sizeLabel: '300 x 100 mm',
+                          widthMm: 300,
+                          depthMm: 100,
+                          serviceClass: 'power',
+                          elevationM: 0,
+                          metadata: {},
+                          orientation: { preset: 'open_up', label: 'Open Up', quarter_turns: 0 },
+                          segmentOrientationOverrides: {},
+                          segmentFaceOffsetOverrides: {},
+                          nodes: [
+                            { x: 10, y: 10, z: 0, coordinate_frame: 'source_xyz_m', anchor: {} },
+                            { x: 20, y: 10, z: 0, coordinate_frame: 'source_xyz_m', anchor: {} },
+                          ],
+                          dirty: false,
+                        },
+                      ]);
+                    }"""
+                )
+                page.click('[data-raceway-action="select-node"][data-node-index="1"]')
+                self.assertFalse(page.eval_on_selector('[data-raceway-action="make-tee"]', "el => el.disabled"))
+                page.click('[data-raceway-action="make-tee"]')
+                page.dispatch_event("#viewerCanvas", "click", {"clientX": 150, "clientY": 100})
+                page.wait_for_function(
+                    """() => {
+                      const runs = window.racewayViewerOverlay.getRuns();
+                      return runs[0]?.nodes?.length === 2
+                        && runs[1]?.nodes?.length === 3
+                        && Math.round(runs[0].nodes[1].x * 1000) === 15000
+                        && Math.round(runs[0].nodes[1].y * 1000) === 10000
+                        && Math.round(runs[1].nodes[1].x * 1000) === 15000
+                        && Math.round(runs[1].nodes[1].y * 1000) === 10000;
+                    }"""
+                )
+                tee_probe = page.evaluate(
+                    """() => window.racewayViewerOverlay.getRuns().map((run) => ({
+                      tag: run.tag,
+                      dirty: run.dirty,
+                      nodes: run.nodes.map((node) => ({ x: node.x, y: node.y, z: node.z })),
+                    }))"""
+                )
+                self.assertTrue(tee_probe[0]["dirty"])
+                self.assertTrue(tee_probe[1]["dirty"])
+                self.assertIn("teed into RWY-TRUNK", page.text_content("#racewayToolStatus"))
+                page.keyboard.press("Control+Z")
+                page.wait_for_function(
+                    """() => {
+                      const runs = window.racewayViewerOverlay.getRuns();
+                      return runs[0]?.nodes?.length === 2
+                        && runs[1]?.nodes?.length === 2
+                        && Math.round(runs[0].nodes[1].y * 1000) === 20000;
+                    }"""
+                )
+                page.evaluate("() => window.racewayViewerOverlay.setRuns([])")
 
                 page.evaluate("() => { window.__racewayUseModelAnchor = false; }")
                 page.click('[data-raceway-action="start"]')

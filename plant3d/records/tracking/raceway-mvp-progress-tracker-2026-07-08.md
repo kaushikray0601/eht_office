@@ -3056,3 +3056,98 @@ Append each pass here.
     - `Make Cross`: start from unconnected-crossing warning, split both
       crossing segments at the warning point, cluster all node keys at one graph
       node, one undo step.
+
+### 2026-07-28 - Intuitive Tee/Cross Authoring V0
+
+- Manual decision from KR:
+  - proceed with intuitive authoring for Tee and Cross after the C10 hardening
+    slice.
+- Claude/Fable note review:
+  - latest local §45 remains aligned,
+  - no blocker found,
+  - projection-only branch intent stays valid for MVP,
+  - inferred main/branch intent still must not drive exportable procurement
+    sizing until user-confirmed or unambiguous.
+- Implemented authoring commands:
+  - `Make Tee`:
+    - select the first or last node of a branch run,
+    - click a horizontal segment on another raceway run,
+    - target segment is split at the picked point,
+    - source endpoint is moved to the inserted target node,
+    - the whole topology edit is one undo step.
+  - `Make Cross`:
+    - save/refresh graph,
+    - select an `unconnected_crossing` graph warning,
+    - command splits both saved crossing segments at the warning point,
+    - the whole topology edit is one undo step.
+- UI/UX changes:
+  - added `Make Tee` and `Make Cross` buttons beside `Connect Node`,
+  - added shortcuts:
+    - `Shift+J` for `Make Tee`,
+    - `Shift+K` for `Make Cross`,
+  - graph warnings are now clickable rows,
+  - selected graph warnings frame the warning point in the viewer,
+  - Make Cross disabled reason is explicit when no crossing warning is
+    selected or unsaved graph changes exist.
+- JS hardening carried forward:
+  - added shared `splitRunSegment()` helper,
+  - `Split Segment`, `Make Tee`, and `Make Cross` now share the same segment
+    intent remapping path,
+  - graph/schedule warning focus is cleared when its source projection is
+    invalidated,
+  - fixed a refactor bug caught by browser smoke where `splitSelectedSegment`
+    mutated nodes but failed before status/render due to a stale `splitIndex`
+    reference.
+- Browser cache key:
+  - Raceway overlay: `20260728_raceway51`.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python -m py_compile raceway/tests.py raceway/browser_tests.py ELECSENSE/settings.py`
+  - focused static test:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayStaticAssetTests --noinput -v 2`
+  - focused browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayBrowserSmokeTests.test_raceway_authoring_uses_viewer_interaction_contract --noinput -v 2`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - full browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py test plant3d -v 2 --noinput`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry -v 2 --noinput`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+- Manual check:
+  - Tee:
+    - create/select a branch run endpoint,
+    - click `Make Tee`,
+    - click a horizontal segment on another run,
+    - confirm the endpoint jumps to the clicked target segment and the target
+      run gains a node,
+    - `Ctrl+Z` should undo the whole tee.
+  - Cross:
+    - draw two independent trays crossing at the same elevation,
+    - `Save Draft`,
+    - `Refresh Graph`,
+    - click the unconnected-crossing warning,
+    - click `Make Cross`,
+    - confirm both crossing runs gain a node at the warning point,
+    - `Save Draft`, then `Refresh Graph` / `Refresh Fittings` / `Refresh
+      Schedule` to confirm cross count appears and warning clears.
+- Notes to Claude/Fable:
+  - Cross authoring intentionally uses saved graph warnings as the authority,
+    not a second client-side crossing solver,
+  - please review whether the Make Cross saved-state precondition and warning
+    selection are strict enough,
+  - Make Tee v0 intentionally skips riser target segments; challenge if riser
+    teeing must come before Phase H.
+- Next recommended pass:
+  - finish verification battery for this pass,
+  - if KR manual check passes, close accessory v0 authoring enough to take one
+    compact C10.2 structure pass before Phase H:
+    - extract topology/authoring helpers away from DOM command wiring,
+    - add broader graph/fitting-summary contract pins around the fields the
+      authoring commands now consume,
+    - keep this as a guardrail pass, not a rewrite.
+  - then pivot to:
+    - Phase H cable-to-raceway assignment foundation,
+    - route graph consumption by EHT/cable schedule,
+    - manual cable assignment first, then shortest-path suggestions.
