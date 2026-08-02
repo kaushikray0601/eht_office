@@ -1092,3 +1092,35 @@ C10 remainder (deeper geometry/DOM module split; broader graph/fitting-summary c
 ### Scorecard update triggered
 
 Score-moving events landed (command-state seam, contract pins, view models, six browser workflow tests): JS 6→7, Testing 7.5→8, overall ≈ 8.0. DevOps stays 5 — CI remains the gap. Scorecard history updated.
+
+## 47. Tee/Cross authoring + C10.2 review — the balance narrows (2026-07-28; for Codex + KR)
+
+Scope: `5dc8d58` (intuitive Tee/Cross authoring) + `9797238` (C10.2 guardrails). **Verdict: both approved. Make Tee completes the original M-3 vision in full — snap a branch onto a segment, split, join, one undo step — and Make Cross reusing the `unconnected_crossing` warning as its picker is a genuinely elegant design (the warning *is* the work-list). Codex's point-by-point §46 response in the tracker is the collaboration protocol at its best.** Verified: **154 tests OK twice**, browser **6/6 OK**, full **eht 360 OK**, statics clean.
+
+Highlights verified: shared `splitRunSegment()` gives Split/Make-Tee/Make-Cross one intent-remapping path (no divergence class); a refactor bug was caught by browser smoke before shipping (the net works); graph contract pins cover every Make-Cross JS dependency; the fitting-summary pins close the last un-pinned viewer surface; **C8 CLOSED** with the exact assumptions line, pinned in tests; `validateGraphProjectionContract` extends fail-loud to the graph payload. **A-7 DECIDED** via Codex's recorded stance — left/right/center are drafting controls; only resulting face offsets persist until accessory acceptance/intent exists — which is the "label as drafting aids" option and is accepted; A-7 closes.
+
+### The remaining balance — everything raised and not yet taken up
+
+**Codex-side (all agreed-deferred, none disputed):** C10 tail (geometry/DOM module split; separate JS module file) — *the one item I'd insist rides before Phase H's big JS*; A-4 riser orientation inheritance (backlog, agreed non-blocking); C9 accessory-intent persistence (waits for the acceptance palette); C4 `session_key`; C5 blocked-endpoint assertion; C6 M-5 copy-offset + M-6 EL-grid; C7 remainder (work-plane messaging, segment-pick reuse beyond Tee); C1 vendor-sync command (KR-assigned, still unbuilt); C11 stale-doc retirement; B-5/CI — coded in an afternoon the day A3 is spoken.
+
+**KR-side (unchanged, all aging):** A1 catalogue-seed (19+ days), A2 workspace file, **A3 CI go-ahead — the highest-leverage word on the board**, B1 decision-sweep habit, B2 eht June sign-off, B3 root-stub refresh.
+
+**Gates:** D2 georeference proof, D3 large-model test, D4 SEC-P1b leftovers, D5 vendor licensing, D6 0007 — all correctly parked, none started.
+
+### Arc verdict
+
+With Make Tee/Make Cross accepted by KR's manual check, **the accessory arc is closed for MVP.** Per §45/D1: the C10 module-split tail, then Phase H + durable EHT persistence. The next §-entry here should be reviewing route discovery over the graph — the thing this entire raceway campaign was built to enable.
+
+## 48. Phase H-A1 plan position + pre-coding riders (2026-07-28; for Codex + KR)
+
+Codex proposes Phase H-A1: server-side route-graph foundation (`raceway.routing`, weighted network from the saved graph, path tests, optional `/routes/preview/` endpoint), with H-A2 manual assignment UI after. **Aligned — this is the pivot the whole campaign built toward, and starting server-side with little visual change is the same projection-first pattern that made Stage 8A land clean.** Five riders to record before coding:
+
+1. **H-1 — Edge identity must be node-pair-derived, not ordinal.** Codex's list promises "stable `edge_key` output for future consumers" — but graph edges today carry `E###` presentation keys that shift on any insertion (N-09). The durable edge identity is `start_node_key::end_node_key` (already the segment-intent convention). Any consumer-visible `edge_key` in routing output must be that pair form; `E###` must never appear in a route payload a consumer might store.
+2. **H-2 — Make the weight function a seam, not a constant.** Length-only weights are right for A1, but Phase I adds bends, fill, and cost. Structure the router as `shortest_path(graph, start, end, cost=edge_length_cost)` with the cost callable injected — a five-minute decision now that prevents an algorithm rewrite later, and it is precisely where Tier-2 learned weights eventually plug in.
+3. **H-3 — Deterministic tie-breaking.** Equal-cost paths must resolve identically every run (stable ordering by node/edge keys) — same doctrine as the graph projection, and it needs its own test, because a nondeterministic route suggestion would poison telemetry labels later.
+4. **H-4 — Contract-first from birth.** Pin the route-preview payload in Python tests in the *same pass* that creates it (B-1 discipline, now house style): path node/edge pair-keys, per-edge lengths, total length, riser/horizontal flags, and an explicit `basis`/assumption block ("length-only weights, single-layer scope"). Endpoint access through `_layer_for_user`, node-key membership validated, and single-layer scope stated as an assumption (cross-layer/multi-package routing is a recorded non-goal for A1).
+5. **H-5 — What A1 must NOT do:** no route/assignment persistence (that needs the consumer-neutral cable-ref design note first — one page, D3/F-07 shape: `owner_module` + opaque `cable_ref`, no eht imports); no UI suggestion loop yet (telemetry code `raceway.route.candidate` is already reserved for H-A2, where the §39 doctrine — reasons, saved-state precondition, telemetry from day one — applies wholesale). And **durable EHT persistence must appear in the Phase H plan as a named parallel workstream** — A1 doesn't need it, the integrated-chain demo does, and it must not slip to the end.
+
+**Sequencing note:** H-A1 is server-side, so it does *not* violate §47's "module split before Phase H's big JS" — the C10 split must land **before H-A2 (the assignment UI)**, not before A1. Recorded so it can't quietly evaporate.
+
+**On the CI fork Codex posed to KR:** false dilemma — the answer is *both*, in the order CI-then-A1. CI is one afternoon pass; approving A3 today means every Phase H pass is born under CI, and the momentum cost is half a day against a phase that will run for weeks. If KR forces a binary: CI first — Phase H is exactly the "project grows" moment CI exists to protect.
