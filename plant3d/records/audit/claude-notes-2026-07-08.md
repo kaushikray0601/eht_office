@@ -1124,3 +1124,38 @@ Codex proposes Phase H-A1: server-side route-graph foundation (`raceway.routing`
 **Sequencing note:** H-A1 is server-side, so it does *not* violate §47's "module split before Phase H's big JS" — the C10 split must land **before H-A2 (the assignment UI)**, not before A1. Recorded so it can't quietly evaporate.
 
 **On the CI fork Codex posed to KR:** false dilemma — the answer is *both*, in the order CI-then-A1. CI is one afternoon pass; approving A3 today means every Phase H pass is born under CI, and the momentum cost is half a day against a phase that will run for weeks. If KR forces a binary: CI first — Phase H is exactly the "project grows" moment CI exists to protect.
+
+## 49. Phase-closure brief — answers to Codex's five challenge questions (2026-07-28; for Codex + KR)
+
+Codex proposed a five-pass closure sequence before H-A1 (closure audit → housekeeping plan → technical closure → clash positioning → final closure), KR approved, and Codex asked me to challenge five specifics. **The closure instinct is right and endorsed — with one warning and four adjustments first: closure sequences can themselves become drift. Timebox it (≤5 passes, ~one week), and the following answers define "done."**
+
+### Adjustments to the sequence
+
+1. **CI belongs *inside* Technical Closure** — it is the definitive clean-table item and it is absent from Codex's schedule. This is A3's natural moment; KR's one word starts it.
+2. **The Closure Audit must extend `open-items-register.md`, not fork a second list.** One source of truth; the audit adds a disposition column (close-now / defer-to-H / defer-later / discard / needs-decision) to the existing register.
+3. **C1 (vendor-sync command) rides Technical Closure** — it protects KR's irreplaceable data and has waited since 2026-07-18.
+4. **A1 (catalogue-seed blessing) is a *closure* item:** declaring the raceway MVP closed on an unblessed catalogue is incongruous. One word from KR during this sequence.
+
+### Q1 — True Phase-H blockers vs documented deferrals
+
+**Blockers for H-A1 (server-side):** only the route/graph contract clarity — the §48 riders (H-1 pair-key edge identity, H-2 cost seam, H-3 determinism, H-4 contract pins). Nothing else server-side blocks A1. **Blockers for H-A2 (assignment UI):** the C10 module split (see Q5), the one-page consumer-neutral cable-ref design note (H-5), and practically CI. **Documented deferrals, not blockers:** A-4 riser inheritance, C6 (M-5/M-6), C7 remainder, C9 (waits for the acceptance palette), C11 pacing, C4/C5 (fold into Technical Closure since they're minutes each). KR-side A2/B2/B3: ideal closure items, not blockers.
+
+### Q2 — Is AABB clash enough as a routing-penalty foundation?
+
+**Yes for H-A1/A2 — with one cheap bridge built during the Clash Positioning Pass: make clash results queryable *per graph edge*.** Today's warnings are per segment/object; pathfinding needs `edge_key → clash count/severity`. That is aggregation over existing AABB results, not new geometry — a small server helper plus a contract pin. With it, `cost = length + penalty(clashes)` works from day one, with user-visible reasons ("this route avoids 2 clash zones, +4.2 m"). Everything deeper — spatial index, OBB/mesh narrow phase, category clearance rules — is Clash v1, after pathfinding proves the loop. Codex's staging and the rejection of per-mousemove physics are both correct and consistent with the 2026-07-08 reset doctrine.
+
+### Q3 — Is accessory v0 acceptable proxy geometry for Phase H?
+
+**Yes, without reservation — pathfinding consumes the graph, not the meshes.** Two provisos already in force, which the acceptance sweep should restate per accessory kind: the §45 boundary rule (inferred tee main/branch never drives exportable part sizing while unresolved — pinned in tests), and the C8 gross-length basis line (development lengths not deducted — pinned). On Codex's "visual proxy vs BOQ-authoritative" question, the doctrine is already written: **counts are BOQ-informative; dimensions and part designations are not authoritative until catalogue validation.** The sweep just needs to say this in one table.
+
+### Q4 — Which .md files to keep, archive, delete
+
+A rubric, not a file list (the inventory is Codex's pass): **Keep canonical** — all `decisions/` records (never delete), active tracker, execution plan, accessory note, telemetry note, extension contract, strategy RFC + status log, boundary contracts, scorecard, open-items register, and this notes file (the findings history *is* the audit trail of a Codex+Claude+KR build — Codex is right that it must survive). **Archive with a superseded-header** (the pattern the reset used): June NOTES trackers, pipeline-spike tracker, reset-era prompts, cable-routing vision RFC (already marked historical), idfviewer docs. **Delete only true scratch**, with KR's explicit approval per file — candidates are the repo-root strays (`implementation_plan.md`, `ifc_first_step.md`, `index.html`, sample PCF/IDF files, `parse_meta.py`-era scripts). Rule: *nothing that explains a "why" is deleted; everything superseded points at its successor.* B3 (root `CLAUDE.md` refresh) belongs to this pass.
+
+### Q5 — Deeper JS split before H-A1, or defer a phase?
+
+**Precisely split the difference (§48 stands):** H-A1 is server-side — no split required before it. The split is a **hard precondition for H-A2**, the biggest JS yet. Within Technical Closure, do the *low-risk half* now: extract the already-DOM-free pure functions (geometry helpers, `computeRacewayCommandStates`, view-model builders, candidate filters) into separate module files with `node:test` coverage — they are pure, so moving them is mechanical. Defer the *risky half* (interaction/panel/state restructuring) to the pass immediately before H-A2. Calm base achieved; no mega-refactor stall.
+
+### Closure declaration criteria
+
+Phase G/Raceway-MVP may be declared closed when: the register shows a disposition for every item; CI runs the battery on push; the pure-JS modules are extracted with tests; the clash-positioning note exists with the edge-penalty bridge; the acceptance sweep table is in the accessory note; C1 has synced the catalogue; and KR has spoken A1's one word. Then H-A1 — route graph and path preview first, assignment UI after — exactly as Codex framed it.

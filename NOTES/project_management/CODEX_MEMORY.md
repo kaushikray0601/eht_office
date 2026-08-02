@@ -1365,3 +1365,18 @@ development lengths not deducted"). Added fail-loud
 graph edges and unconnected-crossing warnings. Overlay cache key is
 `20260728_raceway52`. Next: after manual spot check, pivot to Phase H
 foundation unless KR approves CI first.
+
+Plant3D/Raceway note, 2026-08-02 Phase G closure sequence: KR paused Phase H
+and requested top-to-toe closure/housekeeping before cable assignment and
+pathfinding. Created `plant3d/records/audit/phase-g-closure-audit-2026-08-02.md`.
+Claude §49 endorsed closure with adjustments: keep `open-items-register.md` as
+the single source of truth with dispositions, put CI and vendor-catalogue sync
+inside Technical Closure, require A1 catalogue-seed blessing, and add a Clash
+v0 graph-edge penalty bridge before route suggestions rely on clash evidence.
+Closure Pass 2 refreshed root `CLAUDE.md` and `NOTES/project_management/CLAUDE.md`
+from stale June EHT orientation to the Plant3D/Raceway closure era, updated
+`plant3d/records/README.md`, rewrote `open-items-register.md` with explicit
+dispositions and Phase H H1-H6 gates, and added an MVP accessory acceptance
+table to `raceway-accessory-geometry-note-2026-07-17.md`. A1/A2/A3 remain KR
+decisions; do not silently bless seed data, remove workspace files, or add CI
+without KR's explicit approval.

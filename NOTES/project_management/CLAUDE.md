@@ -1,7 +1,7 @@
 # CLAUDE.md — Architect / Reviewer Orientation
 
 **Role:** Claude is the architect, auditor, reviewer, and adversarial critic.  
-**Last updated:** 2026-06-11
+**Last updated:** 2026-08-02
 
 ---
 
@@ -14,45 +14,56 @@
 | **KR** | Product owner and domain authority. All engineering decisions go to KR. |
 
 **Claude's permitted files (without explicit KR instruction):**
-- `NOTES/` — all documentation and project management files
+- `NOTES/` — documentation and project management files
+- `plant3d/records/` — planning, audit, tracking, and decision records
 - `NOTES/project_management/CLAUDE.md` — this file
-- `templates/eht/design_guide.html` — Engineering Hub reference page
+- `templates/eht/design_guide.html` — Engineering Hub reference page, when
+  asked
 
 **Claude must not touch:**
 - Any `.py` file in `eht/` (models, views, calculation engines, tests)
 - `eht/migrations/`
-- `templates/eht/` (except design_guide.html)
-- `static/`
+- `raceway/`, `plant3d/`, `telemetry/`, or `ELECSENSE/` code files
+- `templates/` and `static/` except documentation-only files explicitly
+  assigned by KR
 
 ---
 
-## 2. Project Management Folder
+## 2. Current Session Entry Points
 
-All project control files live in `NOTES/project_management/`. Read them in this order at the start of a session:
+The current active project control has moved to `plant3d/records/` for the
+Plant3D/Raceway era. Read in this order at the start of a session:
 
-1. `CODEX_MEMORY.md` — frozen engineering decisions and current repo state (Codex's brief)
-2. `CURRENT_PHASE_TRACKER.md` — active pass queue and status
-3. `MASTER_ROADMAP.md` — phase structure and completed baseline
-4. `DECISION_LOG.md` — binding design decisions
-5. `OPEN_QUESTIONS.md` — unresolved choices that need KR input
-6. `RISK_REGISTER.md` — known risks and mitigations
-7. `RELEASE_CHECKLIST.md` — Phase A acceptance gate
+1. `plant3d/records/README.md` — record-book map and active files.
+2. `plant3d/records/audit/open-items-register.md` — single source of open
+   decisions/backlog/gates.
+3. `plant3d/records/audit/phase-g-closure-audit-2026-08-02.md` — current
+   closure map before Phase H.
+4. `plant3d/records/tracking/raceway-mvp-progress-tracker-2026-07-08.md` —
+   active Raceway execution history and next-pass notes.
+5. `plant3d/records/audit/claude-notes-2026-07-08.md` — Claude/Fable review
+   history; latest relevant section is §49.
+6. `plant3d/records/audit/development-scorecard.md` — scorecard and drift
+   watch.
+7. `NOTES/project_management/CODEX_MEMORY.md` — Codex local memory and
+   implementation continuity.
 
 ---
 
-## 3. Current Module Status (Snapshot — verify against CURRENT_PHASE_TRACKER.md)
+## 3. Current Module Status
 
 | Module | Status |
 |---|---|
 | SR cable | Complete MVP |
-| MI cable | Bounded MVP — auto-fallback, `is_validated` gate; R7 vendor comparison pending (KR) |
-| Cold cable | Complete MVP — Cu-only, ampacity + VD + RCD earth loop + volume optimisation + multi-segment 3C |
-| Verification report | Complete |
-| Engineering Hub / Design Guide | Complete |
-| User Manual (`NOTES/CALCULATION_MODULE_USER_MANUAL.md`) | Up to date; staged for commit |
-| Constant wattage | Not started (Phase B) |
+| MI cable | Bounded MVP; vendor validation remains a governance concern |
+| Cold cable | Complete MVP with 3C/multi-segment foundation |
+| EHT SLD/cold-cable flow | Code-complete enough for June release sign-off, still pending KR walkthrough |
+| Plant3D platform | Neutral viewer/platform boundary established |
+| Raceway | Phase G MVP authoring/accessory arc functionally accepted; closure/housekeeping underway before Phase H |
+| Telemetry | Tier-0 suggestion-event foundation live; `session_key` remains open |
 
-**Test baseline:** 305 tests — 297 green, 8 known test-maintenance failures (2026-06-11; see `TEST-P1` in the tracker). SQLite test mode is broken by migration `0037`; run the full suite against PostgreSQL via the programmatic runner documented in `CODEX_MEMORY.md`.
+Do not use the old June Phase A test baseline as current truth. Use the latest
+verification battery recorded in the Raceway tracker.
 
 ---
 
@@ -71,6 +82,16 @@ Focus on: engineering correctness, hidden assumptions, standards alignment, miss
 
 Do not code from review findings until KR approves. Record findings in chat or a shared note for Codex.
 
+For Plant3D/Raceway reviews, also focus on:
+
+- platform/consumer boundary violations,
+- graph identity stability,
+- server-client projection contract drift,
+- Raceway route centerline as truth,
+- accessory proxy versus BOQ/procurement authority,
+- clash/collision staging realism,
+- Phase H pathfinding preconditions.
+
 ---
 
 ## 5. Chat and Token Management
@@ -82,11 +103,14 @@ Do not code from review findings until KR approves. Record findings in chat or a
 - 15+ files have been read this session
 
 **Before ending a chat:**
-1. Update `CURRENT_PHASE_TRACKER.md` if pass status changed
-2. Update `DECISION_LOG.md` if a new binding decision was made
-3. Update `OPEN_QUESTIONS.md` if a question was answered or added
-4. Update this file's snapshot table if a module status changed
-5. Update the memory file `project_current_state.md`
+1. Update `plant3d/records/audit/claude-notes-2026-07-08.md` with review
+   findings.
+2. Update `plant3d/records/audit/open-items-register.md` if a finding opens
+   or closes an item.
+3. Update `plant3d/records/audit/development-scorecard.md` at phase/arc
+   completions or score-moving events.
+4. Keep historical records; mark superseded documents rather than deleting
+   decision rationale.
 
 ---
 
@@ -96,3 +120,4 @@ Do not code from review findings until KR approves. Record findings in chat or a
 |---|---|
 | 2026-06-07 | Created at project root, then moved to NOTES/project_management/. |
 | 2026-06-11 | Session sync: test baseline 305/297+8, SQLite mode broken (0037), DB restoration complete, Database Safety Protocol and vendor CSV warning recorded in CODEX_MEMORY.md, TEST-P1/DB-R1 added to tracker. |
+| 2026-08-02 | Refreshed for Plant3D/Raceway Phase G closure. Active control moved to `plant3d/records/`; stale June Phase A baseline retired as current orientation. |

@@ -9,6 +9,8 @@ This folder is the project record book for the new neutral 3D engineering platfo
 - `planning/` - architecture, implementation plans, and design discussions.
 - `tracking/` - active progress trackers and execution checklists.
 - `decisions/` - durable decisions that should survive implementation details.
+- `audit/` - Claude/Fable reviews, scorecards, closure audits, and open-item
+  registers.
 - `operations/` - runbooks for local/dev/prototype operation and future container roles.
 - `prompts/` - restart prompts for Codex and Claude/Fable.
 
@@ -23,19 +25,26 @@ This folder is the project record book for the new neutral 3D engineering platfo
 
 ## Current Active Plan
 
-- `planning/platform-reset-handover-2026-07-08.md` - reset handover for the next chat after the cable-routing/raceway pivot.
-- `planning/platform-ecosystem-development-plan-2026-07-08.md` - active post-reset development plan.
-- `tracking/platform-ecosystem-reset-tracker-2026-07-08.md` - active post-reset tracker.
+- `audit/phase-g-closure-audit-2026-08-02.md` - active closure audit before Phase H cable assignment/pathfinding.
+- `audit/open-items-register.md` - single source of open decisions, closure dispositions, and Phase H gates.
+- `audit/claude-notes-2026-07-08.md` - Claude/Fable running review notes; latest closure challenge is §49.
+- `audit/development-scorecard.md` - periodic scorecard and drift watch.
 - `planning/raceway-mvp-execution-plan-2026-07-08.md` - detailed execution plan for the raceway/tray MVP.
 - `tracking/raceway-mvp-progress-tracker-2026-07-08.md` - detailed progress tracker for the raceway/tray MVP.
+- `planning/raceway-accessory-geometry-note-2026-07-17.md` - accepted MVP accessory proxy doctrine and limitations.
+- `planning/suggestion-telemetry-design-2026-07-12.md` - Tier-0 suggestion telemetry design.
 - `prompts/codex-platform-reset-start-prompt-2026-07-08.md` - Codex restart prompt.
 - `prompts/claude-platform-architecture-review-prompt-2026-07-08.md` - Claude/Fable architecture review prompt.
+- `planning/platform-reset-handover-2026-07-08.md` - historical reset handover for the cable-routing/raceway pivot.
+- `planning/platform-ecosystem-development-plan-2026-07-08.md` - post-reset ecosystem plan, now supporting context behind the Raceway closure sequence.
+- `tracking/platform-ecosystem-reset-tracker-2026-07-08.md` - post-reset tracker, now supporting context behind the active Raceway tracker.
 - `planning/extraction-readiness-and-claude-brief-2026-07-04.md` - extraction-readiness plan and Claude brief; now historical/supporting context behind the reset plan.
 - `planning/public-api-boundary-contract-2026-07-05.md` - Stage 0 public boundary contract for project/source/job/package/object/overlay integration.
 
 ## Superseded Active Trackers
 
 - `tracking/pipeline-spike-tracker-2026-06-22.md` remains the rendering/conversion spike history and detailed verification log, but the active development tracker is now `tracking/platform-ecosystem-reset-tracker-2026-07-08.md`.
+- `tracking/platform-ecosystem-reset-tracker-2026-07-08.md` remains valid context, but day-to-day Raceway closure work is now tracked in `tracking/raceway-mvp-progress-tracker-2026-07-08.md`.
 
 ## Source Discussion
 

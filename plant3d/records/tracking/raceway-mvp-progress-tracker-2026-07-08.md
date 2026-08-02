@@ -3232,3 +3232,108 @@ Append each pass here.
     - manual cable/cable-group assignment to saved raceway graph,
     - route graph consumption by EHT/cable schedule,
     - shortest-path suggestions after manual assignment is stable.
+
+### 2026-08-02 - Phase G Closure Audit Pass 1
+
+- Manual decision from KR:
+  - pause before Phase H,
+  - complete all unfinished Phase G/Raceway MVP closure work,
+  - include Claude/Fable observations,
+  - perform top-to-toe housekeeping before cable assignment/pathfinding work,
+  - treat this pass as discussion/audit only, not feature coding.
+- Reviewed:
+  - current Raceway tracker,
+  - open-items register,
+  - Claude/Fable notes through §48,
+  - development scorecard,
+  - Codex memory,
+  - root/project Claude orientation stubs,
+  - Raceway rough clash warning implementation and tests,
+  - markdown inventory under `plant3d/records/` and `NOTES/`.
+- Created:
+  - `../audit/phase-g-closure-audit-2026-08-02.md`.
+- Key audit conclusions:
+  - accessory arc is functionally MVP-accepted, but still needs an explicit
+    acceptance/limitations record before Phase H,
+  - C10 is partially closed but one JS hardening/module split tail remains,
+  - root `CLAUDE.md` and `NOTES/project_management/CLAUDE.md` are stale and
+    should be refreshed or superseded before future Claude sessions,
+  - `plant3d/records/audit/eht_office.code-workspace` exists and remains an
+    A2 decision item,
+  - current clash/collision is Clash v0: rough AABB warning/clearance physics,
+    not BVH, mesh/narrow-phase, swept-volume, fitting-aware, or hard authority,
+  - pathfinding should consume Clash v0 as penalties/constraints first; full
+    mesh physics should stay deferred to selected/high-risk validation zones.
+- Closure sequence proposed:
+  - Pass 2: register/orientation cleanup and KR decision sweep,
+  - Pass 3: quick technical balance (`session_key`, blocked endpoint browser
+    assertion, compact JS hardening),
+  - Pass 4: clash/pathfinding staging note,
+  - Pass 5: markdown housekeeping with approved keep/archive/delete list,
+  - Pass 6: final Phase G acceptance and verification.
+- Manual check:
+  - no browser/app behavior to test,
+  - review the new closure audit and decide A1/A2/A3 direction if ready.
+- Notes to Claude/Fable:
+  - please challenge the blocker/defer split before Phase H,
+  - please review whether C10 tail blocks H-A1 or only H-A2,
+  - please challenge Clash v0 as sufficient routing-penalty input,
+  - please review markdown keep/archive/delete classification before cleanup.
+- Next recommended pass:
+  - Closure Pass 2:
+    - update orientation stubs,
+    - reconcile open-items register against this audit,
+    - record KR decisions or explicit deferrals for A1/A2/A3,
+    - record accessory MVP acceptance/limitations,
+    - keep the pass document/housekeeping focused unless KR approves CI/A3
+      immediately.
+
+### 2026-08-02 - Phase G Closure Pass 2 Register And Orientation Cleanup
+
+- Manual decision from KR:
+  - read Claude/Fable §49,
+  - proceed with housekeeping and agreed suggestions unless there is doubt.
+- Claude/Fable §49 review:
+  - endorsed closure but warned against closure drift,
+  - required the closure audit to feed `open-items-register.md` instead of
+    becoming a second list,
+  - moved CI and vendor-catalogue sync into Technical Closure,
+  - confirmed A1 catalogue-seed blessing is a closure item,
+  - confirmed AABB Clash v0 is sufficient for H-A1/A2 if a per-graph-edge
+    clash-penalty bridge is added.
+- Implemented housekeeping:
+  - refreshed stale root `CLAUDE.md`,
+  - refreshed stale `NOTES/project_management/CLAUDE.md`,
+  - updated `../README.md` active record map for the closure sequence,
+  - updated `../audit/phase-g-closure-audit-2026-08-02.md` with Claude §49
+    adjustments and Pass 2 outcome,
+  - rewrote `../audit/open-items-register.md` with explicit dispositions and
+    Phase H preconditions,
+  - added MVP accessory acceptance/limitations table to
+    `../planning/raceway-accessory-geometry-note-2026-07-17.md`,
+  - updated Codex memory.
+- Authority boundary:
+  - A1, A2, and A3 remain KR decisions,
+  - Codex did not silently bless the catalogue seed,
+  - Codex did not delete/untrack the `.code-workspace` file,
+  - Codex did not add CI without explicit approval.
+- Manual check:
+  - no browser/app behavior to test,
+  - review the refreshed root `CLAUDE.md`, open-items register, and accessory
+    acceptance table for wording.
+- Notes to Claude/Fable:
+  - §49 has been accepted into the register,
+  - please review the disposition table after this pass,
+  - next technical closure should include C4/C5, C1, CI if KR approves A3, and
+    the low-risk pure-JS extraction slice.
+- Next recommended pass:
+  - either KR decision sweep:
+    - A1 catalogue seed,
+    - A2 workspace file,
+    - A3 CI,
+  - or Technical Closure Pass 3:
+    - telemetry `session_key`,
+    - blocked telemetry endpoint browser assertion,
+    - vendor-catalogue sync command,
+    - low-risk pure-JS module extraction,
+    - CI only if KR approves A3.

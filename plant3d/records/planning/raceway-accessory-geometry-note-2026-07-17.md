@@ -447,6 +447,33 @@ Recommended next sequence:
    - Wye, covers, dividers, couplers, supports, vendor models, and
      catalogue-grade persisted accessory intent.
 
+## MVP Acceptance Sweep
+
+Date: 2026-08-02
+Status: accepted for Raceway MVP / Phase G closure.
+
+The accessory arc is accepted as a graph-aware parametric proxy foundation, not
+as a vendor-grade accessory catalogue.
+
+| Accessory / workflow | MVP status | Authoritative for MVP | Explicit limitations |
+| --- | --- | --- | --- |
+| Reducer taper proxy | accepted | graph/fitting candidate, proxy visual, clash/schedule warning evidence | not vendor part selection; development length is heuristic unless catalogue/preference overrides later; handedness dropdown is drafting control until accessory intent persistence exists |
+| `Apply Edge Match` | accepted as authoring aid | writes face-offset intent needed for one-edge matching | not itself a reducer; does not move centerline truth or create procurement identity |
+| Plan bend proxy | accepted | bend count, advisory standard-angle flags, lightweight proxy geometry | bend radius is project-neutral/default unless later user/catalogue intent persists it |
+| Riser proxy | accepted | riser count, elevation-change proxy, unresolved status where face orientation is ambiguous | vertical orientation inheritance remains a deferred refinement; inside/outside should not be guessed when ambiguous |
+| Tee proxy and Make Tee | accepted | explicit graph-node branch proxy, count placeholder, visual/snap proxy | inferred main/branch may guide visuals/warnings only; procurement sizing remains unresolved unless unambiguous or later user-confirmed |
+| Cross proxy and Make Cross | accepted | explicit graph-node cross proxy, count placeholder, visual/snap proxy | detailed catalogue cross body and branch-size variants remain deferred |
+| Schedule/fitting quantities | accepted as informative | centerline straight lengths, placeholder counts, warning evidence | fitting development lengths are not deducted from straight lengths in MVP schedule basis |
+| Accessory palette / accepted vendor part | deferred | none yet | future UI should accept/reject/override projected candidates and persist intent, not hand-place disconnected meshes |
+
+Boundary rule retained from Claude §45:
+
+- inferred branch/accessory intent may drive proxy visuals and warnings,
+- inferred intent must not drive exportable procurement part sizing unless it
+  is unambiguous or user-confirmed,
+- catalogue-grade dimensions, handedness intent, bend radius, tee branch
+  intent, covers/dividers/couplers, supports, and vendor meshes are post-MVP.
+
 ## Acceptance For First Reducer Geometry Pass
 
 - Unequal-width connected runs produce an accessory projection with two ports.

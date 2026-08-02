@@ -1,55 +1,84 @@
-# Open Items Register — for KR to take up at his own pace
+# Open Items Register
 
-Owner: Claude (consolidates every open point from the review history; updated whenever items open/close)
-Created: 2026-07-19 at KR's request. Companion to `development-scorecard.md` (scores/trends) and `claude-notes-2026-07-08.md` (full findings history, §-references below).
+Owner: Claude/Fable consolidates review history; Codex updates during closure
+passes when KR approves the work. Companion to `development-scorecard.md`
+and `claude-notes-2026-07-08.md`.
 
-Legend: 🔴 decision needed · 🟡 action/habit · 🟢 backlog (Codex executes when scheduled) · ⚪ gate (must close before a named milestone)
+Created: 2026-07-19.
+Last updated: 2026-08-02, Closure Pass 2.
 
-## A. KR decisions (each is minutes, not hours)
+This is the single source of truth for open/closed/deferred items. The Phase G
+closure audit is supporting analysis, not a competing register.
 
-| # | Item | Since | Ref | Note |
+Disposition legend:
+
+- `needs-decision`: KR must decide.
+- `close-now`: close during the Phase G closure sequence.
+- `defer-to-H`: deliberately deferred to Phase H.
+- `defer-later`: post-Phase-H or post-MVP backlog.
+- `closed`: done or accepted for MVP.
+- `gate`: must close before the named milestone.
+
+## A. KR Decisions
+
+| # | Item | Since | Ref | Disposition | Note |
+| --- | --- | --- | --- | --- | --- |
+| A1 | Catalogue-seed confirmation: bless the seeded generic catalogue, or amend it | §14, 2026-07-09 | claude-notes §14, §21, §49 | needs-decision | Codex/Claude recommendation: accept as generic IEC/vendor-free MVP seed, explicitly not vendor-validated. One KR word closes it. |
+| A2 | `.code-workspace` file in `plant3d/records/audit/` | §13, 2026-07-09 | claude-notes §13, §17, §49 | needs-decision | File exists at `plant3d/records/audit/eht_office.code-workspace`. Recommendation: untrack/remove from records and add ignore rule unless KR wants it kept deliberately. |
+| A3 | CI go-ahead for L1 GitHub Actions pipeline | 2026-07-18 | CI course, scorecard, claude-notes §49 | needs-decision | Claude §49 moves CI inside Technical Closure. Codex agrees; needs KR approval before workflow work. |
+
+## B. KR Actions And Habits
+
+| # | Item | Since | Ref | Disposition | Note |
+| --- | --- | --- | --- | --- | --- |
+| B1 | Weekly 10-minute decision sweep over section A | 2026-07-18 | assessment (f) | defer-later | Useful project habit; not a Phase H technical blocker. |
+| B2 | EHT manual release sign-off | 2026-06-14 | eht tracker RELEASE-P1, claude-notes §49 | defer-later | Important but separate from Raceway Phase H. Needs KR walkthrough/sign-off. |
+| B3 | Root `CLAUDE.md` stub refresh | §28 | claude-notes F-02, §28, §49 | closed | Refreshed on 2026-08-02 along with `NOTES/project_management/CLAUDE.md`. |
+
+## C. Codex Technical / Housekeeping Backlog
+
+| # | Item | Ref | Disposition | Note |
 | --- | --- | --- | --- | --- |
-| A1 🔴 | **Catalogue-seed confirmation** — bless the seeded generic catalogue (ladder 300/450/600, perforated 150/300/450, HDG, IEC 61537) or amend | §14 (2026-07-09) | claude-notes §14, §21 | Oldest open decision; seed data now appears in exportable CSVs — one word closes it |
-| A2 🔴 | **`.code-workspace` file** — untrack from `records/audit/` + gitignore, or keep deliberately | §13 (2026-07-09) | claude-notes §13, §17 | One `git rm --cached` + one gitignore line |
-| A3 🔴 | **CI go-ahead** — approve the L1 GitHub Actions pipeline (one small Codex pass, ~2–3 min battery per push) | 2026-07-18 | CI/CD course; scorecard | Highest score-per-effort move on the board (DevOps 5→6, Testing 7.5→8) |
+| C1 | Vendor-catalogue sync command, dry-run default, source read-only, explicit targets, includes `RacewayFamily`/`RacewaySize` | claude-notes §42, §49 | close-now | Claude §49 correctly promotes this into Technical Closure because it protects KR's curated data. |
+| C2 | L1 CI workflow file | CI course, claude-notes §49 | close-now after A3 | Implement only after KR approves A3. |
+| C3 | Accessory v0 acceptance sweep | §40-§47 | closed | Accessory arc is accepted for MVP; limitations table added to accessory note on 2026-08-02. |
+| C4 | Telemetry `session_key` or equivalent browser-session grouping | telemetry note T-2, §49 | close-now | Small technical closure item before Phase G is declared closed. |
+| C5 | Browser assertion for blocked telemetry endpoint behavior | §26, §49 | close-now | Small technical closure item. |
+| C6 | M-5 copy-run-with-offset; M-6 EL grid while drawing | RFC M-table, §49 | defer-later | Useful UX, not a Phase H-A1 blocker. |
+| C7 | Work-plane/free-route messaging and broader segment-pick reuse | tracker deferred list, §49 | defer-later | Partly landed for Make Tee. Record UX gap; not H-A1 blocker. |
+| C8 | BOQ gross-length/development-length assumption line | §40, §47 | closed | Closed in C10.2 and pinned in tests. |
+| C9 | Radius/handedness/accessory-intent persistence via segment-intent idiom | §43, §47, §49 | defer-later | Waits for accessory acceptance palette and catalogue workflow. |
+| C10 | JS hardening: pure seams, geometry/DOM split, separate module files, JS tests | js-audit, §44, §46, §49 | close-now partially; H-A2 gate | Low-risk pure-function/module extraction should happen in Technical Closure. Interaction/panel/state restructuring is a hard precondition before H-A2 assignment UI. |
+| C11 | Mark/retire stale legacy docs | scorecard, §49 | close-now plan; defer bulk cleanup | Use a keep/archive/delete proposal and KR-approved deletion only. Nothing that explains "why" should be deleted. |
 
-## B. KR actions & habits
+## D. Gates
 
-| # | Item | Since | Ref | Note |
-| --- | --- | --- | --- | --- |
-| B1 🟡 | **Weekly 10-minute decision sweep** over section A — answer or defer-with-date | 2026-07-18 | assessment (f) | The habit that stops small items aging into reminders |
-| B2 🟡 | **eht manual release sign-off** — demo walkthrough, cold-cable label overlap, large-project browsing feel, terminal-voltage cross-check | 2026-06-14 | eht tracker RELEASE-P1 | The eht MVP has been code-complete and waiting since June |
-| B3 🟡 | Approve a **root `CLAUDE.md` stub refresh** so fresh agent sessions orient to the raceway era, not June's Phase A | §28 | claude-notes F-02, §28 | 5-line doc change; Codex or Claude can draft |
+| # | Gate | Blocks | Ref | Disposition | Note |
+| --- | --- | --- | --- | --- | --- |
+| D1 | Accessory-arc timebox | Phase G closure | claude-notes §45-§49 | closed | Reducer, bend/riser, Tee/Cross v0 accepted for MVP. Vendor-grade/accessory-intent work remains deferred. |
+| D2 | Georeferenced/plant-global IFC precision proof | Real plant-global demo | reset tracker carry-forward | gate | Not required for H-A1 on the current sample, but required before serious real-plant demo claims. |
+| D3 | Larger real EPC model test beyond 15 MB IFC | Real plant demo / scale confidence | reset tracker carry-forward | gate | Biggest runtime/scalability unknown; not a server-side H-A1 blocker. |
+| D4 | EHT dependency-hygiene + deployment-hardening leftovers (SEC-P1b) | Production deployment | eht tracker | defer-later | Production gate, separate from Raceway Phase H-A1. |
+| D5 | Vendor-mesh licensing check | Vendor-library stage | assessment (c) | defer-later | Required before redistributing vendor meshes/assets. |
+| D6 | Decision record `0007-ai_gateway` | First Tier-1 AI feature | strategy RFC | gate | Must precede first real AI agent/AI suggestion feature beyond Tier-0 telemetry. |
 
-## C. Codex backlog (consolidated; schedule when convenient — none blocking)
+## E. Phase H Preconditions
 
-| # | Item | Ref | Size |
-| --- | --- | --- | --- |
-| C1 🟢 | **Vendor-catalogue sync command** (dev → two backup DBs; dry-run default; incl. `RacewayFamily`/`Size`) — KR-assigned | §42 | small pass |
-| C2 🟢 | L1 **CI workflow file** (after A3) | CI course | small pass |
-| C3 🟢 | **Accessory v0 acceptance sweep** — reducer body, bend/riser proxies, and Tee/Cross branch proxies are coded; after KR manual acceptance, archive the accessory arc and leave vendor-grade/accessory-intent work for later | §40–§45 | tiny |
-| C4 🟢 | T-2 `session_key` column on telemetry | telemetry note T-2 | one column |
-| C5 🟢 | §26 blocked-telemetry-endpoint browser assertion | §26 | tiny |
-| C6 🟢 | M-5 copy-run-with-offset; M-6 remainder (EL grid while drawing) | RFC M-table | small each |
-| C7 🟢 | Segment-interior canvas picking is partly landed for `Make Tee`; remaining: explicit work-plane mode messaging and broader segment-pick reuse outside Tee authoring | tracker deferred list | small each |
-| C8 🟢 | A-3 BOQ assumptions line ("straight lengths gross; development lengths not deducted") — closed in C10.2; kept here one cycle for Claude/KR visibility | §40 | closed |
-| C9 🟢 | Radius/handedness persistence via the segment-intent idiom (when choice UI lands) | §43 | with reducer UI |
-| C10 🟢 | **JS hardening pass** (upgraded from "plan" after the Apply Edge Match incident): Codex's 5 recommendations (pure command-state layer, JSDoc/@ts-check, geometry/DOM split, state invariants, workflow browser tests) **+ Claude B-1..B-4**. 2026-07-28 status: reducer B-1 pins, B-2/B-3/B-4 reducer diagnostics, first `computeRacewayCommandStates(snapshot)` seam, schedule/fitting summary view-model helpers, JSDoc typedefs, browser helper assertions, Phase-H schedule/route contract pins, Make-Cross graph contract pins, fitting summary pins, and graph fail-loud validation are landed. Remaining work: deeper geometry/DOM split, CI/B-5, eventual separate JS module, and real accessory-intent persistence when acceptance UI lands | js-audit + claude-notes §44/§46 | 1–2 passes |
-| C11 🟢 | Mark/retire stale legacy docs (idfviewer-era, NOTES June trackers) | scorecard | housekeeping |
+| # | Item | Blocks | Ref | Disposition | Note |
+| --- | --- | --- | --- | --- | --- |
+| H1 | Route edge identity must be durable node-pair key, not ordinal `E###` | H-A1 | claude-notes §48 | gate | Route payloads must never expose ordinal graph keys as stored consumer truth. |
+| H2 | Route weight function must be injectable | H-A1 | claude-notes §48 | gate | Start length-only, but leave seam for bends/fill/clash/learned weights. |
+| H3 | Deterministic path tie-breaking | H-A1 | claude-notes §48 | gate | Stable ordering by node/edge keys and tests. |
+| H4 | Route preview payload contract pin | H-A1 | claude-notes §48 | gate | Pin path node/edge pair keys, edge lengths, total, riser/horizontal flags, basis/assumptions. |
+| H5 | Consumer-neutral cable reference design note | H-A2 | claude-notes §48, §49 | gate | Needed before assignment persistence/UI: `owner_module` + opaque `cable_ref`, no EHT imports. |
+| H6 | Clash v0 edge-penalty bridge | H-A1/H-A2 route quality | claude-notes §49 | close-now | Aggregate existing AABB warnings per durable graph edge so routing can apply clash penalties/reasons without new mesh physics. |
 
-## D. Gates (close before the named milestone)
+## Recently Closed
 
-| # | Gate | Blocks | Ref |
-| --- | --- | --- | --- |
-| D1 ⚪ | **Accessory-arc timebox** — reducer/bend/riser and Tee/Cross v0 are coded, pending KR manual acceptance. Then **C10 hardening slice**, then **pivot to Phase H cable assignment + durable EHT persistence** (the integrated-chain demo). Boundary rule recorded: inferred tee main/branch never drives exportable part sizing while unresolved | The strategic milestone | claude-notes §45 |
-| D2 ⚪ | **Georeferenced/plant-global IFC precision proof** | Any demo on a real plant-global file | reset tracker carry-forward |
-| D3 ⚪ | **Larger real EPC model test** (beyond 15 MB IFC) | Same; also the biggest technical unknown | reset tracker carry-forward |
-| D4 ⚪ | eht dependency-hygiene + deployment-hardening leftovers (SEC-P1b) | Production deployment | eht tracker |
-| D5 ⚪ | **Vendor-mesh licensing check** (redistribution rights per vendor) | The vendor-library stage | assessment (c) |
-| D6 ⚪ | Decision record 0007 `ai_gateway` | First Tier-1 AI feature | strategy RFC |
-
-## Recently closed (kept one cycle for visibility)
-
-- **B-1..B-4 — all closed** (2026-07-20 pass; §46 verified): reducer contract pins, fail-loud client checks, visible disabled reasons (`#racewayCommandHint`), `insufficient_segment_context` hardened with a healthy-geometry impossibility test. §45 tee boundary rule **verified honored** via the Phase-H schedule contract pin (projection-only sizing status). Hybrid accessory doctrine recorded. `computeRacewayCommandStates` pure seam live. Tee/Cross v0 projection-only shipped. Scorecard: JS 6→7, Testing 7.5→8, overall ≈ 8.0.
-- **C8 — BOQ assumption line closed** (2026-07-28 C10.2): schedule JSON/API now include `raceway.schedule.gross_straight_length_basis`, explicitly stating straight lengths are gross centerline lengths and fitting/accessory development lengths are not deducted in the MVP basis.
-- **A-7 — DECIDED and closed** (2026-07-28, Codex stance accepted in Claude §47): left/right/center handedness are drafting controls; only resulting segment face offsets persist until accessory acceptance/intent exists. **M-3 fully realized** — Make Tee (click-on-segment split+join) + Make Cross (warning-as-picker) shipped and KR-accepted; **accessory arc closed for MVP** (§47). Graph + fitting-summary contract pins landed; `validateGraphProjectionContract` fail-loud live.
+- B-1..B-4: reducer/server-client hardening closed and verified in §46.
+- C8: schedule assumption `raceway.schedule.gross_straight_length_basis`
+  closed in C10.2.
+- A-7: reducer handedness decided as drafting controls; only resulting face
+  offsets persist until real accessory intent exists.
+- M-3: Make Tee and Make Cross authoring shipped and KR-accepted.
+- B3: stale root/project Claude orientation refreshed on 2026-08-02.
