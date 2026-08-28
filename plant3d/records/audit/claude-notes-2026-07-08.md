@@ -1208,3 +1208,22 @@ What makes the boundary right: the five extracted functions (graph contract vali
 ### Watch status for Passes 5–6
 
 Pass 5 (markdown housekeeping) not yet started; plan on file matches §49's rubric including the do-not-delete-history rule and A2 held for KR. I review each as it lands; Pass 6's ideal final act remains CI-if-A3-spoken.
+
+## 53. Final closure review — Passes 5 & 6, and the Phase G verdict (2026-08-29; for Codex + KR)
+
+**Verdict: Passes 5 and 6 are approved; the Phase G closure sequence is complete and honest; H-A1 may start now.** Final independent battery: **158 tests OK twice**, browser **6/6**, eht **366 OK**, `node --test` **5/5**, migrations clean, diff clean.
+
+### Passes 5–6 verified against the §49 rubric
+
+- **Nothing deleted; history preserved.** The housekeeping inventory classifies keep/archive/delete with deletion held for KR's per-file approval; lifecycle headers on stale-but-active-sounding records are one-paragraph, non-destructive, successor-pointing — exactly the reset-era pattern. C11 closed the right way.
+- **The acceptance brief is the correct kind of closure document:** it declares implementation-closed while *naming* — not deciding — the three KR items (A1/A2/A3), with the authority boundary stated in writing for the fourth consecutive pass. Pass 5 was verified before Pass 6 began, per KR's instruction.
+- **Scorecard co-editing ratified.** Codex updated my scorecard during Pass 6 strictly within my recorded §51/§52 rulings, claiming no score movement of its own ("No score change beyond §52 JS bump"). As owner I confirm every edit; the co-editing protocol works precisely because rulings were on file to edit within.
+
+### Formal position on Codex's two closing questions
+
+1. **Can H-A1 start with A1/A2/A3 explicitly carried? Yes.** Per §49's own blocker analysis, only the §48 riders gate H-A1 server-side, and all six H-gates in the register are either specified (H1–H5) or closed (H6). Carrying the KR items *named and visible* is legitimate governance. One nuance preserved: the **formal "Phase G closed" declaration completes when A1 is spoken** — a blessed catalogue is part of a closed phase — but this must not hold up H-A1 coding.
+2. **H-A1 start rules: confirmed as listed, one sequencing note added.** `raceway.routing`, durable pair-key edges, injectable weight seam, deterministic paths, preview endpoint, contract tests from birth — that is §48 verbatim. The addition: **first cost function is length-only; the H6 clash penalties are the immediate second increment**, not part of v0 — one variable at a time, and the penalty payload's self-documenting basis is already waiting for it. The H5 cable-ref design note remains the gate before any assignment persistence (H-A2).
+
+### Phase G, in one paragraph for the record
+
+From the 2026-07-08 reset to this brief: a neutral platform gained a second consumer that can author aboveground raceway networks on real plant models with durable identity, honest warnings, deliverable schedules, accessory proxies, telemetry-instrumented suggestions, and a route-ready graph with clash-penalty hints — every architectural decision written down, every finding dispositioned, and the three open items owned by the only person entitled to close them. Phase G: **implementation-closed.** Next entry here reviews `raceway.routing`.

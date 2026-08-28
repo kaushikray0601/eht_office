@@ -1,7 +1,7 @@
 # CLAUDE.md — Architect / Reviewer Orientation
 
 **Role:** Claude is the architect, auditor, reviewer, and adversarial critic.  
-**Last updated:** 2026-08-02
+**Last updated:** 2026-08-29
 
 ---
 
@@ -35,17 +35,19 @@ The current active project control has moved to `plant3d/records/` for the
 Plant3D/Raceway era. Read in this order at the start of a session:
 
 1. `plant3d/records/README.md` — record-book map and active files.
-2. `plant3d/records/audit/open-items-register.md` — single source of open
+2. `plant3d/records/audit/hot-standby-pause-index-2026-08-29.md` — pause
+   state and restart read order.
+3. `plant3d/records/audit/open-items-register.md` — single source of open
    decisions/backlog/gates.
-3. `plant3d/records/audit/phase-g-closure-audit-2026-08-02.md` — current
-   closure map before Phase H.
-4. `plant3d/records/tracking/raceway-mvp-progress-tracker-2026-07-08.md` —
+4. `plant3d/records/audit/phase-g-final-acceptance-brief-2026-08-28.md` —
+   Phase G final acceptance and H-A1 start rules.
+5. `plant3d/records/tracking/raceway-mvp-progress-tracker-2026-07-08.md` —
    active Raceway execution history and next-pass notes.
-5. `plant3d/records/audit/claude-notes-2026-07-08.md` — Claude/Fable review
-   history; latest relevant section is §49.
-6. `plant3d/records/audit/development-scorecard.md` — scorecard and drift
+6. `plant3d/records/audit/claude-notes-2026-07-08.md` — Claude/Fable review
+   history; latest relevant section is §53.
+7. `plant3d/records/audit/development-scorecard.md` — scorecard and drift
    watch.
-7. `NOTES/project_management/CODEX_MEMORY.md` — Codex local memory and
+8. `NOTES/project_management/CODEX_MEMORY.md` — Codex local memory and
    implementation continuity.
 
 ---
@@ -59,8 +61,8 @@ Plant3D/Raceway era. Read in this order at the start of a session:
 | Cold cable | Complete MVP with 3C/multi-segment foundation |
 | EHT SLD/cold-cable flow | Code-complete enough for June release sign-off, still pending KR walkthrough |
 | Plant3D platform | Neutral viewer/platform boundary established |
-| Raceway | Phase G MVP authoring/accessory arc functionally accepted; closure/housekeeping underway before Phase H |
-| Telemetry | Tier-0 suggestion-event foundation live; `session_key` remains open |
+| Raceway | Phase G implementation/closure complete; project paused hot-standby before Phase H-A1 server-side routing |
+| Telemetry | Tier-0 suggestion-event foundation live; browser `session_key` grouping closed |
 
 Do not use the old June Phase A test baseline as current truth. Use the latest
 verification battery recorded in the Raceway tracker.
@@ -121,3 +123,4 @@ For Plant3D/Raceway reviews, also focus on:
 | 2026-06-07 | Created at project root, then moved to NOTES/project_management/. |
 | 2026-06-11 | Session sync: test baseline 305/297+8, SQLite mode broken (0037), DB restoration complete, Database Safety Protocol and vendor CSV warning recorded in CODEX_MEMORY.md, TEST-P1/DB-R1 added to tracker. |
 | 2026-08-02 | Refreshed for Plant3D/Raceway Phase G closure. Active control moved to `plant3d/records/`; stale June Phase A baseline retired as current orientation. |
+| 2026-08-29 | Refreshed for hot-standby pause after Phase G implementation closure. Next coding pass is Phase H-A1 server-side routing/pathfinding; latest Claude note is §53. |

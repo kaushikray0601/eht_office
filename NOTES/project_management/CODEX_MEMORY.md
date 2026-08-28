@@ -1459,3 +1459,19 @@ Final battery on 2026-08-29 passed: JS syntax/core unit test, raceway 77,
 plant3d 76, telemetry 5, curated sync tests 6, full eht 366, full Raceway
 browser smoke 6/6 unsandboxed for Chromium, `manage.py check`, migration
 dry-run, Python compile, and `git diff --check`.
+
+Plant3D/Raceway note, 2026-08-29 hot-standby pause: KR paused this project to
+focus on another unfinished project and asked for quick restart preparation.
+Claude §53 approves Passes 5-6, confirms Phase G implementation closure, and
+says H-A1 may start now with A1/A2/A3 carried explicitly. Added
+`plant3d/records/audit/hot-standby-pause-index-2026-08-29.md` as the restart
+entry point. Updated root `CLAUDE.md`, `NOTES/project_management/CLAUDE.md`,
+`plant3d/records/README.md`, the open-items register, and the Raceway tracker
+so future Codex/Claude sessions start from hot-standby. On restart, read the
+pause index before coding, run `git status --short`, preserve user/Claude
+changes, and begin with H-A1 server-side `raceway.routing`: durable
+`start_node_key::end_node_key` edge identity, injectable length-only weight
+seam first, deterministic shortest path, preview endpoint, and Python contract
+tests. Do not start route persistence, assignment UI, mesh collision, vendor
+accessory workflow, or large JS interaction split in the first restart pass.
+A1 catalogue seed, A2 workspace file, and A3 CI remain explicit KR decisions.

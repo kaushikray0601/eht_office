@@ -3605,3 +3605,42 @@ Append each pass here.
     - deterministic shortest path,
     - route preview JSON endpoint,
     - contract tests from birth.
+
+### 2026-08-29 - Hot-Standby Pause Preparation
+
+- Manual direction from KR:
+  - pause Plant3D/Raceway temporarily,
+  - prepare the project so it can restart in hot-standby mode,
+  - update Codex memory and organize/index documentation for quick restart.
+- Claude/Fable latest context:
+  - §53 approves Passes 5-6,
+  - confirms Phase G implementation closure,
+  - says H-A1 may start now with A1/A2/A3 carried explicitly.
+- Implemented:
+  - added `../audit/hot-standby-pause-index-2026-08-29.md`,
+  - updated root `CLAUDE.md`,
+  - updated `NOTES/project_management/CLAUDE.md`,
+  - updated `../README.md`,
+  - updated `../audit/open-items-register.md`,
+  - updated Codex memory.
+- Hot-standby restart entry:
+  - read `CLAUDE.md`,
+  - read `NOTES/project_management/CLAUDE.md`,
+  - read `NOTES/project_management/CODEX_MEMORY.md`,
+  - read `../README.md`,
+  - read `../audit/hot-standby-pause-index-2026-08-29.md`,
+  - read `../audit/open-items-register.md`,
+  - read `../audit/phase-g-final-acceptance-brief-2026-08-28.md`,
+  - read Claude/Fable notes §53,
+  - then start H-A1 server-side routing only.
+- Authority boundary preserved:
+  - A1 catalogue seed remains KR decision,
+  - A2 workspace file remains KR decision,
+  - A3 CI remains KR decision.
+- Next coding pass after restart:
+  - `raceway.routing`,
+  - durable node-pair edge keys,
+  - injectable length-only weight seam first,
+  - deterministic shortest path,
+  - route preview endpoint,
+  - route preview contract tests.

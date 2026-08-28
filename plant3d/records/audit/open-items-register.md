@@ -5,13 +5,15 @@ passes when KR approves the work. Companion to `development-scorecard.md`
 and `claude-notes-2026-07-08.md`.
 
 Created: 2026-07-19.
-Last updated: 2026-08-28, Closure Pass 6.
+Last updated: 2026-08-29, hot-standby pause.
 
 This is the single source of truth for open/closed/deferred items. The Phase G
 closure audit is supporting analysis, not a competing register.
 
 Phase G implementation and closure sequence are complete as of Closure Pass 6.
-A1/A2/A3 remain explicit KR decisions, not Codex-closed items.
+The project is paused hot-standby as of 2026-08-29; restart from
+`hot-standby-pause-index-2026-08-29.md`. A1/A2/A3 remain explicit KR
+decisions, not Codex-closed items.
 
 Disposition legend:
 
