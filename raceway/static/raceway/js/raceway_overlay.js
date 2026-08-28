@@ -20,6 +20,7 @@ const ACCESSORY_DEFAULT_RADIUS_M = 0.6;
 const ACCESSORY_CURVE_SEGMENTS = 8;
 const TELEMETRY_FLUSH_DELAY_MS = 750;
 const TELEMETRY_MAX_BATCH_SIZE = 50;
+const TELEMETRY_SESSION_KEY = telemetryUuid();
 const RACEWAY_MEASUREMENT_SNAP_KINDS = new Set([
   'side-rail',
   'lower-edge',
@@ -3589,6 +3590,7 @@ function queueTelemetryEvent({ key = '', suggestionCode, action = 'shown', conte
     owner_module: 'raceway',
     suggestion_code: suggestionCode,
     action,
+    session_key: TELEMETRY_SESSION_KEY,
     context: telemetrySafeJson(context),
     action_detail: telemetrySafeJson(actionDetail),
     client: TELEMETRY_CLIENT,

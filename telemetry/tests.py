@@ -60,6 +60,7 @@ class SuggestionTelemetryApiTests(TestCase):
 
     def test_events_endpoint_stores_batch_with_project_access_and_uuid_keys(self):
         event_key = uuid.uuid4()
+        session_key = uuid.uuid4()
 
         response = self.client.post(
             reverse("telemetry:events"),
@@ -68,6 +69,7 @@ class SuggestionTelemetryApiTests(TestCase):
                     "events": [
                         {
                             "key": str(event_key),
+                            "session_key": str(session_key),
                             "project_id": self.project.proj_id,
                             "owner_module": "raceway",
                             "suggestion_code": "raceway.graph.near_miss_endpoint",
@@ -92,6 +94,7 @@ class SuggestionTelemetryApiTests(TestCase):
         self.assertEqual(response.json()["accepted"], 1)
         event = SuggestionEvent.objects.get()
         self.assertEqual(event.key, event_key)
+        self.assertEqual(event.session_key, session_key)
         self.assertEqual(event.project_id, self.project.proj_id)
         self.assertEqual(event.user, self.user)
         self.assertEqual(event.owner_module, "raceway")
@@ -145,6 +148,29 @@ class SuggestionTelemetryApiTests(TestCase):
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("action", response.json()["errors"])
+        self.assertFalse(SuggestionEvent.objects.exists())
+
+    def test_events_endpoint_rejects_invalid_session_key(self):
+        response = self.client.post(
+            reverse("telemetry:events"),
+            data=json_body(
+                {
+                    "events": [
+                        {
+                            "session_key": "not-a-uuid",
+                            "project_id": self.project.proj_id,
+                            "owner_module": "raceway",
+                            "suggestion_code": "raceway.ortho.axis_lock",
+                            "action": "shown",
+                        }
+                    ]
+                }
+            ),
+            content_type="application/json",
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("session_key", response.json()["errors"])
         self.assertFalse(SuggestionEvent.objects.exists())
 
     def test_events_endpoint_caps_batch_size(self):

@@ -516,9 +516,9 @@ Acceptance:
     viewer canvas as well as from the Raceway pane,
   - avoid broad key capture that conflicts with typing or viewer navigation.
 - [ ] Decision record `0007-ai-gateway-seam` before first Tier-1 AI feature.
-- [ ] Telemetry `session_key` column or equivalent browser-session grouping
+- [x] Telemetry `session_key` column or equivalent browser-session grouping
   strategy.
-- [ ] Browser assertion for blocked telemetry endpoint behavior.
+- [x] Browser assertion for blocked telemetry endpoint behavior.
 - [ ] Commit/readiness housekeeping from Claude §28:
   - decide whether to untrack `.code-workspace`,
   - keep KR catalogue seed confirmation visible,
@@ -3337,3 +3337,71 @@ Append each pass here.
     - vendor-catalogue sync command,
     - low-risk pure-JS module extraction,
     - CI only if KR approves A3.
+
+### 2026-08-28 - Technical Closure Pass 3 Session Telemetry And Catalogue Sync
+
+- Manual decision from KR:
+  - proceed with the next housekeeping/hardening step while Claude/Fable reviews
+    the completed work independently.
+- Implemented:
+  - added nullable indexed `SuggestionEvent.session_key` and migration
+    `telemetry.0002`,
+  - validated optional telemetry `session_key` values at ingestion,
+  - added one browser-session UUID to Raceway telemetry events,
+  - pinned blocked telemetry endpoint behavior in the focused Raceway browser
+    smoke: telemetry failure logs a console warning and authoring continues,
+  - added `sync_curated_catalogue_data` management command:
+    - dry-run by default,
+    - explicit target aliases only,
+    - source alias is read-only,
+    - no deletes,
+    - upserts curated EHT tables plus `RacewayFamily` and `RacewaySize`,
+    - reports missing/stale schema as dry-run readiness warnings and fails
+      clearly before `--execute`.
+- Updated records:
+  - `../planning/suggestion-telemetry-design-2026-07-12.md` now documents
+    `session_key`,
+  - `../audit/open-items-register.md` closes C1/C4/C5.
+- Authority boundary:
+  - A1 catalogue-seed confirmation remains KR decision; this command does not
+    bless catalogue content,
+  - A2 workspace-file cleanup remains KR decision,
+  - A3 CI remains KR decision and was not implemented.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `venv/bin/python manage.py check`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test eht.tests.CuratedCatalogueSyncCommandTests --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py sync_curated_catalogue_data --target sqlite_backup`
+  - focused Raceway browser smoke, rerun outside the sandbox because Chromium
+    launch hit `sandbox_host_linux Operation not permitted` inside the tool
+    sandbox:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests.RacewayBrowserSmokeTests.test_raceway_authoring_uses_viewer_interaction_contract --noinput -v 1`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+- Adverse observation:
+  - the first telemetry test run without `USE_POSTGRES=false` failed before test
+    execution because the local PostgreSQL test connection was unavailable.
+    SQLite verification is green.
+  - the local SQLite `default`/`sqlite_backup` catalogue schemas are incomplete
+    for several curated tables; the new command now reports this as dry-run
+    readiness output instead of a stack trace.
+- Manual check:
+  - no visible UI change is expected,
+  - optional: open the Raceway viewer and confirm drawing/saving still works
+    normally; telemetry failure remains non-blocking by design.
+- Notes to Claude/Fable:
+  - C1/C4/C5 are closed,
+  - please review whether the primary-key mirror strategy for
+    `sync_curated_catalogue_data` is acceptable for the current legacy EHT
+    catalogue tables, which lack reliable natural-key uniqueness,
+  - A1/A2/A3 remain explicitly unclosed.
+- Next recommended pass:
+  - finish the low-risk C10 JavaScript extraction slice:
+    - move pure view-model/contract helpers into a separate Raceway static
+      module,
+    - keep one load-order/cache-key path through Plant3D extensions,
+    - preserve browser-test seams,
+  - then proceed to Closure Pass 4:
+    - clash/pathfinding staging note,
+    - H6 durable graph-edge clash-penalty bridge design.

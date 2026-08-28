@@ -1380,3 +1380,26 @@ dispositions and Phase H H1-H6 gates, and added an MVP accessory acceptance
 table to `raceway-accessory-geometry-note-2026-07-17.md`. A1/A2/A3 remain KR
 decisions; do not silently bless seed data, remove workspace files, or add CI
 without KR's explicit approval.
+
+Plant3D/Raceway note, 2026-08-28 Technical Closure Pass 3: KR asked to proceed
+while Claude reviews independently. Implemented telemetry browser-session
+grouping with nullable indexed `SuggestionEvent.session_key`, migration
+`telemetry.0002`, ingestion validation, and a single Raceway overlay
+`TELEMETRY_SESSION_KEY` sent with every suggestion event. The focused Raceway
+browser smoke now pins the blocked telemetry endpoint contract: a 503 telemetry
+response logs `Raceway telemetry was not recorded.` and authoring continues.
+Added `sync_curated_catalogue_data` management command for curated database
+alias sync: dry-run default, explicit targets, source read-only, no deletes,
+and curated scope includes EHT catalogue/reference models plus
+`RacewayFamily`/`RacewaySize`. The command now reports missing/stale schema as
+dry-run readiness warnings and fails clearly before `--execute`; tests pin
+guardrails, scope, and unavailable-schema behavior.
+Records updated: open-items register closes C1/C4/C5; telemetry design note
+documents `session_key`. Authority remains: A1 seed blessing, A2 workspace file,
+and A3 CI are still KR decisions. The first telemetry test without
+`USE_POSTGRES=false` hit local PostgreSQL test connection failure before tests;
+SQLite tests are green. A real SQLite dry-run shows several curated tables are
+absent from the local aliases, now as readable readiness output. Browser smoke
+needed unsandboxed rerun due Chromium launcher sandbox error, then passed. Next
+pass: finish the low-risk C10 JS module extraction tail, then Closure Pass 4
+for clash/pathfinding staging and H6 durable graph-edge clash-penalty bridge.

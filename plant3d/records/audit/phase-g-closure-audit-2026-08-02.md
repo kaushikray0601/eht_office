@@ -333,3 +333,26 @@ Closure Pass 2 converted this audit into project records:
 - root/project Claude orientation was refreshed,
 - the accessory note gained an MVP acceptance/limitations table,
 - the record README now points fresh sessions to the closure sequence.
+
+## Pass 3 Outcome
+
+Technical Closure Pass 3 partially completed the technical-balance list:
+
+- telemetry `session_key` landed as an additive nullable indexed field,
+- Raceway telemetry now carries one browser-session UUID per loaded overlay,
+- blocked telemetry endpoint behavior is pinned in the focused browser smoke,
+- `sync_curated_catalogue_data` landed as a dry-run-first, explicit-target,
+  no-delete database-alias sync command for curated EHT and Raceway catalogue
+  tables,
+- the sync command reports missing/stale schema as dry-run readiness warnings
+  and fails clearly before `--execute`.
+
+Not done in this pass:
+
+- CI remains blocked on KR A3 approval,
+- `.code-workspace` cleanup remains blocked on KR A2 approval,
+- catalogue-seed confirmation remains blocked on KR A1 approval,
+- the low-risk C10 JavaScript module extraction tail remains the next technical
+  closure slice.
+- local SQLite catalogue aliases are not fully migrated for all curated tables;
+  fix the alias schema before treating an actual sync execution as meaningful.

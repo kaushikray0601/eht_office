@@ -20,6 +20,7 @@ from django.core.exceptions import ValidationError
 from django.contrib.auth.models import User
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.db import connection
+from django.db.utils import DatabaseError
 from django.test import SimpleTestCase, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils.timezone import now
@@ -100,6 +101,7 @@ from eht.sld_validation import validate_project_sld_payload
 from eht.pipeline import run_project_calculations
 from eht.heat_loss_methods import DEFAULT_HEAT_LOSS_METHOD
 from eht.sanatize_input import sanitize_file
+from raceway.models import RacewayFamily, RacewaySize
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -620,6 +622,103 @@ class CatalogueAndSecurityHardeningTests(TestCase):
             self.assertIn(file_name, response['Content-Disposition'])
         finally:
             file_path.unlink(missing_ok=True)
+
+
+class CuratedCatalogueSyncCommandTests(SimpleTestCase):
+    def test_sync_curated_catalogue_data_requires_explicit_target(self):
+        with self.assertRaises(CommandError):
+            call_command('sync_curated_catalogue_data')
+
+    def test_sync_curated_catalogue_data_dry_run_dispatches_without_execute(self):
+        output = StringIO()
+
+        with patch('eht.management.commands.sync_curated_catalogue_data.Command._sync_target') as sync_target:
+            call_command(
+                'sync_curated_catalogue_data',
+                target='sqlite_backup',
+                stdout=output,
+            )
+
+        sync_target.assert_called_once_with('default', 'sqlite_backup', execute=False)
+        self.assertIn('Curated catalogue sync DRY-RUN', output.getvalue())
+
+    def test_sync_curated_catalogue_data_execute_uses_target_transaction(self):
+        class NoopAtomic:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        with (
+            patch('eht.management.commands.sync_curated_catalogue_data.transaction.atomic', return_value=NoopAtomic()) as atomic,
+            patch('eht.management.commands.sync_curated_catalogue_data.Command._sync_target') as sync_target,
+        ):
+            call_command(
+                'sync_curated_catalogue_data',
+                target='sqlite_backup',
+                execute=True,
+                stdout=StringIO(),
+            )
+
+        atomic.assert_called_once_with(using='sqlite_backup')
+        sync_target.assert_called_once_with('default', 'sqlite_backup', execute=True)
+
+    def test_sync_curated_catalogue_data_dry_run_reports_unavailable_schema(self):
+        from eht.management.commands.sync_curated_catalogue_data import CatalogueSyncSchemaError
+
+        def unavailable(*args, **kwargs):
+            raise CatalogueSyncSchemaError(
+                model_label='eht.MissingReference',
+                alias='default',
+                original=DatabaseError('missing table'),
+            )
+
+        output = StringIO()
+        with patch('eht.management.commands.sync_curated_catalogue_data.Command._sync_model', side_effect=unavailable):
+            call_command(
+                'sync_curated_catalogue_data',
+                target='sqlite_backup',
+                stdout=output,
+            )
+
+        self.assertIn('schema unavailable on default: missing table', output.getvalue())
+        self.assertIn('migrate source/target aliases before --execute', output.getvalue())
+
+    def test_sync_curated_catalogue_data_execute_fails_on_unavailable_schema(self):
+        from eht.management.commands.sync_curated_catalogue_data import CatalogueSyncSchemaError
+
+        class NoopAtomic:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+        def unavailable(*args, **kwargs):
+            raise CatalogueSyncSchemaError(
+                model_label='eht.MissingReference',
+                alias='sqlite_backup',
+                original=DatabaseError('missing table'),
+            )
+
+        with (
+            patch('eht.management.commands.sync_curated_catalogue_data.transaction.atomic', return_value=NoopAtomic()),
+            patch('eht.management.commands.sync_curated_catalogue_data.Command._sync_model', side_effect=unavailable),
+            self.assertRaisesMessage(CommandError, 'Run migrations or choose migrated database aliases before --execute'),
+        ):
+            call_command(
+                'sync_curated_catalogue_data',
+                target='sqlite_backup',
+                execute=True,
+                stdout=StringIO(),
+            )
+
+    def test_sync_curated_catalogue_data_curated_scope_includes_raceway_seed_models(self):
+        from eht.management.commands.sync_curated_catalogue_data import CURATED_MODELS
+
+        self.assertIn(RacewayFamily, CURATED_MODELS)
+        self.assertIn(RacewaySize, CURATED_MODELS)
 
 
 def make_project_settings(**overrides):

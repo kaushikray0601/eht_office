@@ -34,11 +34,13 @@ Recommend a minimal new peer app **`telemetry`** (one model, one endpoint, impor
 | `owner_module` | char(40) | `"raceway"` today |
 | `suggestion_code` | char(120), indexed | e.g. `raceway.graph.near_miss_endpoint`, `raceway.ortho.axis_lock`, future `raceway.route.candidate` |
 | `action` | choices | `shown` \| `accepted` \| `rejected` \| `edited` \| `dismissed` \| `unresolved_at_save` |
+| `session_key` | UUID, nullable, indexed | browser-session grouping key; additive and optional for older clients |
 | `context` | JSON | the suggestion's own evidence payload (warning body, thresholds, distances, run/node UUID keys) — reuse the existing warning shape verbatim |
 | `action_detail` | JSON | edit delta, chosen candidate index, time-to-action seconds |
 | `client` | char(80), blank | overlay cache key, for version-aware analysis later |
 
-Indexes: (`project_id`, `suggestion_code`), (`suggestion_code`, `action`), `created_at`.
+Indexes: (`project_id`, `suggestion_code`), (`suggestion_code`, `action`),
+(`project_id`, `session_key`), `created_at`.
 
 ## Event taxonomy v0 (maps to features that already exist)
 
@@ -119,7 +121,7 @@ Append-only immutable rows (trivial to partition/archive; event-sourcing-clean);
 | # | Item | Trigger |
 | --- | --- | --- |
 | T-1 | **Event dictionary**: per-`suggestion_code` context shape documented in this note as codes are added (else 2 years of data needs archaeology) | With every pass that adds a suggestion_code |
-| T-2 | `session_key` column (browser-session UUID) for behavioral sequence context | Next telemetry-touching pass; one additive column |
+| T-2 | `session_key` column (browser-session UUID) for behavioral sequence context | Closed 2026-08-28 in Closure Pass 3 |
 | T-3 | Monthly range partitioning + retention/archive policy | ~10 M rows or ~10 GB |
 | T-4 | Parquet snapshot export path for offline training | Start of Tier-2 work |
 | T-5 | Aggregate/materialized views for threshold calibration | When first month of real usage data exists |

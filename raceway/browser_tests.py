@@ -710,8 +710,15 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                 )
                 self.assertIn("raceway.ortho.axis_lock", {event["suggestion_code"] for event in telemetry_events})
                 self.assertTrue(any(event["suggestion_code"].startswith("raceway.warning.") for event in telemetry_events))
+                session_keys = {event.get("session_key") for event in telemetry_events}
+                self.assertEqual(len(session_keys), 1)
+                self.assertRegex(next(iter(session_keys)), r"^[0-9a-f-]{36}$")
                 self.assertFalse(any("run_id" in event.get("context", {}) for event in telemetry_events))
                 self.assertFalse(any("node_id" in event.get("context", {}) for event in telemetry_events))
+                self.assertTrue(
+                    any("Raceway telemetry was not recorded." in message and "503" in message for message in console_messages),
+                    console_messages,
+                )
                 page.select_option("#racewaySegmentDirectionSelect", "plus_y")
                 page.fill("#racewaySegmentLengthInput", "4")
                 page.press("#racewaySegmentLengthInput", "Enter")

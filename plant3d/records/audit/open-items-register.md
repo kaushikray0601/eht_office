@@ -5,7 +5,7 @@ passes when KR approves the work. Companion to `development-scorecard.md`
 and `claude-notes-2026-07-08.md`.
 
 Created: 2026-07-19.
-Last updated: 2026-08-02, Closure Pass 2.
+Last updated: 2026-08-28, Closure Pass 3.
 
 This is the single source of truth for open/closed/deferred items. The Phase G
 closure audit is supporting analysis, not a competing register.
@@ -39,11 +39,11 @@ Disposition legend:
 
 | # | Item | Ref | Disposition | Note |
 | --- | --- | --- | --- | --- |
-| C1 | Vendor-catalogue sync command, dry-run default, source read-only, explicit targets, includes `RacewayFamily`/`RacewaySize` | claude-notes §42, §49 | close-now | Claude §49 correctly promotes this into Technical Closure because it protects KR's curated data. |
+| C1 | Vendor-catalogue sync command, dry-run default, source read-only, explicit targets, includes `RacewayFamily`/`RacewaySize` | claude-notes §42, §49 | closed | Closed in Closure Pass 3 with `sync_curated_catalogue_data`; command is dry-run by default, requires explicit target aliases, performs no deletes, reports missing/stale schema as readiness warnings in dry-run, fails clearly before `--execute`, and is pinned by dispatch/scope tests. This does not bless catalogue content. |
 | C2 | L1 CI workflow file | CI course, claude-notes §49 | close-now after A3 | Implement only after KR approves A3. |
 | C3 | Accessory v0 acceptance sweep | §40-§47 | closed | Accessory arc is accepted for MVP; limitations table added to accessory note on 2026-08-02. |
-| C4 | Telemetry `session_key` or equivalent browser-session grouping | telemetry note T-2, §49 | close-now | Small technical closure item before Phase G is declared closed. |
-| C5 | Browser assertion for blocked telemetry endpoint behavior | §26, §49 | close-now | Small technical closure item. |
+| C4 | Telemetry `session_key` or equivalent browser-session grouping | telemetry note T-2, §49 | closed | Additive nullable `SuggestionEvent.session_key`, browser-session UUID producer, and API validation landed in Closure Pass 3. |
+| C5 | Browser assertion for blocked telemetry endpoint behavior | §26, §49 | closed | Focused browser smoke now pins that blocked telemetry returns a console warning and authoring continues. |
 | C6 | M-5 copy-run-with-offset; M-6 EL grid while drawing | RFC M-table, §49 | defer-later | Useful UX, not a Phase H-A1 blocker. |
 | C7 | Work-plane/free-route messaging and broader segment-pick reuse | tracker deferred list, §49 | defer-later | Partly landed for Make Tee. Record UX gap; not H-A1 blocker. |
 | C8 | BOQ gross-length/development-length assumption line | §40, §47 | closed | Closed in C10.2 and pinned in tests. |
@@ -82,3 +82,5 @@ Disposition legend:
   offsets persist until real accessory intent exists.
 - M-3: Make Tee and Make Cross authoring shipped and KR-accepted.
 - B3: stale root/project Claude orientation refreshed on 2026-08-02.
+- C1/C4/C5: vendor-catalogue sync command, telemetry browser session key,
+  and blocked-telemetry browser assertion closed in Closure Pass 3.

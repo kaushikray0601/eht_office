@@ -82,6 +82,15 @@ def _clean_uuid(value):
         raise ValidationError({"key": "Event key must be a UUID."})
 
 
+def _clean_optional_uuid(value, field_name):
+    if value in (None, ""):
+        return None
+    try:
+        return uuid.UUID(str(value))
+    except (TypeError, ValueError):
+        raise ValidationError({field_name: "Value must be a UUID."})
+
+
 def _clean_json_object(value, field_name):
     if value in (None, ""):
         return {}
@@ -128,6 +137,7 @@ def _event_from_payload(raw_event, user):
         owner_module=_clean_text(raw_event.get("owner_module"), "owner_module", 40),
         suggestion_code=_clean_text(raw_event.get("suggestion_code"), "suggestion_code", 120),
         action=action,
+        session_key=_clean_optional_uuid(raw_event.get("session_key"), "session_key"),
         context=_clean_json_object(raw_event.get("context", {}), "context"),
         action_detail=_clean_json_object(raw_event.get("action_detail", {}), "action_detail"),
         client=_clean_optional_text(raw_event.get("client", ""), 80),

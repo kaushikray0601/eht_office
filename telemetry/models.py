@@ -34,6 +34,7 @@ class SuggestionEvent(models.Model):
     owner_module = models.CharField(max_length=40)
     suggestion_code = models.CharField(max_length=120, db_index=True)
     action = models.CharField(max_length=30, choices=ACTION_CHOICES)
+    session_key = models.UUIDField(null=True, blank=True, db_index=True)
     context = models.JSONField(default=dict, blank=True)
     action_detail = models.JSONField(default=dict, blank=True)
     client = models.CharField(max_length=80, blank=True, default="")
@@ -43,6 +44,7 @@ class SuggestionEvent(models.Model):
         indexes = [
             models.Index(fields=["project_id", "suggestion_code"]),
             models.Index(fields=["suggestion_code", "action"]),
+            models.Index(fields=["project_id", "session_key"]),
             models.Index(fields=["created_at"]),
         ]
 

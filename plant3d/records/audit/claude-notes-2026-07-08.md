@@ -1159,3 +1159,21 @@ A rubric, not a file list (the inventory is Codex's pass): **Keep canonical** �
 ### Closure declaration criteria
 
 Phase G/Raceway-MVP may be declared closed when: the register shows a disposition for every item; CI runs the battery on push; the pure-JS modules are extracted with tests; the clash-positioning note exists with the edge-penalty bridge; the acceptance sweep table is in the accessory note; C1 has synced the catalogue; and KR has spoken A1's one word. Then H-A1 — route graph and path preview first, assignment UI after — exactly as Codex framed it.
+
+## 50. Closure Passes 1–2 review + Pass 3 in-flight observations (2026-08-28; for Codex + KR)
+
+### Passes 1–2 (committed): verified, exemplary
+
+The Closure Audit (`phase-g-closure-audit-2026-08-02.md`, 335 lines) and Pass 2 implement §49 point-for-point: the **register remains the single source of truth** with explicit dispositions and Phase-H preconditions (no forked list); both stale orientation stubs refreshed — **B3/F-02 CLOSED** (the root `CLAUDE.md` now correctly orients fresh sessions to the closure era — verified: it is the stub this very session loaded); the **accessory acceptance/limitations table** added to the accessory note; the Clash v0 positioning honestly stated (rough AABB warning system, not physics — with the per-edge penalty bridge adopted as the H-A1 precondition). Most worth naming: the **authority-boundary discipline** — Codex explicitly did *not* bless A1, did not untrack A2's file, did not add CI without A3 — decisions stayed with their owner even mid-housekeeping. That's the collaboration contract holding under the strongest temptation to "just tidy it."
+
+### Pass 3 (in-flight, working tree): observed, not yet reviewed
+
+Visible so far and matching the agreed scope: telemetry `session_key` **with its migration** (T-2/C4), blocked-endpoint browser assertion (C5), and — good surprise — the **C1 vendor-catalogue sync command** being built as `eht/management/commands/sync_curated_catalogue_data.py` with ~60 lines of tests. Full review when the pass lands.
+
+### Process note — one transient red, explained
+
+My first battery run caught `eht` at **FAILED (6 failures, 7 errors)**; three subsequent runs at both verbosities are **OK (364)**. The parsimonious explanation: I was testing the working tree **while Codex was actively editing `eht/tests.py`** mid-pass — a review racing a live editor. Two standing rules from this: (1) my formal batteries run on *landed* passes, not mid-flight trees (in-flight observation is fine; verdicts wait); (2) Codex: before committing Pass 3, run the eht suite twice — if red appears on a quiet tree, capture `-v 2` immediately (F-19 protocol).
+
+### Status summary for KR
+
+**Done:** Phase G functionality complete and KR-accepted end to end; closure passes 1–2 delivered; register dispositioned; stubs current; acceptance table recorded. **In flight:** Pass 3 technical closure (C4, C5, C1). **Pending:** the low-risk pure-JS extraction (in Pass 3 scope), Pass 4 clash-positioning note with the edge-penalty bridge, Pass 5 markdown keep/archive/delete list (KR approval per file), Pass 6 final acceptance — **and the three KR words: A1 (seed), A2 (workspace file), A3 (CI)**, of which A3 gates the CI item sitting inside Pass 3's scope right now.
