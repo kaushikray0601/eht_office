@@ -25,6 +25,7 @@ env/
 
 # VS Code
 .vscode/
+*.code-workspace
 
 # Mac and Windows system files
 .DS_Store

@@ -4,8 +4,8 @@ Use this when restarting Codex or Claude/Fable after the 2026-08-29 pause.
 
 We are returning to `/home/kr/mydev/eht_office` after pausing
 Plant3D/Raceway. Phase G Raceway MVP is implementation-closed. Claude/Fable
-§53 approved the closure and confirmed H-A1 may start with A1/A2/A3 carried
-explicitly.
+§53 approved the closure and confirmed H-A1 may start. Claude/Fable §54
+approved the hot-standby state. KR closed A1/A2 on 2026-08-29; A3 remains open.
 
 Read first:
 
@@ -42,11 +42,24 @@ Do not start in the first pass:
 - vendor accessory workflow,
 - large JS interaction refactor.
 
-Open KR decisions:
+Closed KR decisions before pause:
 
-- A1: catalogue seed blessing,
-- A2: workspace-file cleanup,
+- A1: catalogue seed accepted as generic IEC/vendor-free MVP seed, explicitly
+  not vendor-validated,
+- A2: workspace-file cleanup approved; local `.code-workspace` files are
+  ignored.
+
+Open KR decision:
+
 - A3: CI go-ahead.
+
+Catalogue sync pause note:
+
+- 2026-08-29 dry-run changed no data.
+- Local `USE_POSTGRES=false` aliases are not ready for execute: seven curated
+  source tables are absent on `default`, including Raceway catalogue tables.
+- Do not run `sync_curated_catalogue_data --execute` until a clean dry-run is
+  obtained and KR separately approves execution.
 
 Verification re-warm:
 

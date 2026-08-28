@@ -81,7 +81,7 @@ Close by:
 
 ### G-2. KR Decision Sweep
 
-Status: open only for KR-owned decision exceptions.
+Status: closed for A1/A2 on 2026-08-29; A3 and B2 remain KR-owned follow-ups.
 
 Decisions needed:
 
@@ -98,8 +98,12 @@ Recommendation:
 - Approve A3 before Phase H. Routing/pathfinding will add enough surface that
   manual-only verification becomes fragile.
 
-Closure Pass 6 note: A1/A2/A3 are still open in
+Closure Pass 6 note: A1/A2/A3 were still open in
 `open-items-register.md`. Codex did not silently close them.
+
+Hot-standby update, 2026-08-29: KR accepted A1 as a generic IEC/vendor-free MVP
+seed, explicitly not vendor-validated, and approved A2 workspace-file cleanup.
+A3 CI remains open.
 
 ### G-3. C10 Tail - JavaScript Hardening
 

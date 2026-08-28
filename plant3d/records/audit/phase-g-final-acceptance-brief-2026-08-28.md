@@ -8,15 +8,18 @@ Owner: Codex, with KR decision authority and Claude/Fable review
 Phase G Raceway MVP implementation and closure sequence are complete enough to
 start Phase H-A1 server-side routing/pathfinding foundation.
 
-This is not a silent close of KR-owned decisions. The following remain open by
-explicit authority boundary:
+This was not a silent close of KR-owned decisions. At Closure Pass 6, the
+following remained open by explicit authority boundary:
 
 - A1: bless or amend the generic IEC/vendor-free Raceway catalogue seed.
 - A2: remove/untrack or keep `plant3d/records/audit/eht_office.code-workspace`.
 - A3: approve or reject the L1 CI workflow.
 
-Those items remain named in `open-items-register.md`; they are not forgotten
+Those items were named in `open-items-register.md`; they were not forgotten
 and were not decided by Codex.
+
+Hot-standby update, 2026-08-29: KR explicitly closed A1 and A2. A3 remains the
+open KR decision.
 
 ## What Closed
 

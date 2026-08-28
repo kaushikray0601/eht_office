@@ -5,15 +5,16 @@ passes when KR approves the work. Companion to `development-scorecard.md`
 and `claude-notes-2026-07-08.md`.
 
 Created: 2026-07-19.
-Last updated: 2026-08-29, hot-standby pause.
+Last updated: 2026-08-29, hot-standby A1/A2 closure.
 
 This is the single source of truth for open/closed/deferred items. The Phase G
 closure audit is supporting analysis, not a competing register.
 
 Phase G implementation and closure sequence are complete as of Closure Pass 6.
 The project is paused hot-standby as of 2026-08-29; restart from
-`hot-standby-pause-index-2026-08-29.md`. A1/A2/A3 remain explicit KR
-decisions, not Codex-closed items.
+`hot-standby-pause-index-2026-08-29.md`. A1 and A2 were closed by explicit KR
+approval on 2026-08-29. A3 remains an explicit KR decision, not a Codex-closed
+item.
 
 Disposition legend:
 
@@ -28,8 +29,8 @@ Disposition legend:
 
 | # | Item | Since | Ref | Disposition | Note |
 | --- | --- | --- | --- | --- | --- |
-| A1 | Catalogue-seed confirmation: bless the seeded generic catalogue, or amend it | §14, 2026-07-09 | claude-notes §14, §21, §49 | needs-decision | Codex/Claude recommendation: accept as generic IEC/vendor-free MVP seed, explicitly not vendor-validated. One KR word closes it. |
-| A2 | `.code-workspace` file in `plant3d/records/audit/` | §13, 2026-07-09 | claude-notes §13, §17, §49 | needs-decision | File exists at `plant3d/records/audit/eht_office.code-workspace`. Recommendation: untrack/remove from records and add ignore rule unless KR wants it kept deliberately. |
+| A1 | Catalogue-seed confirmation: bless the seeded generic catalogue, or amend it | §14, 2026-07-09 | claude-notes §14, §21, §49, §54 | closed | KR accepted the seeded generic IEC/vendor-free Raceway catalogue for MVP on 2026-08-29. It is explicitly not vendor-validated; vendor/catalogue validation remains future governance. |
+| A2 | `.code-workspace` file in `plant3d/records/audit/` | §13, 2026-07-09 | claude-notes §13, §17, §49, §54 | closed | KR approved removing/untracking `plant3d/records/audit/eht_office.code-workspace` on 2026-08-29 and adding an ignore rule for local workspace files. |
 | A3 | CI go-ahead for L1 GitHub Actions pipeline | 2026-07-18 | CI course, scorecard, claude-notes §49 | needs-decision | Claude §49 moves CI inside Technical Closure. Codex agrees; needs KR approval before workflow work. |
 
 ## B. KR Actions And Habits
@@ -98,4 +99,6 @@ Disposition legend:
 - C10 test foundation: `raceway_projection_core.test.js` added in Closure
   Pass 5, closing the cheap JS unit-test gap Claude §51 identified.
 - Phase G closure sequence: final acceptance brief added in Closure Pass 6;
-  H-A1 may start server-side with A1/A2/A3 carried explicitly.
+  H-A1 may start server-side with A3 carried explicitly.
+- A1/A2: KR closed catalogue-seed acceptance and workspace-file cleanup on
+  2026-08-29 before the hot-standby pause.

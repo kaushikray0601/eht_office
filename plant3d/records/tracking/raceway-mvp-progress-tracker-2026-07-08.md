@@ -3644,3 +3644,37 @@ Append each pass here.
   - deterministic shortest path,
   - route preview endpoint,
   - route preview contract tests.
+
+### 2026-08-29 - Hot-Standby A1/A2 Closure
+
+- Manual direction from KR:
+  - accepted Codex/Claude recommendation to close A1 and A2 before pausing,
+  - agreed to accept the generic Raceway catalogue seed for MVP,
+  - agreed to remove/untrack the local `.code-workspace` record file.
+- Claude/Fable §54:
+  - confirmed the workspace is safe to close,
+  - recommended running curated-catalogue sync dry-run before pause,
+  - recommended closing A1/A2 so only A3 remains for restart day.
+- Implemented:
+  - closed A1 in `../audit/open-items-register.md` as KR-accepted generic
+    IEC/vendor-free MVP seed, explicitly not vendor-validated,
+  - closed A2 in `../audit/open-items-register.md`,
+  - deleted `../audit/eht_office.code-workspace`,
+  - added `*.code-workspace` to `.gitignore`,
+  - updated hot-standby index, restart prompt, final acceptance brief,
+    closure audit, records README, and Codex memory.
+- Authority boundary after this pass:
+  - A1 closed by KR,
+  - A2 closed by KR,
+  - A3 CI remains KR decision and was not implemented.
+- Catalogue sync:
+  - dry-run only; no `--execute` was run in this pass,
+  - dry-run result against `USE_POSTGRES=false` local aliases:
+    - existing EHT legacy tables would update in `sqlite_backup`,
+    - 7 curated models could not be inspected because source schema tables are
+      absent on the local `default` alias, including `RacewayFamily` and
+      `RacewaySize`,
+    - do not run `--execute` until source/target aliases are migrated and the
+      dry-run is clean,
+  - execute remains a separate explicit approval after reviewing dry-run
+    readiness.

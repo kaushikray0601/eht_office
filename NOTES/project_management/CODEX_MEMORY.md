@@ -1474,4 +1474,21 @@ changes, and begin with H-A1 server-side `raceway.routing`: durable
 seam first, deterministic shortest path, preview endpoint, and Python contract
 tests. Do not start route persistence, assignment UI, mesh collision, vendor
 accessory workflow, or large JS interaction split in the first restart pass.
-A1 catalogue seed, A2 workspace file, and A3 CI remain explicit KR decisions.
+At the time of hot-standby preparation, A1 catalogue seed, A2 workspace file,
+and A3 CI remained explicit KR decisions.
+
+Plant3D/Raceway note, 2026-08-29 hot-standby A1/A2 closure: KR approved the two
+optional cleanup decisions from Claude §54 before pausing. A1 is closed:
+Raceway's seeded catalogue is accepted as a generic IEC/vendor-free MVP seed,
+explicitly not vendor-validated; future vendor/project preference validation
+still belongs to later catalogue governance. A2 is closed:
+`plant3d/records/audit/eht_office.code-workspace` was removed/untracked and
+`*.code-workspace` added to `.gitignore`. A3 CI remains the only open KR
+decision for the Phase H restart and must not be implemented without explicit
+approval. The curated catalogue sync command should be run dry-run-first; do
+not execute a sync without separate KR approval after checking readiness output.
+Dry-run on 2026-08-29 with `USE_POSTGRES=false` showed legacy EHT tables would
+upsert to `sqlite_backup`, but 7 curated source tables are absent on the local
+`default` alias, including `raceway_racewayfamily` and `raceway_racewaysize`;
+therefore `--execute` should wait until aliases are migrated and a dry-run is
+clean.

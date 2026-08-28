@@ -29,7 +29,7 @@ This folder is the project record book for the new neutral 3D engineering platfo
 - `audit/phase-g-final-acceptance-brief-2026-08-28.md` - final Phase G closure candidate and H-A1 start rules.
 - `audit/phase-g-closure-audit-2026-08-02.md` - Phase G closure audit and pass-by-pass outcome history.
 - `audit/open-items-register.md` - single source of open decisions, closure dispositions, and Phase H gates.
-- `audit/claude-notes-2026-07-08.md` - Claude/Fable running review notes; latest closure verdict is §53.
+- `audit/claude-notes-2026-07-08.md` - Claude/Fable running review notes; latest hot-standby verdict is §54.
 - `audit/development-scorecard.md` - periodic scorecard and drift watch.
 - `audit/markdown-housekeeping-inventory-2026-08-28.md` - keep/archive/delete classification and non-destructive records cleanup result.
 - `planning/raceway-mvp-execution-plan-2026-07-08.md` - detailed execution plan for the raceway/tray MVP.

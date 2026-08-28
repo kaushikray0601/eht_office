@@ -12,6 +12,8 @@ The project is intentionally left in hot-standby:
 
 - Phase G Raceway MVP is implementation-closed.
 - Claude/Fable §53 approves the closure and says H-A1 may start.
+- Claude/Fable §54 approves the hot-standby state and recommends closing A1/A2
+  before pause; KR approved both on 2026-08-29.
 - Final verification on 2026-08-29 was green:
   - `raceway` 77 tests,
   - `plant3d` 76 tests,
@@ -63,19 +65,34 @@ Important viewer/runtime note:
 - Browser tests load the same order.
 - Chromium browser smoke may need unsandboxed execution in this environment.
 
-## Open Decisions To Preserve
+Curated catalogue sync note:
 
-Do not silently close these:
+- A dry-run on 2026-08-29 used `USE_POSTGRES=false` and target
+  `sqlite_backup`.
+- No data was changed.
+- Legacy EHT catalogue/reference tables would upsert to `sqlite_backup`.
+- Seven curated models could not be inspected because source schema tables are
+  absent on the local `default` alias, including `RacewayFamily` and
+  `RacewaySize`.
+- Do not run `sync_curated_catalogue_data --execute` until source/target aliases
+  are migrated and dry-run readiness is clean.
 
-- A1: KR must bless or amend the generic IEC/vendor-free Raceway catalogue seed.
-- A2: KR must decide whether to remove/untrack
-  `plant3d/records/audit/eht_office.code-workspace`.
+## KR Decisions
+
+Closed before pause:
+
+- A1: KR accepted the generic IEC/vendor-free Raceway catalogue seed for MVP,
+  explicitly not vendor-validated.
+- A2: KR approved removing/untracking
+  `plant3d/records/audit/eht_office.code-workspace`; future local workspace
+  files are ignored.
+
+Open decision to preserve:
+
 - A3: KR must approve or reject L1 CI.
 
 Recommendation remains:
 
-- accept A1 as generic IEC/vendor-free MVP seed, not vendor-validated;
-- remove/untrack A2 unless KR intentionally wants workspace files in records;
 - approve A3 before Phase H grows.
 
 ## Next Coding Pass

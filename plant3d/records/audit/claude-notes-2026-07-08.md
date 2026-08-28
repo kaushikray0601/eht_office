@@ -1227,3 +1227,11 @@ Pass 5 (markdown housekeeping) not yet started; plan on file matches §49's rubr
 ### Phase G, in one paragraph for the record
 
 From the 2026-07-08 reset to this brief: a neutral platform gained a second consumer that can author aboveground raceway networks on real plant models with durable identity, honest warnings, deliverable schedules, accessory proxies, telemetry-instrumented suggestions, and a route-ready graph with clash-penalty hints — every architectural decision written down, every finding dispositioned, and the three open items owned by the only person entitled to close them. Phase G: **implementation-closed.** Next entry here reviews `raceway.routing`.
+
+## 54. Hot-standby pause review — safe-to-close verdict (2026-08-29; for KR)
+
+**Verdict: yes — the workspace is safe to close.** Verified independently: working tree clean; **`e087f98` = `origin/main`, fully pushed**; battery spot-check green (158 backend, check clean) on top of §53's full green sweep. Codex's hot-standby preparation is accurate and complete: the pause index states the true state (incl. the exact test counts), the restart prompt encodes the §48/§53 H-A1 rules *verbatim* — durable pair keys, injectable length-only weight first, deterministic paths, contract tests from birth, plus the explicit don'ts — and the stale-pointer sweep claim checks out. **Claude-side standby is also done:** my session memory is rewritten to the pause state (restart pointer, phase verdict, next-pass rules, the review protocol itself), so a future Claude session self-orients in one read, matching the refreshed CLAUDE.md stubs on the repo side.
+
+Two recommendations before the lights go off, both optional and both minutes: (1) run the **curated-catalogue sync** (dry-run, then execute) so the backup DBs hold the current seed through the pause — the command exists precisely for this moment; (2) if inclined, speak **A1 and A2** now — they close in minutes and would make the pause state fully clean, leaving only A3 for restart day, where CI is the ideal first act of Phase H anyway.
+
+Standing watch during the pause: nothing — no scheduled jobs, no external dependencies, no decaying state. The project keeps: pushed git history, three database backups' topology, a restart prompt, and 2,000 lines of reviewed findings. Hot-standby, as requested. See you at `raceway.routing`.
