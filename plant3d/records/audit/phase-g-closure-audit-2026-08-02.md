@@ -66,7 +66,7 @@ Anything left as a vague open reminder is not closed.
 
 ### G-1. Records And Session Orientation
 
-Status: open.
+Status: closed in Closure Pass 2.
 
 Why it matters: fresh Codex/Claude sessions still see stale June-era
 orientation in root/project management documents.
@@ -81,7 +81,7 @@ Close by:
 
 ### G-2. KR Decision Sweep
 
-Status: open.
+Status: open only for KR-owned decision exceptions.
 
 Decisions needed:
 
@@ -98,9 +98,12 @@ Recommendation:
 - Approve A3 before Phase H. Routing/pathfinding will add enough surface that
   manual-only verification becomes fragile.
 
+Closure Pass 6 note: A1/A2/A3 are still open in
+`open-items-register.md`. Codex did not silently close them.
+
 ### G-3. C10 Tail - JavaScript Hardening
 
-Status: partially closed, tail open.
+Status: low-risk closure slice closed; larger H-A2 split deferred.
 
 Already closed:
 
@@ -111,7 +114,7 @@ Already closed:
 - fail-loud graph/fitting validation,
 - visible disabled reasons.
 
-Still open:
+Still deferred:
 
 - deeper geometry/DOM module split,
 - eventual separate JS module file,
@@ -124,9 +127,13 @@ Recommendation:
 - If H-A1 stays server-side only, this can happen before H-A2, but KR's current
   closure request reasonably pulls it before Phase H starts.
 
+Closure Pass 6 note: the low-risk separate module and Node unit-test seam now
+exist. The risky interaction/panel/state decomposition remains a hard
+precondition before H-A2 assignment UI, not before H-A1 server routing.
+
 ### G-4. Accessory Arc Acceptance Record
 
-Status: open as a record, functionally accepted in manual tests.
+Status: closed in Closure Pass 2 as an MVP acceptance record.
 
 Close by writing one explicit record entry:
 
@@ -147,7 +154,7 @@ Close by writing one explicit record entry:
 
 ### G-5. Clash/Collision Staging
 
-Status: rough v0 is implemented; full physics is deferred.
+Status: Clash v0 plus H6 route-penalty bridge closed; full physics deferred.
 
 Current implementation:
 
@@ -180,9 +187,12 @@ Recommendation:
 
 Do not build expensive live mesh physics for every mouse movement.
 
+Closure Pass 6 note: H6 is now implemented as
+`raceway.clash_edge_penalties.v0`; Clash v1/v2 remain deferred.
+
 ### G-6. Phase H-A1 Preconditions
 
-Status: not started.
+Status: ready to start as Phase H-A1.
 
 H-A1 should begin only after the above closure is recorded.
 
@@ -285,6 +295,8 @@ Status: completed 2026-08-02.
 
 ### Closure Pass 4 - Clash/Pathfinding Staging
 
+Status: completed 2026-08-28.
+
 - write clash/collision/pathfinding staging note,
 - define Clash v0/v1/v2,
 - define how H-A1 route costs consume clash/clearance evidence,
@@ -294,12 +306,17 @@ Status: completed 2026-08-02.
 
 ### Closure Pass 5 - Markdown Housekeeping
 
+Status: completed 2026-08-28.
+
 - apply approved keep/archive/delete list,
 - avoid deleting history-bearing docs,
 - add superseded headers or archive index,
 - remove/untrack workspace file if approved.
 
 ### Closure Pass 6 - Final Phase G Acceptance
+
+Status: completed 2026-08-28 as implementation/closure acceptance, with
+A1/A2/A3 carried as explicit KR decisions.
 
 - run agreed verification battery,
 - update scorecard/register/tracker,
@@ -345,14 +362,65 @@ Technical Closure Pass 3 partially completed the technical-balance list:
   no-delete database-alias sync command for curated EHT and Raceway catalogue
   tables,
 - the sync command reports missing/stale schema as dry-run readiness warnings
-  and fails clearly before `--execute`.
+  and fails clearly before `--execute`,
+- the low-risk C10 JavaScript extraction landed as
+  `raceway_projection_core.js`, loaded before the overlay through the existing
+  Plant3D extension list.
 
 Not done in this pass:
 
 - CI remains blocked on KR A3 approval,
 - `.code-workspace` cleanup remains blocked on KR A2 approval,
 - catalogue-seed confirmation remains blocked on KR A1 approval,
-- the low-risk C10 JavaScript module extraction tail remains the next technical
-  closure slice.
+- the larger interaction/panel/state JS refactor remains deferred until before
+  H-A2 assignment UI.
 - local SQLite catalogue aliases are not fully migrated for all curated tables;
   fix the alias schema before treating an actual sync execution as meaningful.
+
+## Pass 4 Outcome
+
+Closure Pass 4 closed the clash/pathfinding staging item:
+
+- added `planning/raceway-clash-pathfinding-staging-2026-08-28.md`,
+- defined Clash v0/v1/v2 and the split between warning evidence, route-cost
+  hints, and real collision/clearance authority,
+- added server module `raceway.clash`,
+- added JSON endpoint `/raceway/layers/<layer_id>/clash-penalties/`,
+- added projection `raceway.clash_edge_penalties.v0`,
+- aggregates existing rough AABB clash/clearance warnings by durable adjacent
+  node UUID edge key,
+- exposes soft route penalties for H-A1 without introducing new mesh physics,
+- pins the projection and endpoint access contract in tests.
+
+## Pass 5 Outcome
+
+Closure Pass 5 closed the records-housekeeping item without destructive edits:
+
+- added `audit/markdown-housekeeping-inventory-2026-08-28.md`,
+- added lifecycle headers to historical active-sounding records:
+  - `tracking/pipeline-spike-tracker-2026-06-22.md`,
+  - `tracking/platform-ecosystem-reset-tracker-2026-07-08.md`,
+  - `planning/platform-ecosystem-development-plan-2026-07-08.md`,
+  - `planning/cable-routing-foundation-review-2026-07-06.md`,
+- listed deletion candidates but removed none,
+- left `plant3d/records/audit/eht_office.code-workspace` untouched because A2
+  requires explicit KR approval,
+- added `raceway_projection_core.test.js` to close the cheap JS unit-test gap
+  Claude §51 identified before final acceptance.
+
+## Pass 6 Outcome
+
+Closure Pass 6 added the final acceptance brief:
+
+- added `audit/phase-g-final-acceptance-brief-2026-08-28.md`,
+- states that Phase G Raceway MVP implementation and closure sequence are
+  complete enough to start H-A1 server-side routing/pathfinding,
+- keeps A1/A2/A3 open as explicit KR decisions,
+- defines the H-A1 start rules:
+  - no route persistence in H-A1,
+  - no assignment UI before the consumer-neutral cable-reference note,
+  - no graph-local `E###` keys in route payloads,
+  - injectable route weight from first implementation,
+  - deterministic tie-breaking,
+  - route preview contract pinned in Python tests,
+  - optional use of `raceway.clash_edge_penalties.v0` as soft route-cost hints.

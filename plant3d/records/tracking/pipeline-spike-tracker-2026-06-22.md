@@ -2,6 +2,12 @@
 
 Date: 2026-06-22
 
+Lifecycle note, 2026-08-28: historical/supporting tracker. Use this for the
+rendering/conversion spike history and detailed verification trail. Current
+day-to-day Raceway control lives in
+`raceway-mvp-progress-tracker-2026-07-08.md` and
+`../audit/open-items-register.md`.
+
 Status: render/conversion spike accepted at current sample scale; current focus is extraction readiness, stable platform boundaries, and disciplined viewer/tool maturation
 
 ## Objective

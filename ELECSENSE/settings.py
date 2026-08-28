@@ -269,11 +269,18 @@ STATICFILES_DIRS = [os.path.join(BASE_DIR, "static"),
 
 PLANT3D_VIEWER_EXTENSIONS = [
     {
+        "id": "raceway-projection-core",
+        "owner": "raceway",
+        "kind": "support-module",
+        "script": "raceway/js/raceway_projection_core.js",
+        "version": "20260828_raceway54",
+    },
+    {
         "id": "raceway-overlay",
         "owner": "raceway",
         "kind": "consumer-overlay",
         "script": "raceway/js/raceway_overlay.js",
-        "version": "20260828_raceway53",
+        "version": "20260828_raceway54",
     },
 ]
 

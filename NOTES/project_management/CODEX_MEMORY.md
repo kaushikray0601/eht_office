@@ -1403,3 +1403,59 @@ absent from the local aliases, now as readable readiness output. Browser smoke
 needed unsandboxed rerun due Chromium launcher sandbox error, then passed. Next
 pass: finish the low-risk C10 JS module extraction tail, then Closure Pass 4
 for clash/pathfinding staging and H6 durable graph-edge clash-penalty bridge.
+
+Plant3D/Raceway note, 2026-08-28 Technical Closure Pass 3B: KR asked to
+accelerate housekeeping/hardening. Read Claude §50; no blocker, and it repeated
+that the low-risk C10 extraction should close before larger Phase H JS. Added
+`raceway/static/raceway/js/raceway_projection_core.js` and moved pure graph
+projection contract validation, schedule/fitting summary view-model builders,
+and `computeRacewayCommandStates` into it. `raceway_overlay.js` now delegates
+through thin wrappers and still exposes the same browser-test seam. Settings now
+load `raceway-projection-core` before `raceway-overlay`, both cache-keyed
+`20260828_raceway54`; browser smoke loads files in the same order. Tests pin the
+split and extension ordering. Verified with node checks, raceway 74 tests,
+plant3d 76 tests, telemetry 5 tests, curated sync 6 tests, and focused Raceway
+browser smoke first, then full Raceway browser smoke 6/6 unsandboxed. C10 low-risk slice is closed; bigger
+interaction/panel/state decomposition remains deferred until before H-A2.
+Next: Closure Pass 4 for clash/pathfinding staging plus H6 durable graph-edge
+clash-penalty bridge.
+
+Plant3D/Raceway note, 2026-08-28 Closure Pass 4: KR asked to proceed with
+Closure Pass 4 after reading Claude/Fable. Claude §50 had no blocker and
+confirmed the intended H6 shape: aggregate existing rough AABB warnings per
+durable edge, no new mesh physics. Implemented `raceway/clash.py` with
+projection `raceway.clash_edge_penalties.v0`, endpoint
+`/raceway/layers/<layer_id>/clash-penalties/`, and tests. The bridge consumes
+existing `raceway.warning.model_clash_aabb` and
+`raceway.warning.model_clearance_aabb`, groups them by ordered adjacent
+Raceway node UUID pair (`start_node_key::end_node_key`), and emits clash/
+clearance counts, reasons, reverse edge key, and soft route penalties
+(`5.0 m` for clash, `1.0 m` for clearance-band warning). It deliberately avoids
+graph-local ordinal `E###` keys as route truth and is not collision-clearance
+authority. Added `raceway-clash-pathfinding-staging-2026-08-28.md` defining
+Clash v0/v1/v2 and Phase H route-cost consumption. H6 is closed. A1 catalogue
+seed blessing, A2 workspace-file cleanup, and A3 CI remain KR decisions. Next:
+Closure Pass 5 markdown housekeeping proposal and cleanup, without deleting
+history-bearing records or touching the workspace file unless KR approves A2.
+
+Plant3D/Raceway note, 2026-08-28 Closure Passes 5-6: KR asked Codex to take
+Pass 5 and Pass 6 together, one by one, with verification between them. Claude
+§51 had no blocker and added one cheap requirement before Pass 6:
+`node --test` coverage for `raceway_projection_core.js`. Added
+`raceway/static/raceway/js/raceway_projection_core.test.js` covering the frozen
+helper surface, command states, schedule/fitting summary view models, and
+fail-loud graph contract warnings. Added non-destructive records housekeeping:
+`markdown-housekeeping-inventory-2026-08-28.md` plus lifecycle headers on the
+old active-sounding spike/reset documents. No files deleted; workspace cleanup
+still waits on A2. Added `phase-g-final-acceptance-brief-2026-08-28.md`,
+updated the closure audit/register/README/scorecard/tracker, and kept A1 seed
+blessing, A2 workspace file, and A3 CI as explicit KR decisions. Phase G is
+implementation/closure complete enough to begin H-A1 server-side. Next coding
+pass: `raceway.routing` foundation with durable node-pair edge keys,
+injectable weight seam, deterministic shortest path, and contract-pinned route
+preview JSON. H-A2 assignment UI must wait for consumer-neutral cable-ref
+design and larger JS interaction split.
+Final battery on 2026-08-29 passed: JS syntax/core unit test, raceway 77,
+plant3d 76, telemetry 5, curated sync tests 6, full eht 366, full Raceway
+browser smoke 6/6 unsandboxed for Chromium, `manage.py check`, migration
+dry-run, Python compile, and `git diff --check`.

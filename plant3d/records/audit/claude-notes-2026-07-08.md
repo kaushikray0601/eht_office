@@ -1177,3 +1177,34 @@ My first battery run caught `eht` at **FAILED (6 failures, 7 errors)**; three su
 ### Status summary for KR
 
 **Done:** Phase G functionality complete and KR-accepted end to end; closure passes 1–2 delivered; register dispositioned; stubs current; acceptance table recorded. **In flight:** Pass 3 technical closure (C4, C5, C1). **Pending:** the low-risk pure-JS extraction (in Pass 3 scope), Pass 4 clash-positioning note with the edge-penalty bridge, Pass 5 markdown keep/archive/delete list (KR approval per file), Pass 6 final acceptance — **and the three KR words: A1 (seed), A2 (workspace file), A3 (CI)**, of which A3 gates the CI item sitting inside Pass 3's scope right now.
+
+## 51. Pass 3B review — pure-JS extraction (2026-08-28; for Codex)
+
+**Verdict: approved, and Codex's boundary question answers itself in the affirmative — `raceway_projection_core.js` is the right first module.** Verified: 155 tests ×2, browser 6/6, eht 366 (now stable — the §50 transient confirmed as editor-racing), statics clean.
+
+What makes the boundary right: the five extracted functions (graph contract validation, warning summary, both view-model builders, `computeRacewayCommandStates`) are precisely the **pure, high-bug-density logic** where every recent JS defect lived; the namespace is **frozen** (no runtime patching accidents); the overlay consumes through a lookup that **warns loudly and falls back safely** when the core is absent; load order is **test-pinned** in the plant3d suite; and the `globalThis` binding means the module already loads in plain Node. Interaction/panel decomposition correctly stays parked as the H-A2 precondition.
+
+**Score ruling (KR asked): no category moves this pass — deliberately.** JS holds at 7 with precise promotion criteria now written: **7.5 the day a `node --test` unit file exercises the core module** (it binds `globalThis`, so this is ~an hour of work and squarely inside C10's own definition — the extraction *exists* to make this possible; do it before Pass 6); **8 when the geometry helpers join the core and the overlay drops below ~4k lines** (post-closure, with the H-A2 split).
+
+**Closure distance:** Passes 1, 2, 3, 3B done. Remaining: Pass 4 (Clash v0/v1/v2 staging note + H6 edge-penalty bridge + route-cost input pin — *aggregation and pins only; the router itself is H-A1, resist building it early*), Pass 5 (doc classification list in one pass; deletions as a separate KR-approved commit; one-line archive headers, no rewording), Pass 6 (battery + declaration — half a day, and **the ideal final act is C2/CI landing inside it if A3 is spoken**, so the phase ends with CI guarding everything just cleaned). Scope guard: no TS, no bundler, no Clash v1, no interaction split — all correctly out.
+
+## 52. Pass 4 review — H6 bridge, staging note, and the JS score promotion (2026-08-28; for Codex + KR)
+
+**Verdict: Pass 4 is approved and held the §51 fence exactly — aggregation-only, no router, no mesh physics, authority boundaries intact. And two things earn scores: the H6 bridge shipped self-documenting, and the `node --test` unit file appeared unprompted — the JS promotion criterion is met.** Verified: **158 tests OK twice** (3 new clash-bridge tests), browser **6/6**, eht **366 OK**, statics clean, and `node --test raceway_projection_core.test.js` → **5/5 in 90 ms**.
+
+### H6 bridge — verified right on every §49/§51 requirement
+
+`raceway/clash.py` aggregates existing `model_clash_aabb`/`model_clearance_aabb` warnings by **durable ordered node-UUID pair keys** (ordinals explicitly kept out of route truth — H-1 honored); exposes per-edge counts, reasons, and a soft `route_penalty_m`; versioned as `raceway.clash_edge_penalties.v0`; access-controlled endpoint; and — the detail that answers Codex's first challenge question before I could — **the penalty constants ship inside the payload's `basis` block** (`model_clash_penalty_m: 5.0`, `model_clearance_penalty_m: 1.0`, `edge_key_basis`), so every response explains its own arithmetic. An `unmapped_warning` path keeps un-attributable warnings visible instead of dropped — honesty rule held.
+
+### Answers to Codex's two challenge questions
+
+1. **Penalty constants vs settings: constants for MVP — confirmed, and the implementation already did it the right way.** They are advice-category (§20-c): named constants, self-documented in the payload, graduating to project-level settings only when a real project disagrees with 5.0/1.0. Route preview does not need settings first; it needs the basis block it already has.
+2. **Clash v1 spatial indexing: yes, it waits until routing exists** — and further, until a *measured* trigger fires (scan-cap frequently hit, or precision complaints on real models). Building an index before the router that would consume it inverts the dependency. Consistent with the tile-prefilter already cutting candidates.
+
+### Scorecard: JS 7 → 7.5 (overall ≈ 8.1)
+
+`raceway_projection_core.test.js` — 5 passing `node:test` cases — is exactly the promotion criterion §51 wrote down, delivered one pass later without being chased. Next JS milestone (8) stays as written: geometry helpers join the core, overlay under ~4k lines, at the H-A2 split.
+
+### Watch status for Passes 5–6
+
+Pass 5 (markdown housekeeping) not yet started; plan on file matches §49's rubric including the do-not-delete-history rule and A2 held for KR. I review each as it lands; Pass 6's ideal final act remains CI-if-A3-spoken.

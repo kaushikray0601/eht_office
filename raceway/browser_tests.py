@@ -25,6 +25,13 @@ REAL_VIEWER_READY_TIMEOUT_MS = 45000
 
 class RacewayBrowserSmokeTests(SimpleTestCase):
     def test_raceway_authoring_uses_viewer_interaction_contract(self):
+        core_script_path = os.path.join(
+            os.path.dirname(__file__),
+            "static",
+            "raceway",
+            "js",
+            "raceway_projection_core.js",
+        )
         script_path = os.path.join(
             os.path.dirname(__file__),
             "static",
@@ -425,6 +432,7 @@ class RacewayBrowserSmokeTests(SimpleTestCase):
                     wait_until="domcontentloaded",
                 )
 
+                page.add_script_tag(path=core_script_path)
                 page.add_script_tag(path=script_path)
                 page.wait_for_selector("#racewayToolSection", timeout=5000)
                 page.wait_for_function("() => window.plant3dViewerLayers.ids().includes('raceway-overlay')")

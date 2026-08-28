@@ -2,6 +2,11 @@
 
 Date: 2026-07-08
 
+Lifecycle note, 2026-08-28: supporting reset plan. It remains the ecosystem
+direction behind Plant3D/Raceway, but active execution has moved to
+`../tracking/raceway-mvp-progress-tracker-2026-07-08.md` and
+`../audit/open-items-register.md`.
+
 Status: active plan after cable-routing reset
 
 Supersedes as active plan:

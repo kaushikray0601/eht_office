@@ -3405,3 +3405,203 @@ Append each pass here.
   - then proceed to Closure Pass 4:
     - clash/pathfinding staging note,
     - H6 durable graph-edge clash-penalty bridge design.
+
+### 2026-08-28 - Technical Closure Pass 3B C10 Pure JS Extraction
+
+- Manual decision from KR:
+  - accelerate the remaining housekeeping/hardening work so Phase H can start
+    sooner, while still following the agreed closure sequence.
+- Claude/Fable §50 review:
+  - confirmed Passes 1-2,
+  - observed Pass 3 in flight,
+  - repeated that low-risk C10 extraction should close before the larger Phase H
+    JavaScript work,
+  - no blocker to this pass.
+- Implemented:
+  - added `raceway/static/raceway/js/raceway_projection_core.js`,
+  - moved pure graph projection contract validation into the core module,
+  - moved pure schedule and fitting summary view-model builders into the core
+    module,
+  - moved pure Raceway command-state computation into the core module,
+  - kept overlay wrappers/export names intact for browser-test seams,
+  - added the support module before `raceway_overlay.js` in
+    `PLANT3D_VIEWER_EXTENSIONS`,
+  - bumped both Raceway static cache keys to `20260828_raceway54`.
+- Tests updated:
+  - Raceway static asset test now checks the split across core and overlay,
+  - Plant3D viewer test now pins extension load order:
+    `raceway_projection_core.js` before `raceway_overlay.js`,
+  - browser smoke loads both files in the same order as the real viewer.
+- Verification passed:
+  - `node --check raceway/static/raceway/js/raceway_projection_core.js`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test eht.tests.CuratedCatalogueSyncCommandTests --noinput -v 1`
+  - full Raceway browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+- Manual check:
+  - no visual or workflow change is expected,
+  - open the Raceway viewer once and confirm the Raceway Draft pane appears,
+    draw/save still works, and schedule/fitting summaries still refresh.
+- Notes to Claude/Fable:
+  - low-risk C10 module extraction is now closed,
+  - interaction/panel/state decomposition is intentionally not attempted here
+    and remains the H-A2 precondition,
+  - please review whether `raceway_projection_core.js` is the right boundary
+    for the first extracted module.
+- Next recommended pass:
+  - Closure Pass 4, with code plus note if no blocker appears:
+    - define Clash v0/v1/v2 staging,
+    - implement or specify H6 graph-edge clash-penalty bridge over existing AABB
+      warnings,
+    - pin the route-cost input shape needed by H-A1.
+
+### 2026-08-28 - Closure Pass 4 Clash/Pathfinding Staging And H6 Bridge
+
+- Manual direction from KR:
+  - proceed with Closure Pass 4,
+  - first read Claude/Fable notes,
+  - pause only if a real decision is needed.
+- Claude/Fable §50 review:
+  - no blocker to Closure Pass 4,
+  - repeated that H6 should aggregate existing AABB warnings per durable graph
+    edge,
+  - explicitly warned not to start new mesh collision physics in this pass.
+- Implemented:
+  - added `raceway/clash.py`,
+  - added projection `raceway.clash_edge_penalties.v0`,
+  - added endpoint `/raceway/layers/<layer_id>/clash-penalties/`,
+  - aggregates existing `raceway.warning.model_clash_aabb` and
+    `raceway.warning.model_clearance_aabb` warnings by durable adjacent
+    Raceway node UUID edge key,
+  - exposes reverse edge key, run key/tag, segment index, warning counts,
+    clash/clearance counts, reasons, and soft route penalty,
+  - keeps graph-local ordinal keys such as `E001` out of route truth,
+  - treats the bridge as a route-cost hint, not clash-clearance approval.
+- Default route-cost hints:
+  - model AABB clash: `5.0 m`,
+  - model AABB clearance-band warning: `1.0 m`.
+- Records updated:
+  - added `../planning/raceway-clash-pathfinding-staging-2026-08-28.md`,
+  - updated `../README.md`,
+  - updated `../audit/open-items-register.md`,
+  - updated `../audit/phase-g-closure-audit-2026-08-02.md`,
+  - updated Codex memory.
+- Authority boundary:
+  - A1 catalogue-seed confirmation remains KR decision,
+  - A2 workspace-file cleanup remains KR decision,
+  - A3 CI remains KR decision,
+  - H6 is now closed in code, tests, and records.
+- Verification passed:
+  - `venv/bin/python -m py_compile raceway/clash.py raceway/views.py raceway/urls.py raceway/tests.py`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway.tests.RacewayClashPenaltyBridgeTests raceway.tests.RacewayApiTests.test_layer_clash_edge_penalties_endpoint_returns_project_scoped_payload --noinput -v 2`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `git diff --check`
+- Manual check:
+  - no visible viewer UI change is expected,
+  - after login, open `/raceway/layers/<layer_id>/clash-penalties/`,
+  - expected JSON contains top-level `layer` and `clash_edge_penalties`,
+  - expected projection is `raceway.clash_edge_penalties.v0`,
+  - expected edge keys look like `node_uuid::node_uuid`,
+  - if a saved tray segment has rough AABB clash/clearance warnings, the
+    affected edge has counts and `route_penalty_m`.
+- Notes to Claude/Fable:
+  - please review the bridge shape before H-A1,
+  - challenge whether the default `5.0 m`/`1.0 m` penalties should stay as
+    constants for MVP or move to settings before route preview,
+  - challenge whether Clash v1 spatial indexing can wait until routing exists.
+- Next recommended pass:
+  - Closure Pass 5 markdown housekeeping:
+    - prepare keep/archive/delete proposal,
+    - add superseded headers where useful,
+    - do not delete history-bearing records,
+    - do not remove the `.code-workspace` file unless KR explicitly approves
+      A2.
+
+### 2026-08-28 - Closure Passes 5 And 6 Housekeeping And Final Acceptance
+
+- Manual direction from KR:
+  - take remaining Closure Passes 5 and 6 together,
+  - do them one by one,
+  - test Pass 5 before moving to Pass 6,
+  - proceed autonomously where no KR-owned decision is required.
+- Claude/Fable §51 review:
+  - approved `raceway_projection_core.js` as the right first JS module,
+  - asked for a cheap `node --test` unit file before Pass 6,
+  - repeated that deletions must be separate KR-approved work,
+  - repeated that CI should land only if A3 is explicitly spoken.
+- Late Claude/Fable §52 review:
+  - approved Pass 4/H6,
+  - confirmed constants are acceptable for MVP because they are named and
+    self-documented in the payload basis,
+  - confirmed Clash v1 spatial indexing can wait until routing exists and a
+    measured trigger appears,
+  - no blocker to Passes 5-6.
+- Pass 5 implemented:
+  - added `raceway/static/raceway/js/raceway_projection_core.test.js`,
+  - added `../audit/markdown-housekeeping-inventory-2026-08-28.md`,
+  - added lifecycle headers to historical active-sounding files:
+    - `pipeline-spike-tracker-2026-06-22.md`,
+    - `platform-ecosystem-reset-tracker-2026-07-08.md`,
+    - `platform-ecosystem-development-plan-2026-07-08.md`,
+    - `cable-routing-foundation-review-2026-07-06.md`,
+  - updated `../README.md`,
+  - closed C11 in `../audit/open-items-register.md`.
+- Pass 5 verification passed before Pass 6:
+  - `node --check raceway/static/raceway/js/raceway_projection_core.js`
+  - `node --check raceway/static/raceway/js/raceway_projection_core.test.js`
+  - `node --test raceway/static/raceway/js/raceway_projection_core.test.js`
+  - `git diff --check`
+- Pass 6 implemented:
+  - added `../audit/phase-g-final-acceptance-brief-2026-08-28.md`,
+  - updated `../audit/phase-g-closure-audit-2026-08-02.md` statuses and
+    outcomes,
+  - updated `../audit/open-items-register.md`,
+  - updated `../audit/development-scorecard.md` consistently with Claude §51,
+  - updated Codex memory.
+- Authority boundary:
+  - A1 catalogue-seed confirmation remains KR decision,
+  - A2 workspace-file cleanup remains KR decision,
+  - A3 CI remains KR decision,
+  - no files were deleted or moved.
+- Final verification passed:
+  - `node --check raceway/static/raceway/js/raceway_projection_core.js`
+  - `node --check raceway/static/raceway/js/raceway_overlay.js`
+  - `node --check raceway/static/raceway/js/raceway_projection_core.test.js`
+  - `node --test raceway/static/raceway/js/raceway_projection_core.test.js`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test raceway --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test plant3d --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test telemetry --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test eht.tests.CuratedCatalogueSyncCommandTests --noinput -v 1`
+  - `env USE_POSTGRES=false venv/bin/python manage.py test eht --noinput -v 1`
+  - full Raceway browser smoke, unsandboxed for Chromium:
+    `env USE_POSTGRES=false venv/bin/python manage.py test raceway.browser_tests --noinput -v 1`
+  - `venv/bin/python manage.py check`
+  - `venv/bin/python manage.py makemigrations --check --dry-run`
+  - `venv/bin/python -m py_compile raceway/clash.py raceway/views.py raceway/urls.py raceway/tests.py telemetry/views.py telemetry/models.py`
+  - `git diff --check`
+- Manual check:
+  - no visible viewer UI change is expected,
+  - skim:
+    - `../audit/markdown-housekeeping-inventory-2026-08-28.md`,
+    - `../audit/phase-g-final-acceptance-brief-2026-08-28.md`,
+    - `../audit/open-items-register.md`,
+  - optional viewer smoke: open Raceway viewer, draw/save one small run, refresh
+    graph/schedule/fittings, and open `/raceway/layers/<layer_id>/clash-penalties/`.
+- Notes to Claude/Fable:
+  - please review the final acceptance brief,
+  - confirm whether H-A1 can start with A1/A2/A3 explicitly carried,
+  - challenge the H-A1 start rules before route preview coding.
+- Next recommended coding pass:
+  - start Phase H-A1 server-side routing foundation:
+    - `raceway.routing`,
+    - durable node-pair edge keys,
+    - injectable weight seam,
+    - deterministic shortest path,
+    - route preview JSON endpoint,
+    - contract tests from birth.

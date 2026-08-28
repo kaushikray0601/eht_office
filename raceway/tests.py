@@ -22,6 +22,14 @@ from .access import (
     user_can_access_project,
     validate_project_id,
 )
+from .clash import (
+    CLASH_EDGE_PENALTY_PROJECTION,
+    MODEL_CLASH_ROUTE_PENALTY_M,
+    MODEL_CLEARANCE_ROUTE_PENALTY_M,
+    build_clash_edge_penalties_from_warnings,
+    build_layer_clash_edge_penalties,
+    durable_segment_edge_key,
+)
 from .fittings import build_layer_fitting_projection
 from .graph import GRAPH_NODE_TOLERANCE_M, NEAR_MISS_ENDPOINT_RADIUS_M, build_layer_graph, build_project_graph
 from .geometry import normalize_bounds
@@ -877,6 +885,134 @@ class RacewayWarningProjectionTests(TestCase):
         )
 
         self.assertEqual(limited_warning["values"]["scan_limit"], MODEL_OBJECT_SCAN_LIMIT)
+
+
+class RacewayClashPenaltyBridgeTests(TestCase):
+    def test_bridge_aggregates_aabb_warnings_by_durable_node_pair(self):
+        project_id = "RWY-CLASH-BRIDGE"
+        source, package = create_source_and_package(project_id)
+        layer = RacewayLayer.objects.create(
+            project_id=project_id,
+            source_model_id=source.pk,
+            render_package_id=package.pk,
+            name="Clash bridge draft",
+        )
+        family = create_family("CLASH-BRIDGE-LADDER")
+        size = create_size(family=family, width_mm=300, depth_mm=100)
+        run = create_run(layer=layer, family=family, size=size)
+        run.tag = "RWY-CLASH-BRIDGE-01"
+        run.save(update_fields=["tag"])
+        start_node, end_node = create_nodes(run, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            stable_id="ifc-beam-clash-bridge",
+            source_object_id="Beam-Bridge-001",
+            object_type="IfcBeam",
+            tag="B-BRIDGE-001",
+            bounds={
+                "min_x": 0.9,
+                "max_x": 1.1,
+                "min_y": -0.05,
+                "max_y": 0.05,
+                "min_z": 0.02,
+                "max_z": 0.06,
+            },
+        )
+        ModelObject.objects.create(
+            source_model=source,
+            render_package=package,
+            stable_id="ifc-pipe-clearance-bridge",
+            source_object_id="Pipe-Bridge-001",
+            object_type="IfcPipeSegment",
+            tag="P-BRIDGE-001",
+            bounds={
+                "min_x": 1.2,
+                "max_x": 1.4,
+                "min_y": 0.21,
+                "max_y": 0.25,
+                "min_z": 0.02,
+                "max_z": 0.06,
+            },
+        )
+
+        payload = build_layer_clash_edge_penalties(layer)
+        edge_key = durable_segment_edge_key(start_node.key, end_node.key)
+
+        self.assertEqual(payload["projection"], CLASH_EDGE_PENALTY_PROJECTION)
+        self.assertEqual(payload["project_id"], project_id)
+        self.assertEqual(payload["layer_id"], layer.pk)
+        self.assertEqual(payload["basis"]["source"], "existing_raceway_aabb_warnings")
+        self.assertEqual(payload["basis"]["edge_key_basis"], "ordered_adjacent_node_uuid_pair")
+        self.assertEqual(
+            payload["basis"]["route_authority"],
+            "soft_cost_hint_not_hard_collision_clearance_authority",
+        )
+        self.assertEqual(payload["counts"]["edge_count"], 1)
+        self.assertEqual(payload["counts"]["warning_count"], 2)
+        self.assertEqual(payload["counts"]["model_clash_count"], 1)
+        self.assertEqual(payload["counts"]["model_clearance_count"], 1)
+        self.assertFalse(payload["counts"]["scan_limited"])
+        self.assertAlmostEqual(
+            payload["counts"]["route_penalty_m_total"],
+            MODEL_CLASH_ROUTE_PENALTY_M + MODEL_CLEARANCE_ROUTE_PENALTY_M,
+        )
+
+        edge = payload["edges"][0]
+        self.assertEqual(edge["edge_key"], edge_key)
+        self.assertEqual(edge["reverse_edge_key"], durable_segment_edge_key(end_node.key, start_node.key))
+        self.assertEqual(edge["node_keys"], [str(start_node.key), str(end_node.key)])
+        self.assertEqual(edge["run_key"], str(run.key))
+        self.assertEqual(edge["run_tag"], "RWY-CLASH-BRIDGE-01")
+        self.assertEqual(edge["segment_index"], 1)
+        self.assertEqual(edge["warning_count"], 2)
+        self.assertEqual(edge["model_clash_count"], 1)
+        self.assertEqual(edge["model_clearance_count"], 1)
+        self.assertAlmostEqual(
+            edge["route_penalty_m"],
+            MODEL_CLASH_ROUTE_PENALTY_M + MODEL_CLEARANCE_ROUTE_PENALTY_M,
+        )
+        reason_ids = {reason["object_stable_id"] for reason in edge["reasons"]}
+        self.assertEqual(reason_ids, {"ifc-beam-clash-bridge", "ifc-pipe-clearance-bridge"})
+        serialized_edges = json.dumps(payload["edges"], sort_keys=True)
+        self.assertNotIn("E001", serialized_edges)
+        serialized = json.dumps(payload, sort_keys=True)
+        self.assertNotIn("model_object_id", serialized)
+
+    def test_bridge_ignores_non_model_warnings_and_reports_unmapped_model_warnings(self):
+        payload = build_clash_edge_penalties_from_warnings(
+            [
+                {
+                    "code": "raceway.warning.short_segment",
+                    "message": "Not a model-envelope warning.",
+                    "node_keys": ["n1", "n2"],
+                },
+                {
+                    "code": "raceway.warning.model_clash_aabb",
+                    "message": "Model warning without a complete segment.",
+                    "run_key": "run-1",
+                    "run_tag": "RWY-1",
+                    "node_keys": ["n1"],
+                    "segment_index": 4,
+                    "values": {"object_stable_id": "ifc-unmapped"},
+                },
+                {
+                    "code": "raceway.warning.model_clash_scan_limited",
+                    "message": "Scan was capped.",
+                },
+            ],
+            project_id="RWY-CLASH-BRIDGE-UNMAPPED",
+            layer_id=77,
+        )
+
+        self.assertEqual(payload["projection"], CLASH_EDGE_PENALTY_PROJECTION)
+        self.assertEqual(payload["edges"], [])
+        self.assertEqual(payload["counts"]["edge_count"], 0)
+        self.assertEqual(payload["counts"]["warning_count"], 0)
+        self.assertEqual(payload["counts"]["unmapped_warning_count"], 1)
+        self.assertTrue(payload["counts"]["scan_limited"])
+        self.assertEqual(payload["unmapped_warnings"][0]["reason"], "missing_two_node_keys")
+        self.assertEqual(payload["unmapped_warnings"][0]["run_tag"], "RWY-1")
 
 
 class RacewayScheduleProjectionTests(TestCase):
@@ -1764,6 +1900,51 @@ class RacewayApiTests(TestCase):
 
         self.assertEqual(blocked_response.status_code, 403)
 
+    def test_layer_clash_edge_penalties_endpoint_returns_project_scoped_payload(self):
+        layer = RacewayLayer.objects.create(
+            project_id=self.project.proj_id,
+            source_model_id=self.source.pk,
+            render_package_id=self.package.pk,
+            name="API clash bridge layer",
+        )
+        run = create_run(layer=layer, family=self.family, size=self.size)
+        run.tag = "RWY-API-CLASH"
+        run.save(update_fields=["tag"])
+        start_node, end_node = create_nodes(run, [(0.0, 0.0, 0.0), (2.0, 0.0, 0.0)])
+        ModelObject.objects.create(
+            source_model=self.source,
+            render_package=self.package,
+            stable_id="ifc-api-clash",
+            source_object_id="API-Beam-001",
+            object_type="IfcBeam",
+            bounds={
+                "min_x": 0.9,
+                "max_x": 1.1,
+                "min_y": -0.05,
+                "max_y": 0.05,
+                "min_z": 0.02,
+                "max_z": 0.06,
+            },
+        )
+
+        response = self.client.get(reverse("raceway:layer_clash_edge_penalties", args=[layer.pk]))
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        bridge = payload["clash_edge_penalties"]
+        self.assertEqual(payload["layer"]["project_id"], self.project.proj_id)
+        self.assertEqual(bridge["projection"], CLASH_EDGE_PENALTY_PROJECTION)
+        self.assertEqual(bridge["basis"]["edge_key_basis"], "ordered_adjacent_node_uuid_pair")
+        self.assertEqual(bridge["edges"][0]["edge_key"], durable_segment_edge_key(start_node.key, end_node.key))
+        self.assertEqual(bridge["edges"][0]["model_clash_count"], 1)
+        self.assertAlmostEqual(bridge["edges"][0]["route_penalty_m"], MODEL_CLASH_ROUTE_PENALTY_M)
+
+        other_user = get_user_model().objects.create_user(username="raceway-clash-bridge-blocked", password="pw")
+        self.client.force_login(other_user)
+        blocked_response = self.client.get(reverse("raceway:layer_clash_edge_penalties", args=[layer.pk]))
+
+        self.assertEqual(blocked_response.status_code, 403)
+
     def test_layer_schedule_csv_endpoint_uses_same_schedule_payload_shape(self):
         layer = create_layer(project_id=self.project.proj_id)
         run = create_run(layer=layer, family=self.family, size=self.size)
@@ -2373,6 +2554,13 @@ class RacewayApiTests(TestCase):
 
 class RacewayStaticAssetTests(TestCase):
     def test_raceway_overlay_registers_external_viewer_layer(self):
+        core_script_path = os.path.join(
+            os.path.dirname(__file__),
+            "static",
+            "raceway",
+            "js",
+            "raceway_projection_core.js",
+        )
         script_path = os.path.join(
             os.path.dirname(__file__),
             "static",
@@ -2383,6 +2571,8 @@ class RacewayStaticAssetTests(TestCase):
 
         with open(script_path, encoding="utf-8") as script:
             content = script.read()
+        with open(core_script_path, encoding="utf-8") as script:
+            core_content = script.read()
 
         self.assertIn("RACEWAY_LAYER_ID = 'raceway-overlay'", content)
         self.assertIn("window.plant3dViewerLayers", content)
@@ -2432,22 +2622,21 @@ class RacewayStaticAssetTests(TestCase):
         self.assertIn("function hasUnsavedSavableChanges", content)
         self.assertIn("function serverRunIdsRemovedFromDraft", content)
         self.assertIn("function deleteServerRunsRemovedFromDraft", content)
-        self.assertIn("function validateGraphProjectionContract", content)
+        self.assertIn("function racewayProjectionCoreFunction", content)
+        self.assertIn("function validateGraphProjectionContract", core_content)
         self.assertIn("function validateFittingProjectionContract", content)
         self.assertIn("function reducerCandidateExclusionReasons", content)
         self.assertIn("function disabledActionHint", content)
-        self.assertIn("@typedef {Object} RacewayCommandStateSnapshot", content)
-        self.assertIn("@typedef {Object} RacewayScheduleSummaryViewModel", content)
-        self.assertIn("@typedef {Object} RacewayFittingSummaryViewModel", content)
-        self.assertIn("function computeRacewayCommandStates", content)
-        self.assertIn("function buildScheduleSummaryViewModel", content)
-        self.assertIn("function buildFittingSummaryViewModel", content)
+        self.assertIn("function computeRacewayCommandStates", core_content)
+        self.assertIn("function buildScheduleSummaryViewModel", core_content)
+        self.assertIn("function buildFittingSummaryViewModel", core_content)
+        self.assertIn("racewayProjectionCore = Object.freeze", core_content)
         self.assertIn("computeRacewayCommandStates,", content)
         self.assertIn("buildScheduleSummaryViewModel,", content)
         self.assertIn("buildFittingSummaryViewModel,", content)
         self.assertIn("dataset.disabledReason", content)
-        self.assertIn("Raceway graph projection contract warning", content)
-        self.assertIn("Raceway unconnected-crossing warning missing edge_keys", content)
+        self.assertIn("Raceway graph projection contract warning", core_content)
+        self.assertIn("Raceway unconnected-crossing warning missing edge_keys", core_content)
         self.assertIn("Raceway fitting projection contract warning", content)
         self.assertIn("Raceway reducer candidate one-edge alignment missing handedness suggestions", content)
         self.assertIn("function reducerTransitionCandidates", content)

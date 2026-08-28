@@ -15,6 +15,7 @@ from plant3d.access import render_packages_for_user, source_models_for_user
 from plant3d.overlay import validate_overlay_anchor
 
 from .access import require_project_access
+from .clash import build_layer_clash_edge_penalties
 from .fittings import build_layer_fitting_projection
 from .graph import build_layer_graph
 from .models import RacewayFamily, RacewayLayer, RacewayNode, RacewayRun, RacewaySize
@@ -706,6 +707,19 @@ def layer_fittings_view(request, layer_id):
     if layer is None:
         return _error_response("Raceway layer was not found.", status=404)
     return JsonResponse({"layer": _layer_payload(layer), "fittings": build_layer_fitting_projection(layer)})
+
+
+@require_http_methods(["GET"])
+def layer_clash_edge_penalties_view(request, layer_id):
+    layer = _layer_for_user(request.user, layer_id)
+    if layer is None:
+        return _error_response("Raceway layer was not found.", status=404)
+    return JsonResponse(
+        {
+            "layer": _layer_payload(layer),
+            "clash_edge_penalties": build_layer_clash_edge_penalties(layer),
+        }
+    )
 
 
 @require_http_methods(["GET"])

@@ -5,10 +5,13 @@ passes when KR approves the work. Companion to `development-scorecard.md`
 and `claude-notes-2026-07-08.md`.
 
 Created: 2026-07-19.
-Last updated: 2026-08-28, Closure Pass 3.
+Last updated: 2026-08-28, Closure Pass 6.
 
 This is the single source of truth for open/closed/deferred items. The Phase G
 closure audit is supporting analysis, not a competing register.
+
+Phase G implementation and closure sequence are complete as of Closure Pass 6.
+A1/A2/A3 remain explicit KR decisions, not Codex-closed items.
 
 Disposition legend:
 
@@ -48,8 +51,8 @@ Disposition legend:
 | C7 | Work-plane/free-route messaging and broader segment-pick reuse | tracker deferred list, §49 | defer-later | Partly landed for Make Tee. Record UX gap; not H-A1 blocker. |
 | C8 | BOQ gross-length/development-length assumption line | §40, §47 | closed | Closed in C10.2 and pinned in tests. |
 | C9 | Radius/handedness/accessory-intent persistence via segment-intent idiom | §43, §47, §49 | defer-later | Waits for accessory acceptance palette and catalogue workflow. |
-| C10 | JS hardening: pure seams, geometry/DOM split, separate module files, JS tests | js-audit, §44, §46, §49 | close-now partially; H-A2 gate | Low-risk pure-function/module extraction should happen in Technical Closure. Interaction/panel/state restructuring is a hard precondition before H-A2 assignment UI. |
-| C11 | Mark/retire stale legacy docs | scorecard, §49 | close-now plan; defer bulk cleanup | Use a keep/archive/delete proposal and KR-approved deletion only. Nothing that explains "why" should be deleted. |
+| C10 | JS hardening: pure seams, geometry/DOM split, separate module files, JS tests | js-audit, §44, §46, §49, §51 | defer-to-H | Low-risk pure helper extraction closed in Technical Closure Pass 3B and Node unit coverage added in Closure Pass 5. Interaction/panel/state restructuring remains the H-A2 precondition. |
+| C11 | Mark/retire stale legacy docs | scorecard, §49-§51 | closed | Closed in Closure Pass 5 with `markdown-housekeeping-inventory-2026-08-28.md` and lifecycle headers on active-sounding historical files. No files were deleted; destructive cleanup stays KR-approved only. |
 
 ## D. Gates
 
@@ -71,7 +74,7 @@ Disposition legend:
 | H3 | Deterministic path tie-breaking | H-A1 | claude-notes §48 | gate | Stable ordering by node/edge keys and tests. |
 | H4 | Route preview payload contract pin | H-A1 | claude-notes §48 | gate | Pin path node/edge pair keys, edge lengths, total, riser/horizontal flags, basis/assumptions. |
 | H5 | Consumer-neutral cable reference design note | H-A2 | claude-notes §48, §49 | gate | Needed before assignment persistence/UI: `owner_module` + opaque `cable_ref`, no EHT imports. |
-| H6 | Clash v0 edge-penalty bridge | H-A1/H-A2 route quality | claude-notes §49 | close-now | Aggregate existing AABB warnings per durable graph edge so routing can apply clash penalties/reasons without new mesh physics. |
+| H6 | Clash v0 edge-penalty bridge | H-A1/H-A2 route quality | claude-notes §49-§50 | closed | Closed in Closure Pass 4 with `raceway.clash_edge_penalties.v0`; existing AABB clash/clearance warnings are aggregated by durable adjacent node UUID edge key as soft route-cost hints, with no new mesh physics. |
 
 ## Recently Closed
 
@@ -84,3 +87,13 @@ Disposition legend:
 - B3: stale root/project Claude orientation refreshed on 2026-08-02.
 - C1/C4/C5: vendor-catalogue sync command, telemetry browser session key,
   and blocked-telemetry browser assertion closed in Closure Pass 3.
+- C10 low-risk slice: pure Raceway projection/command helper module extracted
+  in Closure Pass 3B; larger interaction refactor deferred to H-A2.
+- H6: Clash v0 durable edge-penalty bridge and clash/pathfinding staging note
+  closed in Closure Pass 4.
+- C11: markdown housekeeping inventory and historical lifecycle headers closed
+  in Closure Pass 5; deletion candidates remain approval-only.
+- C10 test foundation: `raceway_projection_core.test.js` added in Closure
+  Pass 5, closing the cheap JS unit-test gap Claude §51 identified.
+- Phase G closure sequence: final acceptance brief added in Closure Pass 6;
+  H-A1 may start server-side with A1/A2/A3 carried explicitly.

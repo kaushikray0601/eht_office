@@ -2,6 +2,9 @@
 
 Date: 2026-07-06
 Author: Claude (architect), reviewing Codex's plan in `pipeline-spike-tracker-2026-06-22.md` ("Next Big Coding Step — Source/Destination-First Cable Routing Foundation")
+Lifecycle note, 2026-08-28: historical review of the cable-first routing
+foundation. Phase H should use the later Raceway graph/pathfinding records,
+especially `raceway-clash-pathfinding-staging-2026-08-28.md`.
 Status: review/guidance for Phase 1 kickoff — not an instruction to change the phase order
 
 ## Verdict

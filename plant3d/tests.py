@@ -2105,8 +2105,14 @@ class Plant3DIntakeTests(TestCase):
         self.assertContains(response, "eht-redo-btn")
         self.assertContains(response, "/static/plant3d/js/package_viewer.js?v=20260714_snap_provider3")
         self.assertContains(response, "plant3dViewerExtensionsConfig")
+        self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-projection-core\"")
         self.assertContains(response, "data-plant3d-viewer-extension=\"raceway-overlay\"")
         self.assertContains(response, "data-owner=\"raceway\"")
+        core_extension = next(
+            extension
+            for extension in settings.PLANT3D_VIEWER_EXTENSIONS
+            if extension["id"] == "raceway-projection-core"
+        )
         raceway_extension = next(
             extension
             for extension in settings.PLANT3D_VIEWER_EXTENSIONS
@@ -2114,7 +2120,16 @@ class Plant3DIntakeTests(TestCase):
         )
         self.assertContains(
             response,
+            f"/static/{core_extension['script']}?v={core_extension['version']}",
+        )
+        self.assertContains(
+            response,
             f"/static/{raceway_extension['script']}?v={raceway_extension['version']}",
+        )
+        html = response.content.decode()
+        self.assertLess(
+            html.index(f"/static/{core_extension['script']}?v={core_extension['version']}"),
+            html.index(f"/static/{raceway_extension['script']}?v={raceway_extension['version']}"),
         )
 
     def test_package_viewer_static_js_exposes_generic_layer_registry(self):

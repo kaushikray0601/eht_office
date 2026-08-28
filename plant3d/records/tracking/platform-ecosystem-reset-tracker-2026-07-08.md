@@ -2,6 +2,10 @@
 
 Date: 2026-07-08
 
+Lifecycle note, 2026-08-28: historical/supporting reset tracker. It explains
+the cable-first to raceway-first pivot, but the current day-to-day tracker is
+`raceway-mvp-progress-tracker-2026-07-08.md`.
+
 Status: active tracker after cable-route reset
 
 ## Current Focus

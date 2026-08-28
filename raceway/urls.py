@@ -14,6 +14,11 @@ urlpatterns = [
     path("layers/<int:layer_id>/schedule/", views.layer_schedule_view, name="layer_schedule"),
     path("layers/<int:layer_id>/warnings/", views.layer_warning_detail_view, name="layer_warnings"),
     path("layers/<int:layer_id>/fittings/", views.layer_fittings_view, name="layer_fittings"),
+    path(
+        "layers/<int:layer_id>/clash-penalties/",
+        views.layer_clash_edge_penalties_view,
+        name="layer_clash_edge_penalties",
+    ),
     path("layers/<int:layer_id>/schedule.csv", views.layer_schedule_csv_view, name="layer_schedule_csv"),
     path("layers/<int:layer_id>/runs/", views.run_collection_view, name="layer_runs"),
     path("runs/<int:run_id>/", views.run_detail_view, name="run_detail"),

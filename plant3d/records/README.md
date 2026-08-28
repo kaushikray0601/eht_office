@@ -25,13 +25,16 @@ This folder is the project record book for the new neutral 3D engineering platfo
 
 ## Current Active Plan
 
-- `audit/phase-g-closure-audit-2026-08-02.md` - active closure audit before Phase H cable assignment/pathfinding.
+- `audit/phase-g-final-acceptance-brief-2026-08-28.md` - final Phase G closure candidate and H-A1 start rules.
+- `audit/phase-g-closure-audit-2026-08-02.md` - Phase G closure audit and pass-by-pass outcome history.
 - `audit/open-items-register.md` - single source of open decisions, closure dispositions, and Phase H gates.
-- `audit/claude-notes-2026-07-08.md` - Claude/Fable running review notes; latest closure challenge is §49.
+- `audit/claude-notes-2026-07-08.md` - Claude/Fable running review notes; latest closure challenge is §52.
 - `audit/development-scorecard.md` - periodic scorecard and drift watch.
+- `audit/markdown-housekeeping-inventory-2026-08-28.md` - keep/archive/delete classification and non-destructive records cleanup result.
 - `planning/raceway-mvp-execution-plan-2026-07-08.md` - detailed execution plan for the raceway/tray MVP.
 - `tracking/raceway-mvp-progress-tracker-2026-07-08.md` - detailed progress tracker for the raceway/tray MVP.
 - `planning/raceway-accessory-geometry-note-2026-07-17.md` - accepted MVP accessory proxy doctrine and limitations.
+- `planning/raceway-clash-pathfinding-staging-2026-08-28.md` - Clash v0/v1/v2 staging and H6 durable edge-penalty bridge for Phase H routing.
 - `planning/suggestion-telemetry-design-2026-07-12.md` - Tier-0 suggestion telemetry design.
 - `prompts/codex-platform-reset-start-prompt-2026-07-08.md` - Codex restart prompt.
 - `prompts/claude-platform-architecture-review-prompt-2026-07-08.md` - Claude/Fable architecture review prompt.
